@@ -744,7 +744,8 @@ YAML
     [ $t -lt 300 ] || { echo "agent-catalog still $p after 5 min"; kubectl -n $NAMESPACE describe pod agent-catalog | tail -20; return 1; }
   done
   kubectl -n $NAMESPACE logs agent-catalog | tail -1
-  kubectl -n $NAMESPACE get pod agent-catalog -o jsonpath='exit {.status.containerStatuses[0].state.terminated.exitCode}{"\n"}'
+  rc="$(kubectl -n $NAMESPACE get pod agent-catalog -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}')"
+  echo "exit $rc"; [ "$rc" = 0 ]
 }
 catalog --plan
 ```
@@ -756,26 +757,35 @@ this point.
 
 **17b. Pause uploads, plan, apply, resume (about a minute).** Apply only
 works on a plan made while nothing writes, so stop uploads, give the indexer a
-minute to catch up, then stop it too:
+minute to catch up, then stop it too. `pause` waits until a Deployment's pods
+are gone; `resume` puts back the replica counts read here:
 
 ```sh
 IE="$(kubectl -n $NAMESPACE get deploy agent-relay-ingest-edge -o jsonpath='{.spec.replicas}')"
 SI="$(kubectl -n $NAMESPACE get deploy agent-relay-search-indexer -o jsonpath='{.spec.replicas}')"
-kubectl -n $NAMESPACE scale deploy/agent-relay-ingest-edge --replicas=0
-sleep 60
-kubectl -n $NAMESPACE scale deploy/agent-relay-search-indexer --replicas=0
-catalog --plan
+pause() {
+  sel="$(kubectl -n $NAMESPACE get deploy "$1" -o json | jq -r '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")')"
+  [ -n "$sel" ] && kubectl -n $NAMESPACE scale deploy/"$1" --replicas=0 || return 1
+  until [ -z "$(kubectl -n $NAMESPACE get pods -l "$sel" -o name)" ]; do sleep 3; done
+}
+resume() {
+  kubectl -n $NAMESPACE scale deploy/agent-relay-search-indexer --replicas=$SI
+  kubectl -n $NAMESPACE scale deploy/agent-relay-ingest-edge --replicas=$IE
+  kubectl -n $NAMESPACE rollout status deploy/agent-relay-search-indexer deploy/agent-relay-ingest-edge --timeout=10m
+}
+if [ -n "$IE" ] && [ -n "$SI" ]; then
+  pause agent-relay-ingest-edge && sleep 60 && pause agent-relay-search-indexer && catalog --plan
+else
+  echo "couldn't read the replica counts; nothing was scaled"
+fi
 ```
 
-Check the plan shows `"eligible":true`, then apply that plan's fingerprint and
-resume:
+Check the plan shows `"eligible":true`, then apply that plan's fingerprint.
+Writers resume and the script is removed only if the apply succeeds:
 
 ```sh
-catalog --apply <fingerprint from the plan above>
-kubectl -n $NAMESPACE scale deploy/agent-relay-search-indexer --replicas=$SI
-kubectl -n $NAMESPACE scale deploy/agent-relay-ingest-edge --replicas=$IE
-kubectl -n $NAMESPACE rollout status deploy/agent-relay-search-indexer deploy/agent-relay-ingest-edge --timeout=10m
-kubectl -n $NAMESPACE delete pod/agent-catalog configmap/agent-catalog-activation
+catalog --apply <fingerprint from the plan above> && resume &&
+  kubectl -n $NAMESPACE delete pod/agent-catalog configmap/agent-catalog-activation
 ```
 
 **Done when:** the plan shows `"eligible":true`, the apply shows
@@ -793,17 +803,18 @@ index isn't ready yet".
   `agent-relay-ingest-edge` is at 0, and the apply itself locks the session
   index (it waits at most 1 second for those locks). Expect about a minute.
   Run it at a quiet time, and before anyone deletes a session.
+- **To give up or try later:** run `resume`. Uploads stay off until you do.
 - **`unprojected` above 0 in the paused plan:** the indexer hadn't caught up.
-  Scale `agent-relay-search-indexer` back to `$SI`, wait a minute, and repeat
-  from its `--replicas=0` line.
+  Run `kubectl -n $NAMESPACE scale deploy/agent-relay-search-indexer --replicas=$SI`,
+  wait a minute, then `pause agent-relay-search-indexer && catalog --plan`.
 - **`native_catalog_plan_changed`:** something wrote between plan and apply.
   Plan again and apply the new fingerprint.
 - **`native_catalog_operation_failed` with `exit 1` from apply:** usually a
-  writer still held the locks. Nothing was written; check both Deployments are
-  at 0 and run the same `catalog --apply` again.
+  writer still held the locks. Nothing was written and writers are still
+  paused; run the same `catalog --apply ... && resume ...` line again.
 - **`native_catalog_schema_validation_required`:** the pod couldn't reach the
   database, or the migrations (step 12) haven't finished.
-- **Any other count above 0** (for example `unknownUsers`): resume writers and
+- **Any other count above 0** (for example `unknownUsers`): run `resume` and
   send us the JSON line.
 
 ## Next
