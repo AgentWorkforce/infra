@@ -385,6 +385,11 @@ async function runHost(): Promise<void> {
         mcpServers.sessions = sessionsMcpServer({ entry: sessionsMcpEntry, proxyUrl: readProxy.url, token });
       }
       for (const [s, tokens] of agentServers) {
+        // The built-in sessions server keeps its name: an OAuth server can't replace it.
+        if (s.name === "sessions" && mcpServers.sessions) {
+          log(`agent MCP server ${s.name}: name taken by the built-in Sessions tools; skipped`);
+          continue;
+        }
         try {
           mcpServers[s.name] = { type: "http", url: s.url, headers: { Authorization: `Bearer ${await tokens.get()}` } };
         } catch (err) {

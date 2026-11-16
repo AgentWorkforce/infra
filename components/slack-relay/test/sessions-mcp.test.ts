@@ -205,6 +205,7 @@ test("output is bounded and long strings are cut", async () => {
     assert.ok(out(r).length <= MAX_OUTPUT, `output ${out(r).length} > ${MAX_OUTPUT}`);
     const j = JSON.parse(out(r));
     assert.equal(j.next_cursor, "n", "the cursor survives the cut");
+    assert.equal(j.messages.length, 50, "no message of the page is dropped (the cursor is past all of them)");
     assert.match(JSON.stringify(j.messages), /\[cut\]/);
   } finally {
     await t.close();
