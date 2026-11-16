@@ -453,10 +453,14 @@ agent takes the message in, but nothing ever goes back to them:
   never answered, inside the pit or out.
 
 relaygate's policy already refuses pit-to-outside writes (the pit can't write
-out). The host check is defence in depth: a policy mistake that allowed the
-write through the proxy still couldn't leak, because the host never sends
-unless the same check says yes. The check is only as wide as the policy, so
-keep outside inboxes (`relaycast:inbox/<prefix>`) unwritable by the pit.
+out), and its proxy enforces that on the send itself. The host check is an
+extra check before sending, against the same policy: the host never attempts
+a reply the gate hasn't allowed, so a gap in how the send is enforced (the
+proxy off, a route it doesn't cover) doesn't become a leak, and a gate that
+doesn't answer means no reply. It is not a separate same-group rule: if the
+policy lets the pit write to an outside inbox and the classifier passes the
+answer, the answer is sent. Keep outside inboxes (`relaycast:inbox/<prefix>`)
+unwritable by the pit.
 
 What the agent sends on its own with its relay tools (`mcp__relaycast`: a DM,
 a channel post) goes through relaygate's proxy with its own `rg_` token, so

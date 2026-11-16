@@ -352,10 +352,10 @@ async function runHost(): Promise<void> {
   const sessionsMcpEntry = join(dirname(fileURLToPath(import.meta.url)), "sessions-mcp.ts");
   const denied = (env.AGENT_DISALLOWED_TOOLS ?? "Bash WebFetch WebSearch Read(//proc/**)").split(/[\s,]+/).filter(Boolean);
   const uploader = sessionUploader(settings, dataDir, hostName);
-  // Behind relaygate every DM answer is checked first, so an agent never tries
-  // to write to a sender outside its group (relaygate's proxy would refuse it
-  // too; this holds even if the policy doesn't). REPLY_TO_OUTSIDE can't turn
-  // that off: it only means something without relaygate, where there are no groups.
+  // Behind relaygate every DM answer is checked first, so an agent never even
+  // attempts a write the gate hasn't allowed (its proxy checks the send again,
+  // against the same policy). REPLY_TO_OUTSIDE can't turn that off: it only
+  // means something without relaygate, where there are no groups.
   if (gate && env.REPLY_TO_OUTSIDE === "true") log("host.replyToOutside ignored: behind relaygate a DM is answered only if the gate allows it");
   const host = new AgentHost({
     routerName,
