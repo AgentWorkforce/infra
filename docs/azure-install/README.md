@@ -11,6 +11,10 @@ applied to that chart. The four edge checks passed, a headless sign-in by
 operator device approval worked, two agents exchanged messages through
 Relaycast, and an uploaded session was indexed. See
 [What was not proven](#what-was-not-proven) before a production rollout.
+The message receipts image patch, and a backup and restore of Control's
+database and Relaycast's SQLite volume around it, were qualified separately on
+agent-relay-2026.11.8: see
+[AKS receipts upgrade qualification](#aks-receipts-upgrade-qualification).
 
 This guide installs release **agent-relay-2026.11.16** (chart agent-relay 0.7.54,
 sessions-pipeline 0.8.47). `searchIndexer.locker.credentials` first shipped
@@ -380,6 +384,115 @@ The RDS ([EKS guide](../enterprise-aws-install.md)) and Cloud SQL
 HoopDb migration owner is the database admin role, and their setup scripts
 never take CREATEROLE from it.
 
+## AKS receipts upgrade qualification
+
+The
+[coordinated receipt patch](https://agentrelay.com/docs/self-hosting/upgrades#coordinated-receipt-patch-before-a-suite-release)
+moves an existing install to **Relaycast 12.10.0** (SQLite migration
+`0081_delivery_confirmation.sql`) and **Control 0.5.24** (migrations `0050`
+and `0051`) without changing its chart. It was qualified on AKS, SQLite
+backend, from this starting point:
+
+| | |
+|---|---|
+| Starting release | agent-relay-2026.11.8 (chart agent-relay 0.7.15): Relaycast 12.8.0 (`sha256:ab9dd678…`), Control 0.5.23 (`sha256:46e2cb51…`). The newest whole release without the pair; 2026.11.9 is the first that contains it. |
+| Install | Steps 1 to 7 of this guide with this guide's `values.yaml`, `postgres-*` files and the release's `values-eks.yaml`. No edge (Traefik, `ingress.yaml`): checks ran through `kubectl port-forward`. |
+| Cluster | AKS 1.36, East US, two Standard_D4s_v4 nodes, default StorageClass |
+| Patch overlay | `receipt-images.values.yaml` from the upgrades page: `relaycast.image.digest` `sha256:ec062ef9…` (12.10.0) and `relay-control.image.digest` `sha256:d1b6ca95…` (0.5.24), passed last |
+
+What the patch does on this install:
+
+- The render with the overlay last differs from the deployed manifest only in
+  the `relaycast` and `relay-control` images and the Control migration Job
+  name (`relay-control-migrate-<identity>`).
+- The `search-indexer-bootstrap` Job keeps its name, so
+  [Upgrades: give CREATEROLE back first](#upgrades-give-createrole-back-first-interim)
+  does not apply to this patch.
+- Relaycast 12.8.0 has already applied `0082` to `0084`. 12.10.0 applies the
+  missing `0081` at startup: `deliveries.accepted_at`, `replied_at`,
+  `reply_message_id` and `messages.reply_to_message_id`.
+- Messages sent before the patch stay readable. Their receipt lookup answers
+  `confirmation: available` with the row's existing state (`queued`).
+
+### Backup (both stores, writers stopped)
+
+```sh
+kubectl -n agent-relay scale deploy/relaycast deploy/relay-control --replicas=0
+# scale returns before the pods exit: wait until neither writer has a pod left
+for d in relaycast relay-control; do
+  sel="$(kubectl -n agent-relay get deploy/$d -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}')"
+  until [ -z "$(kubectl -n agent-relay get pods -l "${sel%,}" -o name)" ]; do sleep 2; done
+done
+PRIMARY="$(kubectl -n agent-relay get cluster.postgresql.cnpg.io hoopdb -o jsonpath='{.status.currentPrimary}')"
+# Control: its own database on the HoopDb cluster
+kubectl -n agent-relay exec "$PRIMARY" -c postgres -- pg_dump -Fc -d relaycontrol > relaycontrol.dump
+# Relaycast: the data directory of the relaycast-data PVC, through a pod that
+# mounts the claim (uid 1000, the Relaycast image, command sleep)
+kubectl -n agent-relay exec <helper pod> -- tar -C /data --exclude=lost+found -cf - . > relaycast-data.tar
+# Optional second copy: an incremental snapshot of the PV's managed disk
+az snapshot create -g <resource group> -n <name> --source <disk ID of the PV> --incremental true
+kubectl -n agent-relay scale deploy/relaycast deploy/relay-control --replicas=1
+```
+
+Delete the helper pod before scaling Relaycast back: the volume is
+ReadWriteOnce. With Relaycast stopped cleanly the directory holds only
+`relaycast.db` (the WAL is checkpointed). The disk ID is the PV's
+`spec.csi.volumeHandle`.
+
+### Restore (both stores, back to the starting release)
+
+```sh
+kubectl -n agent-relay scale deploy/relaycast deploy/relay-control --replicas=0
+# scale returns before the pods exit: wait until neither writer has a pod left
+for d in relaycast relay-control; do
+  sel="$(kubectl -n agent-relay get deploy/$d -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}')"
+  until [ -z "$(kubectl -n agent-relay get pods -l "${sel%,}" -o name)" ]; do sleep 2; done
+done
+kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- dropdb --if-exists relaycontrol
+kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- pg_restore --create --exit-on-error -d postgres < relaycontrol.dump
+# helper pod on relaycast-data, as for the backup
+kubectl -n agent-relay exec <helper pod> -- rm -f /data/relaycast.db /data/relaycast.db-wal /data/relaycast.db-shm
+kubectl -n agent-relay exec -i <helper pod> -- tar -C /data -xf - < relaycast-data.tar
+kubectl -n agent-relay delete pod <helper pod>
+# The original chart and values files, in the original order, without the overlay
+helm upgrade agent-relay "$CHART" --namespace agent-relay \
+  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+```
+
+- `pg_restore --create` recreates the database with its owner and grants
+  (`control_owner`, CONNECT for `control_api_runtime`, none for PUBLIC). A
+  plain `pg_restore` into a new empty database does not restore them.
+- The `tar` extract prints `Cannot utime` and `Cannot change mode` for `.` and
+  exits 2: the volume root belongs to root. `relaycast.db` is restored; check it
+  with `PRAGMA integrity_check`.
+- The original `relay-control-migrate-<identity>` Job runs again and applies
+  nothing. Relaycast 12.8.0 starts on the restored file.
+- A Helm rollback alone does not undo `0081` or Control's `0050` and `0051`.
+  Restore both stores from the same stopped backup.
+
+### Evidence
+
+Run of 2026-11-17, resource group `rg-pepsv12-aks-proof-20261117` (deleted
+afterwards). Times are UTC.
+
+| Step | Command or method | Result | IDs and times |
+|---|---|---|---|
+| Starting release | Release assets `release-manifest.json`, image labels | 2026.11.8 is the newest release below the pair (12.8.0 and 0.5.23); 2026.11.9 pins 12.10.0 and Control 0.5.25 | chart 0.7.15 |
+| Install | Steps 1 to 7, Helm revisions 1 and 2 | Migrations completed, every pod `Running`, `finalize` printed `owner createrole: false` | 21:20:16, 21:22:17 |
+| Seed | MCP `join_relay` (two hosted participants) and `send_relay_message` over a device-approved `cli:auth` bearer | Sent, `queued_unconfirmed`; `get_relay_message_status` not listed (0.5.23) | message `248558839320735744`, delivery `del_248558839320735745`, 21:24:05 |
+| Pre-patch state | `_engine_migrations`, `control_schema_migrations` | 83 Relaycast migrations, no `0081`, no receipt columns; Control 51 migrations, last `0049` | 21:25:04 |
+| Backup | Writers scaled to 0, `pg_dump -Fc`, data-directory `tar`, disk snapshot | Dump 307,449 bytes; `relaycast.db` 1,212,416 bytes, `integrity_check` ok, seed present | recovery ID `pepsv12-pre-20261117T212519Z`, dump `sha256:31cddf74…`, tar `sha256:5825988c…`, snapshot `snap-pepsv12-pre-20261117T212519Z-relaycast`, 21:25:19 to 21:29:56 |
+| Attestations | `gh attestation verify … --owner AgentWorkforce` for both digests | Both pass, SLSA v1 provenance | relaycast `fd101954`, relay-control `edad6432`, 21:10:54 |
+| Render review | `helm template` with the overlay last, compared with `helm get manifest` | Only the two images and the Control migration Job name changed | `relay-control-migrate-ee5b1a3c` → `-69fced99` |
+| Patch | `helm upgrade` with the original chart and values, overlay last (Helm revision 3) | Control Job applied `0050`, `0051`; Relaycast applied `0081` at startup; both Deployments ready | 21:30:16 to 21:31:02 |
+| Schema | `_engine_migrations`, `pragma table_info` | `0081_delivery_confirmation.sql` recorded (84 migrations), the four columns present | `0081` applied 21:31:00 |
+| Receipts tool | MCP `tools/list` | `get_relay_message_status` listed | 21:31:49 |
+| Old message | `read_relay_conversation`, `check_relay_inbox`, `get_relay_message_status` | Readable by sender and recipient; status `available`, state `queued` | `248558839320735744` |
+| New message receipts | `send_relay_message`; recipient `check_relay_inbox` with `acknowledge`; reply with `reply_to` | `queued` → `consumed` (`accepted_at`, `acked_at`, `read_at` set) → `replied` | message `248560789369974784` 21:31:50; ack 21:31:58; reply `248560828267950080` 21:31:59 |
+| Restore | Writers to 0, `dropdb` + `pg_restore --create`, data-directory extract, `helm upgrade` without the overlay (Helm revision 4) | Render identical to the install's; Control Job applied nothing; both Deployments on the 2026.11.8 digests | 21:32:26 to 21:34:17 |
+| Restored state | Same queries and MCP calls | 83 Relaycast migrations, no `0081`, no receipt columns, `integrity_check` ok; Control 51 migrations, no `grok_bot_routines`; seed message readable and in the recipient's inbox; `get_relay_message_status` not listed; the pre-backup device bearer works; a new message sends | 21:34:30 to 21:34:49 |
+| Snapshot | Managed disk from the snapshot, static PV, read-only mount | `integrity_check` ok, 83 migrations, seed present | 21:35:33 |
+
 ## What was not proven
 
 - Any release other than agent-relay-2026.11.0 (patched); `values.yaml` renders
@@ -388,8 +501,15 @@ never take CREATEROLE from it.
 - Azure Database for PostgreSQL, Azure Blob Storage, Application Gateway.
 - NetworkPolicy enforcement beyond a default install, private clusters,
   internal load balancers.
-- Backup and restore, upgrades, HA (every stateful component is one replica on
-  one Azure disk).
+- Backup and restore and upgrades, except the receipts image patch from
+  agent-relay-2026.11.8 and the restore of Control's `relaycontrol` database
+  and Relaycast's SQLite volume around it
+  ([AKS receipts upgrade qualification](#aks-receipts-upgrade-qualification)).
+  Not proven: whole-release upgrades, other starting releases, a restore of
+  HoopDb (`hoopdb`) or the MinIO session objects, a restore into new resources,
+  an Azure disk snapshot swapped in as the live Relaycast volume, and the
+  receipt lookup over an OAuth MCP connection or through the edge.
+- HA (every stateful component is one replica on one Azure disk).
 - The desktop app, the dashboard, SSO, and titles and summaries with a live model
   (the steps were checked on GKE; see step 11).
 - The Traefik edge keeps HTTP closed rather than redirecting it to HTTPS.
