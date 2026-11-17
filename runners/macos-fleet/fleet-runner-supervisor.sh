@@ -213,13 +213,17 @@ ENV
   state "running runner=$runner_name"
   # The single-use config stays in root's 0700 run dir; the runner's shell
   # gets it as an already-open stdin and refuses to start on an empty read.
+  # The group opens the file here, before the fork, so deleting the name
+  # right after cannot race the child's open.
   # caffeinate keeps the Mac from sleeping while a job runs.
-  # shellcheck disable=SC2016 # $1 is the inner bash's positional arg
-  as_user env -i HOME="$RUNNER_HOME" USER="$RUNNER_USER" LOGNAME="$RUNNER_USER" TMPDIR="$RUNNER_HOME/tmp" \
-    PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin DEVELOPER_DIR="$DEVELOPER_DIR" \
-    bash -c 'cd "$1" || exit 70; c=$(cat); [ -n "$c" ] || exit 71; exec caffeinate -i ./run.sh --jitconfig "$c" </dev/null' _ "$runner_dir" \
-    <"$cfg" >>"$log_dir/runner.log" 2>&1 &
-  runner_pid=$!
+  {
+    # shellcheck disable=SC2016 # $1 is the inner bash's positional arg
+    as_user env -i HOME="$RUNNER_HOME" USER="$RUNNER_USER" LOGNAME="$RUNNER_USER" TMPDIR="$RUNNER_HOME/tmp" \
+      PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin DEVELOPER_DIR="$DEVELOPER_DIR" \
+      bash -c 'cd "$1" || exit 70; c=$(cat); [ -n "$c" ] || exit 71; exec caffeinate -i ./run.sh --jitconfig "$c" </dev/null' _ "$runner_dir" \
+      <&3 >>"$log_dir/runner.log" 2>&1 &
+    runner_pid=$!
+  } 3<"$cfg"
   rm -f "$cfg"
   wait "$runner_pid"; rc=$?
   runner_pid=""
