@@ -14,7 +14,7 @@ fleet-runner-supervisor.sh <slot>       POST /mint  (Bearer <this Mac's key>)   
   xcode-parity.sh  ok? ─────────────►   sha256(key) -> {repo, installation, name}    Administration: RW on
   mint ◄──────── encoded JIT config ──  App JWT -> installation token (one repo)      relay-app, relay only
   fresh runner as ghrunner-<slot>       -> generate-jitconfig(labels, group 1)
-  ./run.sh --jitconfig  (one job)
+  ./run.sh  (config via ACTIONS_RUNNER_INPUT_JITCONFIG, one job)
   kill leftovers, wipe caches, repeat
 ```
 
@@ -47,6 +47,13 @@ Files in this directory:
 - **Unprivileged.** Jobs run as `ghrunner-<slot>`: a hidden standard user
   with a discarded random password, no sudo, in `_developer` only so
   `xcodebuild` works. Root holds only the Mac's broker key (`/etc/fleet-runner/<slot>.auth`, 0400).
+- **The JIT config is never on a command line.** Root reads it from its
+  0700 run dir and hands it to the runner's shell on an already-open stdin;
+  the shell passes it on as `ACTIONS_RUNNER_INPUT_JITCONFIG` (the runner's
+  env form of `--jitconfig`), which `Runner.Listener` masks and removes from
+  its environment before any job starts. `ps` shows every local user the
+  arguments of every process, so `run.sh --jitconfig <value>` would hand the
+  registration credential to anyone logged in.
 - **The GitHub App key never leaves the Worker.** A Mac's key is worth one
   thing: JIT configs for its own repo, with the fleet label. Rotating it is
   one `wrangler secret put` and one file on the Mac.
@@ -86,7 +93,12 @@ From there the agent: generates a 32-byte key per Mac (stored at
 `layered-infra-ops/fleet-runner/mac-keys/<mac>-<slot>` in the same Secrets Manager),
 shows `wrangler deploy --dry-run`, deploys the Worker, loads the three secrets
 with `wrangler secret put` straight from Secrets Manager, and sends the Mac
-admin the Worker URL plus the secret name to pull each Mac's key from.
+admin the Worker URL plus the secret name to pull each Mac's key from. A
+`wrangler secret put` takes up to about 30 s to reach every edge; a `/mint`
+right after it can still see the old `MACHINE_KEYS`. Do not test a Mac's key
+with a hand-made `/mint` call: every 200 answer mints a real JIT config and
+registers a runner that then sits offline in the repo until GitHub removes
+it a day later. Let the supervisor on the Mac do the first mint.
 
 ## Storage: the external drive
 
@@ -141,7 +153,9 @@ shared HFS+ drive (no `--quota-gb` possible, `--whole-volume` unacceptable)
 stays out of the fleet until it gets a dedicated or APFS drive; so does a
 Mac that is already short on RAM, or whose internal disk is nearly full
 (the install refuses under 20 GiB free there: tarball, logs, `/var/folders`,
-Xcode first-launch packages and swap still land on it).
+Xcode first-launch packages and swap still land on it; `INTERNAL_MIN_FREE_GB=N`
+in the environment of `setup-mac.sh` changes the threshold for a Mac whose
+admin has checked what is using the disk).
 (`--allow-internal-disk` exists only for a Mac that has no external drive;
 do not use it in the fleet.)
 
@@ -215,6 +229,15 @@ their `runs-on` never mentions the fleet label.
   `/var/log/fleet-runner/<slot>.launchd.log` (supervisor), `<slot>/runner.log`
   (runner), `<slot>/curl.err` (mint failures), `<slot>/diag-*/` (per-job).
 - Restart a slot: `sudo launchctl kickstart -k system/com.agentworkforce.fleet-runner.<slot>`.
+- State `fast-exit ... backoff=Ns`: the runner exited within
+  `RUNNER_MIN_LIFETIME` (60 s) of starting, so it never waited for a job
+  (config rejected, runner cannot start, GitHub turned it away). The
+  supervisor copies the runner's last 15 lines into the launchd log, backs
+  off 30 s -> `MINT_BACKOFF_MAX` (10 min) and alerts after
+  `FAST_EXIT_ALERT_AFTER` (3) in a row; the next runner that lives longer
+  resets both. Read `/var/log/fleet-runner/<slot>.launchd.log` (root only)
+  for the runner's own error, fix it, then kickstart. Mint failures use the
+  same backoff. Both come from `/etc/fleet-runner/<slot>.env` if set.
 - State `volume-unavailable`: the external drive is unmounted, the home is
   not owned by the slot user, or space is short; the alert line in the
   launchd log says which. Mount/fix, then kickstart (or wait for the retry).

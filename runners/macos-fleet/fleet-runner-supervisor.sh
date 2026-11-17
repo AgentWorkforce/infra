@@ -12,8 +12,14 @@
 #      DEVELOPER_DIR and every cache/scratch dir pointed at the home;
 #   5. when the runner exits (one job, ephemeral), kills anything the user
 #      left behind and goes back to 1. _diag is kept for DIAG_KEEP_DAYS.
-# Mint failures back off 30 s -> 10 min. Nothing from the mint response is
-# ever logged. Usage: fleet-runner-supervisor.sh <slot>
+# Mint failures back off 30 s -> 10 min, and so does a runner that exits
+# within RUNNER_MIN_LIFETIME seconds of starting (a bad config, a GitHub
+# rejection or a broken runner would otherwise mint a new config every few
+# seconds). Nothing from the mint response is ever logged. The JIT config
+# reaches the runner only as ACTIONS_RUNNER_INPUT_JITCONFIG in its own
+# environment, which the runner strips before starting any job; never on the
+# command line, which every local user can read with ps.
+# Usage: fleet-runner-supervisor.sh <slot>
 set -uo pipefail
 
 slot=${1:?usage: fleet-runner-supervisor.sh <slot>}
@@ -46,6 +52,7 @@ done
 : "${DATA_VOLUME:?$env_file must set DATA_VOLUME}"
 : "${DEVELOPER_DIR:?$libexec/parity.env must set DEVELOPER_DIR}"
 : "${PARITY_RETRY_SECONDS:=300}" "${MINT_BACKOFF_MAX:=600}" "${DIAG_KEEP_DAYS:=7}"
+: "${RUNNER_MIN_LIFETIME:=60}" "${FAST_EXIT_ALERT_AFTER:=3}"
 : "${DATA_MAX_GB:=0}" "${DATA_MIN_FREE_GB:=40}" "${ALERT_URL:=}"
 [ -f "$RUNNER_TARBALL" ] || { log "missing runner tarball $RUNNER_TARBALL"; exit 64; }
 id "$RUNNER_USER" >/dev/null 2>&1 || { log "no such user $RUNNER_USER"; exit 64; }
@@ -56,6 +63,8 @@ chmod 700 "$run_dir"
 runner_dir=$RUNNER_HOME/runner
 runner_pid=""
 backoff=30
+exit_backoff=30
+fast_exits=0
 
 as_user() { sudo -n -u "$RUNNER_USER" -H "$@"; }
 
@@ -214,19 +223,45 @@ ENV
   # The single-use config stays in root's 0700 run dir; the runner's shell
   # gets it as an already-open stdin and refuses to start on an empty read.
   # The group opens the file here, before the fork, so deleting the name
-  # right after cannot race the child's open.
+  # right after cannot race the child's open. The shell hands the config to
+  # the runner as ACTIONS_RUNNER_INPUT_JITCONFIG (the runner's documented
+  # env form of --jitconfig; Runner.Listener reads it, masks it and removes
+  # it from its environment before any job starts), not as an argument:
+  # argv is visible to every local user through ps, the environment of a
+  # process is not.
   # caffeinate keeps the Mac from sleeping while a job runs.
+  started=$(date +%s)
+  log_mark=$(stat -f %z "$log_dir/runner.log" 2>/dev/null || echo 0)
   {
     # shellcheck disable=SC2016 # $1 is the inner bash's positional arg
     as_user env -i HOME="$RUNNER_HOME" USER="$RUNNER_USER" LOGNAME="$RUNNER_USER" TMPDIR="$RUNNER_HOME/tmp" \
       PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin DEVELOPER_DIR="$DEVELOPER_DIR" \
-      bash -c 'cd "$1" || exit 70; c=$(cat); [ -n "$c" ] || exit 71; exec caffeinate -i ./run.sh --jitconfig "$c" </dev/null' _ "$runner_dir" \
+      bash -c 'cd "$1" || exit 70; c=$(cat); [ -n "$c" ] || exit 71; ACTIONS_RUNNER_INPUT_JITCONFIG=$c exec caffeinate -i ./run.sh </dev/null' _ "$runner_dir" \
       <&3 >>"$log_dir/runner.log" 2>&1 &
     runner_pid=$!
   } 3<"$cfg"
   rm -f "$cfg"
   wait "$runner_pid"; rc=$?
   runner_pid=""
-  log "runner $runner_name exited rc=$rc"
-  state "finished runner=$runner_name rc=$rc"
+  lived=$(( $(date +%s) - started ))
+  log "runner $runner_name exited rc=$rc after ${lived}s"
+  if [ "$lived" -lt "$RUNNER_MIN_LIFETIME" ]; then
+    # A runner that dies this fast never waited for a job: the config was
+    # rejected, the runner cannot start, or GitHub turned it away. Each pass
+    # mints a config and registers a runner, so slow down instead of looping,
+    # and copy the runner's last lines next to this log so the cause is in
+    # one place. The runner masks its own secrets in that output.
+    fast_exits=$(( fast_exits + 1 ))
+    tail -c "+$(( log_mark + 1 ))" "$log_dir/runner.log" 2>/dev/null | tail -n 15 | while IFS= read -r l; do log "  runner: $l"; done
+    state "fast-exit runner=$runner_name rc=$rc lived=${lived}s backoff=${exit_backoff}s"
+    if [ "$fast_exits" -eq "$FAST_EXIT_ALERT_AFTER" ]; then
+      alert "runner exited $fast_exits times within ${RUNNER_MIN_LIFETIME}s of starting (last rc=$rc); see $log_dir/runner.log"
+    fi
+    sleep "$exit_backoff"
+    exit_backoff=$(( exit_backoff * 2 )); [ "$exit_backoff" -gt "$MINT_BACKOFF_MAX" ] && exit_backoff=$MINT_BACKOFF_MAX
+    continue
+  fi
+  exit_backoff=30
+  fast_exits=0
+  state "finished runner=$runner_name rc=$rc lived=${lived}s"
 done
