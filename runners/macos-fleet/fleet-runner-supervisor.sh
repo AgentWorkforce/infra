@@ -113,7 +113,7 @@ ensure_home() {
   if [ "$provenance_warned" = 0 ]; then
     for p in "$parent" "$RUNNER_HOME"; do
       if xattr -p com.apple.provenance "$p" >/dev/null 2>&1; then
-        alert "$p carries com.apple.provenance (made from an admin shell, not by this daemon); if runners exit at once, from Terminal: bootout every slot whose home is under $(printf %q "$parent"), sudo rm -rf $(printf %q "$parent"), then kickstart them (README: Operations)"
+        alert "$p carries com.apple.provenance (made from an admin shell, not by this daemon); if runners exit at once, from Terminal: bootout every slot whose home is under $(printf %q "$parent"), sudo rm -rf $(printf %q "$parent"), then rerun setup-mac.sh for each of those slots (README: Operations)"
         provenance_warned=1
         break
       fi
