@@ -205,6 +205,9 @@ bash postgres-setup.sh finalize
 **Done when:** three `login ok ... tls=true` lines, the bootstrap Job
 completes, every pod is `Running`, and `finalize` prints `owner createrole: false`.
 
+Before any later upgrade, see
+[Upgrades: give CREATEROLE back first](#upgrades-give-createrole-back-first-interim).
+
 ### 8. Edge and checks
 
 Replace the four `__HOST_*__` placeholders in `ingress.yaml`, then:
@@ -288,6 +291,60 @@ kubectl -n agent-relay rollout status deploy/agent-relay-worker-session-brief de
 **Done when:** both rollouts finish and a new session shows a title and a
 summary in the dashboard. The GKE step lists the log lines that show model
 versus extractive summaries, the daily limits, and how to turn it off.
+
+## Upgrades: give CREATEROLE back first (interim)
+
+**Known self-hosted upgrade issue.** Step 7 ends with `finalize`, which takes
+CREATEROLE back from the HoopDb migration owner (`hoop`). An upgrade then needs
+it again for a short time:
+
+- The chart names the `search-indexer-bootstrap` Job from a hash of the
+  `searchIndexer` values, which include the image digest. Every release with a
+  new services image therefore renders a new bootstrap Job, by design.
+- The services image's search consumer bootstrap requires the migration owner
+  to have SUPERUSER or CREATEROLE, even when `search_consumer_runtime` already
+  exists. Without it, the new Job fails with
+  `42501 current role may not create roles`.
+
+This is interim. Once a relayhistory-pipeline release skips that check when
+the role already exists, and the chart pins it, this section goes away.
+
+Fetch the new release as in [Steps](#steps) (its tag, chart package, `CHART`
+and `release-images.values.yaml`), then:
+
+```sh
+# 1. Give the migration owner CREATEROLE back, as postgres-setup.sh pre does.
+PRIMARY="$(kubectl -n agent-relay get cluster.postgresql.cnpg.io hoopdb -o jsonpath='{.status.currentPrimary}')"
+kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- \
+  psql -X -q -v ON_ERROR_STOP=1 -d hoopdb -c 'ALTER ROLE hoop CREATEROLE;'
+kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- \
+  psql -X -A -t -v ON_ERROR_STOP=1 -d hoopdb -c "select 'owner createrole: '||rolcreaterole from pg_roles where rolname='hoop'"
+
+# 2. Upgrade, and wait for the bootstrap Job this release renders.
+helm upgrade agent-relay "$CHART" --namespace agent-relay \
+  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+JOB="$(helm -n agent-relay get manifest agent-relay \
+  | awk '/^---/{k=""} /^kind: Job$/{k=1} k && /^  name: /{print $2; k=""}' \
+  | grep -E -- '-search-indexer-bootstrap-[0-9a-f]{8}$')"
+kubectl -n agent-relay wait --for=condition=complete "job/$JOB" --timeout=10m
+kubectl -n agent-relay rollout status deploy --timeout=10m
+
+# 3. Take CREATEROLE away again.
+bash postgres-setup.sh finalize
+```
+
+The first query prints `owner createrole: true`. **Done when:** the bootstrap
+Job completes, every pod is `Running`, and `finalize` prints
+`owner createrole: false`.
+
+If an upgrade already failed with `42501`, run step 1, delete the failed Job
+(`kubectl -n agent-relay delete job "$JOB"`; a Job's pod template is
+immutable, so Helm does not rerun it), then repeat steps 2 and 3.
+
+The RDS ([EKS guide](../enterprise-aws-install.md)) and Cloud SQL
+([GKE guide](../gcp-install/0-START-HERE.md)) installs do not need this: their
+HoopDb migration owner is the database admin role, and their setup scripts
+never take CREATEROLE from it.
 
 ## What was not proven
 
