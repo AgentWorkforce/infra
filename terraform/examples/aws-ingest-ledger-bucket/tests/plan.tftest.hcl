@@ -115,8 +115,8 @@ run "cross_account_readers_and_writers" {
     condition = alltrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
       s.Action == "s3:ListBucket" && s.Resource == "arn:aws:s3:::relay-ingest-ledger"
       && s.Principal.AWS == ["arn:aws:iam::111111111111:role/example-backlog-read", "arn:aws:iam::222222222222:role/example-backlog-write"]
-    && s.Condition.StringLike["s3:prefix"] == ["96bulls/.admission-inbox/*", "96bulls/.ledger/fence-authority/.ledger-home.json"] if s.Sid == "CrossAccountLedgerList"])
-    error_message = "Readers and writers list only the ledger prefixes."
+    && !contains(keys(s), "Condition") if s.Sid == "CrossAccountLedgerList"])
+    error_message = "Readers and writers list the bucket unconditionally (404, not 403, for missing keys)."
   }
   assert {
     condition = alltrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :

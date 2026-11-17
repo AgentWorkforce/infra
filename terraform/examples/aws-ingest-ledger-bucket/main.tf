@@ -28,7 +28,6 @@ locals {
     Principal = { AWS = local.xall }
     Action    = "s3:ListBucket"
     Resource  = local.bucket_arn
-    Condition = { StringLike = { "s3:prefix" = ["${var.key_root}/.admission-inbox/*", "${var.key_root}/.ledger/fence-authority/.ledger-home.json"] } }
     }] : [], length(local.xall) > 0 ? [{
     Sid       = "CrossAccountLedgerRead"
     Effect    = "Allow"
