@@ -134,11 +134,16 @@ another drive is `--uninstall` then install.
 
 Volume names differ per Mac: during the canary each admin runs
 `diskutil list external physical` and `df -h /Volumes/*` on the Mac and
-passes the drive with the most free space. A Mac whose only drive is a
+passes the drive with the most free space. A separate `--quota-gb` volume
+in the container of a drive people work from is fine: nothing on their
+volume changes and the quota caps the slot. A Mac whose only drive is a
 shared HFS+ drive (no `--quota-gb` possible, `--whole-volume` unacceptable)
 stays out of the fleet until it gets a dedicated or APFS drive; so does a
-Mac that is already short on RAM. (`--allow-internal-disk` exists only for
-a Mac that has no external drive; do not use it in the fleet.)
+Mac that is already short on RAM, or whose internal disk is nearly full
+(the install refuses under 20 GiB free there: tarball, logs, `/var/folders`,
+Xcode first-launch packages and swap still land on it).
+(`--allow-internal-disk` exists only for a Mac that has no external drive;
+do not use it in the fleet.)
 
 ## Per-Mac admin steps
 

@@ -117,6 +117,15 @@ echo "== parity check (the slot never takes jobs while this fails)"
 "$here/xcode-parity.sh" || echo "   parity FAILED: install/select the expected Xcode, then rerun or just let the supervisor retry"
 
 echo "== data location"
+# Job data goes on the external drive, but the runner tarball, diag copies,
+# the slot user's /var/folders, Xcode's first-launch packages and swap all
+# land on the internal disk; a Mac that is already full fails in ways that
+# take its other sessions down with it.
+internal_free_gb=$(df -g /System/Volumes/Data 2>/dev/null | awk 'NR==2{print $4}')
+[ -n "$internal_free_gb" ] || internal_free_gb=$(df -g / | awk 'NR==2{print $4}')
+if [ "$internal_free_gb" -lt "${INTERNAL_MIN_FREE_GB:-20}" ]; then
+  echo "internal disk has ${internal_free_gb} GiB free; the fleet needs at least ${INTERNAL_MIN_FREE_GB:-20} GiB there (INTERNAL_MIN_FREE_GB overrides)" >&2; exit 70
+fi
 mount_point=$data_volume
 if [ "$allow_internal" != 1 ] && [ -z "$quota_gb" ] && [ "$whole_volume" != 1 ]; then
   cat >&2 <<EOT
