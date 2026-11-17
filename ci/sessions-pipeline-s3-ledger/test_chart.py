@@ -102,6 +102,19 @@ class S3Ledger(unittest.TestCase):
         self.render(merge(s3, {"ingestEdge": {"s3TenantLimit": False, "admission": {"asyncMaxPerOrg": 4}}}),
                     fail="ingestEdge.admission.asyncMaxPerOrg requires s3TenantLimit=true")
 
+    def test_replicas(self):
+        s3 = load(S3_FIXTURE)
+        replicas = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")["spec"]["replicas"]
+        self.assertEqual(replicas(self.render(s3)), 1)
+        self.assertEqual(replicas(self.render(load(SQL_FIXTURE))), 1)
+        self.assertEqual(replicas(self.render(merge(s3, {"ingestEdge": {"replicas": 2}}))), 2)
+        for value in (0, 9, "x"):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"replicas": value}}),
+                            fail="ingestEdge.replicas must be an integer from 1 to 8")
+        self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"replicas": 2}}),
+                    fail="ingestEdge.replicas above 1 requires ingestEdge.ledger=s3")
+
     def test_await_authority(self):
         s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
         self.assertNotIn("SELFHOST_ADMISSION_AWAIT_AUTHORITY", self.ingest_env(self.render(s3)))
