@@ -138,7 +138,9 @@ EOT
   exit 64
 fi
 if [ -n "$quota_gb" ]; then
-  container=$(diskutil info "$data_volume" | awk -F': *' '/APFS Container Reference/{print $2}')
+  # Read the plist, not the text report: macOS 26 renamed the text field
+  # ("APFS Container Reference" became "APFS Container"); the plist key is stable.
+  container=$(diskutil info -plist "$data_volume" | plutil -extract APFSContainerReference raw -o - - 2>/dev/null || true)
   [ -n "$container" ] || { echo "$data_volume is not APFS; --quota-gb needs an APFS drive (or omit it and use --max-gb)" >&2; exit 70; }
   if ! diskutil info "$volume_name" >/dev/null 2>&1; then
     diskutil apfs addVolume "$container" APFS "$volume_name" -quota "${quota_gb}g" >/dev/null
@@ -149,7 +151,7 @@ fi
 if [ "$allow_internal" != 1 ]; then
   # External drives default to "ignore ownership"; jobs need real uids.
   diskutil enableOwnership "$mount_point" >/dev/null 2>&1 || true
-  fs=$(diskutil info "$mount_point" | awk -F': *' '/File System Personality/{print $2}')
+  fs=$(diskutil info -plist "$mount_point" | plutil -extract FilesystemName raw -o - - 2>/dev/null || true)
   case "$fs" in *"Case-sensitive"*) echo "   note: $mount_point is case-sensitive; hosted runners are not, so builds may differ" ;; esac
   mdutil -i off "$mount_point" >/dev/null 2>&1 || true
 fi
