@@ -306,13 +306,37 @@ it again for a short time:
   exists. Without it, the new Job fails with
   `42501 current role may not create roles`.
 
-This is interim. Once a relayhistory-pipeline release skips that check when
-the role already exists, and the chart pins it, this section goes away.
+**This is interim.** The fix, a relayhistory-pipeline bootstrap that skips the
+check when the role already exists, is in progress. Once it ships and the chart
+pins it, this section goes away.
 
-Fetch the new release as in [Steps](#steps) (its tag, chart package, `CHART`
-and `release-images.values.yaml`), then:
+Fetch the new release into a new directory, not `release`: `gh release
+download` will not overwrite the files from the install. Set the new tag and
+its chart version (the `agent-relay-<version>.tgz` asset):
 
 ```sh
+NEW_TAG=agent-relay-<version>; CHART_VERSION=<chart version>; NEW_DIR="$NEW_TAG"
+mkdir "$NEW_DIR" && gh release download "$NEW_TAG" -R AgentWorkforce/infra -D "$NEW_DIR" \
+  && (cd "$NEW_DIR" && shasum -a 256 -c --quiet SHA256SUMS && tar -xzf "agent-relay-$CHART_VERSION.tgz") \
+  && sed 's#__IMAGE_MIRROR_ROOT__/##' "$NEW_DIR/release-images.values.yaml" > release-images.values.yaml \
+  && CHART="$NEW_DIR/agent-relay-$CHART_VERSION.tgz"
+```
+
+**Done when:** it prints nothing (`--quiet` reports only checksum failures)
+and `echo "$CHART"` names the new chart package. Then:
+
+```sh
+# Prints the name of the one bootstrap Job the deployed release renders.
+bootstrap_job() {
+  local j
+  j="$(helm -n agent-relay get manifest agent-relay \
+    | awk '/^---/{k=""} /^kind: Job$/{k=1} k && /^  name: /{print $2; k=""}' \
+    | grep -E -- '-search-indexer-bootstrap-[0-9a-f]{8}$')"
+  [ -n "$j" ] && [ "$(printf '%s\n' "$j" | wc -l)" -eq 1 ] \
+    || { echo "expected exactly one search-indexer bootstrap Job in the release" >&2; return 1; }
+  printf '%s' "$j"
+}
+
 # 1. Give the migration owner CREATEROLE back, as postgres-setup.sh pre does.
 PRIMARY="$(kubectl -n agent-relay get cluster.postgresql.cnpg.io hoopdb -o jsonpath='{.status.currentPrimary}')"
 kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- \
@@ -322,24 +346,34 @@ kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- \
 
 # 2. Upgrade, and wait for the bootstrap Job this release renders.
 helm upgrade agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
-JOB="$(helm -n agent-relay get manifest agent-relay \
-  | awk '/^---/{k=""} /^kind: Job$/{k=1} k && /^  name: /{print $2; k=""}' \
-  | grep -E -- '-search-indexer-bootstrap-[0-9a-f]{8}$')"
-kubectl -n agent-relay wait --for=condition=complete "job/$JOB" --timeout=10m
-kubectl -n agent-relay rollout status deploy --timeout=10m
+  -f "$NEW_DIR/agent-relay/values-eks.yaml" -f values.yaml -f release-images.values.yaml --timeout 25m \
+  && JOB="$(bootstrap_job)" \
+  && kubectl -n agent-relay wait --for=condition=complete "job/$JOB" --timeout=10m \
+  && kubectl -n agent-relay rollout status deploy --timeout=10m \
+  && echo "upgrade ok"
 
-# 3. Take CREATEROLE away again.
+# 3. Take CREATEROLE away again. Always run this, even if step 2 failed.
 bash postgres-setup.sh finalize
 ```
 
-The first query prints `owner createrole: true`. **Done when:** the bootstrap
-Job completes, every pod is `Running`, and `finalize` prints
+The first query prints `owner createrole: true`. **Done when:** step 2 prints
+`upgrade ok`, every pod is `Running`, and `finalize` prints
 `owner createrole: false`.
 
-If an upgrade already failed with `42501`, run step 1, delete the failed Job
-(`kubectl -n agent-relay delete job "$JOB"`; a Job's pod template is
-immutable, so Helm does not rerun it), then repeat steps 2 and 3.
+Run step 3 whether or not step 2 succeeded: never leave `hoop` with
+CREATEROLE once you stop. Step 2 keeps going only while each command succeeds.
+If it stops, fix the cause and start again from step 1.
+
+If an upgrade already failed with `42501` (because CREATEROLE was not given
+back first, or `finalize` ran before the Job finished), delete the failed Job.
+A Job's pod template is immutable, so Helm does not rerun it. Define
+`bootstrap_job` (above) in your shell, then:
+
+```sh
+JOB="$(bootstrap_job)" && kubectl -n agent-relay delete job "$JOB"
+```
+
+Then run steps 1 to 3 with the same release.
 
 The RDS ([EKS guide](../enterprise-aws-install.md)) and Cloud SQL
 ([GKE guide](../gcp-install/0-START-HERE.md)) installs do not need this: their
