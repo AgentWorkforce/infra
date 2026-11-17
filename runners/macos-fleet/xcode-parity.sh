@@ -12,7 +12,7 @@ for f in "$here/parity.env" /etc/fleet-runner/parity.env; do
   # shellcheck disable=SC1090 # per-Mac override, same KEY=value shape
   [ -f "$f" ] && . "$f"
 done
-: "${EXPECTED_ARCH:=arm64}" "${EXPECTED_MACOS_MAJOR:=15}"
+: "${EXPECTED_ARCH:=arm64}" "${EXPECTED_MACOS_MIN_MAJOR:=15}"
 : "${EXPECTED_XCODE_VERSION:?parity.env must set EXPECTED_XCODE_VERSION}"
 : "${EXPECTED_XCODE_BUILD:?parity.env must set EXPECTED_XCODE_BUILD}"
 : "${DEVELOPER_DIR:?parity.env must set DEVELOPER_DIR}"
@@ -38,7 +38,11 @@ check() { # name actual expected
   if [ "$2" = "$3" ]; then echo "ok   $1: $2"; else echo "FAIL $1: have '$2', want '$3'"; rc=1; fi
 }
 check arch "$arch" "$EXPECTED_ARCH"
-check macos_major "${macos%%.*}" "$EXPECTED_MACOS_MAJOR"
+if [ "${macos%%.*}" -ge "$EXPECTED_MACOS_MIN_MAJOR" ]; then
+  echo "ok   macos: $macos (>= $EXPECTED_MACOS_MIN_MAJOR)"
+else
+  echo "FAIL macos: have '$macos', want >= $EXPECTED_MACOS_MIN_MAJOR"; rc=1
+fi
 check xcode_version "${xcode_version:-missing}" "$EXPECTED_XCODE_VERSION"
 check xcode_build "${xcode_build:-missing}" "$EXPECTED_XCODE_BUILD"
 if xcodebuild -checkFirstLaunchStatus >/dev/null 2>&1; then

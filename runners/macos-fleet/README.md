@@ -93,18 +93,25 @@ admin the Worker URL plus the secret name to pull each Mac's key from.
 Each Mac keeps job data on its external drive, not the internal disk.
 `setup-mac.sh --data-volume /Volumes/<drive>` does, once:
 
-- `diskutil enableOwnership` on the drive (external drives default to
-  "ignore ownership", which would make every file look owned by the current
-  user); warns if the drive is case-sensitive APFS (hosted runners are not).
-- creates `/Volumes/<drive>/gh-runner/` (root, 0755) and
-  `/Volumes/<drive>/gh-runner/<slot>` (ghrunner-<slot>, 0700) as the user's
-  home; nothing else on the drive is touched or readable by the slot user.
-- Spotlight off for the drive (`mdutil -i off`) and a Time Machine exclusion
-  for the home (`tmutil addexclusion -p`).
-- optional `--quota-gb N`: instead of a directory, an APFS volume
-  `fleet-<slot>` with a hard quota in the drive's container, mounted at
-  `/Volumes/fleet-<slot>`; `--max-gb N` is a soft size watch (the supervisor
-  measures the home after each cleanup and refuses jobs above it).
+- `--quota-gb N` (APFS drives; the choice for a drive people also work
+  from): an APFS volume `fleet-<slot>` with a hard quota in the drive's
+  container, mounted at `/Volumes/fleet-<slot>`. Ownership is enabled and
+  Spotlight turned off on that volume only; the rest of the drive is not
+  touched. `--max-gb N` is a soft size watch on top (the supervisor measures
+  the home after each cleanup and refuses jobs above it).
+- `--whole-volume` (a drive dedicated to the fleet, APFS or HFS+):
+  `diskutil enableOwnership` and `mdutil -i off` on the drive itself.
+  External drives default to "ignore ownership", which makes every file
+  look owned by whoever is looking; enabling it makes every existing file
+  show its real on-disk owner, so never do this to someone's working drive.
+  One of the two flags is required; the script refuses otherwise.
+- creates `<volume>/gh-runner/` (root, 0755) and `<volume>/gh-runner/<slot>`
+  (ghrunner-<slot>, 0700) as the user's home; nothing else on the volume is
+  touched or readable by the slot user. Warns if the volume is case-sensitive
+  (hosted runners are not). Time Machine exclusion for the home
+  (`tmutil addexclusion -p`).
+- Volume names with spaces work (`--data-volume "/Volumes/My Drive"`); the
+  env file is written shell-quoted.
 
 Per job the supervisor points `TMPDIR`, `CARGO_HOME`, `CARGO_TARGET_DIR`,
 `npm_config_cache`, `XDG_CACHE_HOME` and `HOMEBREW_CACHE` into that home
@@ -117,15 +124,21 @@ If the drive is missing at boot (unplugged, failed, renamed) the state file
 says `volume-unavailable`, the launchd log and the unified log
 (`log show --predicate 'process == "logger" AND eventMessage CONTAINS "fleet-runner"'`)
 carry `ALERT data volume ... is not mounted`, and the slot retries every
-`PARITY_RETRY_SECONDS` (300). Set `ALERT_URL=` in `/etc/fleet-runner/<slot>.env`
-to also POST those alerts (plain text) to a webhook. Re-running `setup-mac.sh`
-for an upgrade keeps the installed location; moving a slot to another drive is
-`--uninstall` then install.
+`PARITY_RETRY_SECONDS` (300). macOS mounts external drives only after a user
+logs in unless `AutomountDisksWithoutUserLogin` is set (post-step 5 of the
+install), so set it or the slot waits in that state after every reboot. Set
+`ALERT_URL='https://...'` in `/etc/fleet-runner/<slot>.env` (quoted, the file
+is sourced) to also POST those alerts (plain text) to a webhook. Re-running
+`setup-mac.sh` for an upgrade keeps the installed location; moving a slot to
+another drive is `--uninstall` then install.
 
 Volume names differ per Mac: during the canary each admin runs
 `diskutil list external physical` and `df -h /Volumes/*` on the Mac and
-passes the drive with the most free space. (`--allow-internal-disk` exists
-only for a Mac that has no external drive; do not use it in the fleet.)
+passes the drive with the most free space. A Mac whose only drive is a
+shared HFS+ drive (no `--quota-gb` possible, `--whole-volume` unacceptable)
+stays out of the fleet until it gets a dedicated or APFS drive; so does a
+Mac that is already short on RAM. (`--allow-internal-disk` exists only for
+a Mac that has no external drive; do not use it in the fleet.)
 
 ## Per-Mac admin steps
 
@@ -135,18 +148,27 @@ Do these on the Mac as an admin user; nothing here needs Khaliq's GitHub account
    `macos-15` image's default, build 16F6) and run
    `sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch`.
    Check: `./xcode-parity.sh` prints only `ok` lines. Other Xcodes may stay
-   installed; parity only pins `DEVELOPER_DIR`. Override per Mac in
-   `/etc/fleet-runner/parity.env` if this Mac deliberately tracks another image.
+   installed; parity only pins `DEVELOPER_DIR`. macOS itself only has to be
+   new enough to run that Xcode (`EXPECTED_MACOS_MIN_MAJOR`): the fleet runs
+   current macOS, the hosted image does not, and the toolchain is what the
+   routed lanes depend on. If the internal disk cannot take Xcode (about
+   15 GB), install it on the external drive and set
+   `DEVELOPER_DIR=/Volumes/<drive>/Xcode_16.4.app/Contents/Developer` in
+   `/etc/fleet-runner/parity.env`; that file overrides `parity.env` for both
+   the check and the jobs. Use the same file if a Mac deliberately tracks
+   another image.
 2. Pull this Mac's key from Secrets Manager into a file only you can read:
    `aws secretsmanager get-secret-value --secret-id layered-infra-ops/fleet-runner/mac-keys/<mac>-<slot> --query SecretString --output text > /tmp/fleet.key && chmod 600 /tmp/fleet.key`
 3. From a checkout of this repo:
-   `cd runners/macos-fleet && sudo ./setup-mac.sh --slot a --broker-url https://fleet-runner-jit.agent-workforce.workers.dev --key-file /tmp/fleet.key --data-volume /Volumes/<drive> [--quota-gb 300]`
+   `cd runners/macos-fleet && sudo ./setup-mac.sh --slot a --broker-url https://fleet-runner-jit.agent-workforce.workers.dev --key-file /tmp/fleet.key --data-volume /Volumes/<drive> --quota-gb 300`
    `<drive>` is this Mac's external drive (`diskutil list external physical`).
    Slot `a` = relay-app; add `--slot b` with the `relay` key for the second
    repo. `--quota-gb` gives the slot its own APFS volume with a hard quota
-   so a runaway job cannot fill the drive; see Storage.
+   so a runaway job cannot fill the drive and nothing else on the drive
+   changes; `--whole-volume` instead is only for a dedicated drive. See Storage.
 4. Follow the printed post-steps: `rm -P /tmp/fleet.key`, keep Remote
    Login/Screen Sharing restricted to admins, `pmset` so the Mac stays up,
+   `AutomountDisksWithoutUserLogin` so the drive is there after a reboot,
    and watch `/var/log/fleet-runner/a.launchd.log` for
    `runner <name> waiting for a job`.
 5. Confirm in the repo: Settings → Actions → Runners shows the runner (idle,
@@ -191,8 +213,9 @@ their `runs-on` never mentions the fleet label.
 - State `volume-unavailable`: the external drive is unmounted, the home is
   not owned by the slot user, or space is short; the alert line in the
   launchd log says which. Mount/fix, then kickstart (or wait for the retry).
-- Parity failed (Xcode updated, macOS upgraded): fix the Mac or update
-  `parity.env` here (and the hosted image assumption) in one PR.
+- Parity failed (Xcode updated or removed): fix the Mac or update
+  `parity.env` here (and the hosted image assumption) in one PR. A macOS
+  upgrade alone does not fail parity.
 - New runner version: bump `RUNNER_VERSION` / `RUNNER_SHA256` in
   `setup-mac.sh` (sha256 from the `actions/runner` release page) and rerun
   setup on each Mac; the next job uses it.

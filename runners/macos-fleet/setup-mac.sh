@@ -4,15 +4,19 @@
 #
 #   sudo ./setup-mac.sh --slot a --broker-url https://fleet-runner-jit.<acct>.workers.dev \
 #        --key-file /path/to/this-macs-key --data-volume /Volumes/<external drive> \
-#        [--quota-gb 300] [--max-gb 250] [--runner-version 2.338.2] [--runner-sha256 <hex>]
+#        --quota-gb 300 | --whole-volume [--max-gb 250] [--runner-version 2.338.2] [--runner-sha256 <hex>]
 #   sudo ./setup-mac.sh --slot a --uninstall
 #
 # Everything a job touches lives on the external drive named by --data-volume:
 # the slot user's home (<volume>/gh-runner/<slot>: runner, _work, _tool,
 # caches, DerivedData, cargo, tmp). With --quota-gb the home is instead an
 # APFS volume "fleet-<slot>" with that quota, created in the drive's APFS
-# container (mounted at /Volumes/fleet-<slot>). The internal disk is never
-# used for job data; --allow-internal-disk is the only way to say otherwise.
+# container (mounted at /Volumes/fleet-<slot>), and only that volume gets
+# ownership enabled and Spotlight off. --whole-volume does that to the
+# drive named by --data-volume itself (every file on it starts showing its
+# real on-disk owner): only for a drive dedicated to the fleet, never a
+# drive people work from. One of the two is required. The internal disk is
+# never used for job data; --allow-internal-disk is the only way to say otherwise.
 #
 # What it creates: a hidden standard user ghrunner-<slot> (no password login,
 # member of _developer so xcodebuild works), the data dir/volume with
@@ -26,7 +30,7 @@ set -euo pipefail
 
 RUNNER_VERSION=2.338.2
 RUNNER_SHA256=25a065af409ffa317ab4d5a3b614dd15fc9c40f2172bc1b35a1b1258e919a388
-slot="" broker_url="" key_file="" data_volume="" quota_gb="" max_gb="" uninstall=0 allow_internal=0
+slot="" broker_url="" key_file="" data_volume="" quota_gb="" max_gb="" uninstall=0 allow_internal=0 whole_volume=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --slot) slot=$2; shift 2 ;;
@@ -36,6 +40,7 @@ while [ $# -gt 0 ]; do
     --quota-gb) quota_gb=$2; shift 2 ;;
     --max-gb) max_gb=$2; shift 2 ;;
     --allow-internal-disk) allow_internal=1; shift ;;
+    --whole-volume) whole_volume=1; shift ;;
     --runner-version) RUNNER_VERSION=$2; shift 2 ;;
     --runner-sha256) RUNNER_SHA256=$2; shift 2 ;;
     --uninstall) uninstall=1; shift ;;
@@ -58,11 +63,15 @@ volume_name="fleet-$slot"
 
 dev_of() { df -P "$1" 2>/dev/null | awk 'NR==2{print $1}'; }
 
+# A value from the installed env file (shell-quoted by this script, so source it).
+# shellcheck disable=SC1090 # the file this script writes below
+installed_value() { ( set +u; . "$etc/$slot.env" 2>/dev/null; eval "printf '%s' \"\${$1:-}\"" ); }
+
 if [ "$uninstall" = 1 ]; then
   launchctl bootout system "$plist" 2>/dev/null || true
   rm -f "$plist"
   pkill -KILL -u "$user" 2>/dev/null || true
-  home=$(awk -F= '/^RUNNER_HOME=/{print $2}' "$etc/$slot.env" 2>/dev/null || true)
+  home=$(installed_value RUNNER_HOME)
   if id "$user" >/dev/null 2>&1; then sysadminctl -deleteUser "$user" >/dev/null 2>&1 || dscl . -delete "/Users/$user"; fi
   if diskutil info "$volume_name" >/dev/null 2>&1; then diskutil apfs deleteVolume "$volume_name"; fi
   case "$home" in */gh-runner/"$slot") rm -rf "$home" ;; esac
@@ -83,9 +92,10 @@ done
 if [ -f "$etc/$slot.env" ]; then
   # Re-run (runner upgrade, new key): keep the installed data location unless
   # the admin asks for the same one again; moving a slot means --uninstall first.
-  installed_volume=$(awk -F= '/^DATA_VOLUME=/{print $2}' "$etc/$slot.env")
-  installed_home=$(awk -F= '/^RUNNER_HOME=/{print $2}' "$etc/$slot.env")
+  installed_volume=$(installed_value DATA_VOLUME)
+  installed_home=$(installed_value RUNNER_HOME)
   if [ -z "$data_volume" ] && [ -z "$quota_gb" ] && [ -n "$installed_home" ]; then
+    whole_volume=1 # ownership/Spotlight were settled at install; nothing changes now
     echo "slot $slot already installed with home $installed_home; keeping it"
     data_volume=$installed_volume
     [ "$installed_volume" = /Users ] && allow_internal=1
@@ -108,6 +118,16 @@ echo "== parity check (the slot never takes jobs while this fails)"
 
 echo "== data location"
 mount_point=$data_volume
+if [ "$allow_internal" != 1 ] && [ -z "$quota_gb" ] && [ "$whole_volume" != 1 ]; then
+  cat >&2 <<EOT
+choose how $data_volume is used:
+  --quota-gb N     APFS only: a separate volume fleet-$slot (quota N GB) in the drive's container;
+                   ownership and Spotlight change only on that volume (the choice for a shared drive)
+  --whole-volume   enable ownership and turn Spotlight off on $data_volume itself; every file on
+                   it then shows its real owner: only for a drive dedicated to the fleet
+EOT
+  exit 64
+fi
 if [ -n "$quota_gb" ]; then
   container=$(diskutil info "$data_volume" | awk -F': *' '/APFS Container Reference/{print $2}')
   [ -n "$container" ] || { echo "$data_volume is not APFS; --quota-gb needs an APFS drive (or omit it and use --max-gb)" >&2; exit 70; }
@@ -163,14 +183,11 @@ if [ ! -f "$tarball" ] || ! printf '%s  %s\n' "$RUNNER_SHA256" "$tarball" | shas
 fi
 chmod 644 "$tarball"
 umask 077
-cat >"$etc/$slot.env" <<ENV
-BROKER_URL=$broker_url
-RUNNER_USER=$user
-RUNNER_HOME=$home
-RUNNER_TARBALL=$tarball
-DATA_VOLUME=$mount_point
-DATA_MAX_GB=${max_gb:-${quota_gb:-0}}
-ENV
+# Shell-quoted (%q): the supervisor sources this file and volume names may contain spaces.
+{
+  printf '%s=%q\n' BROKER_URL "$broker_url" RUNNER_USER "$user" RUNNER_HOME "$home" \
+    RUNNER_TARBALL "$tarball" DATA_VOLUME "$mount_point" DATA_MAX_GB "${max_gb:-${quota_gb:-0}}"
+} >"$etc/$slot.env"
 printf 'Authorization: Bearer %s\n' "$(tr -d '[:space:]' <"$key_file")" >"$etc/$slot.auth"
 chmod 400 "$etc/$slot.auth"
 umask 022
@@ -190,6 +207,8 @@ Slot $slot installed. Remaining manual steps on this Mac:
   2. sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch   (if parity printed that hint)
   3. System Settings > General > Sharing: Remote Login / Screen Sharing restricted to admins, never to $user
   4. sudo pmset -a sleep 0 disksleep 0 autorestart 1 womp 1     (stay up, come back after power loss)
-  5. tail -f /var/log/fleet-runner/$slot.launchd.log         (expect "runner <name> waiting for a job")
-  Optional: ALERT_URL=https://... in $etc/$slot.env to get volume/parity/mint problems POSTed somewhere.
+  5. sudo defaults write /Library/Preferences/SystemConfiguration/autodiskmount AutomountDisksWithoutUserLogin -bool true
+     (external drives otherwise mount only after someone logs in; until then the slot sits in state volume-unavailable)
+  6. tail -f /var/log/fleet-runner/$slot.launchd.log         (expect "runner <name> waiting for a job")
+  Optional: ALERT_URL='https://...' (quoted) in $etc/$slot.env to get volume/parity/mint problems POSTed somewhere.
 MSG
