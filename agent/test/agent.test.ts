@@ -18,7 +18,7 @@ test("user data: under EC2's limit, every kit and lane file, no secret values", 
   const encoded = userDataBase64(agent, read);
   assert.ok(encoded.length < EC2_USER_DATA_ENCODED_LIMIT - 500, `user data is ${encoded.length} bytes encoded`);
   const script = gunzipSync(Buffer.from(encoded, "base64")).toString("utf8");
-  const optional: readonly string[] = ["headless.py", "delegation.md", ...WORKER_KIT_FILES, ...RELAY_SESSIONS_KIT_FILES, ...ISSUE_WATCH_KIT_FILES];
+  const optional: readonly string[] = ["headless.py", "delegation.md", "orchestration.md", ...WORKER_KIT_FILES, ...RELAY_SESSIONS_KIT_FILES, ...ISSUE_WATCH_KIT_FILES];
   for (const f of agent.files) {
     const shipped = script.includes(`cat > /opt/agent-host/${f.name} <<'`);
     // The generated card and issue-watch files travel by hot update, never in user data.
