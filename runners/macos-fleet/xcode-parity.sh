@@ -16,7 +16,9 @@ done
 : "${EXPECTED_XCODE_VERSION:?parity.env must set EXPECTED_XCODE_VERSION}"
 : "${EXPECTED_XCODE_BUILD:?parity.env must set EXPECTED_XCODE_BUILD}"
 : "${DEVELOPER_DIR:?parity.env must set DEVELOPER_DIR}"
-export DEVELOPER_DIR
+# Exported only when present: /usr/bin's xcrun shims (git included) fail
+# loudly on a DEVELOPER_DIR that does not exist.
+[ -d "$DEVELOPER_DIR" ] && export DEVELOPER_DIR
 
 arch=$(uname -m)
 macos=$(sw_vers -productVersion)
@@ -50,5 +52,6 @@ if xcodebuild -checkFirstLaunchStatus >/dev/null 2>&1; then
 else
   echo "FAIL xcode_first_launch: run 'sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch'"; rc=1
 fi
-if command -v git >/dev/null 2>&1; then echo "ok   git: $(git --version | awk '{print $3}')"; else echo "FAIL git: missing"; rc=1; fi
+git_version=$(git --version 2>/dev/null | awk '{print $3}')
+if [ -n "$git_version" ]; then echo "ok   git: $git_version"; else echo "FAIL git: not working (needs Xcode or the Command Line Tools)"; rc=1; fi
 exit "$rc"
