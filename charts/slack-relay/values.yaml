@@ -98,6 +98,10 @@ slack:
   # Refuse channels shared outside the workspace (Slack Connect), for answers
   # and ingest. Unknown sharing state counts as shared.
   refuseSharedChannels: true
+  # Reaction the router adds to each message it routes to an agent, as soon as
+  # it takes it (before the agent starts). Needs the bot scope reactions:write;
+  # without it the router logs once and carries on. Empty turns it off.
+  ackReaction: eyes
 
 # Remote MCP servers behind OAuth client credentials, e.g. a gbrain company
 # brain. Agents get the ones listed in host.mcpServers as tools (add

@@ -1816,9 +1816,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.49
+    - id: agent-relay-0.7.50
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.50, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.44, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.9 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.49 and slack-relay 0.3.11: the Slack router reacts :eyes: to each message it routes as soon as it takes it (slack.ackReaction, needs the bot scope reactions:write), still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.49
+      status: planned
       charts: { agent-relay: 0.7.49, relay-control: 0.4.22, relay-webapp: 0.2.7 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -3368,9 +3381,16 @@ compatibility:
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
       notes: First registered chart, rendered only; default-off in the agent-relay umbrella (components.relaygate). Build 1 of the server (registration, mode check, /v1/check, classifier, audit); the Relaycast/Sessions proxy follows. Ships no default digest.
-    - id: slack-relay-0.3.10
+    - id: slack-relay-0.3.11
       status: unreleased
       current: true
+      charts: { slack-relay: 0.3.11 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.10. The router adds a reaction (slack.ackReaction, SLACK_ACK_REACTION, default eyes; empty turns it off) to each message it routes to an agent (a mention, a reply in a thread it holds, an allowed DM) as soon as it takes it, fire-and-forget: routing never waits on it, already_reacted is ignored and failures log Slack''s error code only. Needs the bot scope reactions:write (added to the manifest); without it the router logs once and stops trying until restarted. Needs a slack-relay image built from this revision or later (the router code that sends the reaction); with an older image.digest the env is rendered but nothing reacts. Existing installs move to that image, add reactions:write, reinstall the Slack app and restart the router. Default renders gain the SLACK_ACK_REACTION env. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.10
+      status: planned
       charts: { slack-relay: 0.3.10 }
       app_versions: { slack-relay: 0.1.0 }
       images:
@@ -7313,10 +7333,10 @@ entries:
   - id: opt.slack-relay.channels
     kind: option
     title: Slack channels, DMs and shared-channel refusal
-    description: slack.allowedChannels lists the channel IDs (C...) the app answers in; empty answers in every channel the bot is invited to, so restrict it for a first rollout. slack.allowDms answers direct messages. slack.refuseSharedChannels (default on, fail closed) refuses channels shared outside the workspace for answers and ingest.
+    description: slack.allowedChannels lists the channel IDs (C...) the app answers in; empty answers in every channel the bot is invited to, so restrict it for a first rollout. slack.allowDms answers direct messages. slack.refuseSharedChannels (default on, fail closed) refuses channels shared outside the workspace for answers and ingest. slack.ackReaction (default eyes, empty turns it off) is the reaction the router adds to each message it routes, as soon as it takes it; it needs the bot scope reactions:write, and without it the router logs once and routes as before.
     chart: slack-relay
-    values: [slack.allowedChannels, slack.allowDms, slack.refuseSharedChannels]
-    env: [SLACK_ALLOWED_CHANNELS, SLACK_ALLOW_DMS, SLACK_REFUSE_SHARED_CHANNELS]
+    values: [slack.allowedChannels, slack.allowDms, slack.refuseSharedChannels, slack.ackReaction]
+    env: [SLACK_ALLOWED_CHANNELS, SLACK_ALLOW_DMS, SLACK_REFUSE_SHARED_CHANNELS, SLACK_ACK_REACTION]
     profiles: [slack-relay]
     status: shipped
     provided_by: operator
@@ -7326,8 +7346,8 @@ entries:
       - { value: listed }
     verify: a mention in a channel outside slack.allowedChannels gets no answer and the router logs nothing for it
     sources:
-      - "charts/slack-relay/values.yaml:41-48"
-      - "charts/slack-relay/templates/router.yaml:65-78"
+      - "charts/slack-relay/values.yaml:89-104"
+      - "charts/slack-relay/templates/router.yaml:65-82"
 
   - id: opt.slack-relay.orchestrator
     kind: option
