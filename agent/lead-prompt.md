@@ -53,7 +53,7 @@ asked or what was asked, so don't copy sender names or bodies anywhere.
    with other text, the broker refuses it; ask the requester to send the
    JSON alone.
 3. **`pending-approval`**: DM the output's `approver` (`khaliq-gant`, or a
-   delegated approver such as `neon-exit-lead` when the broker says it can
+   delegated approver such as `neon-exit-lead-2` when the broker says it can
    approve this one) the output's `approvalPrompt` verbatim. When the
    approver replies to you with exactly `approve <id> <digest>` or
    `refuse <id>`, run `aws-cred-broker decide --message-id ID` with the id of
