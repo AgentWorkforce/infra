@@ -35,8 +35,15 @@ Files in this directory:
   serves exactly one repo; a Mac that should serve both repos gets two slots.
 - **Ephemeral.** Every JIT config is single-use; the runner process exits
   after one job and the next job gets a new runner extracted from the pinned,
-  sha256-checked tarball. The job's user is killed and its home, caches,
-  DerivedData, npm/swiftpm caches and temp dirs are wiped between jobs.
+  sha256-checked tarball. The job's user is killed and its whole home
+  (runner, `_work`, `_tool`, caches, DerivedData, cargo, tmp) is deleted and
+  recreated between jobs, plus its `/var/folders` and `/tmp` leftovers.
+- **Job data only on the external drive.** The slot user's home is
+  `/Volumes/<drive>/gh-runner/<slot>` (0700, root-owned parent). The
+  supervisor refuses to take jobs, and alerts, when the drive is not mounted,
+  the home is not owned by the slot user, free space is under
+  `DATA_MIN_FREE_GB` (40) or the home exceeds `DATA_MAX_GB`; it never falls
+  back to the internal disk. See Storage.
 - **Unprivileged.** Jobs run as `ghrunner-<slot>`: a hidden standard user
   with a discarded random password, no sudo, in `_developer` only so
   `xcodebuild` works. Root holds only the Mac's broker key (`/etc/fleet-runner/<slot>.auth`, 0400).
@@ -81,6 +88,45 @@ shows `wrangler deploy --dry-run`, deploys the Worker, loads the three secrets
 with `wrangler secret put` straight from Secrets Manager, and sends the Mac
 admin the Worker URL plus the secret name to pull each Mac's key from.
 
+## Storage: the external drive
+
+Each Mac keeps job data on its external drive, not the internal disk.
+`setup-mac.sh --data-volume /Volumes/<drive>` does, once:
+
+- `diskutil enableOwnership` on the drive (external drives default to
+  "ignore ownership", which would make every file look owned by the current
+  user); warns if the drive is case-sensitive APFS (hosted runners are not).
+- creates `/Volumes/<drive>/gh-runner/` (root, 0755) and
+  `/Volumes/<drive>/gh-runner/<slot>` (ghrunner-<slot>, 0700) as the user's
+  home; nothing else on the drive is touched or readable by the slot user.
+- Spotlight off for the drive (`mdutil -i off`) and a Time Machine exclusion
+  for the home (`tmutil addexclusion -p`).
+- optional `--quota-gb N`: instead of a directory, an APFS volume
+  `fleet-<slot>` with a hard quota in the drive's container, mounted at
+  `/Volumes/fleet-<slot>`; `--max-gb N` is a soft size watch (the supervisor
+  measures the home after each cleanup and refuses jobs above it).
+
+Per job the supervisor points `TMPDIR`, `CARGO_HOME`, `CARGO_TARGET_DIR`,
+`npm_config_cache`, `XDG_CACHE_HOME` and `HOMEBREW_CACHE` into that home
+(`runner/.env`, which the runner exports to every step); Xcode's
+DerivedData default is already under it. Between jobs the home is deleted
+and recreated, so caches do not persist on purpose: a job that wants a warm
+cache uses `actions/cache` like it does on hosted runners.
+
+If the drive is missing at boot (unplugged, failed, renamed) the state file
+says `volume-unavailable`, the launchd log and the unified log
+(`log show --predicate 'process == "logger" AND eventMessage CONTAINS "fleet-runner"'`)
+carry `ALERT data volume ... is not mounted`, and the slot retries every
+`PARITY_RETRY_SECONDS` (300). Set `ALERT_URL=` in `/etc/fleet-runner/<slot>.env`
+to also POST those alerts (plain text) to a webhook. Re-running `setup-mac.sh`
+for an upgrade keeps the installed location; moving a slot to another drive is
+`--uninstall` then install.
+
+Volume names differ per Mac: during the canary each admin runs
+`diskutil list external physical` and `df -h /Volumes/*` on the Mac and
+passes the drive with the most free space. (`--allow-internal-disk` exists
+only for a Mac that has no external drive; do not use it in the fleet.)
+
 ## Per-Mac admin steps
 
 Do these on the Mac as an admin user; nothing here needs Khaliq's GitHub account.
@@ -94,10 +140,11 @@ Do these on the Mac as an admin user; nothing here needs Khaliq's GitHub account
 2. Pull this Mac's key from Secrets Manager into a file only you can read:
    `aws secretsmanager get-secret-value --secret-id layered-infra-ops/fleet-runner/mac-keys/<mac> --query SecretString --output text > /tmp/fleet.key && chmod 600 /tmp/fleet.key`
 3. From a checkout of this repo:
-   `cd runners/macos-fleet && sudo ./setup-mac.sh --slot a --broker-url https://<worker-url> --key-file /tmp/fleet.key [--quota-gb 120]`
+   `cd runners/macos-fleet && sudo ./setup-mac.sh --slot a --broker-url https://<worker-url> --key-file /tmp/fleet.key --data-volume /Volumes/<drive> [--quota-gb 300]`
+   `<drive>` is this Mac's external drive (`diskutil list external physical`).
    Slot `a` = relay-app; add `--slot b` with the `relay` key for the second
-   repo. `--quota-gb` puts the runner user's home on its own APFS volume with
-   a quota so a runaway job cannot fill the disk.
+   repo. `--quota-gb` gives the slot its own APFS volume with a hard quota
+   so a runaway job cannot fill the drive; see Storage.
 4. Follow the printed post-steps: `rm -P /tmp/fleet.key`, keep Remote
    Login/Screen Sharing restricted to admins, `pmset` so the Mac stays up,
    and watch `/var/log/fleet-runner/a.launchd.log` for
@@ -113,8 +160,10 @@ fleet. Remove a slot with `sudo ./setup-mac.sh --slot a --uninstall`.
 1. **Canary**: two Macs, slot `a` (relay-app) only. Route one lane,
    `macos-core-tests`, by setting the repo variable `CI_MACOS_ARM64_RUNNER`
    to `fleet-macos-arm64` (desktop-ci reads it; unset or any other value =
-   hosted/Blacksmith, so rollback is the variable). Watch a day of runs: queue
-   time, pass rate against the known flaky suites, cache wipe cost.
+   hosted/Blacksmith, so rollback is the variable). Record each canary Mac's
+   external drive name and size in the fleet notes (not in this public repo).
+   Watch a day of runs: queue time, pass rate against the known flaky
+   suites, cache wipe cost, and `du -sh` of the slot home after a job.
 2. **Route step** (phase 2, owned by layered-relay-app): the `changes` job
    checks fleet health (`GET /repos/{repo}/actions/runners`, any online runner
    with the label, plus queue age) and emits the matrix with the fleet label
@@ -139,6 +188,9 @@ their `runs-on` never mentions the fleet label.
   `/var/log/fleet-runner/<slot>.launchd.log` (supervisor), `<slot>/runner.log`
   (runner), `<slot>/curl.err` (mint failures), `<slot>/diag-*/` (per-job).
 - Restart a slot: `sudo launchctl kickstart -k system/com.agentworkforce.fleet-runner.<slot>`.
+- State `volume-unavailable`: the external drive is unmounted, the home is
+  not owned by the slot user, or space is short; the alert line in the
+  launchd log says which. Mount/fix, then kickstart (or wait for the retry).
 - Parity failed (Xcode updated, macOS upgraded): fix the Mac or update
   `parity.env` here (and the hosted image assumption) in one PR.
 - New runner version: bump `RUNNER_VERSION` / `RUNNER_SHA256` in

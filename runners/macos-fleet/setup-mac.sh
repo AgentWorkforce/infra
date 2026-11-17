@@ -3,32 +3,43 @@
 # this directory (a checkout of AgentWorkforce/infra):
 #
 #   sudo ./setup-mac.sh --slot a --broker-url https://fleet-runner-jit.<acct>.workers.dev \
-#        --key-file /path/to/this-macs-key [--runner-version 2.338.2] \
-#        [--runner-sha256 <hex>] [--quota-gb 120]
+#        --key-file /path/to/this-macs-key --data-volume /Volumes/<external drive> \
+#        [--quota-gb 300] [--max-gb 250] [--runner-version 2.338.2] [--runner-sha256 <hex>]
 #   sudo ./setup-mac.sh --slot a --uninstall
 #
+# Everything a job touches lives on the external drive named by --data-volume:
+# the slot user's home (<volume>/gh-runner/<slot>: runner, _work, _tool,
+# caches, DerivedData, cargo, tmp). With --quota-gb the home is instead an
+# APFS volume "fleet-<slot>" with that quota, created in the drive's APFS
+# container (mounted at /Volumes/fleet-<slot>). The internal disk is never
+# used for job data; --allow-internal-disk is the only way to say otherwise.
+#
 # What it creates: a hidden standard user ghrunner-<slot> (no password login,
-# member of _developer so xcodebuild works), optionally an APFS volume with a
-# quota as its home, /usr/local/libexec/fleet-runner/{supervisor,parity},
-# /usr/local/share/fleet-runner/actions-runner-<ver>.tar.gz (sha256-checked),
-# /etc/fleet-runner/<slot>.env (0600) and <slot>.auth (0400, the Mac's key),
-# and the LaunchDaemon com.agentworkforce.fleet-runner.<slot>. It then prints
-# the manual steps that remain (Xcode license, Remote Login, power settings).
+# member of _developer so xcodebuild works), the data dir/volume with
+# ownership enabled, Spotlight off and a Time Machine exclusion,
+# /usr/local/libexec/fleet-runner/{supervisor,parity}, the sha256-checked
+# runner tarball under /usr/local/share/fleet-runner, /etc/fleet-runner/<slot>.env
+# (0600) and <slot>.auth (0400, the Mac's key), and the LaunchDaemon
+# com.agentworkforce.fleet-runner.<slot>. It then prints the remaining
+# manual steps (Xcode license, Remote Login, power settings).
 set -euo pipefail
 
 RUNNER_VERSION=2.338.2
 RUNNER_SHA256=25a065af409ffa317ab4d5a3b614dd15fc9c40f2172bc1b35a1b1258e919a388
-slot="" broker_url="" key_file="" quota_gb="" uninstall=0
+slot="" broker_url="" key_file="" data_volume="" quota_gb="" max_gb="" uninstall=0 allow_internal=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --slot) slot=$2; shift 2 ;;
     --broker-url) broker_url=$2; shift 2 ;;
     --key-file) key_file=$2; shift 2 ;;
+    --data-volume) data_volume=${2%/}; shift 2 ;;
+    --quota-gb) quota_gb=$2; shift 2 ;;
+    --max-gb) max_gb=$2; shift 2 ;;
+    --allow-internal-disk) allow_internal=1; shift ;;
     --runner-version) RUNNER_VERSION=$2; shift 2 ;;
     --runner-sha256) RUNNER_SHA256=$2; shift 2 ;;
-    --quota-gb) quota_gb=$2; shift 2 ;;
     --uninstall) uninstall=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -43,15 +54,19 @@ plist=/Library/LaunchDaemons/$label.plist
 etc=/etc/fleet-runner
 libexec=/usr/local/libexec/fleet-runner
 share=/usr/local/share/fleet-runner
-volume="fleet-$slot"
+volume_name="fleet-$slot"
+
+dev_of() { df -P "$1" 2>/dev/null | awk 'NR==2{print $1}'; }
 
 if [ "$uninstall" = 1 ]; then
   launchctl bootout system "$plist" 2>/dev/null || true
   rm -f "$plist"
   pkill -KILL -u "$user" 2>/dev/null || true
+  home=$(awk -F= '/^RUNNER_HOME=/{print $2}' "$etc/$slot.env" 2>/dev/null || true)
   if id "$user" >/dev/null 2>&1; then sysadminctl -deleteUser "$user" >/dev/null 2>&1 || dscl . -delete "/Users/$user"; fi
-  if diskutil info "$volume" >/dev/null 2>&1; then diskutil apfs deleteVolume "$volume"; fi
-  rm -rf "/Users/$user" "$etc/$slot.env" "$etc/$slot.auth" "/var/run/fleet-runner/$slot".*
+  if diskutil info "$volume_name" >/dev/null 2>&1; then diskutil apfs deleteVolume "$volume_name"; fi
+  case "$home" in */gh-runner/"$slot") rm -rf "$home" ;; esac
+  rm -rf "$etc/$slot.env" "$etc/$slot.auth" "/var/run/fleet-runner/$slot".*
   echo "removed slot $slot (logs kept in /var/log/fleet-runner/$slot, shared files in $libexec and $share kept)"
   exit 0
 fi
@@ -59,24 +74,69 @@ fi
 [ -n "$broker_url" ] || { echo "--broker-url is required" >&2; exit 64; }
 [ -r "$key_file" ] || { echo "--key-file must be a readable file holding this Mac's key" >&2; exit 64; }
 [ "$(wc -c <"$key_file")" -ge 32 ] || { echo "key file looks too short" >&2; exit 64; }
-if [ -n "$quota_gb" ] && ! [[ "$quota_gb" =~ ^[0-9]+$ ]]; then echo "--quota-gb must be an integer" >&2; exit 64; fi
+for v in quota_gb max_gb; do
+  if [ -n "${!v}" ] && ! [[ "${!v}" =~ ^[0-9]+$ ]]; then echo "--${v/_/-} must be an integer" >&2; exit 64; fi
+done
 for f in fleet-runner-supervisor.sh xcode-parity.sh parity.env com.agentworkforce.fleet-runner.plist.template; do
   [ -f "$here/$f" ] || { echo "missing $here/$f; run from runners/macos-fleet in a repo checkout" >&2; exit 64; }
 done
+if [ -f "$etc/$slot.env" ]; then
+  # Re-run (runner upgrade, new key): keep the installed data location unless
+  # the admin asks for the same one again; moving a slot means --uninstall first.
+  installed_volume=$(awk -F= '/^DATA_VOLUME=/{print $2}' "$etc/$slot.env")
+  installed_home=$(awk -F= '/^RUNNER_HOME=/{print $2}' "$etc/$slot.env")
+  if [ -z "$data_volume" ] && [ -z "$quota_gb" ] && [ -n "$installed_home" ]; then
+    echo "slot $slot already installed with home $installed_home; keeping it"
+    data_volume=$installed_volume
+    [ "$installed_volume" = /Users ] && allow_internal=1
+  fi
+fi
+if [ -z "$data_volume" ]; then
+  if [ "$allow_internal" = 1 ]; then data_volume=/Users; else
+    echo "--data-volume /Volumes/<external drive> is required (job data never goes on the internal disk); external drives here:" >&2
+    diskutil list external physical >&2 || true
+    exit 64
+  fi
+fi
+[ -d "$data_volume" ] || { echo "$data_volume does not exist" >&2; exit 64; }
+if [ "$allow_internal" != 1 ] && [ "$(dev_of "$data_volume")" = "$(dev_of /)" ]; then
+  echo "$data_volume is on the internal disk (not a mounted volume); mount the drive or pass --allow-internal-disk" >&2; exit 64
+fi
 
 echo "== parity check (the slot never takes jobs while this fails)"
 "$here/xcode-parity.sh" || echo "   parity FAILED: install/select the expected Xcode, then rerun or just let the supervisor retry"
 
-echo "== runner user $user"
-home=/Users/$user
+echo "== data location"
+mount_point=$data_volume
 if [ -n "$quota_gb" ]; then
-  container=$(diskutil info / | awk -F': *' '/APFS Container Reference/{print $2}')
-  [ -n "$container" ] || { echo "cannot find the APFS container of /" >&2; exit 70; }
-  if ! diskutil info "$volume" >/dev/null 2>&1; then
-    diskutil apfs addVolume "$container" APFS "$volume" -quota "${quota_gb}g" >/dev/null
+  container=$(diskutil info "$data_volume" | awk -F': *' '/APFS Container Reference/{print $2}')
+  [ -n "$container" ] || { echo "$data_volume is not APFS; --quota-gb needs an APFS drive (or omit it and use --max-gb)" >&2; exit 70; }
+  if ! diskutil info "$volume_name" >/dev/null 2>&1; then
+    diskutil apfs addVolume "$container" APFS "$volume_name" -quota "${quota_gb}g" >/dev/null
   fi
-  home=/Volumes/$volume/home
+  mount_point=/Volumes/$volume_name
+  [ -d "$mount_point" ] || { echo "$mount_point did not mount" >&2; exit 70; }
 fi
+if [ "$allow_internal" != 1 ]; then
+  # External drives default to "ignore ownership"; jobs need real uids.
+  diskutil enableOwnership "$mount_point" >/dev/null 2>&1 || true
+  fs=$(diskutil info "$mount_point" | awk -F': *' '/File System Personality/{print $2}')
+  case "$fs" in *"Case-sensitive"*) echo "   note: $mount_point is case-sensitive; hosted runners are not, so builds may differ" ;; esac
+  mdutil -i off "$mount_point" >/dev/null 2>&1 || true
+fi
+home=$mount_point/gh-runner/$slot
+if [ "$allow_internal" = 1 ]; then home=/Users/$user; fi
+if [ -n "${installed_home:-}" ] && [ "$installed_home" != "$home" ]; then
+  echo "slot $slot is installed with home $installed_home; run --uninstall before moving it to $home" >&2; exit 64
+fi
+# The parent stays root-owned so the slot user can never replace its home
+# with a link (the supervisor wipes the home as root between jobs).
+install -d -o root -g wheel -m 755 "$(dirname "$home")"
+install -d -m 700 "$home"
+tmutil addexclusion -p "$home" >/dev/null 2>&1 || true
+echo "   home: $home ($(df -Pg "$home" | awk 'NR==2{print $4}') GB free)"
+
+echo "== runner user $user"
 if ! id "$user" >/dev/null 2>&1; then
   # Random password that nobody keeps: the account is only ever entered via
   # sudo from the supervisor. Hidden from the login window and Users prefs.
@@ -85,9 +145,10 @@ if ! id "$user" >/dev/null 2>&1; then
   unset pw
   dscl . -create "/Users/$user" IsHidden 1
 fi
+dscl . -create "/Users/$user" NFSHomeDirectory "$home"
 dseditgroup -o edit -a "$user" -t user _developer
-mkdir -p "$home"
 chown "$user:staff" "$home"; chmod 700 "$home"
+[ "$(stat -f %Su "$home")" = "$user" ] || { echo "$home is not owned by $user; ownership on $mount_point is still ignored" >&2; exit 70; }
 
 echo "== files"
 install -d -m 755 "$libexec" "$share"
@@ -107,6 +168,8 @@ BROKER_URL=$broker_url
 RUNNER_USER=$user
 RUNNER_HOME=$home
 RUNNER_TARBALL=$tarball
+DATA_VOLUME=$mount_point
+DATA_MAX_GB=${max_gb:-${quota_gb:-0}}
 ENV
 printf 'Authorization: Bearer %s\n' "$(tr -d '[:space:]' <"$key_file")" >"$etc/$slot.auth"
 chmod 400 "$etc/$slot.auth"
@@ -128,4 +191,5 @@ Slot $slot installed. Remaining manual steps on this Mac:
   3. System Settings > General > Sharing: Remote Login / Screen Sharing restricted to admins, never to $user
   4. sudo pmset -a sleep 0 disksleep 0 autorestart 1 womp 1     (stay up, come back after power loss)
   5. tail -f /var/log/fleet-runner/$slot.launchd.log         (expect "runner <name> waiting for a job")
+  Optional: ALERT_URL=https://... in $etc/$slot.env to get volume/parity/mint problems POSTed somewhere.
 MSG
