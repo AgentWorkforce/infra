@@ -135,13 +135,16 @@ test("the shipped config pins the real agent id: an agent with another id under 
   assert.equal(calls.length, 1);
 });
 
-test("the shipped pin works end to end: an approval DM from neon-exit-lead-2 carrying exactly the shipped agent id is issued", async () => {
-  // Guards against pinning an id the broker never sees: the Relay sender id must equal the shipped agentId, byte for byte.
-  const shippedId = shipped.delegatedApprovers![0]!.agentId;
+// neon-exit-lead-2's Relaycast agent_id as the broker itself saw it: `aws-cred-broker whois --name neon-exit-lead-2`
+// on the broker host, 2026-11-17 07:24Z (name neon-exit-lead-2, type agent). Recorded here independently of
+// allowlist.json, so a wrong pin fails the test below instead of being copied into the fake sender.
+const RECORDED_DELEGATE_ID = "248345546605203456";
+
+test("the shipped pin works end to end: an approval DM from the recorded neon-exit-lead-2 id is issued", async () => {
   const { broker, calls } = setup(shipped);
   const { text } = await pend(broker, secretsReq());
   const original = agents[DELEGATE]!;
-  agents[DELEGATE] = { ...original, id: shippedId };
+  agents[DELEGATE] = { ...original, id: RECORDED_DELEGATE_ID };
   try {
     const ok = await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER);
     assert.equal(ok.outcome, "issued", ok.reasons.join("; "));
