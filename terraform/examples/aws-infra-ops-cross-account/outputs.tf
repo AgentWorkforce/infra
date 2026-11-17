@@ -9,11 +9,11 @@ output "role_name" {
 }
 
 output "aws_config_profile" {
-  description = "A ~/.aws/config profile for the operator (its default profile is the trusted role)."
-  value       = <<-EOT
-    [profile ${var.account_id}]
-    role_arn = ${aws_iam_role.operator.arn}
-    source_profile = default
-    region = ${var.region}
-  EOT
+  description = "A profile for the operator's AWS config (its default profile is the trusted role); carries the external id when one is set."
+  value = join("", concat([
+    "[profile ${var.account_id}]\n",
+    "role_arn = ${aws_iam_role.operator.arn}\n",
+    "source_profile = default\n",
+    "region = ${var.region}\n",
+  ], var.external_id == null ? [] : ["external_id = ${var.external_id}\n"]))
 }

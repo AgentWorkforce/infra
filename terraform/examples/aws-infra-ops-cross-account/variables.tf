@@ -53,7 +53,7 @@ variable "external_id" {
   type        = string
   default     = null
   validation {
-    condition     = var.external_id == null || (can(regex("^[A-Za-z0-9+=,.@:/_-]{2,}$", var.external_id)) && length(var.external_id) <= 1224)
+    condition     = var.external_id == null ? true : (can(regex("^[A-Za-z0-9+=,.@:/_-]{2,}$", var.external_id)) && length(var.external_id) <= 1224)
     error_message = "external_id must be null or 2-1224 characters of A-Z a-z 0-9 + = , . @ : / _ -."
   }
 }

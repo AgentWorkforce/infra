@@ -72,3 +72,18 @@ run "refuses_a_session_over_twelve_hours" {
   }
   expect_failures = [var.max_session_duration]
 }
+
+run "profile_carries_the_external_id" {
+  command = apply # mocked: the role ARN is only known after the (mock) apply
+
+  variables {
+    account_id        = "000000000000"
+    trusted_role_arns = ["arn:aws:iam::111111111111:role/example-operator-admin"]
+    external_id       = "shared-secret-token"
+  }
+
+  assert {
+    condition     = strcontains(output.aws_config_profile, "external_id = shared-secret-token\n") && strcontains(output.aws_config_profile, "[profile 000000000000]\n")
+    error_message = "the config profile must carry the external id when one is set"
+  }
+}

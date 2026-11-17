@@ -29,9 +29,13 @@ The operator then verifies from its host, with its default profile:
 
 ```sh
 aws sts assume-role --role-arn <role_arn> --role-session-name verify --query AssumedRoleUser.Arn
+# with an external id:  ... --external-id <external_id>
 ```
 
-and adds `terraform output -raw aws_config_profile` to its `~/.aws/config`.
+and appends `terraform output -raw aws_config_profile` to `~/.aws/config.local`
+on its host. The host setup (`agent/setup-lane.sh`) rewrites `~/.aws/config`
+on every update and merges `config.local` into it, so the profile survives;
+until the next update the operator appends the same lines to `~/.aws/config`.
 
 After the bootstrap the operator can re-apply this root itself (for example to
 re-trust a recreated home role), but a change to the trust or the grant is a
@@ -82,7 +86,7 @@ until this root is applied again.
 
 | Name | Description |
 | ---- | ----------- |
-| aws\_config\_profile | A ~/.aws/config profile for the operator (its default profile is the trusted role). |
+| aws\_config\_profile | A profile for the operator's AWS config (its default profile is the trusted role); carries the external id when one is set. |
 | role\_arn | The operator role. Assume it from the trusted role: aws sts assume-role --role-arn <this> --role-session-name <who>. |
 | role\_name | The operator role's name. |
 <!-- END_TF_DOCS -->
