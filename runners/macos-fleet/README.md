@@ -248,12 +248,16 @@ their `runs-on` never mentions the fleet label.
   if set.
 - Alert `... carries com.apple.provenance` (or fast exits with rc 0 and
   nothing useful in the runner's lines): `<volume>/gh-runner` was created
-  from an admin shell by an older setup. From Terminal, with no job running:
-  `sudo launchctl bootout system /Library/LaunchDaemons/com.agentworkforce.fleet-runner.<slot>.plist`,
-  `sudo rm -rf /Volumes/<volume>/gh-runner`, rerun `setup-mac.sh` with the new
-  scripts (the slot, user and volume are kept) and the supervisor recreates
-  the tree untagged. Then restore the Mac's key in `MACHINE_KEYS` if it was
-  paused. Check with `xattr -l /Volumes/<volume>/gh-runner`: no
+  from an admin shell by an older setup. The tree is shared by every slot
+  on that volume (a `--whole-volume` drive can carry both), so from Terminal,
+  with no job running on any of them:
+  `sudo launchctl bootout system /Library/LaunchDaemons/com.agentworkforce.fleet-runner.<slot>.plist`
+  for each such slot, `sudo rm -rf '/Volumes/<volume>/gh-runner'` (quoted:
+  a volume name may contain spaces), rerun `setup-mac.sh` for each slot with
+  the new scripts (the slot, user and volume are kept) and the supervisor
+  recreates the tree untagged. `setup-mac.sh` prints exactly these commands
+  when it finds a tagged tree. Then restore the Mac's key in `MACHINE_KEYS`
+  if it was paused. Check with `xattr -l '/Volumes/<volume>/gh-runner'`: no
   `com.apple.provenance` line.
 - State `volume-unavailable`: the external drive is unmounted, the home is
   not owned by the slot user, or space is short; the alert line in the

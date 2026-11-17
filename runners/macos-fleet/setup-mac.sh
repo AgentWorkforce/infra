@@ -171,14 +171,26 @@ fi
 # <volume>/gh-runner (root, 0755) and the home (0700, slot user) on its first
 # pass. An already tagged tree from an older setup has to go first.
 if [ "$allow_internal" != 1 ]; then
-  for p in "$(dirname "$home")" "$home"; do
+  parent=$(dirname "$home")
+  for p in "$parent" "$home"; do
     if xattr -p com.apple.provenance "$p" >/dev/null 2>&1; then
+      # The tree goes as a whole, so every slot whose home is under it (a
+      # --whole-volume drive can carry both) must be stopped first. Paths
+      # are printed shell-quoted: a volume name may contain spaces.
+      bootouts=""
+      for f in "$etc"/*.env; do
+        [ -f "$f" ] || continue
+        s=${f##*/}; s=${s%.env}
+        h=$(slot=$s installed_value RUNNER_HOME)
+        case "$h" in "$parent"/*) bootouts="$bootouts  sudo launchctl bootout system /Library/LaunchDaemons/com.agentworkforce.fleet-runner.$s.plist"$'\n' ;; esac
+      done
+      [ -n "$bootouts" ] || bootouts="  sudo launchctl bootout system $plist"$'\n'
       cat >&2 <<EOT
 $p carries com.apple.provenance (created from an admin shell by an older setup);
-the runner cannot read it. From this Terminal, once no job is running:
-  sudo launchctl bootout system $plist
-  sudo rm -rf $(dirname "$home")
-then rerun this setup; the supervisor recreates it.
+the runner cannot read it. From this Terminal, once no job is running on any
+slot of this volume (every installed slot with a home under $(printf %q "$parent") is listed):
+${bootouts}  sudo rm -rf $(printf %q "$parent")
+then rerun this setup for each of those slots; the supervisor recreates the tree.
 EOT
       exit 70
     fi

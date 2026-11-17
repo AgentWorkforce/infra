@@ -113,7 +113,7 @@ ensure_home() {
   if [ "$provenance_warned" = 0 ]; then
     for p in "$parent" "$RUNNER_HOME"; do
       if xattr -p com.apple.provenance "$p" >/dev/null 2>&1; then
-        alert "$p carries com.apple.provenance (made from an admin shell, not by this daemon); if runners exit at once, from Terminal: sudo rm -rf $parent, then kickstart this slot (README: Operations)"
+        alert "$p carries com.apple.provenance (made from an admin shell, not by this daemon); if runners exit at once, from Terminal: bootout every slot whose home is under $(printf %q "$parent"), sudo rm -rf $(printf %q "$parent"), then kickstart them (README: Operations)"
         provenance_warned=1
         break
       fi
@@ -126,7 +126,14 @@ volume_ok() {
   # The data volume must be a mounted filesystem other than the root one,
   # the home must be sane and there must be room. Anything else: refuse.
   if [ "$DATA_VOLUME" != /Users ]; then
-    if [ ! -d "$DATA_VOLUME" ] || [ "$(dev_of "$DATA_VOLUME")" = "$(dev_of /)" ]; then
+    # "/" is the sealed system snapshot on macOS 11+; everything writable on
+    # the internal disk (/Users, /Volumes itself, ...) is a second device
+    # mounted at /System/Volumes/Data. The mount-point directory of a drive
+    # that is unplugged sits on that device, so both count as "not mounted":
+    # ensure_home below must never build the tree on the internal disk.
+    data_dev=$(dev_of "$DATA_VOLUME")
+    if [ ! -d "$DATA_VOLUME" ] || [ -z "$data_dev" ] || [ "$data_dev" = "$(dev_of /)" ] \
+      || [ "$data_dev" = "$(dev_of /System/Volumes/Data)" ]; then
       alert "data volume $DATA_VOLUME is not mounted; not taking jobs"; return 1
     fi
   fi
