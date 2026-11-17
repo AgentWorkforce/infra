@@ -230,6 +230,11 @@ host:
   permissionMode: dontAsk
   # Give each agent a Relaycast MCP bound to its own token (DMs, channels).
   relaycastMcp: true
+  # Behind relaygate, agents see the relay's agents with mcp__relay_agents
+  # (list_agents, get_agent) as themselves: Relaycast's agent.list needs a
+  # workspace key, which only relaygate holds. Read-only; which agents show is
+  # relaygate's policy (r on relaycast:agent/<name>, or r/w on the inbox).
+  relayAgentsMcp: true
   # Names from the top-level mcpServers list agents get as tools. Empty: every
   # read-scoped one (write-scoped servers, e.g. ingest writers, only when named).
   mcpServers: []

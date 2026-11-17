@@ -37,6 +37,7 @@ is private to its owner's group:
 | `relaycast:channel/`, `relaycast:inbox/local-` | 11 | pit (22) may read |
 | `relaycast:channel/pit-`, `relaycast:inbox/pit-`, `relaycast:inbox/slack-` | 22 | local (11) may write |
 | `slack:`, `kb:` | 22 | none; classified |
+| `relaycast:agent/` (the agent directory) | 22 | none; mode `040`: the pit sees every agent, and seeing grants no write |
 
 Enrollment keys decide an agent's group at registration; give each a name
 prefix matching its streams (`local-`, `pit-`, `slack-`) so a key can't take

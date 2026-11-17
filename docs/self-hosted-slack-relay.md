@@ -515,6 +515,54 @@ which outside groups can't read under the default policy.
 relaygate it is ignored (the host logs that). Without relaygate there are no
 groups, and DMs are answered as before.
 
+### What the agents see on the relay
+
+Behind relaygate there is no Relaycast workspace key anywhere in the Slack
+app: relaygate holds it. Relaycast's MCP lists agents only with a workspace
+key (its `agent.list` refuses before asking anyone), so a gated agent can't
+list agents with `mcp__relaycast`. Instead each agent gets **`mcp__relay_agents`**
+(`host.relayAgentsMcp`, default `true`; it only applies with relaygate):
+
+- `list_agents` (filter `status`: `online`, `offline`, `all`; `include_stale`;
+  `query` on name or persona; pages of up to 50 with `offset`/`next_offset`,
+  so every visible agent is reachable) and `get_agent` (one agent's status,
+  persona and card). Each is a `GET` to
+  relaygate's `/v1/agents` or `/v1/agents/<name>` with the agent's own `rg_`
+  token; there are no write tools. relaygate answers with its workspace key
+  and shows only the agents its policy lets this agent see. Credential-looking
+  fields are dropped from what the agent gets.
+- `mcp__relaycast__agent_list` and the `mcp__relaycast__workspace_*` tools are
+  refused for gated agents (added to the disallowed tools): they can only fail
+  without a workspace key, and their error reads like a setup problem.
+- The system prompt says the agent can see every agent on the relay, can
+  message agents in its own group, and can't message agents outside it (such
+  as people's local, desktop or editor agents), and never to blame a missing
+  workspace key.
+
+Which agents an agent sees is relaygate's policy. It sees an agent when it may
+write or read that agent's inbox (`relaycast:inbox/<name>`), or read its
+**directory entry** `relaycast:agent/<name>`. A directory entry only shows the
+agent (name, status, persona, card): it never lets the agent message it, and
+agents can't create entries themselves. To let the pit (gid 22) see every
+agent on the relay, including desktop and editor agents whose names no inbox
+prefix covers, the relaygate chart's default policy has:
+
+```yaml
+policy:
+  streamDefaults:
+    # Visibility only: the pit sees every agent; messaging still needs w on the inbox.
+    - { prefix: "relaycast:agent/", gid: 22, mode: "040" }
+```
+
+If you replace `policy.streamDefaults`, keep that line. It needs a relaygate
+image with the agent directory (relaygate#41); older images ignore it, and the
+pit then sees only the agents whose inbox it may read or write (with the
+default policy: its own group and `local-*`). Messaging is unchanged: a DM to
+an agent outside the pit is still refused by relaygate (`relaygate_denied`),
+because the pit has no `w` on outside inboxes. To check what an agent sees:
+`npm run explain -- --policy policy.json --as key:pit --op r --stream relaycast:agent/<name>`
+in the relaygate repo.
+
 ### Session upload (optional)
 
 With relaygate on, the host can upload every agent's Claude Code session to
@@ -682,6 +730,7 @@ See `charts/slack-relay/values.yaml`. The ones you're most likely to change:
 | `host.allowedTools` | `[Read(./**), Glob(./**), Grep(./**), mcp__relaycast]` | Scoped to the agent's workdir. |
 | `host.disallowedTools` | `[Bash, WebFetch, WebSearch, Read(//proc/**)]` | Always refused. |
 | `host.idleReleaseMinutes` | `15` | |
+| `host.relayAgentsMcp` | `true` | Behind relaygate: `mcp__relay_agents` (list and read agents as each agent, read-only) instead of Relaycast's `agent.list`. |
 | `host.replyToOutside` | `false` | Behind relaygate ignored: a DM is answered only if `/v1/check` allows it. Without relaygate, DMs are answered as before. |
 | `repos.enabled` | `false` | Read-only GitHub repositories at `/repos` for the agents. |
 | `repos.app.privateKey` | `{ name: "", key: private-key }` | Secret with the GitHub App's private key (and, by default, `app-id` and `installation-id`); only the sidecar mounts it. Recommended. |
@@ -702,5 +751,6 @@ See `charts/slack-relay/values.yaml`. The ones you're most likely to change:
   count.
 - Each agent's turns run one at a time. Different threads run in parallel.
 - An agent's awareness of other agents comes from the ledger roster in its
-  prompt. Its relay tools are scoped to its own token, so it can message and
-  read channels but not administer the workspace.
+  prompt and, behind relaygate, `mcp__relay_agents`. Its relay tools are
+  scoped to its own token, so it can message and read channels but not
+  administer the workspace.
