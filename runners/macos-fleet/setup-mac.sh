@@ -109,7 +109,11 @@ if [ -z "$data_volume" ]; then
   fi
 fi
 [ -d "$data_volume" ] || { echo "$data_volume does not exist" >&2; exit 64; }
-if [ "$allow_internal" != 1 ] && [ "$(dev_of "$data_volume")" = "$(dev_of /)" ]; then
+# "/" is the sealed system snapshot on macOS 11+; everything writable on the
+# internal disk (/Users, /private, ...) is a different device mounted at
+# /System/Volumes/Data, so a path is internal if it matches either.
+data_dev=$(dev_of "$data_volume")
+if [ "$allow_internal" != 1 ] && { [ "$data_dev" = "$(dev_of /)" ] || [ "$data_dev" = "$(dev_of /System/Volumes/Data)" ]; }; then
   echo "$data_volume is on the internal disk (not a mounted volume); mount the drive or pass --allow-internal-disk" >&2; exit 64
 fi
 
