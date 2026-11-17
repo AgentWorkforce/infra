@@ -11,27 +11,27 @@ metadata:
     {{- include "relaygate.labels" . | nindent 4 }}
 data:
   policy.json: |
-    {{- /* inboxDefaults keeps the chart default even when an override replaces groups (Helm merges maps). Only that
-         default entry is dropped when the policy lacks its groups, so a policy without gid 11 or 22 still loads; an
-         operator's own entry naming an undefined gid fails the render, never loosens to relaygate's 660 fallback. */ -}}
+    {{- /* inboxDefaults: the chart's default (gid 11, 660, acl 22:r, mirroring the local- inbox rule) applies only
+         when policy omits the key, and is dropped when policy.groups lacks gid 11 or 22 so such a policy still loads.
+         Any inboxDefaults the operator sets that names an undefined gid fails the render: it never loosens to
+         relaygate's 660 fallback. */ -}}
     {{- $policy := deepCopy .Values.policy }}
-    {{- if hasKey $policy "inboxDefaults" }}
-    {{- $chartDefault := toJson (dict "gid" 11 "mode" "660" "acl" (list (dict "gid" 22 "perm" "r"))) }}
+    {{- $inherited := not (hasKey $policy "inboxDefaults") }}
+    {{- if $inherited }}{{ $_ := set $policy "inboxDefaults" (list (dict "gid" 11 "mode" "660" "acl" (list (dict "gid" 22 "perm" "r")))) }}{{ end }}
     {{- $gids := list }}
     {{- range ($policy.groups | default list) }}{{ $gids = append $gids (toString .gid) }}{{ end }}
     {{- $kept := list }}
-    {{- range $policy.inboxDefaults }}
+    {{- range ($policy.inboxDefaults | default list) }}
     {{- $missing := list }}
     {{- if not (has (toString .gid) $gids) }}{{ $missing = append $missing (toString .gid) }}{{ end }}
     {{- range (.acl | default list) }}{{ if not (has (toString .gid) $gids) }}{{ $missing = append $missing (toString .gid) }}{{ end }}{{ end }}
     {{- if not $missing }}
     {{- $kept = append $kept . }}
-    {{- else if ne (toJson .) $chartDefault }}
+    {{- else if not $inherited }}
     {{- fail (printf "relaygate: policy.inboxDefaults entry for gid %v names gid(s) %s that policy.groups doesn't define; define them or remove the entry" .gid (join ", " (uniq $missing))) }}
     {{- end }}
     {{- end }}
     {{- $_ := set $policy "inboxDefaults" $kept }}
-    {{- end }}
     {{- $policy | toPrettyJson | nindent 4 }}
 ---
 {{- end }}

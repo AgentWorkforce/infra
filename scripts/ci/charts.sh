@@ -1029,6 +1029,7 @@ for chart in "${charts[@]}"; do
         # An operator's own entry naming an undefined gid fails closed rather than falling back to relaygate's 660.
         expect_render_failure "$chart" charts/relaygate/ci/proxy-values.yaml "inboxDefaults ACL names an undefined gid" "policy.inboxDefaults entry for gid 11 names gid(s) 44" --set-json 'policy.inboxDefaults=[{"gid":11,"mode":"600","acl":[{"gid":44,"perm":"r"}]}]'
         expect_render_failure "$chart" charts/relaygate/ci/proxy-values.yaml "inboxDefaults for an undefined gid" "policy.inboxDefaults entry for gid 33 names gid(s) 33" --set-json 'policy.inboxDefaults=[{"gid":33,"mode":"600"}]'
+        expect_render_failure "$chart" charts/relaygate/ci/proxy-values.yaml "explicit copy of the default inboxDefaults without gid 22" "policy.inboxDefaults entry for gid 11 names gid(s) 22" --set-json 'policy.groups=[{"gid":11,"name":"local"}]' --set-json 'policy.inboxDefaults=[{"gid":11,"mode":"660","acl":[{"gid":22,"perm":"r"}]}]'
         [ "$(inbox_defaults --set-json 'policy.inboxDefaults=[{"gid":11,"mode":"600","acl":[{"gid":22,"perm":"r"}]}]')" = '[{"acl":[{"gid":22,"perm":"r"}],"gid":11,"mode":"600"}]' ] || err "$chart: an operator inboxDefaults entry must render as given"
         expect_render_failure "$chart" "$v" "Sessions CORS/internal secret without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
         # Control principals alone (desktop enrolment): no Sessions proxy needed.
