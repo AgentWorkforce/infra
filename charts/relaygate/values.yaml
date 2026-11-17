@@ -56,6 +56,12 @@ policy:
   # local- inbox rule: local agents DM each other, the pit may read, never
   # write. A name no agent has is still refused. relaygate#43; older images
   # ignore it.
+  # A policy override that omits inboxDefaults inherits this entry (Helm
+  # merges maps), including its 22:r ACL, even if the override's local- rule
+  # drops that ACL: set inboxDefaults to match your own groups, or [] to opt
+  # out (desktop inboxes then get 660, same group only). Entries naming a gid
+  # your policy.groups doesn't define are left out of the rendered policy, so
+  # an override without gid 11 or 22 still loads.
   inboxDefaults:
     - { gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
   # Sessions (with the Sessions proxy): local sessions readable by the pit,

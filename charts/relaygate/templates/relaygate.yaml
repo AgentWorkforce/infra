@@ -11,7 +11,21 @@ metadata:
     {{- include "relaygate.labels" . | nindent 4 }}
 data:
   policy.json: |
-    {{- .Values.policy | toPrettyJson | nindent 4 }}
+    {{- /* inboxDefaults comes from the chart default even when an override replaces groups (Helm merges maps):
+         render only the entries whose gid and ACL gids the policy defines, so a policy without gid 11 still loads. */ -}}
+    {{- $policy := deepCopy .Values.policy }}
+    {{- if hasKey $policy "inboxDefaults" }}
+    {{- $gids := list }}
+    {{- range ($policy.groups | default list) }}{{ $gids = append $gids (toString .gid) }}{{ end }}
+    {{- $kept := list }}
+    {{- range $policy.inboxDefaults }}
+    {{- $ok := has (toString .gid) $gids }}
+    {{- range (.acl | default list) }}{{ if not (has (toString .gid) $gids) }}{{ $ok = false }}{{ end }}{{ end }}
+    {{- if $ok }}{{ $kept = append $kept . }}{{ end }}
+    {{- end }}
+    {{- $_ := set $policy "inboxDefaults" $kept }}
+    {{- end }}
+    {{- $policy | toPrettyJson | nindent 4 }}
 ---
 {{- end }}
 {{- if not .Values.persistence.existingClaim }}
