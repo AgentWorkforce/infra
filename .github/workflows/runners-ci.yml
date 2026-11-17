@@ -1,0 +1,46 @@
+# Lints the self-hosted runner tooling under runners/ (shell syntax,
+# shellcheck, the launchd template and the broker Worker).
+name: Runners CI
+
+on:
+  pull_request:
+    paths: [runners/**, .github/workflows/runners-ci.yml]
+  push:
+    branches: [main]
+    paths: [runners/**, .github/workflows/runners-ci.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint runner tooling
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Shell syntax and shellcheck
+        working-directory: runners/macos-fleet
+        run: |
+          bash -n ./*.sh
+          shellcheck ./*.sh
+
+      - name: launchd template renders to a valid plist
+        working-directory: runners/macos-fleet
+        run: |
+          sed 's/__SLOT__/a/g' com.agentworkforce.fleet-runner.plist.template > /tmp/a.plist
+          python3 -c 'import plistlib,sys; d=plistlib.load(open("/tmp/a.plist","rb")); assert d["Label"]=="com.agentworkforce.fleet-runner.a", d'
+
+      - name: Broker Worker parses
+        working-directory: runners/macos-fleet/broker
+        run: node --check worker.js
