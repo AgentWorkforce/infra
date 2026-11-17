@@ -7653,6 +7653,35 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-17T02:22:28.398284837Z"
+    description: 'Optional Slack app for Agent Relay: a router that maps Slack threads
+      to per-thread agents through a ledger, a Claude orchestrator for new threads,
+      and an agent host that runs the agents on the relay.'
+    digest: 3247bbbde5a4105e5979eaf7db3eee9e66428fe28ce7a0bf335ac58cf942eb9c
+    home: https://github.com/AgentWorkforce/infra
+    keywords:
+    - slack
+    - agents
+    - agent-relay
+    - relaycast
+    kubeVersion: '>=1.27.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: slack-relay
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/components/slack-relay
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/slack-relay
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/slack-relay-0.3.11/slack-relay-0.3.11.tgz
+    version: 0.3.11
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-17T00:29:06.738008512Z"
     description: 'Optional Slack app for Agent Relay: a router that maps Slack threads
       to per-thread agents through a ledger, a Claude orchestrator for new threads,
@@ -8172,4 +8201,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-17T02:00:32.483621018Z"
+generated: "2026-11-17T02:22:28.398761957Z"
