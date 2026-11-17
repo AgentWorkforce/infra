@@ -63,7 +63,11 @@ if [ -n "${AWS_ADMIN_ROLE_ARN:-}" ]; then
   sudo -H -u agent env ROLE="$AWS_ADMIN_ROLE_ARN" REGION="$AWS_REGION" bash -c '
     umask 077; mkdir -p ~/.aws
     printf "[default]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = layered-infra-ops\nregion = %s\n\n[profile instance]\nregion = %s\n" \
-      "$ROLE" "$REGION" "$REGION" > ~/.aws/config.new && mv -f ~/.aws/config.new ~/.aws/config'
+      "$ROLE" "$REGION" "$REGION" > ~/.aws/config.new
+    # Profiles the agent added itself (cross-account operator roles) live in
+    # config.local, which this script never writes, and are merged on every run.
+    if [ -f ~/.aws/config.local ]; then printf "\n" >> ~/.aws/config.new; cat ~/.aws/config.local >> ~/.aws/config.new; fi
+    mv -f ~/.aws/config.new ~/.aws/config'
 fi
 
 # The AWS credential broker (agent/broker, DESIGN.md), when credentialBroker
