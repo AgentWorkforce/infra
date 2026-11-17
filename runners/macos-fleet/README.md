@@ -138,9 +138,9 @@ Do these on the Mac as an admin user; nothing here needs Khaliq's GitHub account
    installed; parity only pins `DEVELOPER_DIR`. Override per Mac in
    `/etc/fleet-runner/parity.env` if this Mac deliberately tracks another image.
 2. Pull this Mac's key from Secrets Manager into a file only you can read:
-   `aws secretsmanager get-secret-value --secret-id layered-infra-ops/fleet-runner/mac-keys/<mac> --query SecretString --output text > /tmp/fleet.key && chmod 600 /tmp/fleet.key`
+   `aws secretsmanager get-secret-value --secret-id layered-infra-ops/fleet-runner/mac-keys/<mac>-<slot> --query SecretString --output text > /tmp/fleet.key && chmod 600 /tmp/fleet.key`
 3. From a checkout of this repo:
-   `cd runners/macos-fleet && sudo ./setup-mac.sh --slot a --broker-url https://<worker-url> --key-file /tmp/fleet.key --data-volume /Volumes/<drive> [--quota-gb 300]`
+   `cd runners/macos-fleet && sudo ./setup-mac.sh --slot a --broker-url https://fleet-runner-jit.agent-workforce.workers.dev --key-file /tmp/fleet.key --data-volume /Volumes/<drive> [--quota-gb 300]`
    `<drive>` is this Mac's external drive (`diskutil list external physical`).
    Slot `a` = relay-app; add `--slot b` with the `relay` key for the second
    repo. `--quota-gb` gives the slot its own APFS volume with a hard quota
