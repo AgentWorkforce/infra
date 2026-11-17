@@ -28,7 +28,7 @@ One message, end to end:
 
 | Piece | Kind | What it does |
 | --- | --- | --- |
-| Router | Deployment, 1 replica, PVC | Holds the Slack connection. Records every message in the **ledger**: threads, the people in them, agents, and an append-only event log. Routes by ledger lookup and asks the orchestrator only about threads nobody owns yet. Each message it routes gets an :eyes: reaction as soon as the router takes it, before the agent starts (`slack.ackReaction`). It is the only component with Slack credentials. |
+| Router | Deployment, 1 replica, PVC | Holds the Slack connection. Records every message in the **ledger**: threads, the people in them, agents, and an append-only event log. Routes by ledger lookup and asks the orchestrator only about threads nobody owns yet. For each message it routes it sends an :eyes: reaction request as soon as it takes the message, before routing, and does not wait for it, so the reaction usually shows before the agent starts but can land later or fail without affecting the answer (`slack.ackReaction`). It is the only component with Slack credentials. |
 | Orchestrator | in the router | Each Slack thread gets its own agent; that is enforced in code. A Claude model (default `claude-fable-5-2`) that sees every agent, its status, what it's working on and whose threads it holds, decides only whether a new thread goes to a pinned agent (`router.knownAgents`) instead. With no pinned agents it isn't called. `router.allowAgentReuse: true` lets it also hand a thread to an agent that already owns others. |
 | Agent host | StatefulSet, 1 replica, PVC | Runs the per-thread agents with headless Claude Code (default `claude-opus-5-5`). Each agent is its own relay identity with its own workdir and Claude session on the volume. It runs no process between messages: the host keeps only each agent's relay connection, like a node, and a routed Slack message or a direct message on the relay (from a person or another agent) wakes the agent and resumes its session. A DM is answered by DM; an agent's automatic answer to another agent's DM gets no reply back, so agents can't loop. Behind relaygate a DM from outside the pit gets no answer at all (see "Messages from outside the pit"). It has no Slack credentials. |
 
@@ -81,7 +81,8 @@ channels shared outside the workspace). Events: `app_mention`, `message.channels
 or are in a thread it already holds. It ignores DMs unless `slack.allowDms` is
 set. Ignored messages get no reaction.
 
-**Existing installs:** an app created from an older manifest lacks
+**Existing installs:** the reaction needs a slack-relay image from chart 0.3.11
+or later. An app created from an older manifest also lacks
 `reactions:write`. Add it under **OAuth & Permissions**, **Bot Token Scopes**,
 then reinstall the app to the workspace (**Install App**, **Reinstall to
 Workspace**); the bot token stays the same. Until then the router logs
