@@ -39,11 +39,13 @@ just a values change.
 `cross_account_ledger_reader_role_arns` and `cross_account_ledger_writer_role_arns`
 (both empty by default, which leaves the bucket policy unchanged) add bucket
 policy statements for roles in other accounts. Readers and writers may list
-`<key_root>/.admission-inbox/*` and the ledger-home marker, and get the ledger
-objects (`.admission-inbox/*/ledger/*`) and the marker. Writers may also put
-ledger objects. Nobody gets delete or version actions. Because the list grant
-is prefix-scoped, a cross-account GET or HEAD of a missing key answers 403, not
-404: clients must not treat 403 as absence (list the prefix instead).
+the bucket, and get the ledger objects (`.admission-inbox/*/ledger/*`) and the
+ledger-home marker. Writers may also put ledger objects. Nobody gets delete or
+version actions. The list grant is unconditional on purpose: S3 answers 404 for
+a missing key only when the caller may list the bucket for that request, and
+`s3:prefix` is absent on GET/HEAD, so a prefix-scoped list would turn every
+missing owner stub or revision shard into a 403. The bucket holds only ledger
+keys and the home marker, so a bucket-wide list exposes nothing more.
 
 A bucket policy is only half of a cross-account grant: each role's own identity
 policy, in its account, must allow the same actions (`s3:ListBucket` on the
