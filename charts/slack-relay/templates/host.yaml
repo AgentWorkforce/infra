@@ -82,6 +82,8 @@ spec:
               value: {{ .Values.host.permissionMode | quote }}
             - name: RELAYCAST_MCP
               value: {{ .Values.host.relaycastMcp | quote }}
+            - name: RELAY_AGENTS_MCP
+              value: {{ ne .Values.host.relayAgentsMcp false | quote }}
             - name: TURN_TIMEOUT_SECONDS
               value: {{ .Values.host.turnTimeoutSeconds | quote }}
             - name: IDLE_RELEASE_MINUTES

@@ -92,6 +92,11 @@ export interface HostOptions {
    */
   dmCheck?: (token: string, to: string, content: string) => Promise<void>;
   /**
+   * Behind relaygate, agents see the relay's agents with mcp__relay_agents (agents-mcp.ts): the system prompt says
+   * what they can see and whom they can message.
+   */
+  agentsTools?: boolean;
+  /**
    * Called after each turn (and for every known agent on rejoin) so the agent's Claude session can be uploaded
    * as the agent. Fire and forget: it never delays or fails a turn.
    */
@@ -120,6 +125,7 @@ export class AgentHost {
       persona: DEFAULT_PERSONA,
       idleMs: 15 * 60_000,
       gated: false,
+      agentsTools: false,
       log: () => {},
       ...o,
     } as HostConfig;
@@ -259,7 +265,7 @@ export class AgentHost {
             : canReply || !sendable
               ? `Direct message on the relay from ${dm.from}:\n\n${dm.text}\n\n(Your answer is sent back to ${dm.from} as a direct message.)`
               : `Direct message on the relay from ${dm.from}:\n\n${dm.text}\n\n(Nothing is sent back to ${dm.from}: they're outside your group, and you can't answer or message them. Don't promise them a reply. You can still work inside your group.)`,
-          system: [`You are ${name}, an agent on Agent Relay.`, this.#o.persona, this.#o.dmCheck ? OUTSIDE_NOTE : ""].filter(Boolean).join("\n\n"),
+          system: [`You are ${name}, an agent on Agent Relay.`, this.#o.persona, this.#o.agentsTools ? GATED_AGENTS_NOTE : "", this.#o.dmCheck ? OUTSIDE_NOTE : ""].filter(Boolean).join("\n\n"),
           mcpConfigPath: await this.#mcpPath(name, workdir, live),
         });
         if (!result.error) writeFileSync(marker, result.sessionId);
@@ -363,7 +369,7 @@ export class AgentHost {
         sessionId: inbound.session.id,
         resume: started,
         prompt: promptFor(inbound, text),
-        system: systemFor(name, this.#o.persona, inbound, Boolean(this.#o.dmCheck)),
+        system: systemFor(name, this.#o.persona, inbound, Boolean(this.#o.dmCheck), this.#o.agentsTools),
         mcpConfigPath,
       });
       if (!result.error) writeFileSync(join(workdir, ".session-started"), result.sessionId);
@@ -390,9 +396,13 @@ export class AgentHost {
 export const OUTSIDE_NOTE =
   "Agents outside your group can send you direct messages, but you can't answer them: no reply, direct message or post reaches them from you. Never promise such a sender a reply or tell them you'll follow up.";
 
+/** Behind relaygate: what a hosted agent can see and whom it can message (agents-mcp.ts, relaygate's policy). */
+export const GATED_AGENTS_NOTE =
+  "You can see every agent on the relay that relaygate's policy shows you, including agents outside your group such as people's local, desktop or editor agents: list them with mcp__relay_agents__list_agents and read one's status, persona and card with mcp__relay_agents__get_agent. You can message agents in your own group with the relaycast tools. You can't message agents outside your group: relaygate refuses it (relaygate_denied), and that is final. If someone asks you to contact one, say it is outside your group and that a person in the thread can reach it instead. Never say a workspace key is missing or needed: behind relaygate there is none by design.";
+
 const DEFAULT_PERSONA = "You are a helpful generalist working for the team. Be accurate and concise.";
 
-export function systemFor(name: string, persona: string, inbound: InboundData, outsideNote = false): string {
+export function systemFor(name: string, persona: string, inbound: InboundData, outsideNote = false, agentsTools = false): string {
   const others = inbound.roster.length
     ? inbound.roster.map((r) => `- ${r.name} (${r.status}): ${r.summary ?? "no summary yet"}; ${r.threads} thread(s)`).join("\n")
     : "- none yet";
@@ -401,7 +411,9 @@ export function systemFor(name: string, persona: string, inbound: InboundData, o
     persona,
     `Your reply is posted to the Slack thread as-is: write Slack-ready text (short paragraphs, *bold*, \`code\`), no preamble.`,
     `Other agents on the relay right now (from the routing ledger):\n${others}`,
-    `You can see and message them with the relaycast tools when another agent's work is relevant; never paste another thread's private content into this one.`,
+    agentsTools
+      ? `${GATED_AGENTS_NOTE} Reach for another agent when its work is relevant; never paste another thread's private content into this one.`
+      : `You can see and message them with the relaycast tools when another agent's work is relevant; never paste another thread's private content into this one.`,
     outsideNote ? OUTSIDE_NOTE : "",
     inbound.brief ? `Orchestrator brief for this thread: ${inbound.brief}` : "",
   ]

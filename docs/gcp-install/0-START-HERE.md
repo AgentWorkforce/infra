@@ -658,7 +658,7 @@ Good to know:
   `"reason":"model_failed"`.
 - **Limits.** The brief worker writes at most 2000 briefs a day across the
   install and 10 per session (`nativeBrief.globalDailyCap`, `sessionDailyCap`;
-  agent-relay 0.7.48 and later; 20 and 3 before), for sessions in the listed
+  agent-relay 0.7.49 and later; 20 and 3 before), for sessions in the listed
   workspaces only. They cap model spend: past a cap new briefs are
   `rate_limited` and the dashboard shows "No summary yet" until the next UTC
   day, so raise `globalDailyCap` above your sessions per day if that happens.
