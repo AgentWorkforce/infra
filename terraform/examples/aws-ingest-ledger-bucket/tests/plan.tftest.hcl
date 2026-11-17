@@ -110,23 +110,24 @@ run "cross_account_readers_and_writers" {
     condition     = [for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement : s.Sid] == ["DenyInsecureTransport", "CrossAccountLedgerList", "CrossAccountLedgerRead", "CrossAccountLedgerWrite"]
     error_message = "DenyInsecureTransport stays first, then List, Read and Write."
   }
+  # Filter by Sid first: Terraform 1.11 does not short-circuit &&.
   assert {
-    condition = anytrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
-      s.Sid == "CrossAccountLedgerList" && s.Action == "s3:ListBucket" && s.Resource == "arn:aws:s3:::relay-ingest-ledger"
+    condition = alltrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
+      s.Action == "s3:ListBucket" && s.Resource == "arn:aws:s3:::relay-ingest-ledger"
       && s.Principal.AWS == ["arn:aws:iam::111111111111:role/example-backlog-read", "arn:aws:iam::222222222222:role/example-backlog-write"]
-    && s.Condition.StringLike["s3:prefix"] == ["96bulls/.admission-inbox/*", "96bulls/.ledger/fence-authority/.ledger-home.json"]])
+    && s.Condition.StringLike["s3:prefix"] == ["96bulls/.admission-inbox/*", "96bulls/.ledger/fence-authority/.ledger-home.json"] if s.Sid == "CrossAccountLedgerList"])
     error_message = "Readers and writers list only the ledger prefixes."
   }
   assert {
-    condition = anytrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
-      s.Sid == "CrossAccountLedgerRead" && s.Action == "s3:GetObject" && length(s.Principal.AWS) == 2
-    && s.Resource == ["arn:aws:s3:::relay-ingest-ledger/96bulls/.admission-inbox/*/ledger/*", "arn:aws:s3:::relay-ingest-ledger/96bulls/.ledger/fence-authority/.ledger-home.json"]])
+    condition = alltrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
+      s.Action == "s3:GetObject" && length(s.Principal.AWS) == 2
+    && s.Resource == ["arn:aws:s3:::relay-ingest-ledger/96bulls/.admission-inbox/*/ledger/*", "arn:aws:s3:::relay-ingest-ledger/96bulls/.ledger/fence-authority/.ledger-home.json"] if s.Sid == "CrossAccountLedgerRead"])
     error_message = "Readers and writers get the ledger objects and the home marker."
   }
   assert {
-    condition = anytrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
-      s.Sid == "CrossAccountLedgerWrite" && s.Action == "s3:PutObject" && s.Principal.AWS == ["arn:aws:iam::222222222222:role/example-backlog-write"]
-    && s.Resource == "arn:aws:s3:::relay-ingest-ledger/96bulls/.admission-inbox/*/ledger/*" && !can(s.Condition)])
+    condition = alltrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
+      s.Action == "s3:PutObject" && s.Principal.AWS == ["arn:aws:iam::222222222222:role/example-backlog-write"]
+    && s.Resource == "arn:aws:s3:::relay-ingest-ledger/96bulls/.admission-inbox/*/ledger/*" && !can(s.Condition) if s.Sid == "CrossAccountLedgerWrite"])
     error_message = "Only writers put ledger objects, with no SSE condition."
   }
   assert {

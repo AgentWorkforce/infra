@@ -41,7 +41,9 @@ just a values change.
 policy statements for roles in other accounts. Readers and writers may list
 `<key_root>/.admission-inbox/*` and the ledger-home marker, and get the ledger
 objects (`.admission-inbox/*/ledger/*`) and the marker. Writers may also put
-ledger objects. Nobody gets delete or version actions.
+ledger objects. Nobody gets delete or version actions. Because the list grant
+is prefix-scoped, a cross-account GET or HEAD of a missing key answers 403, not
+404: clients must not treat 403 as absence (list the prefix instead).
 
 A bucket policy is only half of a cross-account grant: each role's own identity
 policy, in its account, must allow the same actions (`s3:ListBucket` on the
