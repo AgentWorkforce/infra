@@ -219,6 +219,57 @@ for chart in "${charts[@]}"; do
   done
   if [ "$mode" = static ]; then
     case $chart in
+      slack-relay)
+        # repos: the GitHub token reaches only the repo-sync sidecar; the host
+        # mounts /repos read-only and its agents get only Read/Glob/Grep on it.
+        v=charts/slack-relay/ci/repos-values.yaml
+        repos_out=$(render "$chart" "$v") || { err "$chart: repos render failed"; continue; }
+        repos_out=$(yq 'select(.kind == "StatefulSet")' <<<"$repos_out")
+        sts='.'
+        [ "$(yq "[.spec.template.spec.containers[] | select(.env | any_c(.name == \"GITHUB_TOKEN\")) | .name] | join(\",\")" <<<"$repos_out")" = repo-sync ] \
+          || err "$chart: GITHUB_TOKEN must be in the repo-sync container only"
+        [ "$(yq "$sts | .spec.template.spec.containers[] | select(.name == \"host\") | .volumeMounts[] | select(.name == \"repos\") | .readOnly" <<<"$repos_out")" = true ] \
+          || err "$chart: the host must mount /repos read-only"
+        [ "$(yq "$sts | .spec.template.spec.containers[] | select(.name == \"host\") | .env[] | select(.name == \"AGENT_ALLOWED_TOOLS\") | .value" <<<"$repos_out")" = 'Read(./**) Glob(./**) Grep(./**) mcp__relaycast Read(//repos/**) Glob(//repos/**) Grep(//repos/**)' ] \
+          || err "$chart: repos must add exactly Read/Glob/Grep on //repos/** to the agents' tools"
+        [ "$(yq "$sts | .spec.template.spec.containers[] | select(.name == \"repo-sync\") | .env[] | select(.name == \"REPOS_LIST\") | .value" <<<"$repos_out")" = $'example-org/api\nexample-org/web release/2026' ] \
+          || err "$chart: REPOS_LIST must list each repo with its ref"
+        ! grep -q 'repo-sync\|/repos' <<<"$(render "$chart" charts/slack-relay/ci/default-values.yaml)" \
+          || err "$chart: repos off must render no sidecar or mount"
+        expect_render_failure "$chart" "$v" "repos without a token" "repos.enabled needs repos.app.privateKey.name" --set repos.token.name=
+        # An empty list syncs every repo the token can read, via the API.
+        all_out=$(render "$chart" "$v" --set-json 'repos.list=[]' | yq 'select(.kind == "StatefulSet") | .spec.template.spec.containers[] | select(.name == "repo-sync") | .env[] | select(.name == "REPOS_LIST" or .name == "REPOS_API_URL") | .name + "=" + .value')
+        [ "$all_out" = $'REPOS_API_URL=https://api.github.com\nREPOS_LIST=' ] || err "$chart: an empty repos.list must render an empty REPOS_LIST and the github.com API: $all_out"
+        expect_render_failure "$chart" "$v" "repo path traversal" "must be owner/name" --set-json 'repos.list=["../etc"]'
+        expect_render_failure "$chart" "$v" "repo listed twice" "more than once" --set-json 'repos.list=["a/b",{"repo":"A/b","ref":"dev"}]'
+        expect_render_failure "$chart" "$v" "repo option-like ref" "must be a branch, tag or commit" --set-json 'repos.list=[{"repo":"a/b","ref":"--upload-pack=x"}]'
+        expect_render_failure "$chart" "$v" "repos host with credentials" "repos.host must be a host name or base URL" --set repos.host=https://user:pw@ghe.example.com
+        expect_render_failure "$chart" "$v" "repos zero refresh" "repos.refreshMinutes must be a whole number" --set repos.refreshMinutes=0
+        ghe_out=$(render "$chart" "$v" --set repos.host=https://ghe.example.com/)
+        grep -q 'value: "https://ghe.example.com"' <<<"$ghe_out" || err "$chart: a GHE base URL must render as REPOS_BASE_URL"
+        grep -q 'value: "https://ghe.example.com/api/v3"' <<<"$ghe_out" || err "$chart: a GHE host must list repos through <base>/api/v3"
+        # repos.app: the GitHub App's private key is a Secret volume only the
+        # repo-sync sidecar mounts; no container gets GITHUB_TOKEN from a Secret.
+        av=charts/slack-relay/ci/repos-app-values.yaml
+        app_out=$(render "$chart" "$av" | yq 'select(.kind == "StatefulSet") | .spec.template.spec') || { err "$chart: repos app render failed"; continue; }
+        [ "$(yq '[.containers[] | select(.volumeMounts | any_c(.name == "repo-sync-app-key")) | .name] | join(",")' <<<"$app_out")" = repo-sync ] \
+          || err "$chart: only repo-sync may mount the GitHub App private key"
+        [ "$(yq '.volumes[] | select(.name == "repo-sync-app-key") | .secret.secretName + "/" + .secret.items[0].key' <<<"$app_out")" = slack-relay-github-app/private-key ] \
+          || err "$chart: the app key volume must come from repos.app.privateKey"
+        [ "$(yq '[.containers[] | .env[]? | select(.name == "GITHUB_TOKEN")] | length' <<<"$app_out")" = 0 ] \
+          || err "$chart: app mode must not render GITHUB_TOKEN"
+        [ "$(yq '.containers[] | select(.name == "repo-sync") | .env[] | select(.name == "REPOS_AUTH" or .name == "GITHUB_APP_ID" or .name == "GITHUB_APP_INSTALLATION_ID") | .name + "=" + (.value // (.valueFrom.secretKeyRef.name + ":" + .valueFrom.secretKeyRef.key))' <<<"$app_out")" = $'REPOS_AUTH=app\nGITHUB_APP_ID=slack-relay-github-app:app-id\nGITHUB_APP_INSTALLATION_ID=slack-relay-github-app:installation-id' ] \
+          || err "$chart: app mode must read the app and installation IDs from the helper's Secret by default"
+        ids_out=$(render "$chart" "$av" --set repos.app.appId=1234567 --set repos.app.installationId=98765432 | yq 'select(.kind == "StatefulSet") | .spec.template.spec.containers[] | select(.name == "repo-sync") | .env[] | select(.name == "GITHUB_APP_ID" or .name == "GITHUB_APP_INSTALLATION_ID") | .value')
+        [ "$ids_out" = $'1234567\n98765432' ] || err "$chart: numeric app and installation IDs must render as integers: $ids_out"
+        expect_render_failure "$chart" "$av" "repos with both app and token" "not both" --set repos.token.name=slack-relay-github
+        expect_render_failure "$chart" "$av" "repos app bad installation id" "installationId must be a number" --set repos.app.installationId=abc
+        expect_render_failure "$chart" "$av" "repos app bad app id" "appId must be the GitHub App" --set repos.app.appId=not-an-id
+        expect_render_failure "$chart" "$av" "repos app fractional installation id" "installationId must be a number" --set-json repos.app.installationId=42.9
+        expect_render_failure "$chart" "$av" "repos app fractional app id" "appId must be the GitHub App" --set-json repos.app.appId=1234567.5
+        render "$chart" "$v" | yq 'select(.kind == "ConfigMap") | .data | keys | sort | join(",")' | grep -qx 'github-app.mts,repo-list.mts,repo-sync.sh' \
+          || err "$chart: the repo-sync ConfigMap must carry repo-sync.sh, repo-list.mts and github-app.mts"
+        ;;
       sessions-pipeline-worker)
         v=charts/sessions-pipeline-worker/ci/pod-identity-values.yaml
         check_postgres_ca "$chart" "$v"
@@ -1043,6 +1094,12 @@ for chart in "${charts[@]}"; do
         [ "$(routes cast.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only cast routes: $(routes cast.gcp-proof.agentrelay.com)"
         want="/v1/sessions Prefix $gate;"; for p in /v1/events /v1/ingest /v1/delivery/batches /v1/delivery/limits /v1/auth/token/refresh /v1/onboarding/heartbeat; do want+="$p Exact $gate;"; done
         [ "$(routes history.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only history routes: $(routes history.gcp-proof.agentrelay.com)"
+        # Desktop on a gate-only install uses the sign-in origin as control_url
+        # and opens GET /relay-node/v1/ws there; relay-control serves the
+        # relay-node routes only at the root path, so the root host must send
+        # /relay-node to relay-control, not the dashboard.
+        [ "$(routes gcp-proof.agentrelay.com)" = "/cloud/api Prefix relay-control;/login Prefix relay-control;/relay-node Prefix relay-control;/ Prefix relay-webapp;" ] \
+          || err "$chart: gate-only root routes must send /relay-node to relay-control: $(routes gcp-proof.agentrelay.com)"
         [ "$(yq "select(.kind == \"Service\" and .metadata.name == \"$gate\") | .spec.selector[\"app.kubernetes.io/name\"] + \" \" + .metadata.annotations[\"cloud.google.com/backend-config\"]" <<<"$out" | sed '/^---$/d;/^$/d')" = "relaygate {\"default\": \"$gate\"}" ] || err "$chart: gate edge Service must select relaygate with its BackendConfig"
         [ "$(yq "select(.kind == \"BackendConfig\" and .metadata.name == \"$gate\") | .spec.healthCheck.requestPath + \" \" + (.spec.timeoutSec | tostring)" <<<"$out" | sed '/^---$/d;/^$/d')" = "/healthz 3600" ] || err "$chart: gate edge BackendConfig must check /healthz with the cast timeout"
         peers() { yq "select(.kind == \"NetworkPolicy\" and .metadata.name == \"$1\") | [.spec.ingress[].from[] | (.podSelector.matchLabels[\"app.kubernetes.io/name\"] // .ipBlock.cidr // \"any\")] | join(\" \")" <<<"$out" | sed '/^---$/d;/^$/d'; }

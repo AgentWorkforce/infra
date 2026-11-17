@@ -280,8 +280,17 @@ nativeBrief:
   model: gpt-5.6-luna
   sweepSeconds: 60
   batch: 1
-  globalDailyCap: 20
-  sessionDailyCap: 3
+  # Daily model-call caps per UTC day. They bound model spend: each brief is
+  # one model call billed to openaiSecret's key. globalDailyCap counts every
+  # brief across the whole install; sessionDailyCap counts re-briefs of one
+  # session as it grows. Past a cap a brief is recorded rate_limited
+  # (session_brief_global_capped / the session cap) and the dashboard shows
+  # "No summary yet" until the next UTC day. Size globalDailyCap above the
+  # install's sessions per day times the re-briefs each typically gets, with
+  # headroom, then multiply by the per-call cost of model to bound spend.
+  # Positive integers up to 10000000 (global) and 10000 (per session).
+  globalDailyCap: 2000
+  sessionDailyCap: 10
   openaiSecret:
     name: ""
     key: OPENAI_API_KEY

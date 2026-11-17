@@ -205,7 +205,7 @@ and its actor-mode consumers (relaycast, relayfile).
 
 {{/*
 Single-host mode (global.singleHost.host): the dashboard and the control API
-share one host (/ and /cloud/api, /login, /api). Relaycast, History,
+share one host (/ and /cloud/api, /login, /relay-node, /api). Relaycast, History,
 Relayfile and the durable-actors control plane cannot be served under a path
 prefix on that host without app changes, so they stay on their own hosts and
 the chart refuses to put them on the single host.

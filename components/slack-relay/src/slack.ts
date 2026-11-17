@@ -142,6 +142,18 @@ export class ChannelDirectory {
 
 export interface SlackWebLike {
   postMessage(args: { channel: string; text: string; threadTs?: string }): Promise<{ ts?: string }>;
+  /** reactions.add; rejects with a SlackApiError carrying Slack's error code. */
+  addReaction?(args: { channel: string; timestamp: string; name: string }): Promise<void>;
+}
+
+/** A Web API call Slack answered with ok:false (or a non-2xx status). `code` is Slack's error code only. */
+export class SlackApiError extends Error {
+  readonly code: string;
+  constructor(method: string, status: number, code: string) {
+    super(`slack ${method} failed: ${status} ${code}`);
+    this.name = "SlackApiError";
+    this.code = code;
+  }
 }
 
 /** Slack form arguments: strings as-is, everything else JSON (Slack's convention for blocks etc.). */
@@ -180,7 +192,7 @@ export class SlackWeb implements SlackWebLike {
       }
       const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok || json.ok !== true) {
-        throw new Error(`slack ${method} failed: ${res.status} ${String(json.error ?? "unknown_error")}`);
+        throw new SlackApiError(method, res.status, String(json.error ?? "unknown_error"));
       }
       return json;
     }
@@ -199,6 +211,10 @@ export class SlackWeb implements SlackWebLike {
       unfurl_links: false,
     });
     return { ts: typeof r.ts === "string" ? r.ts : undefined };
+  }
+
+  async addReaction(args: { channel: string; timestamp: string; name: string }): Promise<void> {
+    await this.call("reactions.add", { channel: args.channel, timestamp: args.timestamp, name: args.name });
   }
 
   async openSocketUrl(appToken: string): Promise<string> {

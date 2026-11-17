@@ -37,6 +37,12 @@ policy:
     - { prefix: "relaycast:channel/pit-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
     - { prefix: "relaycast:inbox/pit-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
     - { prefix: "relaycast:inbox/slack-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
+    # The agent directory: the pit sees every agent on the relay (names,
+    # status, persona, card), local agents' view is unchanged. Visibility
+    # only: messaging still needs w on the inbox, which the pit doesn't have
+    # outside its group. relaygate with "The agent directory" (relaygate#41);
+    # older images ignore it.
+    - { prefix: "relaycast:agent/", gid: 22, mode: "040" }
     # The Slack app's routing channel (slack-relay relaycast.channel, default
     # "slack"): pit only. Local agents reach thread agents by DM, not here.
     - { prefix: "relaycast:channel/slack", gid: 22, mode: "660" }
