@@ -825,8 +825,11 @@ index isn't ready yet".
 - **Before people start:** in the dashboard, under Settings › Policies, set
   what the desktop app uploads.
 - **Desktop app:** install it, sign in to `https://<domain>`, run one agent
-  session, and check it appears under **Sessions**. A desktop build for a GKE
-  install doesn't update itself (NOT-QUALIFIED.md item 11).
+  session, and check it appears under **Sessions**. The desktop app updates
+  itself from the signed feed in the `desktop_feed_bucket_name` bucket (step 4)
+  once the feed's signing key is in place (Agent Relay sets it up with you; see
+  step 4). Without the bucket, a newer desktop version means installing the new
+  build over the old one (NOT-QUALIFIED.md item 11).
 - **Search:** transcript search is stored in Cloud SQL (`search.backend:
   postgres`); there is no search cluster to run.
 - **Problems:** to ask for help, send:
