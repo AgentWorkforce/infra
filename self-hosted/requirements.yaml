@@ -8609,7 +8609,7 @@ entries:
     status: shipped
     provided_by: operator
     default: false
-    choices: [{value: false}, {value: true, note: Requires ledger=s3, admission.mode async or drain and a services image implementing SELFHOST_ADMISSION_AWAIT_AUTHORITY.}]
+    choices: [{value: false}, {value: true, note: "Requires ledger=s3, admission.mode async or drain and a services image implementing SELFHOST_ADMISSION_AWAIT_AUTHORITY."}]
     verify: Render default byte-identical; render true with ledger=s3 and async or drain admission and confirm SELFHOST_ADMISSION_AWAIT_AUTHORITY=on only on the ingest edge; confirm the refusals for a non-boolean, sync admission and ledger=sql.
     sources: ["charts/sessions-pipeline/templates/ingest-edge.yaml:1", "ci/sessions-pipeline-s3-ledger/test_chart.py:1"]
 

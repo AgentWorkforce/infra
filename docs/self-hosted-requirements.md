@@ -5240,7 +5240,7 @@ or refusing them. Render fails unless ingestEdge.ledger is s3 and
 ingestEdge.admission.mode is async or drain.
 
 - Default: `false`
-- Choices: `false`; `true`: Requires ledger=s3
+- Choices: `false`; `true`: Requires ledger=s3, admission.mode async or drain and a services image implementing SELFHOST_ADMISSION_AWAIT_AUTHORITY.
 - Provided by: operator
 - Values: `ingestEdge.admission.awaitAuthority`
 - Env: `SELFHOST_ADMISSION_AWAIT_AUTHORITY`
