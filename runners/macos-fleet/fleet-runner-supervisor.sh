@@ -63,6 +63,7 @@ chmod 700 "$run_dir"
 runner_dir=$RUNNER_HOME/runner
 runner_pid=""
 backoff=30
+provenance_warned=0
 exit_backoff=30
 fast_exits=0
 
@@ -89,6 +90,38 @@ home_ok() {
     && [ "$(stat -f %u "$parent")" = 0 ] && [ "$(stat -f %Su "$RUNNER_HOME")" = "$RUNNER_USER" ]
 }
 
+ensure_home() {
+  # This daemon, never setup-mac.sh, makes the home's parent and the home.
+  # A directory created from an admin's Terminal carries
+  # com.apple.provenance, and macOS then denies a launchd-started runner
+  # readdir on it (and root, from here, unlink inside it) while the admin's
+  # own shell sees nothing wrong. The parent stays root-owned so the slot
+  # user can never replace its home with a link; the home is 0700, the user's.
+  parent=$(dirname "$RUNNER_HOME")
+  if [ ! -e "$parent" ]; then
+    install -d -o root -g wheel -m 755 "$parent" || return 1
+    log "created $parent"
+  fi
+  if [ ! -e "$RUNNER_HOME" ]; then
+    install -d -o "$RUNNER_USER" -g staff -m 700 "$RUNNER_HOME" || return 1
+    tmutil addexclusion -p "$RUNNER_HOME" >/dev/null 2>&1 || true
+    log "created $RUNNER_HOME"
+  fi
+  # A tagged tree is reported once per start, not refused: whether macOS
+  # enforces the block depends on its version, and a Mac that still works
+  # should keep working until the admin migrates it (README: Operations).
+  if [ "$provenance_warned" = 0 ]; then
+    for p in "$parent" "$RUNNER_HOME"; do
+      if xattr -p com.apple.provenance "$p" >/dev/null 2>&1; then
+        alert "$p carries com.apple.provenance (made from an admin shell, not by this daemon); if runners exit at once, from Terminal: sudo rm -rf $parent, then kickstart this slot (README: Operations)"
+        provenance_warned=1
+        break
+      fi
+    done
+  fi
+  return 0
+}
+
 volume_ok() {
   # The data volume must be a mounted filesystem other than the root one,
   # the home must be sane and there must be room. Anything else: refuse.
@@ -97,6 +130,7 @@ volume_ok() {
       alert "data volume $DATA_VOLUME is not mounted; not taking jobs"; return 1
     fi
   fi
+  ensure_home || return 1
   if ! home_ok; then
     alert "$RUNNER_HOME missing, a link, or not owned by $RUNNER_USER inside a root-owned dir; not taking jobs"; return 1
   fi
@@ -244,19 +278,25 @@ ENV
   wait "$runner_pid"; rc=$?
   runner_pid=""
   lived=$(( $(date +%s) - started ))
-  log "runner $runner_name exited rc=$rc after ${lived}s"
-  if [ "$lived" -lt "$RUNNER_MIN_LIFETIME" ]; then
-    # A runner that dies this fast never waited for a job: the config was
-    # rejected, the runner cannot start, or GitHub turned it away. Each pass
-    # mints a config and registers a runner, so slow down instead of looping,
-    # and copy the runner's last lines next to this log so the cause is in
-    # one place. The runner masks its own secrets in that output.
+  # The runner prints "Running job: <name>" when it takes one; a job that
+  # finishes in under a minute is a normal short run, not a failed start.
+  ran_job=$(tail -c "+$(( log_mark + 1 ))" "$log_dir/runner.log" 2>/dev/null | grep -c 'Running job:' || true)
+  log "runner $runner_name exited rc=$rc after ${lived}s (jobs: $ran_job)"
+  if [ "$lived" -lt "$RUNNER_MIN_LIFETIME" ] && [ "$ran_job" -eq 0 ]; then
+    # A runner that dies this fast without a job never waited for one: the
+    # config was rejected, the runner cannot start or read its home, or
+    # GitHub turned it away. Each pass mints a config and registers a runner,
+    # so slow down instead of looping, and copy the runner's last lines next
+    # to this log so the cause is in one place. The runner masks its own
+    # secrets in that output.
     fast_exits=$(( fast_exits + 1 ))
     tail -c "+$(( log_mark + 1 ))" "$log_dir/runner.log" 2>/dev/null | tail -n 15 | while IFS= read -r l; do log "  runner: $l"; done
     state "fast-exit runner=$runner_name rc=$rc lived=${lived}s backoff=${exit_backoff}s"
     if [ "$fast_exits" -eq "$FAST_EXIT_ALERT_AFTER" ]; then
       alert "runner exited $fast_exits times within ${RUNNER_MIN_LIFETIME}s of starting (last rc=$rc); see $log_dir/runner.log"
     fi
+    # Nothing it left behind runs through the wait: kill and wipe first.
+    cleanup_user
     sleep "$exit_backoff"
     exit_backoff=$(( exit_backoff * 2 )); [ "$exit_backoff" -gt "$MINT_BACKOFF_MAX" ] && exit_backoff=$MINT_BACKOFF_MAX
     continue

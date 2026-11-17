@@ -39,7 +39,8 @@ Files in this directory:
   (runner, `_work`, `_tool`, caches, DerivedData, cargo, tmp) is deleted and
   recreated between jobs, plus its `/var/folders` and `/tmp` leftovers.
 - **Job data only on the external drive.** The slot user's home is
-  `/Volumes/<drive>/gh-runner/<slot>` (0700, root-owned parent). The
+  `/Volumes/<drive>/gh-runner/<slot>` (0700, root-owned parent), both
+  created by the supervisor itself, never by setup from an admin shell. The
   supervisor refuses to take jobs, and alerts, when the drive is not mounted,
   the home is not owned by the slot user, free space is under
   `DATA_MIN_FREE_GB` (40) or the home exceeds `DATA_MAX_GB`; it never falls
@@ -117,11 +118,16 @@ Each Mac keeps job data on its external drive, not the internal disk.
   look owned by whoever is looking; enabling it makes every existing file
   show its real on-disk owner, so never do this to someone's working drive.
   One of the two flags is required; the script refuses otherwise.
-- creates `<volume>/gh-runner/` (root, 0755) and `<volume>/gh-runner/<slot>`
-  (ghrunner-<slot>, 0700) as the user's home; nothing else on the volume is
-  touched or readable by the slot user. Warns if the volume is case-sensitive
-  (hosted runners are not). Time Machine exclusion for the home
-  (`tmutil addexclusion -p`).
+- leaves `<volume>/gh-runner/` (root, 0755) and `<volume>/gh-runner/<slot>`
+  (ghrunner-<slot>, 0700, the user's home) to the supervisor, which creates
+  them on its first pass and excludes the home from Time Machine. A directory
+  created from an admin's Terminal carries `com.apple.provenance`, and macOS
+  then denies the launchd-started runner `readdir` on it (and root `unlink`
+  inside it) while the admin's own shell sees nothing wrong: the runner exits
+  within seconds with rc 0. Setup refuses, with the commands to run, when it
+  finds a tagged tree from an older install; the supervisor alerts on one.
+  Nothing else on the volume is touched or readable by the slot user. Warns
+  if the volume is case-sensitive (hosted runners are not).
 - Volume names with spaces work (`--data-volume "/Volumes/My Drive"`); the
   env file is written shell-quoted.
 
@@ -235,9 +241,20 @@ their `runs-on` never mentions the fleet label.
   supervisor copies the runner's last 15 lines into the launchd log, backs
   off 30 s -> `MINT_BACKOFF_MAX` (10 min) and alerts after
   `FAST_EXIT_ALERT_AFTER` (3) in a row; the next runner that lives longer
-  resets both. Read `/var/log/fleet-runner/<slot>.launchd.log` (root only)
-  for the runner's own error, fix it, then kickstart. Mint failures use the
-  same backoff. Both come from `/etc/fleet-runner/<slot>.env` if set.
+  resets both. A runner that took a job (`Running job:` in its log) is never
+  counted, however short the job. Read `/var/log/fleet-runner/<slot>.launchd.log`
+  (root only) for the runner's own error, fix it, then kickstart. Mint
+  failures use the same backoff. Both come from `/etc/fleet-runner/<slot>.env`
+  if set.
+- Alert `... carries com.apple.provenance` (or fast exits with rc 0 and
+  nothing useful in the runner's lines): `<volume>/gh-runner` was created
+  from an admin shell by an older setup. From Terminal, with no job running:
+  `sudo launchctl bootout system /Library/LaunchDaemons/com.agentworkforce.fleet-runner.<slot>.plist`,
+  `sudo rm -rf /Volumes/<volume>/gh-runner`, rerun `setup-mac.sh` with the new
+  scripts (the slot, user and volume are kept) and the supervisor recreates
+  the tree untagged. Then restore the Mac's key in `MACHINE_KEYS` if it was
+  paused. Check with `xattr -l /Volumes/<volume>/gh-runner`: no
+  `com.apple.provenance` line.
 - State `volume-unavailable`: the external drive is unmounted, the home is
   not owned by the slot user, or space is short; the alert line in the
   launchd log says which. Mount/fix, then kickstart (or wait for the retry).

@@ -74,7 +74,7 @@ if [ "$uninstall" = 1 ]; then
   home=$(installed_value RUNNER_HOME)
   if id "$user" >/dev/null 2>&1; then sysadminctl -deleteUser "$user" >/dev/null 2>&1 || dscl . -delete "/Users/$user"; fi
   if diskutil info "$volume_name" >/dev/null 2>&1; then diskutil apfs deleteVolume "$volume_name"; fi
-  case "$home" in */gh-runner/"$slot") rm -rf "$home" ;; esac
+  case "$home" in */gh-runner/"$slot") rm -rf "$home"; rmdir "$(dirname "$home")" 2>/dev/null || true ;; esac
   rm -rf "$etc/$slot.env" "$etc/$slot.auth" "/var/run/fleet-runner/$slot".*
   echo "removed slot $slot (logs kept in /var/log/fleet-runner/$slot, shared files in $libexec and $share kept)"
   exit 0
@@ -164,26 +164,53 @@ if [ "$allow_internal" = 1 ]; then home=/Users/$user; fi
 if [ -n "${installed_home:-}" ] && [ "$installed_home" != "$home" ]; then
   echo "slot $slot is installed with home $installed_home; run --uninstall before moving it to $home" >&2; exit 64
 fi
-# The parent stays root-owned so the slot user can never replace its home
-# with a link (the supervisor wipes the home as root between jobs).
-install -d -o root -g wheel -m 755 "$(dirname "$home")"
-install -d -m 700 "$home"
-tmutil addexclusion -p "$home" >/dev/null 2>&1 || true
-echo "   home: $home ($(df -Pg "$home" | awk 'NR==2{print $4}') GB free)"
+# Neither the home nor its parent is created here. A directory made from an
+# admin's Terminal carries com.apple.provenance, and macOS then denies the
+# launchd-started runner readdir on it (and root unlink inside it) while
+# this shell sees nothing wrong. The supervisor, started by launchd, creates
+# <volume>/gh-runner (root, 0755) and the home (0700, slot user) on its first
+# pass. An already tagged tree from an older setup has to go first.
+if [ "$allow_internal" != 1 ]; then
+  for p in "$(dirname "$home")" "$home"; do
+    if xattr -p com.apple.provenance "$p" >/dev/null 2>&1; then
+      cat >&2 <<EOT
+$p carries com.apple.provenance (created from an admin shell by an older setup);
+the runner cannot read it. From this Terminal, once no job is running:
+  sudo launchctl bootout system $plist
+  sudo rm -rf $(dirname "$home")
+then rerun this setup; the supervisor recreates it.
+EOT
+      exit 70
+    fi
+  done
+fi
+if [ -e "$home" ]; then echo "   home: $home (exists; the supervisor keeps it)"
+else echo "   home: $home (the supervisor creates it on first start)"; fi
+echo "   free: $(df -Pg "$mount_point" | awk 'NR==2{print $4}') GB on $mount_point"
 
 echo "== runner user $user"
 if ! id "$user" >/dev/null 2>&1; then
   # Random password that nobody keeps: the account is only ever entered via
   # sudo from the supervisor. Hidden from the login window and Users prefs.
   pw=$(head -c 48 /dev/urandom | base64 | tr -d '/+=' | head -c 40)
+  had_home=0; [ -e "$home" ] && had_home=1
+  had_parent=0; [ -e "$(dirname "$home")" ] && had_parent=1
   sysadminctl -addUser "$user" -fullName "fleet runner $slot" -password "$pw" -home "$home" -shell /bin/bash >/dev/null 2>&1
   unset pw
   dscl . -create "/Users/$user" IsHidden 1
+  # Whatever sysadminctl made for the home from this shell is tagged (see
+  # above): remove it and let the supervisor create the tree.
+  if [ "$had_home" = 0 ] && [ -e "$home" ]; then rm -rf "$home"; fi
+  if [ "$had_parent" = 0 ] && [ "$allow_internal" != 1 ] && [ -e "$(dirname "$home")" ]; then rm -rf "$(dirname "$home")"; fi
 fi
 dscl . -create "/Users/$user" NFSHomeDirectory "$home"
 dseditgroup -o edit -a "$user" -t user _developer
-chown "$user:staff" "$home"; chmod 700 "$home"
-[ "$(stat -f %Su "$home")" = "$user" ] || { echo "$home is not owned by $user; ownership on $mount_point is still ignored" >&2; exit 70; }
+# Ownership probe: a file chowned to the slot user must show that owner, or
+# the volume still ignores ownership. Nothing that stays is created here.
+probe=$(mktemp "$mount_point/.fleet-runner-probe.XXXXXX")
+chown "$user:staff" "$probe"
+probe_owner=$(stat -f %Su "$probe"); rm -f "$probe"
+[ "$probe_owner" = "$user" ] || { echo "ownership on $mount_point is still ignored (a file chowned to $user shows $probe_owner)" >&2; exit 70; }
 
 echo "== files"
 install -d -m 755 "$libexec" "$share"
