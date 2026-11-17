@@ -38,6 +38,8 @@
 {{- end -}}
 {{- if not (kindIs "bool" $admission.awaitAuthority) }}{{ fail "ingestEdge.admission.awaitAuthority must be a boolean" }}{{ end -}}
 {{- if and $admission.awaitAuthority (or (ne $ledger "s3") (eq $admission.mode "sync")) }}{{ fail "ingestEdge.admission.awaitAuthority requires ingestEdge.ledger=s3 and admission.mode async or drain" }}{{ end -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $c.replicas))) (lt (int $c.replicas) 1) (gt (int $c.replicas) 8) }}{{ fail "ingestEdge.replicas must be an integer from 1 to 8" }}{{ end -}}
+{{- if and (gt (int $c.replicas) 1) (ne $ledger "s3") }}{{ fail "ingestEdge.replicas above 1 requires ingestEdge.ledger=s3" }}{{ end -}}
 {{- if not (kindIs "bool" $c.createServiceAccount) }}{{ fail "ingestEdge.createServiceAccount must be a boolean" }}{{ end -}}
 {{- if and $c.createServiceAccount (or (not $c.serviceAccountName) (gt (len $c.serviceAccountName) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $c.serviceAccountName))) }}{{ fail "ingestEdge.createServiceAccount requires a DNS-label serviceAccountName" }}{{ end -}}
 {{- $upload := $c.uploadDirect -}}
@@ -152,7 +154,10 @@ metadata:
     app.kubernetes.io/component: ingest-edge
     helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
 spec:
-  replicas: 1
+  {{- /* ingestEdge.replicas (default 1). Above 1 requires ledger=s3: the S3-ledger
+  multi-writer proof passed locally (two processes, exactly-once); it does not
+  cover the SQL ledger. Tenant caps are per replica, so halve per-replica caps. */}}
+  replicas: {{ int $c.replicas }}
   # This does not order schema changes: an operator drain/migrate/verify barrier
   # is still required before changing the image/generation.
   strategy: { type: Recreate }
