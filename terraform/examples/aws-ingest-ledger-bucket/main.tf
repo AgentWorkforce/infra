@@ -16,6 +16,32 @@ locals {
   kms        = var.sse_kms_key_arn != null
   sweeper    = var.rearm_sweeper_role_name != null
   kms_via    = local.kms ? "s3.${split(":", var.sse_kms_key_arn)[3]}.amazonaws.com" : null
+  xreaders   = var.cross_account_ledger_reader_role_arns
+  xwriters   = var.cross_account_ledger_writer_role_arns
+  xall       = concat(local.xreaders, local.xwriters)
+  # Cross-account backlog access: list the ledger prefixes, read the ledger
+  # objects and the home marker; writers also create ledger objects. Nothing
+  # deletes and nothing touches versions. Empty by default.
+  cross_account = concat(length(local.xall) > 0 ? [{
+    Sid       = "CrossAccountLedgerList"
+    Effect    = "Allow"
+    Principal = { AWS = local.xall }
+    Action    = "s3:ListBucket"
+    Resource  = local.bucket_arn
+    Condition = { StringLike = { "s3:prefix" = ["${var.key_root}/.admission-inbox/*", "${var.key_root}/.ledger/fence-authority/.ledger-home.json"] } }
+    }] : [], length(local.xall) > 0 ? [{
+    Sid       = "CrossAccountLedgerRead"
+    Effect    = "Allow"
+    Principal = { AWS = local.xall }
+    Action    = "s3:GetObject"
+    Resource  = [local.ledger, local.home]
+    }] : [], length(local.xwriters) > 0 ? [{
+    Sid       = "CrossAccountLedgerWrite"
+    Effect    = "Allow"
+    Principal = { AWS = local.xwriters }
+    Action    = "s3:PutObject"
+    Resource  = local.ledger
+  }] : [])
   key_via_s3 = local.kms ? [{
     Sid       = "LedgerKeyViaS3"
     Effect    = "Allow"
@@ -80,15 +106,22 @@ resource "aws_s3_bucket_policy" "ledger" {
   depends_on = [aws_s3_bucket_public_access_block.ledger]
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
+    Statement = concat([{
       Sid       = "DenyInsecureTransport"
       Effect    = "Deny"
       Principal = "*"
       Action    = "s3:*"
       Resource  = [local.bucket_arn, "${local.bucket_arn}/*"]
       Condition = { Bool = { "aws:SecureTransport" = "false" } }
-    }]
+    }], local.cross_account)
   })
+
+  lifecycle {
+    precondition {
+      condition     = !(local.kms && length(local.xall) > 0)
+      error_message = "Cross-account ledger access with sse_kms_key_arn is not supported by this module: the KMS key policy would also have to grant the cross-account principals. Use SSE-S3 (sse_kms_key_arn = null) or grant the key outside this module and drop the cross-account role ARNs."
+    }
+  }
 }
 
 data "aws_iam_role" "consumer" {

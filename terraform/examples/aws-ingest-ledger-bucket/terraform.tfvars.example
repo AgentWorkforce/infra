@@ -3,3 +3,7 @@ region             = "us-west-2"    # the cluster's region
 bucket_name        = "example-ingest-ledger"
 consumer_role_name = "example-history-consumer"
 # rearm_sweeper_role_name = "example-rearm-sweeper"
+# Cross-account backlog access (bucket policy only; each role's own identity
+# policy in its account must grant the same s3 actions on this bucket). SSE-S3 only.
+# cross_account_ledger_reader_role_arns = ["arn:aws:iam::111111111111:role/example-backlog-read"]
+# cross_account_ledger_writer_role_arns = ["arn:aws:iam::222222222222:role/example-backlog-write"]
