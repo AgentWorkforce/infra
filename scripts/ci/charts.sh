@@ -1026,6 +1026,10 @@ for chart in "${charts[@]}"; do
         [ "$(inbox_defaults --set-json 'policy.groups=[{"gid":22,"name":"pit"}]')" = '[]' ] || err "$chart: inboxDefaults for an undefined gid must not render"
         [ "$(inbox_defaults --set-json 'policy.groups=[{"gid":11,"name":"local"}]')" = '[]' ] || err "$chart: inboxDefaults with an ACL on an undefined gid must not render"
         [ "$(inbox_defaults --set-json 'policy.inboxDefaults=[]')" = '[]' ] || err "$chart: inboxDefaults: [] must opt out"
+        # An operator's own entry naming an undefined gid fails closed rather than falling back to relaygate's 660.
+        expect_render_failure "$chart" charts/relaygate/ci/proxy-values.yaml "inboxDefaults ACL names an undefined gid" "policy.inboxDefaults entry for gid 11 names gid(s) 44" --set-json 'policy.inboxDefaults=[{"gid":11,"mode":"600","acl":[{"gid":44,"perm":"r"}]}]'
+        expect_render_failure "$chart" charts/relaygate/ci/proxy-values.yaml "inboxDefaults for an undefined gid" "policy.inboxDefaults entry for gid 33 names gid(s) 33" --set-json 'policy.inboxDefaults=[{"gid":33,"mode":"600"}]'
+        [ "$(inbox_defaults --set-json 'policy.inboxDefaults=[{"gid":11,"mode":"600","acl":[{"gid":22,"perm":"r"}]}]')" = '[{"acl":[{"gid":22,"perm":"r"}],"gid":11,"mode":"600"}]' ] || err "$chart: an operator inboxDefaults entry must render as given"
         expect_render_failure "$chart" "$v" "Sessions CORS/internal secret without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
         # Control principals alone (desktop enrolment): no Sessions proxy needed.
         out=$(render "$chart" "$v" --set proxy.sessionsUrl= --set-json 'proxy.sessionsCorsOrigins=[]' --set secrets.sessionsInternalSecret.name=)

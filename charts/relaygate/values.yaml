@@ -59,9 +59,10 @@ policy:
   # A policy override that omits inboxDefaults inherits this entry (Helm
   # merges maps), including its 22:r ACL, even if the override's local- rule
   # drops that ACL: set inboxDefaults to match your own groups, or [] to opt
-  # out (desktop inboxes then get 660, same group only). Entries naming a gid
-  # your policy.groups doesn't define are left out of the rendered policy, so
-  # an override without gid 11 or 22 still loads.
+  # out (desktop inboxes then get 660, same group only). This default entry is
+  # left out of the rendered policy when policy.groups lacks gid 11 or 22, so
+  # such an override still loads; an entry of your own that names a gid
+  # policy.groups doesn't define fails the render instead.
   inboxDefaults:
     - { gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
   # Sessions (with the Sessions proxy): local sessions readable by the pit,

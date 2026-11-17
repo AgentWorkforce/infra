@@ -11,17 +11,24 @@ metadata:
     {{- include "relaygate.labels" . | nindent 4 }}
 data:
   policy.json: |
-    {{- /* inboxDefaults comes from the chart default even when an override replaces groups (Helm merges maps):
-         render only the entries whose gid and ACL gids the policy defines, so a policy without gid 11 still loads. */ -}}
+    {{- /* inboxDefaults keeps the chart default even when an override replaces groups (Helm merges maps). Only that
+         default entry is dropped when the policy lacks its groups, so a policy without gid 11 or 22 still loads; an
+         operator's own entry naming an undefined gid fails the render, never loosens to relaygate's 660 fallback. */ -}}
     {{- $policy := deepCopy .Values.policy }}
     {{- if hasKey $policy "inboxDefaults" }}
+    {{- $chartDefault := toJson (dict "gid" 11 "mode" "660" "acl" (list (dict "gid" 22 "perm" "r"))) }}
     {{- $gids := list }}
     {{- range ($policy.groups | default list) }}{{ $gids = append $gids (toString .gid) }}{{ end }}
     {{- $kept := list }}
     {{- range $policy.inboxDefaults }}
-    {{- $ok := has (toString .gid) $gids }}
-    {{- range (.acl | default list) }}{{ if not (has (toString .gid) $gids) }}{{ $ok = false }}{{ end }}{{ end }}
-    {{- if $ok }}{{ $kept = append $kept . }}{{ end }}
+    {{- $missing := list }}
+    {{- if not (has (toString .gid) $gids) }}{{ $missing = append $missing (toString .gid) }}{{ end }}
+    {{- range (.acl | default list) }}{{ if not (has (toString .gid) $gids) }}{{ $missing = append $missing (toString .gid) }}{{ end }}{{ end }}
+    {{- if not $missing }}
+    {{- $kept = append $kept . }}
+    {{- else if ne (toJson .) $chartDefault }}
+    {{- fail (printf "relaygate: policy.inboxDefaults entry for gid %v names gid(s) %s that policy.groups doesn't define; define them or remove the entry" .gid (join ", " (uniq $missing))) }}
+    {{- end }}
     {{- end }}
     {{- $_ := set $policy "inboxDefaults" $kept }}
     {{- end }}
