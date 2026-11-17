@@ -21,7 +21,7 @@ const HOSTS = "500268966557";
 const NOW = new Date("2026-11-15T22:00:00Z");
 const WS = "rw_test0001";
 const BROKER = "layered-infra-ops";
-const DELEGATE = "neon-exit-lead";
+const DELEGATE = "neon-exit-lead-2";
 const WORKER = "cloud-db-driver";
 const DELEGATE_ID = "300000000000000002";
 const agents: Record<string, RelayAgent> = {
@@ -31,7 +31,7 @@ const agents: Record<string, RelayAgent> = {
   "some-other-agent": { id: "300000000000000005", name: "some-other-agent", type: "agent", workspaceId: WS },
   [BROKER]: { id: "246905220461514752", name: BROKER, type: "agent", workspaceId: WS },
 };
-// The shipped entry, with the fake Relay's id for neon-exit-lead pinned (the shipped agentId is filled in at review).
+// The shipped entry, with the fake Relay's id for neon-exit-lead-2 pinned (the shipped agentId is filled in at review).
 const allowlist: Allowlist = { ...shipped, delegatedApprovers: [{ ...shipped.delegatedApprovers![0]!, agentId: DELEGATE_ID }] };
 /** The broker's clock in the current test: messages are sent a minute before it. */
 let clock = NOW;
@@ -104,11 +104,11 @@ async function pend(broker: Broker, req: CredentialRequest, from = WORKER) {
 
 const withDelegate = (over: Partial<DelegatedApprover>): Allowlist => ({ ...allowlist, delegatedApprovers: [{ ...allowlist.delegatedApprovers![0]!, ...over }] });
 
-test("the shipped delegation: neon-exit-lead, pinned by agent id, six requesters, one literal instance, expiring 2026-11-19", () => {
-  // Pinned to neon-exit-lead's Relaycast agent_id (read from cast.agentrelay.com with the broker's
-  // observer token, 2026-11-16; it matches its address neon-exit-lead@sf-mac-mini-247865646017380352).
+test("the shipped delegation: neon-exit-lead-2, pinned by agent id, six requesters, one literal instance, expiring 2026-11-19", () => {
+  // Pinned to neon-exit-lead-2's Relaycast agent_id (read from cast.agentrelay.com with the broker's
+  // observer token, 2026-11-17; its address is neon-exit-lead-2@sf-mac-mini-desktop).
   assert.deepEqual(delegationConfigProblems(shipped), []);
-  assert.equal(shipped.delegatedApprovers![0]!.agentId, "247865646017380352");
+  assert.equal(shipped.delegatedApprovers![0]!.agentId, "248345546605203456");
   assert.deepEqual(delegationConfigProblems(allowlist), []);
   assert.deepEqual(shipped.humanApprovers, ["khaliq-gant"], "Khaliq is still the only human approver");
   const [d, ...rest] = shipped.delegatedApprovers!;
@@ -126,8 +126,8 @@ test("the shipped delegation: neon-exit-lead, pinned by agent id, six requesters
   assert.deepEqual(c!.grants.find((g) => g.id === "neon-exit-ssm")!.instanceIds, ["i-0887caee00ca9029a"]);
 });
 
-test("the shipped config pins the real agent id: an agent with another id under the name neon-exit-lead can't approve; Khaliq still can", async () => {
-  // The fake Relay's neon-exit-lead has a different id from the shipped pin (247865646017380352).
+test("the shipped config pins the real agent id: an agent with another id under the name neon-exit-lead-2 can't approve; Khaliq still can", async () => {
+  // The fake Relay's neon-exit-lead-2 has a different id from the shipped pin (248345546605203456).
   const { broker, calls } = setup(shipped);
   const { text } = await pend(broker, secretsReq());
   assert.match((await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER)).reasons[0]!, /not the Relay agent the delegation names/);
@@ -135,7 +135,27 @@ test("the shipped config pins the real agent id: an agent with another id under 
   assert.equal(calls.length, 1);
 });
 
-test("the delegation is bound to the Relay agent id: a re-registered neon-exit-lead (new id) can't approve", async () => {
+// neon-exit-lead-2's Relaycast agent_id as the broker itself saw it: `aws-cred-broker whois --name neon-exit-lead-2`
+// on the broker host, 2026-11-17 07:24Z (name neon-exit-lead-2, type agent). Recorded here independently of
+// allowlist.json, so a wrong pin fails the test below instead of being copied into the fake sender.
+const RECORDED_DELEGATE_ID = "248345546605203456";
+
+test("the shipped pin works end to end: an approval DM from the recorded neon-exit-lead-2 id is issued", async () => {
+  const { broker, calls } = setup(shipped);
+  const { text } = await pend(broker, secretsReq());
+  const original = agents[DELEGATE]!;
+  agents[DELEGATE] = { ...original, id: RECORDED_DELEGATE_ID };
+  try {
+    const ok = await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER);
+    assert.equal(ok.outcome, "issued", ok.reasons.join("; "));
+    assert.match(ok.reasons.join("; "), /approved by neon-exit-lead-2 \(delegated by khaliq-gant/);
+  } finally {
+    agents[DELEGATE] = original;
+  }
+  assert.equal(calls.length, 1);
+});
+
+test("the delegation is bound to the Relay agent id: a re-registered neon-exit-lead-2 (new id) can't approve", async () => {
   const { broker, calls } = setup();
   const { text } = await pend(broker, secretsReq());
   const original = agents[DELEGATE]!;
@@ -168,7 +188,7 @@ test("happy path: a worker's request naming the delegate goes to it; its own DM 
   assert.match(r.approvalPrompt!, /as a delegate of khaliq-gant until 2026-11-19T00:00:00Z/);
   const ok = await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER);
   assert.equal(ok.outcome, "issued", ok.reasons.join("; "));
-  assert.match(ok.reasons.join("; "), /approved by neon-exit-lead \(delegated by khaliq-gant, capability neon-exit, until 2026-11-19T00:00:00Z\)/);
+  assert.match(ok.reasons.join("; "), /approved by neon-exit-lead-2 \(delegated by khaliq-gant, capability neon-exit, until 2026-11-19T00:00:00Z\)/);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.sessionName, WORKER, "the credentials are the requester's, not the delegate's");
   const approved = audit().find((l) => l.kind === "approved")!;
@@ -340,7 +360,7 @@ test("the delegate never approves its own request, one that didn't name it, or o
     const { broker, calls } = setup();
     const { r, text } = await pend(broker, secretsReq({ delegate: undefined }));
     assert.equal(r.approver, "khaliq-gant");
-    assert.match((await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER)).reasons[0]!, /didn't name neon-exit-lead/);
+    assert.match((await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER)).reasons[0]!, /didn't name neon-exit-lead-2/);
     assert.equal(calls.length, 0);
   }
   {
