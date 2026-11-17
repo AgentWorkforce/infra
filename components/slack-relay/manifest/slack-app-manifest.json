@@ -25,7 +25,8 @@
         "chat:write",
         "groups:history",
         "groups:read",
-        "im:history"
+        "im:history",
+        "reactions:write"
       ]
     }
   },

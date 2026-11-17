@@ -116,6 +116,7 @@ async function runRouter(): Promise<void> {
     channel,
     selfName: routerName,
     log,
+    ackReaction: env.SLACK_ACK_REACTION ?? "eyes",
     // Slack posts don't pass through relaygate, so each one is asked about first.
     egress: gate ? (ref, text) => checkWithRetry(gate, routerToken, { op: "w", resource: { kind: "stream", id: slackStreamId(ref) }, content: text }) : undefined,
   });

@@ -28,7 +28,7 @@ One message, end to end:
 
 | Piece | Kind | What it does |
 | --- | --- | --- |
-| Router | Deployment, 1 replica, PVC | Holds the Slack connection. Records every message in the **ledger**: threads, the people in them, agents, and an append-only event log. Routes by ledger lookup and asks the orchestrator only about threads nobody owns yet. It is the only component with Slack credentials. |
+| Router | Deployment, 1 replica, PVC | Holds the Slack connection. Records every message in the **ledger**: threads, the people in them, agents, and an append-only event log. Routes by ledger lookup and asks the orchestrator only about threads nobody owns yet. Each message it routes gets an :eyes: reaction as soon as the router takes it, before the agent starts (`slack.ackReaction`). It is the only component with Slack credentials. |
 | Orchestrator | in the router | Each Slack thread gets its own agent; that is enforced in code. A Claude model (default `claude-fable-5-2`) that sees every agent, its status, what it's working on and whose threads it holds, decides only whether a new thread goes to a pinned agent (`router.knownAgents`) instead. With no pinned agents it isn't called. `router.allowAgentReuse: true` lets it also hand a thread to an agent that already owns others. |
 | Agent host | StatefulSet, 1 replica, PVC | Runs the per-thread agents with headless Claude Code (default `claude-opus-5-5`). Each agent is its own relay identity with its own workdir and Claude session on the volume. It runs no process between messages: the host keeps only each agent's relay connection, like a node, and a routed Slack message or a direct message on the relay (from a person or another agent) wakes the agent and resumes its session. A DM is answered by DM; an agent's automatic answer to another agent's DM gets no reply back, so agents can't loop. Behind relaygate a DM from outside the pit gets no answer at all (see "Messages from outside the pit"). It has no Slack credentials. |
 
@@ -74,11 +74,23 @@ never leave your control.
 
 Bot scopes the manifest requests: `app_mentions:read`, `channels:history`,
 `groups:history`, `im:history` (to read the threads it is in), `chat:write`
-(to answer) and `channels:read` / `groups:read` (to refuse channels shared
-outside the workspace). Events: `app_mention`, `message.channels`, `message.groups` and
+(to answer), `reactions:write` (to put :eyes: on each message it routes, so
+people see it was picked up) and `channels:read` / `groups:read` (to refuse
+channels shared outside the workspace). Events: `app_mention`, `message.channels`, `message.groups` and
 `message.im`. The router ignores channel messages unless they mention the app
 or are in a thread it already holds. It ignores DMs unless `slack.allowDms` is
-set.
+set. Ignored messages get no reaction.
+
+**Existing installs:** an app created from an older manifest lacks
+`reactions:write`. Add it under **OAuth & Permissions**, **Bot Token Scopes**,
+then reinstall the app to the workspace (**Install App**, **Reinstall to
+Workspace**); the bot token stays the same. Until then the router logs
+`ack reaction off: the bot token lacks reactions:write (add reactions:write and
+reinstall the app)` once, adds no reactions, and routes as before. Once it has
+logged that, it stops trying until it restarts, so after the reinstall restart
+the router, standalone or in the umbrella:
+`kubectl -n agent-relay rollout restart deployment -l app.kubernetes.io/name=slack-relay,app.kubernetes.io/component=router`.
+To turn the reaction off, set `slack.ackReaction: ""`.
 
 To receive events over HTTPS instead of Socket Mode, render the manifest with
 `--mode http --url https://<host>/slack/events`. Then set `slack.mode: http`,
@@ -721,6 +733,7 @@ See `charts/slack-relay/values.yaml`. The ones you're most likely to change:
 | --- | --- | --- |
 | `slack.allowedChannels` | `[]` (any channel the bot is in) | Channel IDs the app answers in. |
 | `slack.allowDms` | `false` | Answer DMs to the bot. |
+| `slack.ackReaction` | `eyes` | Reaction added to each message the router routes, right away. Needs `reactions:write`. Empty turns it off. |
 | `router.orchestrator` | `claude` | `deterministic` to skip the model and start one agent per thread. |
 | `router.orchestratorModel` | `claude-fable-5-2` | |
 | `router.knownAgents` | `[]` | Pinned agents the orchestrator may route to, e.g. a company knowledge agent. |
