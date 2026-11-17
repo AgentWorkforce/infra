@@ -83,7 +83,7 @@ person and expire.
    Neither number is secret.
 
 From there the agent: generates a 32-byte key per Mac (stored at
-`layered-infra-ops/fleet-runner/mac-keys/<mac>` in the same Secrets Manager),
+`layered-infra-ops/fleet-runner/mac-keys/<mac>-<slot>` in the same Secrets Manager),
 shows `wrangler deploy --dry-run`, deploys the Worker, loads the three secrets
 with `wrangler secret put` straight from Secrets Manager, and sends the Mac
 admin the Worker URL plus the secret name to pull each Mac's key from.
