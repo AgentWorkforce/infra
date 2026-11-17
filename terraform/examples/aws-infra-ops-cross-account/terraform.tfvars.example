@@ -1,0 +1,5 @@
+account_id        = "000000000000" # the account being opened to the operator
+trusted_role_arns = ["arn:aws:iam::111111111111:role/example-operator-admin"] # the operator's admin role in its home account
+# role_name            = "layered-infra-ops"
+# max_session_duration = 3600
+# external_id          = "example"

@@ -457,7 +457,7 @@ Set `nativeBrief.workspaceIds` to the explicit workspace IDs that may incur mode
 calls, `nativeBrief.keyPrefix` to the writer/reader's **bare** root (for example,
 `96bulls`), and `nativeBrief.openaiSecret.name/key` to an existing API-key Secret.
 Only the brief process receives that key. The managed defaults are one claimed
-wakeup per tick, twenty model calls globally per UTC day and three per session
+wakeup per tick, 2000 model calls globally per UTC day and ten per session
 per UTC day (`batch`, `globalDailyCap`, `sessionDailyCap`); these positive bounded
 values are configurable. The worker keeps the existing leases,
 provider transport, prompt/input bounds, scrubbing and model-call budgets. It
