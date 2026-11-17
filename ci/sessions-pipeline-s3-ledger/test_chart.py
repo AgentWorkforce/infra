@@ -102,6 +102,24 @@ class S3Ledger(unittest.TestCase):
         self.render(merge(s3, {"ingestEdge": {"s3TenantLimit": False, "admission": {"asyncMaxPerOrg": 4}}}),
                     fail="ingestEdge.admission.asyncMaxPerOrg requires s3TenantLimit=true")
 
+    def test_await_authority(self):
+        s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
+        self.assertNotIn("SELFHOST_ADMISSION_AWAIT_AUTHORITY", self.ingest_env(self.render(s3)))
+        self.assertNotIn("SELFHOST_ADMISSION_AWAIT_AUTHORITY",
+                         self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"awaitAuthority": False}}}))))
+        for mode in ("async", "drain"):
+            with self.subTest(mode=mode):
+                env = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"mode": mode, "awaitAuthority": True}}})))
+                self.assertEqual(env["SELFHOST_ADMISSION_AWAIT_AUTHORITY"]["value"], "on")
+        for value in ("on", "true", 1):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"admission": {"awaitAuthority": value}}}),
+                            fail="ingestEdge.admission.awaitAuthority must be a boolean")
+        requires = "ingestEdge.admission.awaitAuthority requires ingestEdge.ledger=s3 and admission.mode async or drain"
+        self.render(merge(s3, {"ingestEdge": {"admission": {"mode": "sync", "awaitAuthority": True}}}), fail=requires)
+        sql = merge(load(SQL_FIXTURE), {"ingestEdge": {"admission": {"mode": "async", "awaitAuthority": True}}})
+        self.render(sql, fail=requires)
+
     def test_probe_timeout_seconds(self):
         s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
         c = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")["spec"]["template"]["spec"]["containers"][0]

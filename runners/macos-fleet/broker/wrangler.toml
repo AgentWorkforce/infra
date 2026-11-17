@@ -1,0 +1,14 @@
+# fleet-runner-jit: mints single-use GitHub Actions JIT runner configs for the
+# Mac fleet. Secrets (never in this file, set with `wrangler secret put`):
+#   GITHUB_APP_ID           numeric App ID of the fleet-runner-jit GitHub App
+#   GITHUB_APP_PRIVATE_KEY  the App's private key, PKCS#8 PEM
+#   MACHINE_KEYS            JSON: { "<sha256 hex of a Mac's key>":
+#                             { "repo": "OWNER/REPO", "installation_id": 123,
+#                               "name": "fleet-mac-1" }, ... }
+name = "fleet-runner-jit"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[observability]
+enabled = true

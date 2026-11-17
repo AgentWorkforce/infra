@@ -1,6 +1,7 @@
 # Plans the ledger bucket and its grants without cloud credentials.
+# No override_during: OpenTofu does not support it, and every asserted value is
+# known at plan (the bucket ARN is built from var.bucket_name).
 mock_provider "aws" {
-  override_during = plan
   mock_resource "aws_s3_bucket" {
     defaults = { arn = "arn:aws:s3:::relay-ingest-ledger" }
   }

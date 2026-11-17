@@ -570,6 +570,10 @@ ingestEdge:
     # INGEST_ASYNC_MAX_PER_ORG: the async consumer's per-org cap with s3TenantLimit=true,
     # 1..concurrency. Unset (default) renders nothing: the image uses max(1, concurrency/2).
     asyncMaxPerOrg: null
+    # SELFHOST_ADMISSION_AWAIT_AUTHORITY: true renders "on", so async admission defers uploads for
+    # orgs with no fence-authority marker yet (they wait in S3 for the marker) instead of retrying or
+    # refusing them. Requires ledger=s3 and admission.mode async or drain. Default false renders nothing.
+    awaitAuthority: false
     # Async/drain startup and readiness exec probes: timeoutSeconds, 3..30. The probe's own /readyz fetch
     # aborts 1 s earlier. Unset keeps 3 s and the 1500 ms fetch. Raise it when long upload scans
     # (large uploadDirect.scanBatch) make /readyz slow, so a busy single replica stays in the Service.

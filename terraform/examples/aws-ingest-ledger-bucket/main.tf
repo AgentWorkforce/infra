@@ -26,6 +26,9 @@ locals {
 }
 
 resource "aws_s3_bucket" "ledger" {
+  #checkov:skip=CKV2_AWS_62:Nothing consumes ledger events; the edge and the sweeper read the bucket directly.
+  #checkov:skip=CKV_AWS_18:Access logs need a separate target bucket; add one outside this example if required.
+  #checkov:skip=CKV_AWS_144:The ledger lives in the ingest edge's region by design; cross-region replication needs a second region and bucket.
   bucket = var.bucket_name
   tags   = var.tags
 }

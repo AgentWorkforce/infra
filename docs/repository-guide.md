@@ -44,6 +44,8 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 | [session-ingest-api](../charts/session-ingest-api) | Receives session manifests and chunks and stores them in S3-compatible object storage |
 | [relayauth](../charts/relayauth) | Self-hosted RelayAuth issuer: immutable image, externally managed keys, single-writer SQLite, and optional JWKS ingress |
 
+Outside the charts, `runners/macos-fleet/` holds the company's own macOS CI runners (ephemeral JIT runners on Apple-silicon Macs with a Cloudflare Worker broker); see its [README](../runners/macos-fleet/README.md).
+
 ## Self-hosted requirements registry
 
 The public session resource names are `session-object-storage`,

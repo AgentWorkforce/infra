@@ -36,6 +36,8 @@
 {{- if or (not $c.s3TenantLimit) (eq $admission.mode "sync") }}{{ fail "ingestEdge.admission.asyncMaxPerOrg requires s3TenantLimit=true and admission.mode async or drain" }}{{ end -}}
 {{- if or (not (regexMatch "^[0-9]+$" (toString $admission.asyncMaxPerOrg))) (lt (int $admission.asyncMaxPerOrg) 1) (gt (int $admission.asyncMaxPerOrg) (int $admission.concurrency)) }}{{ fail "ingestEdge.admission.asyncMaxPerOrg must be an integer from 1 to admission.concurrency" }}{{ end -}}
 {{- end -}}
+{{- if not (kindIs "bool" $admission.awaitAuthority) }}{{ fail "ingestEdge.admission.awaitAuthority must be a boolean" }}{{ end -}}
+{{- if and $admission.awaitAuthority (or (ne $ledger "s3") (eq $admission.mode "sync")) }}{{ fail "ingestEdge.admission.awaitAuthority requires ingestEdge.ledger=s3 and admission.mode async or drain" }}{{ end -}}
 {{- if not (kindIs "bool" $c.createServiceAccount) }}{{ fail "ingestEdge.createServiceAccount must be a boolean" }}{{ end -}}
 {{- if and $c.createServiceAccount (or (not $c.serviceAccountName) (gt (len $c.serviceAccountName) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $c.serviceAccountName))) }}{{ fail "ingestEdge.createServiceAccount requires a DNS-label serviceAccountName" }}{{ end -}}
 {{- $upload := $c.uploadDirect -}}
@@ -283,6 +285,9 @@ spec:
             - { name: SELFHOST_ADMISSION_MAX_ATTEMPTS, value: {{ $admission.maxAttempts | quote }} }
             {{- if not (kindIs "invalid" $admission.asyncMaxPerOrg) }}
             - { name: INGEST_ASYNC_MAX_PER_ORG, value: {{ $admission.asyncMaxPerOrg | quote }} }
+            {{- end }}
+            {{- if $admission.awaitAuthority }}
+            - { name: SELFHOST_ADMISSION_AWAIT_AUTHORITY, value: "on" }
             {{- end }}
             {{- end }}
             {{- if ne $upload.mode "off" }}
