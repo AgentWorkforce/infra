@@ -11,9 +11,9 @@
       "agent": "neon-exit-lead-2",
       "agentId": "248345546605203456",
       "$agentIdComment": "neon-exit-lead-2's Relaycast agent_id, read with the broker's observer token (GET /v1/agents/neon-exit-lead-2) on 2026-11-17; its address is neon-exit-lead-2@sf-mac-mini-desktop. Re-pinned from neon-exit-lead (agent_id 247865646017380352), which stood down at the lead handover on 2026-11-17. A different agent later registered under this name has a different id and is refused.",
-      "expiresAt": "2026-11-19T00:00:00Z",
+      "expiresAt": "2026-11-21T00:00:00Z",
       "grantedBy": "khaliq-gant",
-      "reason": "Khaliq asked (2026-11-15) to let the neon-exit lead drive the Neon exit without blocking on him. Moved to neon-exit-lead-2 when it took over as lead (2026-11-17).",
+      "reason": "Khaliq asked (2026-11-15) to let the neon-exit lead drive the Neon exit without blocking on him. Moved to neon-exit-lead-2 when it took over as lead (2026-11-17). Expiry extended from 2026-11-19 to 2026-11-21 by Khaliq (2026-11-17) to cover the post-window horizon.",
       "requesters": [
         "legacy-copy",
         "cloud-db-rehearsal",
