@@ -67,3 +67,23 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "cross_account_ledger_reader_role_arns" {
+  description = "IAM role ARNs in other accounts that may list the ledger prefixes and read the ledger objects and the ledger-home marker (bucket policy). Each role's own identity policy, in its account, must grant the same actions on this bucket. Not supported with sse_kms_key_arn."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for a in var.cross_account_ledger_reader_role_arns : can(regex("^arn:aws:iam::[0-9]{12}:role/.+", a))])
+    error_message = "cross_account_ledger_reader_role_arns must be IAM role ARNs (arn:aws:iam::<12 digits>:role/<name>)."
+  }
+}
+
+variable "cross_account_ledger_writer_role_arns" {
+  description = "IAM role ARNs in other accounts that get the reader access plus PutObject on the ledger objects (bucket policy; no delete, no version actions). Each role's own identity policy, in its account, must grant the same actions on this bucket. Not supported with sse_kms_key_arn."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for a in var.cross_account_ledger_writer_role_arns : can(regex("^arn:aws:iam::[0-9]{12}:role/.+", a))])
+    error_message = "cross_account_ledger_writer_role_arns must be IAM role ARNs (arn:aws:iam::<12 digits>:role/<name>)."
+  }
+}

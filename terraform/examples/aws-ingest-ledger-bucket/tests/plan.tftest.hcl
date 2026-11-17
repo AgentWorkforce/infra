@@ -91,3 +91,76 @@ run "refuses_a_bad_bucket_name" {
   }
   expect_failures = [var.bucket_name]
 }
+
+run "default_bucket_policy_has_one_statement" {
+  command = plan
+  assert {
+    condition     = length(jsondecode(aws_s3_bucket_policy.ledger.policy).Statement) == 1 && jsondecode(aws_s3_bucket_policy.ledger.policy).Statement[0].Sid == "DenyInsecureTransport"
+    error_message = "With no cross-account roles the bucket policy is DenyInsecureTransport only."
+  }
+}
+
+run "cross_account_readers_and_writers" {
+  command = plan
+  variables {
+    cross_account_ledger_reader_role_arns = ["arn:aws:iam::111111111111:role/example-backlog-read"]
+    cross_account_ledger_writer_role_arns = ["arn:aws:iam::222222222222:role/example-backlog-write"]
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement : s.Sid] == ["DenyInsecureTransport", "CrossAccountLedgerList", "CrossAccountLedgerRead", "CrossAccountLedgerWrite"]
+    error_message = "DenyInsecureTransport stays first, then List, Read and Write."
+  }
+  assert {
+    condition = anytrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
+      s.Sid == "CrossAccountLedgerList" && s.Action == "s3:ListBucket" && s.Resource == "arn:aws:s3:::relay-ingest-ledger"
+      && s.Principal.AWS == ["arn:aws:iam::111111111111:role/example-backlog-read", "arn:aws:iam::222222222222:role/example-backlog-write"]
+    && s.Condition.StringLike["s3:prefix"] == ["96bulls/.admission-inbox/*", "96bulls/.ledger/fence-authority/.ledger-home.json"]])
+    error_message = "Readers and writers list only the ledger prefixes."
+  }
+  assert {
+    condition = anytrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
+      s.Sid == "CrossAccountLedgerRead" && s.Action == "s3:GetObject" && length(s.Principal.AWS) == 2
+    && s.Resource == ["arn:aws:s3:::relay-ingest-ledger/96bulls/.admission-inbox/*/ledger/*", "arn:aws:s3:::relay-ingest-ledger/96bulls/.ledger/fence-authority/.ledger-home.json"]])
+    error_message = "Readers and writers get the ledger objects and the home marker."
+  }
+  assert {
+    condition = anytrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
+      s.Sid == "CrossAccountLedgerWrite" && s.Action == "s3:PutObject" && s.Principal.AWS == ["arn:aws:iam::222222222222:role/example-backlog-write"]
+    && s.Resource == "arn:aws:s3:::relay-ingest-ledger/96bulls/.admission-inbox/*/ledger/*" && !can(s.Condition)])
+    error_message = "Only writers put ledger objects, with no SSE condition."
+  }
+  assert {
+    condition = alltrue([for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement :
+    s.Effect == "Deny" || length([for a in flatten([s.Action]) : a if strcontains(a, "Delete") || strcontains(a, "Version")]) == 0])
+    error_message = "No cross-account delete or version actions."
+  }
+}
+
+run "cross_account_readers_only" {
+  command = plan
+  variables {
+    cross_account_ledger_reader_role_arns = ["arn:aws:iam::111111111111:role/example-backlog-read"]
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_s3_bucket_policy.ledger.policy).Statement : s.Sid] == ["DenyInsecureTransport", "CrossAccountLedgerList", "CrossAccountLedgerRead"]
+    error_message = "No writers, no Write statement."
+  }
+}
+
+run "refuses_a_bad_cross_account_arn" {
+  command = plan
+  variables {
+    cross_account_ledger_reader_role_arns = ["arn:aws:iam::111111111111:user/example"]
+    cross_account_ledger_writer_role_arns = ["not-an-arn"]
+  }
+  expect_failures = [var.cross_account_ledger_reader_role_arns, var.cross_account_ledger_writer_role_arns]
+}
+
+run "refuses_cross_account_with_kms" {
+  command = plan
+  variables {
+    sse_kms_key_arn                       = "arn:aws:kms:us-west-2:111111111111:key/00000000-0000-4000-8000-000000000000"
+    cross_account_ledger_reader_role_arns = ["arn:aws:iam::111111111111:role/example-backlog-read"]
+  }
+  expect_failures = [aws_s3_bucket_policy.ledger]
+}

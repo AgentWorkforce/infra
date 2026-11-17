@@ -34,6 +34,26 @@ Creating the bucket is harmless. The edge reads it only once
 copy, verify, switch the ledger-home marker, then set the values. It is never
 just a values change.
 
+## Cross-account access
+
+`cross_account_ledger_reader_role_arns` and `cross_account_ledger_writer_role_arns`
+(both empty by default, which leaves the bucket policy unchanged) add bucket
+policy statements for roles in other accounts. Readers and writers may list
+`<key_root>/.admission-inbox/*` and the ledger-home marker, and get the ledger
+objects (`.admission-inbox/*/ledger/*`) and the marker. Writers may also put
+ledger objects. Nobody gets delete or version actions.
+
+A bucket policy is only half of a cross-account grant: each role's own identity
+policy, in its account, must allow the same actions (`s3:ListBucket` on the
+bucket, `s3:GetObject` and, for writers, `s3:PutObject` on those keys). With
+`sse_kms_key_arn` set the plan fails: the KMS key policy would also have to
+grant those principals, and this module does not manage it.
+
+```hcl
+cross_account_ledger_reader_role_arns = ["arn:aws:iam::111111111111:role/example-backlog-read"]
+cross_account_ledger_writer_role_arns = ["arn:aws:iam::222222222222:role/example-backlog-write"]
+```
+
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
 
@@ -72,6 +92,8 @@ just a values change.
 | bucket\_name | The ledger bucket (ingestEdge.ledgerBucket.bucket). Must differ from the Locker bucket. | `string` | n/a | yes |
 | consumer\_role\_name | The ingest edge's existing Pod Identity role (its ServiceAccount is ingestEdge.serviceAccountName). Gets read/write on the ledger bucket's key root; nothing else about the role changes. | `string` | n/a | yes |
 | region | The EKS cluster's region: the ledger bucket is created here, next to the ingest edge. | `string` | n/a | yes |
+| cross\_account\_ledger\_reader\_role\_arns | IAM role ARNs in other accounts that may list the ledger prefixes and read the ledger objects and the ledger-home marker (bucket policy). Each role's own identity policy, in its account, must grant the same actions on this bucket. Not supported with sse\_kms\_key\_arn. | `list(string)` | `[]` | no |
+| cross\_account\_ledger\_writer\_role\_arns | IAM role ARNs in other accounts that get the reader access plus PutObject on the ledger objects (bucket policy; no delete, no version actions). Each role's own identity policy, in its account, must grant the same actions on this bucket. Not supported with sse\_kms\_key\_arn. | `list(string)` | `[]` | no |
 | key\_root | INGEST\_KEY\_ROOT of the ingest edge. | `string` | `"96bulls"` | no |
 | noncurrent\_version\_days | Days a replaced or deleted ledger object version is kept (versioning is on, for recovery). | `number` | `30` | no |
 | rearm\_sweeper\_role\_name | The re-arm sweeper's existing Pod Identity role, or null when the sweeper runs elsewhere. Gets read on the ledger objects and create on the completion records. | `string` | `null` | no |
