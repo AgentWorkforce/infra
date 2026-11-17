@@ -418,6 +418,11 @@ What the patch does on this install:
 
 ```sh
 kubectl -n agent-relay scale deploy/relaycast deploy/relay-control --replicas=0
+# scale returns before the pods exit: wait until neither writer has a pod left
+for d in relaycast relay-control; do
+  sel="$(kubectl -n agent-relay get deploy/$d -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}')"
+  until [ -z "$(kubectl -n agent-relay get pods -l "${sel%,}" -o name)" ]; do sleep 2; done
+done
 PRIMARY="$(kubectl -n agent-relay get cluster.postgresql.cnpg.io hoopdb -o jsonpath='{.status.currentPrimary}')"
 # Control: its own database on the HoopDb cluster
 kubectl -n agent-relay exec "$PRIMARY" -c postgres -- pg_dump -Fc -d relaycontrol > relaycontrol.dump
@@ -438,6 +443,11 @@ ReadWriteOnce. With Relaycast stopped cleanly the directory holds only
 
 ```sh
 kubectl -n agent-relay scale deploy/relaycast deploy/relay-control --replicas=0
+# scale returns before the pods exit: wait until neither writer has a pod left
+for d in relaycast relay-control; do
+  sel="$(kubectl -n agent-relay get deploy/$d -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}')"
+  until [ -z "$(kubectl -n agent-relay get pods -l "${sel%,}" -o name)" ]; do sleep 2; done
+done
 kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- dropdb --if-exists relaycontrol
 kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- pg_restore --create --exit-on-error -d postgres < relaycontrol.dump
 # helper pod on relaycast-data, as for the backup
