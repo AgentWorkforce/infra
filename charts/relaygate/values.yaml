@@ -50,6 +50,14 @@ policy:
     - { prefix: "slack:", gid: 22, mode: "660", classify: true }
     - { prefix: "kb:", gid: 22, mode: "660", classify: true }
   streamOverrides: []
+  # Inboxes no prefix covers (Desktop agents enrolled with a device token are
+  # named cursor-, claude-, codex-...) follow the registered agent: owned by it,
+  # in its gid, with this per-gid mode/ACL (else 660, no ACL). Mirrors the
+  # local- inbox rule: local agents DM each other, the pit may read, never
+  # write. A name no agent has is still refused. relaygate#43; older images
+  # ignore it.
+  inboxDefaults:
+    - { gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
   # Sessions (with the Sessions proxy): local sessions readable by the pit,
   # pit sessions private to the pit. Overrides can't change a session's group.
   sessionDefaults:
