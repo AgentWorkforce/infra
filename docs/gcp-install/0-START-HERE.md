@@ -872,8 +872,15 @@ relay-control:
     trustedProxies: 2
 ```
 
-and run step 11's `helm upgrade` again. With a proxy or CDN in front of the
-load balancer the header has one more entry; use that count.
+and run step 11's `helm upgrade` again.
+
+**A proxy or CDN in front of the load balancer** adds one more entry, so the
+count is one higher. Raise it only once the load balancer refuses requests
+that do not come through the proxy (for example with a Cloud Armor policy
+that admits only the proxy's addresses). Until then keep 2: a caller who
+connects to the load balancer directly can put any address in
+`X-Forwarded-For`, and with the higher count the API would take that forged
+address as the client's.
 
 **Done when:**
 
