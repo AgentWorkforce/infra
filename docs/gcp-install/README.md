@@ -12,6 +12,7 @@ cluster, the GCP counterpart of the AWS EKS guide. Start with
 | `NOT-QUALIFIED.md` | What 2026.11.16 does not yet qualify on GKE. Read before a production rollout |
 | `images.md` | The release images and how they are mirrored |
 | `values.yaml` | Site values template (placeholders filled in step 9) |
+| `external-secrets-values.yaml` | Optional overlay: the install Secrets from Google Secret Manager through External Secrets Operator (step 10 d) |
 | `cloud-sql-setup.sh` | Database and role setup in Jobs inside the cluster (steps 8 and 13) |
 | `helm-secrets-prepare.sh` | Secrets for helm-secrets with SOPS, or vals with Google Secret Manager (step 10) |
 | `create-workload-identity.sh` | Optional: the Workload Identity grants with gcloud |
