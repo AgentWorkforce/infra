@@ -8,6 +8,7 @@ after step 14 of [0-START-HERE.md](0-START-HERE.md), in any order.
 | [TLS policy](#1-tls-policy) | Refuses TLS 1.0 and 1.1 | **On** when this release's Terraform (step 4) created your resources |
 | [Cloud Armor](#2-cloud-armor) | OWASP rules, a sign-in rate limit, and optionally an allowlist of source addresses | Off |
 | [A proxy in front (Cloudflare)](#3-cloudflare-in-front) | Only the proxy may reach the load balancer | Off |
+| [Internal only (VPN)](#4-internal-only-behind-your-vpn) | No public address at all | Off |
 
 **Which release.** These controls need the `agent-relay` chart 0.7.59 or
 later and the Terraform from the same release. The release that
@@ -262,6 +263,61 @@ curl -sk -o /dev/null -w "direct %{http_code}\n" --resolve "api.$DOMAIN:443:$(gc
 - **Cloudflare changes its ranges** rarely and announces it. Before each
   `terraform apply`, compare <https://www.cloudflare.com/ips/> with
   `cloudflare.ipv4_cidrs` in the module (the list there is dated).
+
+## 4. Internal only, behind your VPN
+
+Instead of a public load balancer, the install can have a private address
+that only your VPC and the networks routed to it (VPN, Interconnect) can
+reach. Decide this before step 6 of the guide: the address, DNS and
+certificate all differ. Agents and desktops that are not on the VPN cannot
+connect or upload sessions.
+
+1. **Network.** Use `terraform/modules/gcp/internal-edge` (its README has the
+   call). It creates a proxy-only subnet (pick a free /23 in the VPC), a
+   reserved private address, and the firewall rule that lets the load
+   balancer's proxies reach the nodes. This replaces step 6's
+   `gcloud compute addresses create ... --global`.
+
+2. **DNS.** Create A records for `<domain>`, `api.<domain>`, `cast.<domain>`
+   and `history.<domain>` pointing at the module's `address` output, in a zone
+   your VPN clients resolve.
+
+3. **Certificate.** Google cannot issue a managed certificate for a private
+   address. Create a `kubernetes.io/tls` Secret for the four names (for
+   example with cert-manager and a DNS-01 challenge, which needs no inbound
+   access), or upload a regional certificate:
+
+   ```sh
+   gcloud compute ssl-certificates create agent-relay-internal --region $REGION \
+     --certificate fullchain.pem --private-key privkey.pem
+   ```
+
+4. **Values.** Copy `values-gcp-internal.yaml` from the chart
+   (`$CHART/values-gcp-internal.yaml`), replace `10.129.0.0/23` with your
+   proxy-only range in all six places, set `staticIpName` and the certificate,
+   and add `-f values-gcp-internal.yaml` last in step 11. The file also
+   clears `gkeIngress.sslPolicy` and `securityPolicy`: GKE cannot apply them
+   to an internal load balancer, so sections 1 and 2 above do not apply to
+   this mode.
+
+**Done when**, from a machine on the VPN:
+
+```sh
+kubectl -n $NAMESPACE get ingress agent-relay -o jsonpath='{.metadata.annotations.kubernetes\.io/ingress\.class} {.status.loadBalancer.ingress[0].ip}{"\n"}'
+curl -fsS "https://api.$DOMAIN/readyz" && echo " api ok"
+```
+
+prints `gce-internal` with a private address, then `api ok`; and from a
+machine that is **not** on the VPN the same `curl` cannot connect. Step 14's
+other checks apply unchanged (skip the `managedcertificate` one).
+
+- **Requests hang, then 504:** the firewall rule from the proxy-only subnet
+  is missing, or a backend's `networkPolicy` does not list the range.
+- **`Error syncing to GCP ... proxy-only subnetwork`** in
+  `kubectl describe ingress`: the VPC has no active proxy-only subnet in the
+  cluster's region.
+- Sign-in rate limits: check `trustedProxies` as in section 3, item 4. The
+  internal load balancer's `X-Forwarded-For` has not been measured.
 
 ## Removing these
 
