@@ -112,7 +112,9 @@ URL.
 ## Publish and promote a build
 
 [`scripts/publish.sh`](scripts/publish.sh) needs only the `aws` CLI and
-coreutils. Use credentials that may write to the bucket.
+coreutils. The CLI must be a v2 release whose `s3api put-object` has
+`--if-none-match`. Use credentials that may write to the bucket and delete
+`<origin_prefix>/<channel>/.promote-lock`.
 
 ```sh
 scripts/publish.sh upload example-private-downloads desktop example-channel build-0001 ./dist
@@ -120,7 +122,10 @@ scripts/publish.sh upload example-private-downloads desktop example-channel buil
 
 This uploads every file in `./dist` to
 `s3://example-private-downloads/desktop/example-channel/builds/build-0001/` and
-writes a `SHA256SUMS.txt` beside them. It refuses to reuse a build id.
+writes a `SHA256SUMS.txt` beside them. It refuses to reuse a build id: the id
+is claimed with a conditional write (`builds/build-0001/.claim`), so two
+uploads at the same time cannot both take it. If an upload fails part way,
+publish again under a new build id.
 
 To make a build the current one, write a map file. Each line is a stable name,
 a tab, and a file name in the build:
@@ -134,12 +139,33 @@ Example.exe	Example-1.2.3-setup.exe
 scripts/publish.sh promote example-private-downloads desktop example-channel build-0001 map.txt
 ```
 
-Each file is copied server side onto `<channel>/latest/<stable name>` with a
-download file name (`Content-Disposition`), a content type and
+The whole map is checked before anything under `latest/` changes: every name
+is valid, no stable name appears twice, and every file is in the build and in
+its `SHA256SUMS.txt`. `SHA256SUMS.txt` and `VERSION.txt` are refused as stable
+names, because the script writes those two itself. A map with a mistake leaves
+the current downloads as they were.
+
+Then each file is copied server side onto `<channel>/latest/<stable name>` with
+a download file name (`Content-Disposition`), a content type and
 `Cache-Control: no-store`. Sizes are checked after the copy. Then
 `latest/SHA256SUMS.txt` and `latest/VERSION.txt` are written. Links to the
 stable names never change, and nothing is cached, so the next request gets the
 new build. Copies above 5 GB are out of scope.
+
+One promotion runs per channel at a time. The script creates
+`<channel>/.promote-lock` with a conditional write, and removes it when it
+exits. A second promotion started meanwhile stops with "another promotion
+holds" and changes nothing. A promotion that is killed can leave the lock
+behind. When you are sure none is running, remove it and retry:
+
+```sh
+aws s3 rm s3://example-private-downloads/desktop/example-channel/.promote-lock
+```
+
+A copy that fails after the checks (a network error, a permission) can still
+leave `latest/` part old and part new. Run the same promotion again to finish
+it. [`tests/publish-test.sh`](tests/publish-test.sh) runs both commands against
+a stand-in `aws`, with no credentials.
 
 ## Sign a link
 
