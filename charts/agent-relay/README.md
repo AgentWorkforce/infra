@@ -333,6 +333,62 @@ be Ready, then apply `values-scrub-wasm-bindgen.yaml` in a second Helm revision.
 A fresh install with an empty Sessions database may include that strict overlay
 in its first revision.
 
+### Secrets from AWS SSM Parameter Store (or another external store)
+
+By default the chart renders no Secret and you create the named Secrets
+yourself. If they live in AWS SSM Parameter Store, AWS Secrets Manager or any
+other [External Secrets Operator](https://external-secrets.io) provider, set
+`externalSecrets` instead. The chart then renders one ExternalSecret per
+Secret. ESO creates each Kubernetes Secret under the name the components already
+read, so nothing else in your values changes.
+
+Prerequisites: ESO (with the `external-secrets.io/v1` CRDs) installed in the
+cluster, and IAM for its controller (Pod Identity or IRSA) that can read the
+parameters: `ssm:GetParameter`, `ssm:GetParameters` and
+`ssm:GetParametersByPath` on the parameter paths, plus `kms:Decrypt` on the key
+for SecureString parameters.
+
+```yaml
+externalSecrets:
+  enabled: true
+  store:
+    create: true      # or leave false and set secretStoreRef.name to an existing (Cluster)SecretStore
+    provider: { aws: { service: ParameterStore, region: us-east-1 } }
+  secrets:
+    agent-relay-secrets:
+      data:
+        database-url: /agent-relay/relaycontrol/runtime-url
+        database-migrations-url: /agent-relay/relaycontrol/owner-url
+        HOOPDB_URL: /agent-relay/hoopdb/runtime-url
+        # ...one line per key of the Secret
+    agent-relay-ingest-edge-runtime:
+      data:
+        database-url: /agent-relay/hoopdb/ingest-url
+        introspect-secret: /agent-relay/relaycontrol-introspect-secret
+```
+
+Map every Secret and key your install's Secrets table lists. A value that a
+component reads as JSON (`RELAYHISTORY_READ_API_SECRET`,
+`RELAYHISTORY_PIPELINE_CONSUMER_SECRET`) is stored as that JSON in the
+parameter, or built with an entry's `template`. Each `data` value is a
+parameter name, or a full ESO `remoteRef` map (`key`, `property`, `version`,
+...). An entry can also use ESO's `dataFrom` to load every parameter under a
+path.
+
+Notes:
+
+- Pods that start before ESO writes their Secret wait in
+  `CreateContainerConfigError` and start once it exists. Check
+  `kubectl get externalsecret -n <namespace>` reports every entry `Ready`.
+- `creationPolicy: Owner` (the default) means the release owns each Secret and
+  `helm uninstall` deletes it. For Secrets created by hand before switching,
+  set `creationPolicy: Merge` on those entries or delete the Secrets first.
+- A rotated parameter updates the Secret within `refreshInterval`; running pods
+  see it only after a restart (`kubectl rollout restart`). The HoopDb
+  migration URL uses the RDS admin login, so update that parameter before a
+  `helm upgrade` after RDS rotates the admin password.
+- The `rds-ca` ConfigMap is not a Secret; create it as before.
+
 ## Single-host mode
 
 The per-service hosts above are the default. Single-host mode is opt-in: set
