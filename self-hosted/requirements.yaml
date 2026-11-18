@@ -8604,9 +8604,10 @@ entries:
       budgets; at their defaults every streamed scope is still refused and the
       consumer warns at startup, so raise the budget the scope exceeds. true with
       searchIndexer.outputFacts.enabled is refused. Streaming needs the
-      non-streaming sizing plus about 2 GB at the default budgets: up to one
-      512 MiB scope plus about 3 KB per record of the scope (measured: +0.6 GB
-      at 100000 records, +3.3 GB at 1000000), scaling with
+      non-streaming sizing plus about 2 GB at the default budgets: one
+      decompressed chunk (at most 16 MiB) plus about 3 KB per record of the
+      scope (measured: +0.6 GB at 100000 records, +3.3 GB at 1000000; 500000
+      records at the default budgets), scaling with
       SEARCH_INDEX_STREAM_MAX_READ_EVENTS. The searchIndexer default memory
       limit is 3Gi (request 1Gi) for this; raise it for larger budgets, or set
       false. The staged reconcile needs the same sizing. Images that default streaming
