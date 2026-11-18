@@ -45,7 +45,7 @@ variable "security_policy" {
     - source_ip_allowlist: when non-empty (or cloudflare.enabled), the default rule becomes deny 403 and only these connecting addresses are admitted: a pure source-IP allowlist.
     - cloudflare: admit Cloudflare's published ranges as the connecting addresses (origin lockdown) and read the client address from CF-Connecting-IP.
     - client_ip_header: header an upstream proxy sets with the real client address (Cloud Armor origin.user_ip). Only trustworthy when nothing but that proxy can reach the load balancer: combine with an allowlist of the proxy's ranges, or origin_secret_header.
-    - client_ip_rules: per-client allowlists scoped to paths (and optionally hosts), evaluated in list order. A request whose path starts with one of a rule's path_prefixes (on one of its hosts, when given) is admitted if the client address (origin.user_ip) is in cidrs and denied 403 otherwise. A last rule with path_prefixes = ["/"] therefore closes every other path to everyone but its cidrs. Requires origin_secret_header.
+    - client_ip_rules: per-client allowlists scoped to paths (and optionally hosts), evaluated in list order. A request whose path starts with one of a rule's path_prefixes (on one of its hosts, when given) is denied 403 unless the client address (origin.user_ip) is in cidrs. A last rule with path_prefixes = ["/"] therefore closes every other path to everyone but its cidrs. Requires origin_secret_header. A rule whose cidrs fit one expression (4 ranges, 3 with hosts) only denies, so its clients still pass the rate limits below. A longer list has to admit its clients itself, which ends evaluation: give such a rule its own rate_limit (requests per interval per client), or set unthrottled = true to accept that rate_limits do not apply to it.
     - adaptive_protection: Layer 7 DDoS detection (alerts; automatic deployment needs Cloud Armor Enterprise).
   EOT
   type = object({
@@ -93,6 +93,8 @@ variable "security_policy" {
       path_prefixes = list(string)
       hosts         = optional(list(string), [])
       cidrs         = list(string)
+      rate_limit    = optional(object({ count = number, interval_sec = number }))
+      unthrottled   = optional(bool, false)
     })), [])
     adaptive_protection = optional(bool, false)
   })
@@ -120,9 +122,10 @@ variable "security_policy" {
     condition = alltrue([for r in var.security_policy.client_ip_rules :
       can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && length(r.cidrs) >= 1 && length(r.cidrs) <= 294 &&
       length(r.path_prefixes) >= 1 && alltrue([for p in r.path_prefixes : can(regex("^/[A-Za-z0-9/._~-]*$", p))]) &&
-      alltrue([for h in r.hosts : can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", h))])
+      alltrue([for h in r.hosts : can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", h))]) &&
+      (r.rate_limit == null ? true : r.rate_limit.count >= 1 && contains([10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1800, 2700, 3600], r.rate_limit.interval_sec))
     ]) && length(var.security_policy.client_ip_rules) <= 9 && length(distinct(var.security_policy.client_ip_rules[*].name)) == length(var.security_policy.client_ip_rules)
-    error_message = "At most 9 client_ip_rules with unique lowercase names, 1-294 cidrs, path_prefixes that start with / and hold only unreserved URL characters, and lowercase DNS hosts."
+    error_message = "At most 9 client_ip_rules with unique lowercase names, 1-294 cidrs, path_prefixes that start with / and hold only unreserved URL characters, lowercase DNS hosts, and a rate_limit with count >= 1 and an interval_sec Cloud Armor accepts."
   }
   validation {
     condition     = var.security_policy.client_ip_header == null || can(regex("^[A-Za-z][A-Za-z0-9-]{0,63}$", var.security_policy.client_ip_header))
@@ -139,7 +142,8 @@ variable "origin_secret_header" {
   default   = null
   sensitive = true
   validation {
-    condition     = var.origin_secret_header == null || (can(regex("^[a-z][a-z0-9-]{0,63}$", var.origin_secret_header.name)) && length(var.origin_secret_header.values) >= 1 && length(var.origin_secret_header.values) <= 3 && length(distinct(var.origin_secret_header.values)) == length(var.origin_secret_header.values) && alltrue([for v in var.origin_secret_header.values : can(regex("^[A-Za-z0-9_-]{32,256}$", v))]))
+    # A conditional, not ||: Terraform before 1.9 evaluates both sides of ||, and the attributes of null cannot be read.
+    condition     = var.origin_secret_header == null ? true : (can(regex("^[a-z][a-z0-9-]{0,63}$", var.origin_secret_header.name)) && length(var.origin_secret_header.values) >= 1 && length(var.origin_secret_header.values) <= 3 && length(distinct(var.origin_secret_header.values)) == length(var.origin_secret_header.values) && alltrue([for v in var.origin_secret_header.values : can(regex("^[A-Za-z0-9_-]{32,256}$", v))]))
     error_message = "origin_secret_header.name is a lowercase header name; values holds 1-3 distinct values of 32-256 characters from A-Z a-z 0-9 _ - (for example: openssl rand -hex 32)."
   }
 }

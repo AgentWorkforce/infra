@@ -194,6 +194,11 @@ Cloudflare can reach it.
    too low makes every user share one sign-in limit and lockout; a number
    that is too high lets a client forge its address.
 
+   **Raise the number only after item 3 is applied and the "Done when" below
+   shows `direct 403`.** While the load balancer still answers requests that
+   skip Cloudflare, a caller who connects to it directly can put any address
+   in `X-Forwarded-For`, and with 3 the API would believe it.
+
 5. **Which clients may reach which paths** (optional). To let a vendor's
    published ranges reach only the session upload paths, your own ranges
    reach everything, and nobody else anything, add `client_ip_rules` to the
@@ -212,8 +217,11 @@ Cloudflare can reach it.
    }
    ```
 
-   Rules apply in order; the last one closes every other path. The module's
-   README (`terraform/modules/gcp/edge-security`) explains the limits. A
+   Rules apply in order; the last one closes every other path. A rule with
+   more than 4 ranges (3 with `hosts`) admits its clients before the sign-in
+   rate limit is checked, so Terraform asks you to give it its own
+   `rate_limit = { count = 600, interval_sec = 60 }`. The module's README
+   (`terraform/modules/gcp/edge-security`) explains this and the other limits. A
    vendor that publishes hundreds of ranges needs a higher Cloud Armor quota,
    or that list enforced as a Cloudflare WAF custom rule instead.
 

@@ -35,20 +35,35 @@ locals {
     }
   }]...)
 
-  # client_ip_rules: admit the listed client addresses on the paths, then
-  # deny everything else on those paths.
-  client_rules = merge([for i, r in local.sp.client_ip_rules : merge({
-    for j, group in chunklist(r.cidrs, length(r.hosts) > 0 ? 3 : 4) : "${r.name}-allow-${j}" => {
-      priority    = 2000 + i * 100 + j
-      action      = "allow"
-      description = "${r.name}: listed client addresses on ${join(", ", concat(r.hosts, r.path_prefixes))}"
-      expression  = "${local.path_match[r.name]} && (${join(" || ", [for c in group : "inIpRange(origin.user_ip, '${c}')"])})"
-    }
-    }, { "${r.name}-deny" = {
-      priority    = 2000 + i * 100 + 99
+  # client_ip_rules. A list that fits one expression becomes a single deny
+  # rule ("on these paths, and not one of these clients"): it admits nobody,
+  # so its clients still meet the rate limits and the allowlist below. A
+  # longer list cannot be negated across rules, so it becomes admitting rules
+  # (throttles when the rule has a rate_limit) followed by a deny for the
+  # paths; requests it admits skip every later rule.
+  client_groups = { for r in local.sp.client_ip_rules : r.name => chunklist(r.cidrs, length(r.hosts) > 0 ? 3 : 4) }
+  client_rules = merge([for i, r in local.sp.client_ip_rules : length(local.client_groups[r.name]) == 1 ? {
+    "${r.name}-deny" = {
+      priority    = 2000 + i * 100
       action      = "deny(403)"
-      description = "${r.name}: any other client on ${join(", ", concat(r.hosts, r.path_prefixes))}"
-      expression  = local.path_match[r.name]
+      rate        = { count = 0, interval_sec = 0 }
+      description = "${r.name}: any client outside the list on ${join(", ", concat(r.hosts, r.path_prefixes))}"
+      expression  = "${local.path_match[r.name]} && !(${join(" || ", [for c in r.cidrs : "inIpRange(origin.user_ip, '${c}')"])})"
+    }
+    } : merge({
+      for j, group in local.client_groups[r.name] : "${r.name}-allow-${j}" => {
+        priority    = 2000 + i * 100 + j
+        action      = r.rate_limit == null ? "allow" : "throttle"
+        rate        = { count = try(r.rate_limit.count, 0), interval_sec = try(r.rate_limit.interval_sec, 0) }
+        description = "${r.name}: listed client addresses on ${join(", ", concat(r.hosts, r.path_prefixes))}"
+        expression  = "${local.path_match[r.name]} && (${join(" || ", [for c in group : "inIpRange(origin.user_ip, '${c}')"])})"
+      }
+      }, { "${r.name}-deny" = {
+        priority    = 2000 + i * 100 + 99
+        action      = "deny(403)"
+        rate        = { count = 0, interval_sec = 0 }
+        description = "${r.name}: any other client on ${join(", ", concat(r.hosts, r.path_prefixes))}"
+        expression  = local.path_match[r.name]
   } })]...)
   # The path (one subexpression) and, with hosts, the Host header (a second),
   # which leaves three or four subexpressions for client ranges.
@@ -93,6 +108,10 @@ resource "google_compute_security_policy" "this" {
     precondition {
       condition     = length(local.sp.client_ip_rules) == 0 || (local.secret_header && local.client_ip_header != null)
       error_message = "client_ip_rules trust a client-address header, so they need origin_secret_header (proof the request came through the proxy) and client_ip_header or cloudflare.enabled."
+    }
+    precondition {
+      condition     = length(local.sp.rate_limits) == 0 || alltrue([for r in local.sp.client_ip_rules : length(local.client_groups[r.name]) == 1 || r.rate_limit != null || r.unthrottled])
+      error_message = "A client_ip_rules entry with more ranges than fit one expression (4, or 3 with hosts) admits its clients before rate_limits are evaluated. Give it its own rate_limit, or set unthrottled = true to accept that."
     }
     precondition {
       condition     = local.client_ip_header == null || local.locked || local.secret_header
@@ -140,6 +159,18 @@ resource "google_compute_security_policy_rule" "client_ip" {
   description     = each.value.description
   match {
     expr { expression = each.value.expression }
+  }
+  dynamic "rate_limit_options" {
+    for_each = each.value.rate.count > 0 ? [each.value.rate] : []
+    content {
+      conform_action = "allow"
+      exceed_action  = "deny(429)"
+      enforce_on_key = "USER_IP"
+      rate_limit_threshold {
+        count        = rate_limit_options.value.count
+        interval_sec = rate_limit_options.value.interval_sec
+      }
+    }
   }
   depends_on = [google_compute_security_policy_rule.origin_secret]
 }
