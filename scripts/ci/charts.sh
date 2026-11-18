@@ -1070,14 +1070,19 @@ for chart in "${charts[@]}"; do
         es=(--set externalSecrets.enabled=true --set externalSecrets.store.create=true --set externalSecrets.store.provider.aws.service=ParameterStore --set externalSecrets.store.provider.aws.region=us-east-1
           --set externalSecrets.secrets.agent-relay-secrets.data.database-url=/agent-relay/relaycontrol/runtime-url
           --set externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_URL.key=/agent-relay/hoopdb --set externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_URL.property=url
-          --set externalSecrets.secrets.search-indexer-runtime.creationPolicy=Merge --set-json 'externalSecrets.secrets.search-indexer-runtime.dataFrom=[{"find":{"path":"/agent-relay/search-indexer/"}}]')
+          --set externalSecrets.secrets.search-indexer-runtime.creationPolicy=Merge --set-json 'externalSecrets.secrets.search-indexer-runtime.dataFrom=[{"find":{"path":"/agent-relay/search-indexer/","name":{"regexp":".*"}}}]')
         out=$(render "$chart" "$v" "${es[@]}") || err "$chart: externalSecrets on did not render"
         [ "$(yq 'select(.kind == "ExternalSecret") | .metadata.name + ":" + .spec.target.name + ":" + .spec.secretStoreRef.kind + "/" + .spec.secretStoreRef.name + ":" + .spec.target.creationPolicy' <<<"$out" | sed '/^---$/d' | tr '\n' ' ')" = "agent-relay-secrets:agent-relay-secrets:SecretStore/ci-external-secrets:Owner search-indexer-runtime:search-indexer-runtime:SecretStore/ci-external-secrets:Merge " ] \
           || err "$chart: each externalSecrets entry must target the Secret of its name through the chart SecretStore"
         [ "$(yq 'select(.kind == "SecretStore") | .metadata.name + " " + .spec.provider.aws.service' <<<"$out" | sed '/^---$/d')" = "ci-external-secrets ParameterStore" ] || err "$chart: store.create must render the SecretStore with store.provider"
         [ "$(yq 'select(.kind == "ExternalSecret" and .metadata.name == "agent-relay-secrets") | .spec.data[] | .secretKey + "=" + .remoteRef.key + "#" + (.remoteRef.property // "")' <<<"$out" | tr '\n' ' ')" = "HOOPDB_URL=/agent-relay/hoopdb#url database-url=/agent-relay/relaycontrol/runtime-url# " ] \
           || err "$chart: externalSecrets data must map a string to remoteRef.key and pass a remoteRef map through"
-        kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$out" >/dev/null || err "$chart: externalSecrets failed kubeconform"
+        # ESO CRD schemas pinned to a CRDs-catalog commit, so invalid
+        # ExternalSecret/SecretStore fields fail here instead of being skipped.
+        eso_schemas='https://raw.githubusercontent.com/datreeio/CRDs-catalog/784ec895547a36e548e6810b41f27baade3a0890/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+        es_only=$(yq 'select(.kind == "ExternalSecret" or .kind == "SecretStore")' <<<"$out")
+        [ "$(yq '.kind' <<<"$es_only" | grep -cE '^(ExternalSecret|SecretStore)$')" = 3 ] || err "$chart: externalSecrets must render two ExternalSecrets and one SecretStore"
+        kubeconform -strict -summary -schema-location "$eso_schemas" -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$es_only" >/dev/null || { kubeconform -strict -summary -schema-location "$eso_schemas" <<<"$es_only"; err "$chart: externalSecrets failed kubeconform against the ESO schemas"; }
         [ "$(render "$chart" "$v" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=aws-ssm --set externalSecrets.secrets.x.data.k=/p | yq 'select(.kind == "ExternalSecret") | .spec.secretStoreRef.kind + "/" + .spec.secretStoreRef.name')" = ClusterSecretStore/aws-ssm ] \
           || err "$chart: an existing secretStoreRef must be used as given"
         expect_render_failure "$chart" "$v" "externalSecrets without a store" "requires externalSecrets.secretStoreRef.name" --set externalSecrets.enabled=true --set externalSecrets.secrets.x.data.k=/p

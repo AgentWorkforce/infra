@@ -250,8 +250,9 @@ localKind:
 #
 # A data value is a remote key string, or a full ESO remoteRef map
 # ({key, property, version, decodingStrategy, ...}). An entry may instead (or
-# also) set dataFrom (ESO's list as-is, e.g. [{find: {path: /agent-relay/x/}}]
-# to load every parameter under a path), and template (ESO target.template, to
+# also) set dataFrom (ESO's list as-is, e.g.
+# [{find: {path: /agent-relay/x/, name: {regexp: ".*"}}}] to load every
+# parameter under a path; SSM needs the name or tags matcher), and template (ESO target.template, to
 # build a value such as JSON from several parameters).
 externalSecrets:
   enabled: false

@@ -373,7 +373,8 @@ component reads as JSON (`RELAYHISTORY_READ_API_SECRET`,
 parameter, or built with an entry's `template`. Each `data` value is a
 parameter name, or a full ESO `remoteRef` map (`key`, `property`, `version`,
 ...). An entry can also use ESO's `dataFrom` to load every parameter under a
-path.
+path (`find: {path: /agent-relay/x/, name: {regexp: ".*"}}`; the SSM provider
+needs the `name` or `tags` matcher).
 
 Notes:
 
@@ -385,8 +386,11 @@ Notes:
   set `creationPolicy: Merge` on those entries or delete the Secrets first.
 - A rotated parameter updates the Secret within `refreshInterval`; running pods
   see it only after a restart (`kubectl rollout restart`). The HoopDb
-  migration URL uses the RDS admin login, so update that parameter before a
-  `helm upgrade` after RDS rotates the admin password.
+  migration URL uses the RDS admin login, so after RDS rotates the admin
+  password: update the parameter, force a sync
+  (`kubectl annotate externalsecret agent-relay-secrets -n <namespace> force-sync=$(date +%s) --overwrite`),
+  confirm the ExternalSecret's `status.refreshTime` is later than the update
+  (`Ready=True` alone does not prove it), and only then run `helm upgrade`.
 - The `rds-ca` ConfigMap is not a Secret; create it as before.
 
 ## Single-host mode
