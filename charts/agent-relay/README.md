@@ -418,6 +418,10 @@ proven on a live GKE cluster.
 
 Notes:
 
+- Keep `externalSecrets` in a values file that every `helm upgrade` of the
+  release uses. Helm does not carry values over from the previous command, so
+  an upgrade without the block removes the ExternalSecrets, and ESO then
+  deletes the Secrets it owns (`creationPolicy: Owner`).
 - Pods that start before ESO writes their Secret wait in
   `CreateContainerConfigError` and start once it exists. Check
   `kubectl get externalsecret -n <namespace>` reports every entry `Ready`.

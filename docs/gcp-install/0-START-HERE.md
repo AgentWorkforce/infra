@@ -427,7 +427,16 @@ your own way, `vals eval -f secrets.yaml` resolves the same file.
 
 **d. External Secrets Operator with Google Secret Manager** (the values live
 in Secret Manager and the cluster syncs them; nothing secret passes through
-Helm). You need [External Secrets Operator](https://external-secrets.io)
+Helm).
+
+**Not with this guide's pinned release.** Option d needs the `agent-relay`
+chart 0.7.57 or later. The release this guide installs (chart 0.7.54) has no
+`externalSecrets` support: Helm would ignore the settings without an error,
+create no Secret, and the pods would never start. Use a, b or c with the
+pinned release, and option d from the first release whose chart is 0.7.57 or
+later.
+
+You also need [External Secrets Operator](https://external-secrets.io)
 installed in the cluster with the `external-secrets.io/v1` API. This path is
 covered by render tests; it has been proven on AWS (SSM), not yet on a live
 GKE install.
@@ -443,15 +452,21 @@ for s in $(gcloud secrets list --project $GCP_PROJECT_ID --filter='name~/agent-r
   gcloud secrets add-iam-policy-binding "$s" --project $GCP_PROJECT_ID \
     --member "$MEMBER" --role roles/secretmanager.secretAccessor >/dev/null
 done
-# 3. Fill in the overlay.
-sed -i.bak -e "s/__GCP_PROJECT_ID__/$GCP_PROJECT_ID/g" -e "s/__REGION__/$REGION/g" \
-  -e "s/__GKE_CLUSTER__/<cluster name>/g" external-secrets-values.yaml
-grep -n '__\|<' external-secrets-values.yaml
+# 3. Fill in the settings and add them to values.yaml, so every later helm
+#    command in this guide carries them.
+GKE_CLUSTER=<cluster name>
+sed -e "s/__GCP_PROJECT_ID__/$GCP_PROJECT_ID/g" -e "s/__REGION__/$REGION/g" \
+  -e "s/__GKE_CLUSTER__/$GKE_CLUSTER/g" external-secrets-values.yaml | grep -v '^#' >> values.yaml
+grep -n '__[A-Z_]*__' values.yaml; grep -c '^externalSecrets:' values.yaml
 ```
 
-**Done when:** the `grep` prints nothing. In step 11, add
-`-f "$INSTALL_DIR/external-secrets-values.yaml"` after `values.yaml`. After
-the install:
+**Done when:** the first `grep` prints nothing and the second prints `1`.
+
+The settings must be in **every** `helm upgrade` of this install, which is
+why they go into `values.yaml` and not a separate file: Helm does not keep
+values from the previous command, and an upgrade without them removes the
+five ExternalSecrets and, with them, the five Secrets. After the install
+(step 11):
 
 ```sh
 kubectl -n $NAMESPACE get secretstore,externalsecret
@@ -465,9 +480,17 @@ start by themselves once it does.
   access to that secret. Run the `for` loop again; it also covers secrets
   added since.
 - **A value changed in Secret Manager** reaches the Secret within an hour
-  (`refreshInterval`); restart the pods that use it. After changing the Cloud
-  SQL admin password, force a sync before `helm upgrade`:
-  `kubectl -n $NAMESPACE annotate externalsecret agent-relay-secrets search-indexer-owner force-sync=$(date +%s) --overwrite`.
+  (`refreshInterval`); restart the pods that use it.
+- **After changing the Cloud SQL admin password**, the migration Jobs of the
+  next `helm upgrade` need the new one. Ask for a sync, then wait until both
+  ExternalSecrets report a refresh **later than your change** before you
+  upgrade (the annotation only asks; `Ready` alone does not prove it):
+
+  ```sh
+  kubectl -n $NAMESPACE annotate externalsecret agent-relay-secrets search-indexer-owner force-sync=$(date +%s) --overwrite
+  kubectl -n $NAMESPACE get externalsecret agent-relay-secrets search-indexer-owner \
+    -o custom-columns='NAME:.metadata.name,REFRESHED:.status.refreshTime,STATUS:.status.conditions[0].reason'
+  ```
 - **`helm uninstall` deletes these five Secrets** (ESO owns them). The values
   stay in Secret Manager.
 
