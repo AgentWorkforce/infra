@@ -208,20 +208,23 @@ Cloudflare can reach it.
 
    ```hcl
    edge_security_policy = {
-     create     = true
-     cloudflare = { enabled = true }
+     create      = true
+     cloudflare  = { enabled = true }
+     rate_limits = []
      client_ip_rules = [
-       { name = "vendors", hosts = ["history.<domain>"], path_prefixes = ["/v1/delivery", "/v1/turns", "/v1/auth/token/refresh"], cidrs = ["<vendor range>", "<your range>"] },
-       { name = "staff", path_prefixes = ["/"], cidrs = ["<your range>"] },
+       { name = "vendors", hosts = ["history.<domain>"], path_prefixes = ["/v1/delivery", "/v1/turns", "/v1/auth/token/refresh"], cidrs = ["<vendor range>", "<your range>"], rate_limit = { count = 600, interval_sec = 60 } },
+       { name = "sign-in", path_prefixes = ["/login", "/api/v1/auth", "/cloud/api/v1/auth"], cidrs = ["<your range>"], rate_limit = { count = 60, interval_sec = 60 } },
+       { name = "staff", path_prefixes = ["/"], cidrs = ["<your range>"], unthrottled = true },
      ]
    }
    ```
 
-   Rules apply in order; the last one closes every other path. A rule with
-   more than 4 ranges (3 with `hosts`) admits its clients before the sign-in
-   rate limit is checked, so Terraform asks you to give it its own
-   `rate_limit = { count = 600, interval_sec = 60 }`. The module's README
-   (`terraform/modules/gcp/edge-security`) explains this and the other limits. A
+   The first rule that matches a request's path decides it: its listed
+   clients are admitted, everyone else gets 403. The last rule closes every
+   other path. A request that a rule admits is not checked by any later
+   rule, so each rule carries its own `rate_limit` (per client), and the
+   sign-in limit is a rule of its own ahead of the closing one. The module's
+   README (`terraform/modules/gcp/edge-security`) explains the limits. A
    vendor that publishes hundreds of ranges needs a higher Cloud Armor quota,
    or that list enforced as a Cloudflare WAF custom rule instead.
 

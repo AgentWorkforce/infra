@@ -231,20 +231,28 @@ run "vendor_paths_and_a_closed_remainder" {
   command = apply
   variables {
     security_policy = {
-      create     = true
-      cloudflare = { enabled = true }
+      create      = true
+      cloudflare  = { enabled = true }
+      rate_limits = []
       client_ip_rules = [
         {
           name          = "vendors"
           hosts         = ["history.relay.example.com"]
           path_prefixes = ["/v1/delivery", "/v1/turns", "/v1/auth/token/refresh"]
-          cidrs         = ["192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "198.18.0.0/15"]
+          cidrs         = ["192.0.2.0/24", "198.51.100.0/24"]
           rate_limit    = { count = 600, interval_sec = 60 }
+        },
+        {
+          name          = "sign-in"
+          path_prefixes = ["/login", "/api/v1/auth", "/cloud/api/v1/auth"]
+          cidrs         = ["203.0.113.0/24"]
+          rate_limit    = { count = 60, interval_sec = 60 }
         },
         {
           name          = "staff"
           path_prefixes = ["/"]
-          cidrs         = ["203.0.113.0/24"]
+          cidrs         = ["203.0.113.0/24", "192.0.2.128/25", "198.18.0.0/15", "198.51.100.128/25", "203.0.113.128/25"]
+          unthrottled   = true
         },
       ]
     }
@@ -252,42 +260,57 @@ run "vendor_paths_and_a_closed_remainder" {
   }
 
   assert {
-    condition     = keys(google_compute_security_policy_rule.client_ip) == ["staff-deny", "vendors-allow-0", "vendors-allow-1", "vendors-deny"]
-    error_message = "A host-scoped rule takes three ranges per admitting rule and ends with its deny; a short list is one deny rule."
-  }
-  # A short list never admits: its clients go on to the rate limits and the allowlist.
-  assert {
-    condition     = google_compute_security_policy_rule.client_ip["staff-deny"].action == "deny(403)" && google_compute_security_policy_rule.client_ip["staff-deny"].match[0].expr[0].expression == "request.path.matches('^(/)') && !(inIpRange(origin.user_ip, '203.0.113.0/24'))" && length(google_compute_security_policy_rule.client_ip["staff-deny"].rate_limit_options) == 0
-    error_message = "The closing rule denies every client outside its list and admits nobody."
-  }
-  # A long list admits its clients, so it carries its own per-client limit.
-  assert {
-    condition     = alltrue([for k in ["vendors-allow-0", "vendors-allow-1"] : google_compute_security_policy_rule.client_ip[k].action == "throttle" && google_compute_security_policy_rule.client_ip[k].rate_limit_options[0].enforce_on_key == "USER_IP" && google_compute_security_policy_rule.client_ip[k].rate_limit_options[0].rate_limit_threshold[0].count == 600 && google_compute_security_policy_rule.client_ip[k].rate_limit_options[0].exceed_action == "deny(429)"])
-    error_message = "Admitting client rules throttle per client address."
+    condition     = keys(google_compute_security_policy_rule.client_ip) == ["sign-in-allow-0", "sign-in-deny", "staff-allow-0", "staff-allow-1", "staff-deny", "vendors-allow-0", "vendors-deny"]
+    error_message = "Every rule admits its clients (four ranges per rule, three with hosts) and then denies its paths."
   }
   assert {
-    condition     = google_compute_security_policy_rule.client_ip["vendors-allow-0"].match[0].expr[0].expression == "request.headers['host'].lower().matches('^(history\\\\.relay\\\\.example\\\\.com)(:[0-9]+)?$') && request.path.matches('^(/v1/delivery|/v1/turns|/v1/auth/token/refresh)') && (inIpRange(origin.user_ip, '192.0.2.0/24') || inIpRange(origin.user_ip, '198.51.100.0/24') || inIpRange(origin.user_ip, '203.0.113.0/24'))"
-    error_message = "Host, path and three client ranges: five subexpressions."
+    condition     = google_compute_security_policy_rule.client_ip["vendors-allow-0"].match[0].expr[0].expression == "request.headers['host'].lower().matches('^(history\\\\.relay\\\\.example\\\\.com)(:[0-9]+)?$') && request.path.matches('^(/v1/delivery|/v1/turns|/v1/auth/token/refresh)') && (inIpRange(origin.user_ip, '192.0.2.0/24') || inIpRange(origin.user_ip, '198.51.100.0/24'))"
+    error_message = "Host, path and the client ranges, within five subexpressions."
+  }
+  # A short vendor list ahead of a staff-only "/" rule: the vendor is admitted
+  # by its own rule, which ends evaluation, so the later staff rule cannot
+  # deny it.
+  assert {
+    condition     = google_compute_security_policy_rule.client_ip["vendors-allow-0"].action == "throttle" && google_compute_security_policy_rule.client_ip["vendors-allow-0"].priority < google_compute_security_policy_rule.client_ip["vendors-deny"].priority && google_compute_security_policy_rule.client_ip["vendors-deny"].priority < google_compute_security_policy_rule.client_ip["sign-in-allow-0"].priority && google_compute_security_policy_rule.client_ip["sign-in-deny"].priority < google_compute_security_policy_rule.client_ip["staff-allow-0"].priority
+    error_message = "Rules apply in list order: the first rule that matches the path decides."
+  }
+  # A rule's own limit applies whatever the length of its list.
+  assert {
+    condition     = google_compute_security_policy_rule.client_ip["vendors-allow-0"].rate_limit_options[0].rate_limit_threshold[0].count == 600 && google_compute_security_policy_rule.client_ip["sign-in-allow-0"].action == "throttle" && google_compute_security_policy_rule.client_ip["sign-in-allow-0"].rate_limit_options[0].rate_limit_threshold[0].count == 60 && google_compute_security_policy_rule.client_ip["sign-in-allow-0"].rate_limit_options[0].enforce_on_key == "USER_IP" && google_compute_security_policy_rule.client_ip["sign-in-allow-0"].rate_limit_options[0].exceed_action == "deny(429)"
+    error_message = "A one-range rule with a rate_limit throttles per client address."
   }
   assert {
-    condition     = google_compute_security_policy_rule.client_ip["vendors-deny"].priority < google_compute_security_policy_rule.client_ip["staff-deny"].priority && google_compute_security_policy_rule.client_ip["staff-deny"].priority < min([for r in google_compute_security_policy_rule.rate_limit : r.priority]...)
-    error_message = "Rules apply in list order, ahead of the rate limits."
+    condition     = google_compute_security_policy_rule.client_ip["staff-allow-0"].action == "allow" && length(google_compute_security_policy_rule.client_ip["staff-allow-0"].rate_limit_options) == 0 && google_compute_security_policy_rule.client_ip["staff-deny"].action == "deny(403)" && google_compute_security_policy_rule.client_ip["staff-deny"].match[0].expr[0].expression == "request.path.matches('^(/)')"
+    error_message = "An unthrottled rule admits with allow; the closing rule denies every remaining path."
   }
   assert {
-    condition     = alltrue([for r in google_compute_security_policy_rule.client_ip : r.priority > google_compute_security_policy_rule.origin_secret[0].priority])
+    condition     = alltrue([for r in google_compute_security_policy_rule.client_ip : r.priority > google_compute_security_policy_rule.origin_secret[0].priority]) && length(google_compute_security_policy_rule.rate_limit) == 0
     error_message = "The secret-header rule runs before any client rule."
   }
 }
 
-# A long client list admits its clients before rate_limits run, so the module
-# refuses it until the rule says how it is limited.
-run "long_client_list_must_choose_a_limit" {
+# Admitted requests skip rate_limits, so a rule must say how it is limited.
+run "client_rule_must_choose_a_limit" {
   command = plan
   variables {
     security_policy = {
       create          = true
       cloudflare      = { enabled = true }
-      client_ip_rules = [{ name = "uploads", path_prefixes = ["/v1/delivery"], cidrs = ["192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "192.0.2.128/25", "198.18.0.0/15"] }]
+      client_ip_rules = [{ name = "uploads", path_prefixes = ["/v1/delivery"], cidrs = ["192.0.2.0/24"] }]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+  expect_failures = [google_compute_security_policy.this]
+}
+
+# A rule for every path decides every request, so path rate_limits would be dead.
+run "catch_all_client_rule_refuses_dead_rate_limits" {
+  command = plan
+  variables {
+    security_policy = {
+      create          = true
+      cloudflare      = { enabled = true }
+      client_ip_rules = [{ name = "staff", path_prefixes = ["/"], cidrs = ["203.0.113.0/24"], unthrottled = true }]
     }
     origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
   }
