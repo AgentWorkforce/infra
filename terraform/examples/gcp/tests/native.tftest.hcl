@@ -160,3 +160,41 @@ run "desktop_feed_bucket_and_identity" {
     error_message = "Enabling the feed must keep relay-control's Cloud SQL CA values."
   }
 }
+
+run "edge_tls_policy_is_on_by_default" {
+  command = apply
+
+  assert {
+    condition     = output.chart_values.gkeIngress.sslPolicy == "agent-relay-tls" && output.edge.ssl_policy == "agent-relay-tls"
+    error_message = "managed-values.json must name the TLS 1.2 SSL policy for the GKE Ingress."
+  }
+  assert {
+    condition     = output.edge.security_policy == null && output.edge.client_ip_header == null
+    error_message = "Cloud Armor is off by default."
+  }
+}
+
+run "edge_tls_policy_opt_out" {
+  command = apply
+  variables {
+    edge_ssl_policy = { create = false }
+  }
+
+  assert {
+    condition     = output.chart_values.gkeIngress.sslPolicy == "" && output.edge.ssl_policy == null
+    error_message = "Opting out must leave the chart default (no sslPolicy)."
+  }
+}
+
+run "edge_cloud_armor_behind_cloudflare" {
+  command = apply
+  variables {
+    edge_security_policy      = { create = true, cloudflare = { enabled = true } }
+    edge_origin_secret_header = { name = "x-origin-auth", value = "0123456789abcdef0123456789abcdef" }
+  }
+
+  assert {
+    condition     = output.edge.security_policy == "agent-relay-edge" && output.edge.client_ip_header == "CF-Connecting-IP"
+    error_message = "The Cloud Armor policy and the client-address header must be reported."
+  }
+}

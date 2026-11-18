@@ -60,6 +60,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | Name | Source | Version |
 | ---- | ------ | ------- |
 | desktop\_feed\_bucket | ../../modules/gcp/object-storage | n/a |
+| edge\_security | ../../modules/gcp/edge-security | n/a |
 | functions | ../../modules/gcp/functions | n/a |
 | postgres | ../../modules/gcp/postgres | n/a |
 | search | ../../modules/gcp/search | n/a |
@@ -98,6 +99,9 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | deletion\_protection | Prevent deletion of Cloud SQL, Memorystore and Pub/Sub data resources. Disable only for a disposable proof environment. | `bool` | `true` | no |
 | desktop\_feed\_bucket\_name | Globally unique bucket for relay-control's signed Desktop feed (SELFHOST\_DESKTOP\_FEED\_GCS\_BUCKET). Empty disables it. | `string` | `""` | no |
 | desktop\_feed\_service\_account\_id | account\_id of the Google service account relay-control uses for the Desktop feed bucket (6-30 characters). | `string` | `"agent-relay-control"` | no |
+| edge\_origin\_secret\_header | Shared-secret request header a fronting proxy adds; requests without it are denied (modules/gcp/edge-security origin\_secret\_header). Stored in state. | ```object({ name = string value = string })``` | `null` | no |
+| edge\_security\_policy | Cloud Armor policy for every GKE Ingress backend (modules/gcp/edge-security security\_policy: create, waf, rate\_limits, source\_ip\_allowlist, cloudflare, client\_ip\_header, client\_ip\_rules). Off unless create = true. It is exported as gkeIngress.securityPolicy in output.edge, not in chart\_values, because the chart then also needs the dashboard Service's backend-config annotation. | `any` | `{}` | no |
+| edge\_ssl\_policy | Compute SSL policy for the GKE Ingress HTTPS listener, exported as gkeIngress.sslPolicy in chart\_values. create = false leaves Google's default policy (TLS 1.0 and later). | ```object({ create = optional(bool, true) profile = optional(string, "MODERN") min_tls_version = optional(string, "TLS_1_2") })``` | `{}` | no |
 | enable\_functions | Create the optional event-driven pipeline (Cloud Run functions). | `bool` | `false` | no |
 | enable\_search | Install the optional OpenSearch cluster on GKE. | `bool` | `false` | no |
 | gke\_cluster\_location | Its region or zone. | `string` | `null` | no |
@@ -129,6 +133,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | ---- | ----------- |
 | chart\_values | Complete non-secret managed-service overlay for values-gcp.yaml plus values-gcp-native.yaml. Save with: terraform output -json chart\_values > managed-values.json. |
 | desktop\_feed | Values for relay-control's signed Desktop feed on GCS (null unless desktop\_feed\_bucket\_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys. |
+| edge | Edge policy names (edge.tf). security\_policy is null unless edge\_security\_policy.create is set; put it in gkeIngress.securityPolicy together with the backend-config annotation the chart asks for. client\_ip\_header set means a proxy fronts the load balancer: raise relay-control.auth.trustedProxies by one. |
 | functions | Pipeline function, topics and secret (null unless enable\_functions). |
 | image\_mirror\_root | MIRROR\_ROOT for install guide step 5 (null unless image\_mirror\_repository is set). |
 | pipeline | Native Sessions pipeline values. The Redis CA is public certificate material, not a credential. |

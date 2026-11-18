@@ -61,6 +61,11 @@ gkeIngress:
   staticIpName: __STATIC_IP_NAME__
   managedCertificateName: agent-relay
   frontendConfigName: agent-relay
+  # sslPolicy (TLS 1.2 minimum) comes from managed-values.json (step 4).
+  # Optional, 3-EDGE-HARDENING.md: Cloud Armor on every backend, and a
+  # certificate from a Secret when a proxy such as Cloudflare is in front.
+  # securityPolicy: agent-relay-edge
+  # tlsSecretName: agent-relay-origin-tls
   hosts:
     root: __DOMAIN__
     api: api.__DOMAIN__

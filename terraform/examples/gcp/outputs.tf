@@ -104,6 +104,20 @@ output "chart_values" {
         key       = "ca.crt"
       }
     }
+    # The TLS policy of the load balancer's HTTPS listener (edge.tf). Empty
+    # with edge_ssl_policy.create = false, which is the chart's default.
+    gkeIngress = {
+      sslPolicy = module.edge_security.ssl_policy_name != null ? module.edge_security.ssl_policy_name : ""
+    }
+  }
+}
+
+output "edge" {
+  description = "Edge policy names (edge.tf). security_policy is null unless edge_security_policy.create is set; put it in gkeIngress.securityPolicy together with the backend-config annotation the chart asks for. client_ip_header set means a proxy fronts the load balancer: raise relay-control.auth.trustedProxies by one."
+  value = {
+    ssl_policy       = module.edge_security.ssl_policy_name
+    security_policy  = module.edge_security.security_policy_name
+    client_ip_header = module.edge_security.client_ip_header
   }
 }
 
