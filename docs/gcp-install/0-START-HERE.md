@@ -395,6 +395,10 @@ done
 **Done when:** five lines that end in `created` (`replaced` on a rerun). Copy `~/.agent-relay-install`
 to your secret store again (step 8 shows how): it now holds the encryption keys.
 
+These Secrets include the database administrator's URL. Before other people
+get access to the cluster, restrict who can read Secrets in this namespace:
+[selfhost-secret-access.md](../selfhost-secret-access.md).
+
 **b. helm-secrets with SOPS** (every secret in one encrypted values file, for
 example encrypted with a Cloud KMS key):
 
