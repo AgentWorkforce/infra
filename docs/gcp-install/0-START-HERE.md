@@ -847,6 +847,42 @@ reads (`/turns`, replay, events) are fixed in 2026.11.6 and verified on a GKE
 install. If you uploaded sessions on 2026.11.1 to 2026.11.5, run "Re-stamp
 sessions uploaded before 2026.11.6" below once after upgrading.
 
+## Set `trustedProxies` to 2 (installs made from an earlier copy of this guide)
+
+Earlier copies of `values.yaml` had `relay-control.auth.trustedProxies: 1`.
+The Google load balancer adds two entries to `X-Forwarded-For` (the client's
+address, then its own), so with 1 the API takes the load balancer's address
+as every client's address. Sign-in then works, but all users share one
+per-address rate limit and one password lockout: a few wrong passwords from
+anyone can lock everyone out for a while.
+
+Check what your pods receive:
+
+```sh
+kubectl -n $NAMESPACE logs deploy/relay-webapp -c dashboard --tail 5
+```
+
+The last quoted field of each line is `X-Forwarded-For`. With the load
+balancer alone it is `<your address>, <load balancer address>`: two entries.
+In `values.yaml` set:
+
+```yaml
+relay-control:
+  auth:
+    trustedProxies: 2
+```
+
+and run step 11's `helm upgrade` again. With a proxy or CDN in front of the
+load balancer the header has one more entry; use that count.
+
+**Done when:**
+
+```sh
+kubectl -n $NAMESPACE get deploy relay-control -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_TRUSTED_PROXIES")].value}{"\n"}'
+```
+
+prints `2`.
+
 ## Re-stamp sessions uploaded before 2026.11.6 (upgrades only)
 
 Releases 2026.11.1 to 2026.11.5 recorded sessions uploaded to GCS as if they

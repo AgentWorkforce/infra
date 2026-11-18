@@ -273,8 +273,11 @@ relay-control:
   auth:
     password:
       enabled: true
-    # One hop: the Google load balancer. Rate limits depend on this being right.
-    trustedProxies: 1
+    # The Google load balancer appends two X-Forwarded-For entries: the
+    # client's address, then its own. 2 selects the client; 1 would select the
+    # load balancer's address for every user, so all users would share one
+    # sign-in limit and lockout. Add one more for each proxy or CDN in front.
+    trustedProxies: 2
   selectedFeatures: [usage, launch]
   publicUrl: https://api.__DOMAIN__
   dashboardUrl: https://__DOMAIN__/
