@@ -977,7 +977,10 @@ test "$(yq 'select(.kind == "Ingress") | .metadata.annotations | [has("kubernete
 test "$(yq 'select(.kind == "Ingress") | .spec.tls[0].secretName' <<<"$int_out")" = example-agent-relay-tls || int_fail "Ingress must serve the TLS Secret"
 test -z "$(yq 'select(.kind == "ManagedCertificate" or .kind == "FrontendConfig") | .kind' <<<"$int_out")" || int_fail "ManagedCertificate and FrontendConfig must not render"
 # The routes are the same as on the external edge.
-test "$(yq 'select(.kind == "Ingress") | .spec.rules[] | .host + " " + (.http.paths | length | tostring)' <<<"$int_out")" = "$(yq 'select(.kind == "Ingress") | .spec.rules[] | .host + " " + (.http.paths | length | tostring)' <<<"$edge_default")" \
+int_rules=$(yq -o=json -I=0 'select(.kind == "Ingress") | .spec.rules' <<<"$int_out" | sed '/^---$/d;/^$/d;/^null$/d')
+test "$(grep -c '"host"' <<<"$int_rules")" = 1 || int_fail "expected one Ingress with rules"
+# Every host, path, pathType, backend Service and port is identical to the external edge.
+test "$int_rules" = "$(yq -o=json -I=0 'select(.kind == "Ingress") | .spec.rules' <<<"$edge_default" | sed '/^---$/d;/^$/d;/^null$/d')" \
   || int_fail "internal mode changed the Ingress rules"
 # Every NetworkPolicy that admits the Google health-check range also admits the proxy-only subnet.
 int_gaps=$(yq 'select(.kind == "NetworkPolicy") | select([.spec.ingress[]?.from[]?.ipBlock.cidr] | contains(["35.191.0.0/16"])) | select([.spec.ingress[]?.from[]?.ipBlock.cidr] | contains(["10.129.0.0/23"]) | not) | .metadata.name' <<<"$int_out" | sed '/^---$/d;/^$/d')
@@ -995,6 +998,9 @@ expect_internal_failure() { # expected-error helm-args...
 expect_internal_failure "gkeIngress.mode must be external or internal" --set gkeIngress.mode=private
 expect_internal_failure "requires gkeIngress.internal.proxyOnlySubnetCidr" --set gkeIngress.internal.proxyOnlySubnetCidr=
 expect_internal_failure "requires gkeIngress.internal.proxyOnlySubnetCidr" --set gkeIngress.internal.proxyOnlySubnetCidr=203.0.113.0/24
+for bad in 10.129.999.0/23 172.16.0.0.1/24 10.129.0/23 10.129.0.0/27 10.129.0.0 172.32.0.0/16; do
+  expect_internal_failure "requires gkeIngress.internal.proxyOnlySubnetCidr" --set "gkeIngress.internal.proxyOnlySubnetCidr=$bad"
+done
 expect_internal_failure "gkeIngress.mode=internal requires a certificate" --set gkeIngress.tlsSecretName=
 expect_internal_failure "set only one of gkeIngress.tlsSecretName and gkeIngress.internal.preSharedCerts" --set 'gkeIngress.internal.preSharedCerts={relay-cert}'
 expect_internal_failure "is not a Compute Engine SSL certificate name" --set gkeIngress.tlsSecretName= --set 'gkeIngress.internal.preSharedCerts={Bad_Cert}'

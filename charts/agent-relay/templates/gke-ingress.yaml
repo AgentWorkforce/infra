@@ -22,7 +22,7 @@ creates them):
 {{- if and $tlsSecretName (not (regexMatch "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" $tlsSecretName)) }}{{ fail "gkeIngress.tlsSecretName must be the name of a kubernetes.io/tls Secret in the release namespace" }}{{ end -}}
 {{- $gkeInternal := eq (dig "mode" "external" $gke | toString) "internal" -}}
 {{- $gkeProxyCidr := dig "internal" "proxyOnlySubnetCidr" "" $gke | toString -}}
-{{- if $gkeInternal }}{{- if not (regexMatch "^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)[0-9]{1,3}(\\.[0-9]{1,3}){1,2}/(8|9|1[0-9]|2[0-6])$" $gkeProxyCidr) }}{{ fail "gkeIngress.mode=internal requires gkeIngress.internal.proxyOnlySubnetCidr: the RFC 1918 range (/26 or larger) of the VPC's proxy-only subnet (purpose REGIONAL_MANAGED_PROXY) in the cluster's region; the load balancer's proxies connect to the pods from it" }}{{ end -}}{{ end -}}
+{{- if $gkeInternal }}{{- if not (regexMatch "^(10(\\.(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){3}|172\\.(1[6-9]|2[0-9]|3[01])(\\.(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){2}|192\\.168(\\.(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){2})/(8|9|1[0-9]|2[0-6])$" $gkeProxyCidr) }}{{ fail "gkeIngress.mode=internal requires gkeIngress.internal.proxyOnlySubnetCidr: the RFC 1918 range (/26 or larger) of the VPC's proxy-only subnet (purpose REGIONAL_MANAGED_PROXY) in the cluster's region; the load balancer's proxies connect to the pods from it" }}{{ end -}}{{ end -}}
 {{- $components := .Values.components | default dict -}}
 {{- $relaycast := .Values.relaycast | default dict -}}
 {{- $cloudApi := index .Values "relay-control" | default dict -}}
