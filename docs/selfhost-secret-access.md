@@ -170,8 +170,10 @@ gcloud projects get-iam-policy <project id> --flatten='bindings[].members' \
 
 **Done when:** only your install operators answer `yes`, and every subject
 in the Kubernetes lists and every principal in the cloud list is one you
-expect. An EKS policy other than `AmazonEKSViewPolicy`, or one with scope
-`cluster`, reads the Secrets.
+expect. For each EKS entry check two things: what the policy permits
+(`AmazonEKSViewPolicy` cannot read Secrets at any scope; the admin and edit
+policies can), and whether its scope is `cluster` or lists the install's
+namespace.
 
 ### 5. Record reads
 
