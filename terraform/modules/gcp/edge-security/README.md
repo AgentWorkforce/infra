@@ -65,7 +65,7 @@ A Cloud Armor rule that admits a request ends evaluation. So a request admitted 
 - **Every rule states its own limit**: `rate_limit = { count, interval_sec }` (per client address, 429 beyond it) or `unthrottled = true`.
 - **A rule for every path (`["/"]` without `hosts`) makes `rate_limits` unreachable**, so set `rate_limits = []` and express the sign-in limit as a narrower rule ahead of it, as below.
 
-This example lets two vendors' published ranges reach only the session upload paths on the history host, limits sign-in attempts, lets the organisation's own ranges reach everything, and closes the rest:
+This example lets two vendors' published ranges reach only the session upload paths on the history host and the hosted MCP paths on the API host, limits sign-in attempts, lets the organisation's own ranges reach everything, and closes the rest. Check the path lists against the release you run:
 
 ```hcl
 security_policy = {
@@ -74,10 +74,17 @@ security_policy = {
   rate_limits = []
   client_ip_rules = [
     {
-      name          = "vendors"
+      name          = "vendor-uploads" # session uploads, on the history host
       hosts         = ["history.relay.example.com"]
       path_prefixes = ["/v1/delivery", "/v1/turns", "/v1/auth/token/refresh"]
       cidrs         = ["192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"] # vendor ranges, then your own
+      rate_limit    = { count = 600, interval_sec = 60 }
+    },
+    {
+      name          = "vendor-mcp" # hosted MCP and its OAuth endpoints, on the API host
+      hosts         = ["api.relay.example.com"]
+      path_prefixes = ["/cloud/api/v1/mcp", "/mcp", "/cloud/mcp", "/.well-known"]
+      cidrs         = ["192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"]
       rate_limit    = { count = 600, interval_sec = 60 }
     },
     {
@@ -97,7 +104,7 @@ security_policy = {
 origin_secret_header = { name = "x-origin-auth", values = [var.origin_secret] }
 ```
 
-- Put narrower rules first. Repeat your own ranges in a vendor rule if your users use those paths too: a vendor rule denies everyone it does not list.
+- Put narrower rules first. Repeat your own ranges (for example your VPN's egress range) in a vendor rule: your users' desktop uploads and MCP clients use those paths too, and a rule denies everyone it does not list.
 - Without the closing `["/"]` rule, paths that no rule names stay open to every client that comes through the proxy (and `rate_limits` still apply to them).
 - Each rule costs one advanced rule per four client ranges (three with `hosts`) plus one. A vendor that publishes hundreds of ranges will exceed the project's Cloud Armor quota for advanced rules; ask Google for a higher quota, or enforce that list at the proxy instead (Cloudflare WAF custom rules see the same client address and have no such limit). The limit per rule here is 294 ranges.
 - No rule in this module can contain `0.0.0.0/0` or `::/0`: validation refuses them in every list. The only "all addresses" match is Cloud Armor's mandatory default rule, which is deny whenever an allowlist is set.
