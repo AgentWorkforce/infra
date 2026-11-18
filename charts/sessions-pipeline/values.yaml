@@ -424,9 +424,13 @@ searchIndexer:
   # true together with outputFacts.enabled is refused (the consumer refuses it).
   # A scope streams only when four times its size fits BOTH budgets; at their
   # defaults every streamed scope is still refused and the consumer warns at
-  # startup, so raise the budget(s) the scope exceeds. Memory: up to one 512 MiB
-  # scope plus about 1 KB per record read; raise the indexer's memory limit by
-  # about 0.5 GB where streaming is on, or set enabled: false.
+  # startup, so raise the budget(s) the scope exceeds. Memory: the non-streaming
+  # sizing plus about 2 GB at the default budgets: up to one 512 MiB scope plus
+  # about 3 KB per record of the scope (measured: +0.6 GB at 100000 records,
+  # +3.3 GB at 1000000). It scales with SEARCH_INDEX_STREAM_MAX_READ_EVENTS.
+  # resources below defaults to a 3Gi limit for this; raise it where streaming
+  # is on with larger budgets, or set enabled: false. The staged reconcile
+  # (SEARCH_INDEX_STAGED_RECONCILE_ENABLED) needs the same sizing.
   streaming:
     # SEARCH_INDEX_STREAMING_ENABLED: null | true | false.
     enabled: null
@@ -500,9 +504,10 @@ searchIndexer:
   tolerations: []
   affinity: {}
   podAnnotations: {}
+  # Sized for streaming reconcile at the default budgets (see streaming above).
   resources:
-    requests: { cpu: 50m, memory: 256Mi }
-    limits: { memory: 1Gi }
+    requests: { cpu: 50m, memory: 1Gi }
+    limits: { memory: 3Gi }
 
 # Per-session operator hard-delete composition. Every switch is off by default.
 # The chart renders only Secret references; create the Secrets separately and
