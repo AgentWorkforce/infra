@@ -206,6 +206,78 @@ localKind:
   # Native core installer phase (control, then serve). Required when enabled:
   # the single-phase profile that ran the standalone RelayHistory was removed.
   nativePhase: ""
+# Install Secrets from an external store through External Secrets Operator
+# (ESO, external-secrets.io/v1): AWS SSM Parameter Store, AWS Secrets Manager or
+# any other ESO provider. Off by default; with it off you create the Secrets
+# yourself. Each secrets entry renders one ExternalSecret whose target is the
+# Kubernetes Secret of that name, so the components keep reading the Secret
+# names they already take (relay-control existingSecret, ingestEdge
+# config.existingSecret, ...). Values hold remote key names only, never values.
+#
+# Needs the ESO CRDs and controller in the cluster, and IAM for the controller
+# (Pod Identity or IRSA) to read the parameters (ssm:GetParameter* and
+# kms:Decrypt for SecureString). Pods that start before ESO has written their
+# Secret wait in CreateContainerConfigError and start once it exists.
+# A rotated value reaches running pods only after a restart.
+#
+# Example: AWS SSM Parameter Store, the Secrets of the AWS RDS install.
+#   externalSecrets:
+#     enabled: true
+#     store:
+#       create: true                  # namespaced SecretStore; the controller's own AWS identity
+#       provider: { aws: { service: ParameterStore, region: us-east-1 } }
+#     secrets:
+#       agent-relay-secrets:
+#         data:
+#           database-url: /agent-relay/relaycontrol/runtime-url
+#           database-migrations-url: /agent-relay/relaycontrol/owner-url
+#           HOOPDB_URL: /agent-relay/hoopdb/runtime-url
+#           HOOPDB_MIGRATION_URL: /agent-relay/hoopdb/migration-url
+#           database-owner-url: /agent-relay/relaycast/owner-url
+#           database-runtime-url: /agent-relay/relaycast/runtime-url
+#           selfhost-setup-key: /agent-relay/selfhost-setup-key
+#           # ...every other key the install's Secrets table lists
+#       agent-relay-read-api:
+#         data: { RELAYHISTORY_READ_API_SECRET: /agent-relay/read-api/config }  # stored as JSON
+#       agent-relay-ingest-edge-runtime:
+#         data:
+#           database-url: /agent-relay/hoopdb/ingest-url
+#           introspect-secret: /agent-relay/relaycontrol-introspect-secret
+#       search-indexer-runtime:
+#         data: { RELAYHISTORY_PIPELINE_CONSUMER_SECRET: /agent-relay/search-indexer/runtime-config }
+#       search-indexer-owner:
+#         data: { RELAYHISTORY_PIPELINE_CONSUMER_SECRET: /agent-relay/search-indexer/owner-config }
+#
+# A data value is a remote key string, or a full ESO remoteRef map
+# ({key, property, version, decodingStrategy, ...}). An entry may instead (or
+# also) set dataFrom (ESO's list as-is, e.g.
+# [{find: {path: /agent-relay/x/, name: {regexp: ".*"}}}] to load every
+# parameter under a path; SSM needs the name or tags matcher), and template (ESO target.template, to
+# build a value such as JSON from several parameters).
+externalSecrets:
+  enabled: false
+  apiVersion: external-secrets.io/v1
+  refreshInterval: 1h
+  # Owner: this release owns each target Secret, and uninstall deletes it.
+  # For a Secret you created by hand before enabling this, use Merge (per entry
+  # or here) or delete the Secret first.
+  creationPolicy: Owner
+  # An existing store. Ignored when store.create is true.
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: ""
+  # Or let the chart render a namespaced SecretStore (named
+  # <release>-external-secrets unless store.name is set). provider is ESO's
+  # spec.provider as-is; without an auth block the AWS provider uses the
+  # controller's own credentials.
+  store:
+    create: false
+    name: ""
+    provider: {}
+  # Target Secret name -> {data, dataFrom, template, creationPolicy,
+  # deletionPolicy, refreshInterval}.
+  secrets: {}
+
 # Umbrella NetworkPolicy for the durable-actors control plane (port 7100):
 # release-namespace pods, the actor sandbox namespace and, with
 # gkeIngress.hosts.actors, the GKE load balancer ranges.

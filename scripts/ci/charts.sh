@@ -1063,6 +1063,36 @@ for chart in "${charts[@]}"; do
         ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
+        # externalSecrets (ESO, e.g. AWS SSM): off renders nothing; on renders
+        # one ExternalSecret per target Secret, plus a namespaced SecretStore
+        # when store.create, and refuses an incomplete configuration.
+        ! render "$chart" "$v" | yq '.kind' | grep -qE '^(ExternalSecret|SecretStore)$' || err "$chart: externalSecrets off must render no ExternalSecret or SecretStore"
+        es=(--set externalSecrets.enabled=true --set externalSecrets.store.create=true --set externalSecrets.store.provider.aws.service=ParameterStore --set externalSecrets.store.provider.aws.region=us-east-1
+          --set externalSecrets.secrets.agent-relay-secrets.data.database-url=/agent-relay/relaycontrol/runtime-url
+          --set externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_URL.key=/agent-relay/hoopdb --set externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_URL.property=url
+          --set externalSecrets.secrets.search-indexer-runtime.creationPolicy=Merge --set-json 'externalSecrets.secrets.search-indexer-runtime.dataFrom=[{"find":{"path":"/agent-relay/search-indexer/","name":{"regexp":".*"}}}]')
+        out=$(render "$chart" "$v" "${es[@]}") || err "$chart: externalSecrets on did not render"
+        [ "$(yq 'select(.kind == "ExternalSecret") | .metadata.name + ":" + .spec.target.name + ":" + .spec.secretStoreRef.kind + "/" + .spec.secretStoreRef.name + ":" + .spec.target.creationPolicy' <<<"$out" | sed '/^---$/d' | tr '\n' ' ')" = "agent-relay-secrets:agent-relay-secrets:SecretStore/ci-external-secrets:Owner search-indexer-runtime:search-indexer-runtime:SecretStore/ci-external-secrets:Merge " ] \
+          || err "$chart: each externalSecrets entry must target the Secret of its name through the chart SecretStore"
+        [ "$(yq 'select(.kind == "SecretStore") | .metadata.name + " " + .spec.provider.aws.service' <<<"$out" | sed '/^---$/d')" = "ci-external-secrets ParameterStore" ] || err "$chart: store.create must render the SecretStore with store.provider"
+        [ "$(yq 'select(.kind == "ExternalSecret" and .metadata.name == "agent-relay-secrets") | .spec.data[] | .secretKey + "=" + .remoteRef.key + "#" + (.remoteRef.property // "")' <<<"$out" | tr '\n' ' ')" = "HOOPDB_URL=/agent-relay/hoopdb#url database-url=/agent-relay/relaycontrol/runtime-url# " ] \
+          || err "$chart: externalSecrets data must map a string to remoteRef.key and pass a remoteRef map through"
+        # ESO CRD schemas pinned to a CRDs-catalog commit, so invalid
+        # ExternalSecret/SecretStore fields fail here instead of being skipped.
+        eso_schemas='https://raw.githubusercontent.com/datreeio/CRDs-catalog/784ec895547a36e548e6810b41f27baade3a0890/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+        es_only=$(yq 'select(.kind == "ExternalSecret" or .kind == "SecretStore")' <<<"$out")
+        [ "$(yq '.kind' <<<"$es_only" | grep -cE '^(ExternalSecret|SecretStore)$')" = 3 ] || err "$chart: externalSecrets must render two ExternalSecrets and one SecretStore"
+        kubeconform -strict -summary -schema-location "$eso_schemas" -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$es_only" >/dev/null || { kubeconform -strict -summary -schema-location "$eso_schemas" <<<"$es_only"; err "$chart: externalSecrets failed kubeconform against the ESO schemas"; }
+        [ "$(render "$chart" "$v" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=aws-ssm --set externalSecrets.secrets.x.data.k=/p | yq 'select(.kind == "ExternalSecret") | .spec.secretStoreRef.kind + "/" + .spec.secretStoreRef.name')" = ClusterSecretStore/aws-ssm ] \
+          || err "$chart: an existing secretStoreRef must be used as given"
+        expect_render_failure "$chart" "$v" "externalSecrets without a store" "requires externalSecrets.secretStoreRef.name" --set externalSecrets.enabled=true --set externalSecrets.secrets.x.data.k=/p
+        expect_render_failure "$chart" "$v" "externalSecrets store.create without a provider" "requires externalSecrets.store.provider" --set externalSecrets.enabled=true --set externalSecrets.store.create=true --set externalSecrets.secrets.x.data.k=/p
+        expect_render_failure "$chart" "$v" "externalSecrets with no secrets" "at least one entry in externalSecrets.secrets" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s
+        expect_render_failure "$chart" "$v" "externalSecrets entry with no data" "needs data (Secret key -> remote key) or dataFrom" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s --set externalSecrets.secrets.x.creationPolicy=Owner
+        expect_render_failure "$chart" "$v" "externalSecrets bad Secret name" "must be a DNS-1123 subdomain" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s --set externalSecrets.secrets.Bad_Name.data.k=/p
+        expect_render_failure "$chart" "$v" "externalSecrets bad data key" "is not a valid Secret data key" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s --set 'externalSecrets.secrets.x.data.a/b=/p'
+        expect_render_failure "$chart" "$v" "externalSecrets remoteRef without key" "must be a remote key string or a remoteRef map with key" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s --set externalSecrets.secrets.x.data.k.property=url
+        expect_render_failure "$chart" "$v" "externalSecrets bad creationPolicy" "creationPolicy must be Owner, Merge, Orphan or None" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s --set externalSecrets.secrets.x.data.k=/p --set externalSecrets.creationPolicy=Adopt
         # The standalone RelayHistory component was removed; values that would
         # have deployed it must fail instead of silently dropping History.
         expect_render_failure "$chart" "$v" "removed relayhistory component" "components.relayhistory was removed" --set components.relayhistory=true
