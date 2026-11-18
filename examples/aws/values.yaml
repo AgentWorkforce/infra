@@ -1,7 +1,7 @@
 # EXAMPLE values.yaml for agent-relay-2026.11.16 (chart 0.7.54), filled in.
 # Every site value is an example: domain ar.selfhost-example.agentrelay.com, orgId, org name, admin
-# email, region, bucket, OpenSearch URL, RDS CA sha256 (from
-# ~/.agent-relay-install/rds-ca.sha256; quote it if it is all digits), ALB
+# email, region, bucket, OpenSearch URL, RDS CA sha256 (keep it quoted; from
+# ~/.agent-relay-install/rds-ca.sha256), ALB
 # subnet CIDRs, and the nativeBrief model (disabled until after-install).
 # The unfilled template is https://agentrelay.com/self-hosting/files/eks/values.yaml.
 
@@ -110,7 +110,7 @@ sessions-pipeline:
       enabled: true
       configMap: rds-ca
       key: ca.crt
-      sha256: 9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a
+      sha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     search:
       backend: opensearch
       backendId: opensearch-main
@@ -169,7 +169,7 @@ sessions-pipeline:
       introspectSecretKey: introspect-secret
     postgres:
       caConfigMap: rds-ca
-      caSha256: 9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a
+      caSha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     serviceAccountName: agent-relay-session-ingest-api
     locker:
       bucket: example-agent-relay-sessions
@@ -195,7 +195,7 @@ sessions-pipeline:
     postgres:
       tlsProfile: custom-ca
       caConfigMap: rds-ca
-      caSha256: 9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a
+      caSha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     bootstrap:
       enabled: true
       existingSecret: search-indexer-owner
@@ -221,7 +221,7 @@ sessions-pipeline:
       enabled: true
       configMap: rds-ca
       key: ca.crt
-      sha256: 9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a
+      sha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     hoopdb:
       existingSecret: agent-relay-secrets
       key: HOOPDB_URL
