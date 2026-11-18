@@ -506,6 +506,10 @@ searchIndexer:
   affinity: {}
   podAnnotations: {}
   # Sized for streaming reconcile at the default budgets (see streaming above).
+  # Upgrading from 0.8.48 or earlier: Helm merges these keys with your values,
+  # so a values file that sets only limits.memory below 1Gi now also gets the
+  # 1Gi request and the pod is refused (request above limit). Set
+  # requests.memory with it, or replace the whole resources block.
   resources:
     requests: { cpu: 50m, memory: 1Gi }
     limits: { memory: 3Gi }

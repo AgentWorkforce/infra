@@ -5120,7 +5120,9 @@ scope (measured: +0.6 GB at 100000 records, +3.3 GB at 1000000; 500000
 records at the default budgets), scaling with
 SEARCH_INDEX_STREAM_MAX_READ_EVENTS. The searchIndexer default memory
 limit is 3Gi (request 1Gi) for this; raise it for larger budgets, or set
-false. The staged reconcile needs the same sizing. Images that default streaming
+false. Upgrading from sessions-pipeline 0.8.48 or earlier: a values file
+that sets only searchIndexer.resources.limits.memory below 1Gi must also
+set requests.memory, or the pod is refused (request above limit). The staged reconcile needs the same sizing. Images that default streaming
 on validate the budgets at startup even when enabled is unset.
 
 - Default: (no default)
