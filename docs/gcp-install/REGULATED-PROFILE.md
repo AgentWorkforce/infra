@@ -9,6 +9,15 @@ with your own key. It is the one item you can turn on for a running cluster
 with no replacement, and the install's database URLs and signing keys live in
 Kubernetes Secrets.
 
+**Which release.** The Terraform inputs below (`kms`,
+`binary_authorization_enforce`, `pipeline_redis_kms_key_name`,
+`admin_secret_kms_key_name`, `image_mirror_kms_key_name`) and the
+`regulated.tfvars.example` files are newer than the release 0-START-HERE.md
+currently pins (agent-relay-2026.11.16): Terraform from that tag rejects them
+as unknown variables. With the pinned release you can still use `kms_key_name`
+and `pipeline_pubsub_kms_key_name` (Cloud SQL, buckets, Pub/Sub), and the
+`gcloud` commands in sections 1 and 3, which need no Terraform change.
+
 The Terraform inputs are covered by plan tests with a mock provider. None of
 this has been applied to a live project from this repository; check each
 "Done when".
