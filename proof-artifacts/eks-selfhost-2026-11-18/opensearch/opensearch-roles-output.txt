@@ -1,0 +1,26 @@
+pod/os-relay created
+pod/os-relay condition met
+## whoami
+{"Message":"Your request: '/_plugins/_security/whoami' is not allowed."}
+HTTP_STATUS=401
+## authinfo
+{"user":"User [name=arn:aws:iam::111122223333:role/EXAMPLE-operator-admin-role, backend_roles=[arn:aws:iam::111122223333:role/EXAMPLE-operator-admin-role], requestedTenant=null]","user_name":"arn:aws:iam::111122223333:role/EXAMPLE-operator-admin-role","user_requested_tenant":null,"backend_roles":["arn:aws:iam::111122223333:role/EXAMPLE-operator-admin-role"],"custom_attribute_names":[],"roles":["security_manager","all_access"],"tenants":{"global_tenant":true,"arn:aws:iam::111122223333:role/EXAMPLE-operator-admin-role":true},"principal":null,"peer_certificates":"0","sso_logout_url":null}
+HTTP_STATUS=200
+## PUT role indexer
+{"status":"CREATED","message":"'relayhistory_indexer' created."}
+HTTP_STATUS=201
+## PUT mapping indexer
+{"status":"CREATED","message":"'relayhistory_indexer' created."}
+HTTP_STATUS=201
+## PUT role reader
+{"status":"CREATED","message":"'relayhistory_reader' created."}
+HTTP_STATUS=201
+## PUT mapping reader
+{"status":"CREATED","message":"'relayhistory_reader' created."}
+HTTP_STATUS=201
+## GET mapping indexer
+{"relayhistory_indexer":{"hosts":[],"users":[],"reserved":false,"hidden":false,"backend_roles":["arn:aws:iam::111122223333:role/ar-proof-search-indexer"],"and_backend_roles":[]}}
+HTTP_STATUS=200
+## GET mapping reader
+{"relayhistory_reader":{"hosts":[],"users":[],"reserved":false,"hidden":false,"backend_roles":["arn:aws:iam::111122223333:role/ar-proof-search-reader"],"and_backend_roles":[]}}
+HTTP_STATUS=200

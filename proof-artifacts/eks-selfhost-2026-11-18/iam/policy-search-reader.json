@@ -1,0 +1,4 @@
+{"Version":"2012-10-17","Statement":[
+ {"Sid":"OpenSearchHttp","Effect":"Allow","Action":["es:ESHttpGet","es:ESHttpHead","es:ESHttpPost"],"Resource":["arn:aws:es:us-west-2:111122223333:domain/ar-proof-search/*"]},
+ {"Sid":"ListSessionsBucket","Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::ar-proof-sessions-EXAMPLE"]},
+ {"Sid":"ReadSessionObjects","Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::ar-proof-sessions-EXAMPLE/*"]}]}

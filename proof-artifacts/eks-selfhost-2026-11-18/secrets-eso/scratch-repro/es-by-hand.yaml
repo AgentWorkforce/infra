@@ -1,0 +1,16 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: scratch-es
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: scratch-old
+  target:
+    name: scratch-secret
+    creationPolicy: Owner
+  data:
+    - secretKey: v
+      remoteRef:
+        key: /agent-relay/proof/_scratch/v

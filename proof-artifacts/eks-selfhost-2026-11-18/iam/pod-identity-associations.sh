@@ -1,0 +1,4 @@
+for sa in agent-relay-worker agent-relay-alleyoop agent-relay-session-ingest-api; do
+  aws eks create-pod-identity-association --cluster-name $CLUSTER --namespace agent-relay --service-account $sa --role-arn $SESSIONS_ROLE_ARN --tags owner=$TAG_OWNER,purpose=$TAG_PURPOSE --query association.associationId --output text; done
+aws eks create-pod-identity-association --cluster-name $CLUSTER --namespace agent-relay --service-account agent-relay-search-indexer --role-arn $INDEXER_ROLE_ARN --tags owner=$TAG_OWNER,purpose=$TAG_PURPOSE --query association.associationId --output text
+aws eks create-pod-identity-association --cluster-name $CLUSTER --namespace agent-relay --service-account agent-relay-session-read --role-arn $READER_ROLE_ARN --tags owner=$TAG_OWNER,purpose=$TAG_PURPOSE --query association.associationId --output text

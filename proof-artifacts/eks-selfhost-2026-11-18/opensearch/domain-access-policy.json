@@ -1,0 +1,1 @@
+{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam::111122223333:role/EXAMPLE-operator-admin-role","arn:aws:iam::111122223333:role/ar-proof-search-indexer","arn:aws:iam::111122223333:role/ar-proof-search-reader"]},"Action":"es:ESHttp*","Resource":"arn:aws:es:us-west-2:111122223333:domain/ar-proof-search/*"}]}

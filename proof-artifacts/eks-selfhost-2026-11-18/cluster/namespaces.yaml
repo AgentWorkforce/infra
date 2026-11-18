@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: agent-relay, labels: {owner: layered-infra-ops, purpose: eks-selfhost-proof}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: ar-proof-setup, labels: {owner: layered-infra-ops, purpose: eks-selfhost-proof}}
