@@ -133,6 +133,53 @@ class S3Ledger(unittest.TestCase):
         sql = merge(load(SQL_FIXTURE), {"ingestEdge": {"admission": {"mode": "async", "awaitAuthority": True}}})
         self.render(sql, fail=requires)
 
+    def test_admission_spread(self):
+        s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
+        for docs in (self.render(s3), self.render(load(SQL_FIXTURE))):
+            env = self.ingest_env(docs)
+            self.assertNotIn("SELFHOST_ADMISSION_SPREAD", env)
+            self.assertNotIn("SELFHOST_ADMISSION_SPREAD_GRACE_MS", env)
+        self.assertNotIn("SELFHOST_ADMISSION_SPREAD",
+                         self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"spread": False}}}))))
+        for mode in ("async", "drain"):
+            with self.subTest(mode=mode):
+                env = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"mode": mode, "spread": True}}})))
+                self.assertEqual(env["SELFHOST_ADMISSION_SPREAD"]["value"], "on")
+                self.assertNotIn("SELFHOST_ADMISSION_SPREAD_GRACE_MS", env)
+        sql = merge(load(SQL_FIXTURE), {"ingestEdge": {"admission": {"mode": "async", "spread": True}}})
+        self.assertEqual(self.ingest_env(self.render(sql))["SELFHOST_ADMISSION_SPREAD"]["value"], "on")
+        for grace in (1000, 120000, 3600000, 86400000):
+            with self.subTest(grace=grace):
+                env = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"spread": True, "spreadGraceMs": grace}}})))
+                self.assertEqual(env["SELFHOST_ADMISSION_SPREAD"]["value"], "on")
+                self.assertEqual(env["SELFHOST_ADMISSION_SPREAD_GRACE_MS"]["value"], str(grace))
+        for value in ("on", "true", 1):
+            with self.subTest(spread=value):
+                self.render(merge(s3, {"ingestEdge": {"admission": {"spread": value}}}),
+                            fail="ingestEdge.admission.spread must be a boolean")
+        for grace in (0, 999, 86400001, -1, 1500.5, "120000", "2m", True):
+            with self.subTest(grace=grace):
+                self.render(merge(s3, {"ingestEdge": {"admission": {"spread": True, "spreadGraceMs": grace}}}),
+                            fail="ingestEdge.admission.spreadGraceMs must be an integer from 1000 to 86400000")
+        self.render(merge(s3, {"ingestEdge": {"admission": {"spreadGraceMs": 120000}}}),
+                    fail="ingestEdge.admission.spreadGraceMs requires ingestEdge.admission.spread=true")
+        self.render(merge(s3, {"ingestEdge": {"admission": {"mode": "sync", "spread": True}}}),
+                    fail="ingestEdge.admission.spread requires admission.mode async or drain")
+
+    def test_liveness_timeout_seconds(self):
+        s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
+        c = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(c(self.render(s3))["livenessProbe"]["timeoutSeconds"], 2)
+        for value in (2, 10, 30):
+            with self.subTest(value=value):
+                probe = c(self.render(merge(s3, {"ingestEdge": {"livenessTimeoutSeconds": value}})))["livenessProbe"]
+                self.assertEqual(probe["timeoutSeconds"], value)
+                self.assertEqual(probe["httpGet"]["path"], "/healthz")
+        for value in (0, 1, 31, -1, 2.5, "ten", True):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"livenessTimeoutSeconds": value}}),
+                            fail="ingestEdge.livenessTimeoutSeconds must be an integer from 2 to 30")
+
     def test_probe_timeout_seconds(self):
         s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
         c = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")["spec"]["template"]["spec"]["containers"][0]
