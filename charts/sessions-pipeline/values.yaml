@@ -562,6 +562,10 @@ ingestEdge:
   # Ingest edge Deployment replicas, integer 1..8 (strategy stays Recreate). Above 1 requires
   # ledger=s3. Tenant caps are enforced per replica, so halve per-replica caps when raising this.
   replicas: 1
+  # Liveness /healthz timeoutSeconds, integer 2..30. Unset keeps 2. Under heavy async admission the
+  # event loop can answer /healthz in more than 2 s; three misses restart the pod and drop its claims,
+  # and the first scan after a start is slow. Raise it (for example to admission.probeTimeoutSeconds).
+  livenessTimeoutSeconds: null
   # Requires an image implementing SELFHOST_INGEST_ADMISSION. Sync preserves
   # the existing request path. Async acknowledges durable object storage and
   # defers admission SQL; drain consumes the inbox but accepts new work sync.
@@ -577,6 +581,14 @@ ingestEdge:
     # orgs with no fence-authority marker yet (they wait in S3 for the marker) instead of retrying or
     # refusing them. Requires ledger=s3 and admission.mode async or drain. Default false renders nothing.
     awaitAuthority: false
+    # SELFHOST_ADMISSION_SPREAD: true renders "on". Work younger than the grace is ordered by a
+    # per-process salted hash, so replicas sharing one inbox mostly start on different items instead of all
+    # claiming the oldest; work older than the grace stays strict oldest-first. Meant for
+    # ingestEdge.replicas > 1. Requires admission.mode async or drain. Default false renders nothing.
+    spread: false
+    # SELFHOST_ADMISSION_SPREAD_GRACE_MS, integer 1000..86400000; requires spread=true. Unset (default)
+    # renders nothing: the image uses max(120000, 4 x scanIntervalMs).
+    spreadGraceMs: null
     # Async/drain startup and readiness exec probes: timeoutSeconds, 3..30. The probe's own /readyz fetch
     # aborts 1 s earlier. Unset keeps 3 s and the 1500 ms fetch. Raise it when long upload scans
     # (large uploadDirect.scanBatch) make /readyz slow, so a busy single replica stays in the Service.
