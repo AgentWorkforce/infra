@@ -1,6 +1,6 @@
 # agent-relay
 
-Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
+Public chart names and existing-release compatibility: [Control/Webapp rename](https://github.com/AgentWorkforce/infra/blob/main/docs/control-webapp-chart-rename.md).
 
 Umbrella chart for the self-hosted messaging and Sessions proof:
 
@@ -157,7 +157,7 @@ image from relaycontrol #13 or later.
   `relay-control.auth.trustedProxies` (default `1` with password sign-in)
   must equal the number of proxies in front of the API. Both need a
   relay-control image from source `bd1c9a03` or later. See the
-  [relay-control chart](../relay-control/README.md#first-admin-without-smtp-or-sso-the-setup-key).
+  [relay-control chart](https://github.com/AgentWorkforce/infra/blob/main/charts/relay-control/README.md#first-admin-without-smtp-or-sso-the-setup-key).
 
 The admin signs in at `https://<root host>/login`. Owners and admins then
 invite teammates from Settings → Members. Invite links are single use and
@@ -313,7 +313,7 @@ Run `scripts/selfhost/rds-setup.sh pre` before Helm and `post` only after the
 Sessions migration Job succeeds. On a populated database, build the two
 coordination-reader partial indexes concurrently before the migration; a fresh
 database builds them directly. The exact SQL and verification steps are in
-[`docs/self-hosted-session-read-api.md`](../../docs/self-hosted-session-read-api.md).
+[`docs/self-hosted-session-read-api.md`](https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-session-read-api.md).
 After each workspace has sessions, run the output-facts bootstrap with a new
 `searchIndexer.outputFacts.bootstrap.runId`; the reusable overlay deliberately
 leaves that one-shot Job off.

@@ -206,7 +206,7 @@ than 32 characters) sent with a missing or wrong proof gets 401, not 400
 `key_too_weak`, because the proof is checked first.
 
 The full request/answer table is in
-[docs/self-hosted-durable-actors.md](../../docs/self-hosted-durable-actors.md#workspace-bootstrap-secret-actor-mode).
+[docs/self-hosted-durable-actors.md](https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-durable-actors.md#workspace-bootstrap-secret-actor-mode).
 
 ## Public ingress
 
@@ -282,7 +282,7 @@ kubectl -n relaycast logs job/relaycast-backup-manual   # {"backup":"relaycast-2
 kubectl -n relaycast exec deploy/relaycast -- ls /backup
 ```
 
-To restore, run [`ci/relaycast/restore.sh`](../../ci/relaycast/restore.sh). It is
+To restore, run [`ci/relaycast/restore.sh`](https://github.com/AgentWorkforce/infra/blob/main/ci/relaycast/restore.sh). It is
 the exact procedure CI runs on kind:
 
 ```bash

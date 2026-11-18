@@ -90,6 +90,12 @@ add_repos() { # Chart.yaml
 
 for chart in "${charts[@]}"; do
   [ -f "charts/$chart/Chart.yaml" ] || { err "$chart: no Chart.yaml"; continue; }
+  # README.md ships inside the packaged chart (helm show readme, OCI, Artifact
+  # Hub), where repo-relative links point nowhere. Link with absolute URLs.
+  if [ "$mode" = static ] && [ -f "charts/$chart/README.md" ] &&
+     grep -nE '\]\((\.\.?/|[A-Za-z0-9_-]+\.md)' "charts/$chart/README.md"; then
+    err "$chart: README.md has relative links; use https://github.com/AgentWorkforce/infra/blob/main/..."
+  fi
   if [ -f "charts/$chart/Chart.lock" ] || grep -q '^dependencies:' "charts/$chart/Chart.yaml"; then
     # Helm does not recursively vendor dependencies of a file:// dependency.
     # Build the sessions umbrella first so agent-relay always contains its

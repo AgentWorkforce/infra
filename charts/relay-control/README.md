@@ -3,10 +3,10 @@
 Supply both `image.repository` and `image.digest` explicitly for the same
 verified publication; a chart rename does not republish an old digest.
 
-Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
+Public chart names and existing-release compatibility: [Control/Webapp rename](https://github.com/AgentWorkforce/infra/blob/main/docs/control-webapp-chart-rename.md).
 
 Optional native session reads and scoped DNS mapping:
-[single-origin native History routing](../../docs/self-hosted-native-routing.md).
+[single-origin native History routing](https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-native-routing.md).
 
 Runs the separately built self-host Control image. Select the verified image's
 matching server and migration entrypoints; the chart does not package the full
@@ -35,7 +35,7 @@ RelayAuth and standalone RelayHistory: uploads go to the pipeline ingest edge an
 reads through the read API, both at `services.sessionReadApiPublicUrl`. It requires
 `services.relayauthEnabled=false`, the session read handoff and
 `secretKeys.introspectSecret`, and an image with the Control native backend. See
-[docs/self-hosted-no-relayauth.md](../../docs/self-hosted-no-relayauth.md).
+[docs/self-hosted-no-relayauth.md](https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-no-relayauth.md).
 `services.relaycastUrl` and `services.relayhistoryUrl` are internal origins;
 their `*PublicUrl` counterparts must be public HTTPS origins and are returned
 to clients or used as the externally stable RelayHistory assertion audience.
@@ -46,7 +46,7 @@ Requires Helm 3.10 or newer (templates use `{{ continue }}`).
 
 The authoritative contract is the requirements registry
 (`self-hosted/requirements.yaml`, rendered to
-[docs/self-hosted-requirements.md](../../docs/self-hosted-requirements.md));
+[docs/self-hosted-requirements.md](https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-requirements.md));
 this table summarizes it. The chart renders the relaycontrol env contract and refuses at render time
 whatever the API would refuse at startup:
 
