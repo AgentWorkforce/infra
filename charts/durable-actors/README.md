@@ -2,7 +2,7 @@
 
 Run Durable Actors on GKE Sandbox with one Standard GCS bucket and PostgreSQL. Standard GCS is the default persistence mode. Enable GCS Rapid when you need faster state writes.
 
-Follow the [self-hosting guide](https://github.com/TerseAI/durable-actors/blob/v0.14.6/docs/self-hosting.md) (this repository: [docs/self-hosted-durable-actors.md](../../docs/self-hosted-durable-actors.md)) for cluster prerequisites, IAM, credentials, installation, and Rapid configuration.
+Follow the [self-hosting guide](https://github.com/TerseAI/durable-actors/blob/v0.14.6/docs/self-hosting.md) (this repository: [docs/self-hosted-durable-actors.md](https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-durable-actors.md)) for cluster prerequisites, IAM, credentials, installation, and Rapid configuration.
 
 ```yaml
 publicUrl: https://actors.example.com
