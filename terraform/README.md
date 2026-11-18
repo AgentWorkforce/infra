@@ -18,6 +18,7 @@ terraform/
   examples/{aws,gcp}                 # thin roots: four capabilities together
   examples/{aws,gcp}-foundation      # network and Kubernetes foundation roots
   examples/aws-environments          # environment-scoped AWS data composition
+  examples/aws-private-downloads     # private installer bucket behind CloudFront signed URLs
   scripts/check.sh                   # fmt, validate, tflint, test, docs, checkov
 ```
 
