@@ -3,8 +3,12 @@
 `scripts/selfhost/rds-setup.sh` creates the Agent Relay databases and logins
 on Amazon RDS for PostgreSQL. This page is the same procedure as explicit
 commands, for operators who do not run the script. Every SQL statement below
-is what the script runs, in the same order. Running both on one instance is
-safe: each step reuses what already exists.
+is what the script runs, in the same order. The SQL reuses databases and roles
+that already exist, but it sets every login's password: on a repeat run, use
+the passwords you generated the first time (step 1.3), or every connection
+string already deployed stops working. Pick one procedure per instance; to
+switch from `rds-setup.sh`, take its passwords from
+`~/.agent-relay-install/passwords/<role>` on the machine that ran it.
 
 There are three phases:
 
@@ -34,10 +38,11 @@ There are three phases:
 
 ### 1.1 Connection settings
 
-Run every `psql` command below in a shell with these set. They verify the
+The commands are for **bash** (run `bash` first if your shell is zsh, the macOS
+default). Run every `psql` command below in that shell with these set. They verify the
 server certificate, exactly as the services do.
 
-```sh
+```bash
 export AWS_REGION=us-east-1                                   # your RDS region
 export PGHOST=<instance>.<id>.<region>.rds.amazonaws.com       # the RDS endpoint, not an alias or IP
 export PGPORT=5432
@@ -49,7 +54,7 @@ export PGSSLROOTCERT="$PWD/rds-ca.pem"
 
 ### 1.2 RDS CA bundle and the `rds-ca` ConfigMap
 
-```sh
+```bash
 curl -fsS -o rds-ca.pem "https://truststore.pki.rds.amazonaws.com/$AWS_REGION/$AWS_REGION-bundle.pem"
 grep -c 'BEGIN CERTIFICATE' rds-ca.pem                      # must be more than 0
 kubectl create namespace agent-relay --dry-run=client -o yaml | kubectl apply -f -
@@ -62,11 +67,12 @@ The printed hash is the value for `__RDS_CA_SHA256__` in `values.yaml`.
 
 ### 1.3 Passwords
 
-Generate one password per login. Use 48 hex characters: they need no URL
-encoding. Store them where your connection strings will live (for example
-AWS SSM SecureString parameters); never commit them.
+Generate one password per login, **once**. Use 48 hex characters: they need
+no URL encoding. Store them where your connection strings will live (for
+example AWS SSM SecureString parameters); never commit them. On any later run
+of this page, export the stored passwords instead of generating new ones.
 
-```sh
+```bash
 for r in control_owner control_api_runtime relaycast_owner relaycast_runtime \
          sessions_pipeline_runtime bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
   printf '%s=%s\n' "$r" "$(openssl rand -hex 24)"
@@ -81,13 +87,13 @@ Export them in your shell as `PW_<role>` for the commands below, e.g.
 The files are in `/app/supabase/bootstrap` in the image. Copy them out with
 any OCI tool, for example:
 
-```sh
+```bash
 IMAGE=ghcr.io/agentworkforce/sessions-pipeline@sha256:<digest from values.yaml>
 mkdir -p hoopdb-sql
 # With crane:
 crane export --platform linux/amd64 "$IMAGE" - | tar -x -C hoopdb-sql app/supabase/bootstrap
 # Or with Docker:
-#   docker create --name sql "$IMAGE" && docker cp sql:/app/supabase/bootstrap hoopdb-sql/app/supabase/ && docker rm sql
+#   mkdir -p hoopdb-sql/app/supabase && docker create --name sql "$IMAGE" && docker cp sql:/app/supabase/bootstrap hoopdb-sql/app/supabase/ && docker rm sql
 cd hoopdb-sql/app/supabase/bootstrap
 ls rds_migration_roles.sql hoopdb_runtime_role_rds.sql session_ingest_roles.sql   # must all exist
 ```
@@ -98,7 +104,7 @@ from this repository at your release tag into the same directory.
 
 ### 1.5 Refuse an instance that already has another HoopDb
 
-```sh
+```bash
 psql -X -A -t -d postgres -c "select (select count(*) from pg_database where datname='hoopdb') as hoopdb,
   (select count(*) from pg_roles where rolname='session_directory_search_worker') as search_role"
 ```
@@ -108,7 +114,7 @@ separate instance. `0|0` (fresh) or `1|1` (a re-run) are fine.
 
 ### 1.6 Create the three databases
 
-```sh
+```bash
 for db in relaycontrol hoopdb relaycast; do
   printf '%s\n' "SELECT 'CREATE DATABASE $db' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname='$db') \\gexec" \
     | psql -X -q -v ON_ERROR_STOP=1 -d postgres
@@ -117,7 +123,7 @@ done
 
 ### 1.7 relaycontrol: owner and runtime logins
 
-```sh
+```bash
 psql -X -q -v ON_ERROR_STOP=1 -d relaycontrol -v p1="$PW_control_owner" -v p2="$PW_control_api_runtime" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN', r) FROM unnest(ARRAY['control_owner','control_api_runtime']) r WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=r) \gexec
 ALTER ROLE control_owner PASSWORD :'p1';
@@ -130,7 +136,7 @@ SQL
 
 ### 1.8 relaycast: owner and runtime logins
 
-```sh
+```bash
 psql -X -q -v ON_ERROR_STOP=1 -d relaycast -v p1="$PW_relaycast_owner" -v p2="$PW_relaycast_runtime" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN', r) FROM unnest(ARRAY['relaycast_owner','relaycast_runtime']) r WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=r) \gexec
 ALTER ROLE relaycast_owner PASSWORD :'p1';
@@ -152,7 +158,7 @@ SQL
 Run these in order, as the admin login, from the SQL directory of 1.4. Each
 must finish without an error before the next.
 
-```sh
+```bash
 export PGDATABASE=hoopdb
 P="psql -X -q -v ON_ERROR_STOP=1"
 
@@ -173,7 +179,7 @@ unset PGDATABASE
 
 Check:
 
-```sh
+```bash
 psql -X -A -t -d hoopdb -c "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
 psql -X -A -t -d hoopdb -c "select 'extensions: '||string_agg(extname,',' order by extname) from pg_extension"
 ```
@@ -222,14 +228,14 @@ Then install with Helm as the install guide says.
 
 Wait until the release's HoopDb migrate Job has succeeded:
 
-```sh
+```bash
 kubectl -n agent-relay get jobs -l app.kubernetes.io/component=hoopdb-migrate
 ```
 
 `COMPLETIONS` must be `1/1` for the current Job. Then, with the settings of
 1.1 and from the SQL directory of 1.4:
 
-```sh
+```bash
 export PGDATABASE=hoopdb
 P="psql -X -q -v ON_ERROR_STOP=1"
 
@@ -255,7 +261,7 @@ unset PGDATABASE
 
 Prove each login connects over TLS:
 
-```sh
+```bash
 for r in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
   pw_var="PW_$r"
   PGUSER="$r" PGPASSWORD="${!pw_var}" psql -X -A -t -d hoopdb \
@@ -266,7 +272,7 @@ done
 Each line must read `login ok: <role> tls=t`. Then restart the three services
 so they reconnect:
 
-```sh
+```bash
 kubectl -n agent-relay rollout restart deploy/agent-relay-read-api deploy/agent-relay-ingest-edge deploy/agent-relay-search-indexer
 ```
 
@@ -287,7 +293,7 @@ Only for operator hard delete, which is off by default. After the search
 bootstrap has completed, with the settings of 1.1 and a new password
 `PW_bulls96_session_erase_search`:
 
-```sh
+```bash
 PGDATABASE=hoopdb psql -X -q -v ON_ERROR_STOP=1 -v post=true -v p1="$PW_bulls96_session_erase_search" -f rds-session-erase-search.sql
 ```
 
