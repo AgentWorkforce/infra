@@ -19,9 +19,6 @@ mock_provider "aws" {
   mock_resource "aws_cloudfront_key_group" {
     defaults = { id = "11111111-2222-4333-8444-111111111111" }
   }
-  mock_data "aws_cloudfront_cache_policy" {
-    defaults = { id = "22222222-3333-4444-8555-222222222222" }
-  }
 }
 
 mock_provider "aws" {
@@ -184,8 +181,10 @@ run "two_keys_in_group" {
       example-signing-2 = "-----BEGIN PUBLIC KEY-----\nTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUFleGFtcGxl\n-----END PUBLIC KEY-----\n"
     }
   }
+  # OpenTofu's mock gives both public keys the same generated id, so the group's
+  # set of ids can collapse to one element: compare the sets, not their length.
   assert {
-    condition     = length(aws_cloudfront_key_group.signing.items) == 2 && toset(aws_cloudfront_key_group.signing.items) == toset([for k in aws_cloudfront_public_key.signing : k.id])
+    condition     = length(aws_cloudfront_public_key.signing) == 2 && toset(aws_cloudfront_key_group.signing.items) == toset([for k in aws_cloudfront_public_key.signing : k.id])
     error_message = "Both keys are in the key group."
   }
   assert {
