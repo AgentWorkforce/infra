@@ -88,6 +88,21 @@ re-encrypted the next time they are written. To do it now:
 kubectl get secrets --all-namespaces -o json | kubectl replace -f -
 ```
 
+**Changing to another key later.** GKE needs the old key to read the Secrets
+written under it until they are rewritten, so keep its grant during the
+change. In one apply, set the new key and move the old one to
+`previous_secrets`:
+
+```hcl
+kms = {
+  secrets          = "projects/<key project>/locations/<region>/keyRings/<ring>/cryptoKeys/<new key>"
+  previous_secrets = ["projects/<key project>/locations/<region>/keyRings/<ring>/cryptoKeys/<old key>"]
+}
+```
+
+Apply, run the `kubectl replace` above, then remove `previous_secrets` and
+apply again. Do not disable or destroy the old key before that.
+
 ## 2. Data services
 
 Add `regulated.tfvars` (from the example) to the data root at step 4 of

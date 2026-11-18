@@ -152,7 +152,10 @@ them all on.
 - `kms.secrets` adds `database_encryption { state = "ENCRYPTED" }`:
   application-layer encryption of Kubernetes Secrets in etcd with an existing
   Cloud KMS key. **Recommended.** It can be enabled, and the key changed, on a
-  running cluster without replacement.
+  running cluster without replacement. When changing the key, list the old
+  one in `kms.previous_secrets` until every Secret has been rewritten: GKE
+  still needs it to read them, and its grant is kept. Grants are created
+  before the cluster is updated and removed only afterwards.
 - `kms.node_disks` sets `boot_disk_kms_key` on every node pool (and the
   temporary default pool). Changing it replaces the node pools.
 - `kms.redis` sets `customer_managed_key` on managed Redis. It is fixed at
@@ -324,7 +327,7 @@ Primary references: [VPC firewall priority](https://docs.cloud.google.com/firewa
 | create\_connector | Create dedicated Serverless VPC Access connector for modules/gcp/functions. | `bool` | `true` | no |
 | deletion\_protection | GKE deletion protection. Disabling must be a separately approved retirement change applied before destroy; does not authorize deleting durable data. | `bool` | `true` | no |
 | enable\_nat | Reviewed internet egress through Cloud NAT for private nodes/connector. False permits Google API access but not arbitrary internet pulls or actor HTTPS egress. | `bool` | `false` | no |
-| kms | Optional customer-managed Cloud KMS keys (full resource names, in the cluster's region), all null by default. secrets: application-layer encryption of Kubernetes Secrets in etcd (recommended; can be enabled and changed in place). node\_disks: node boot disks (changing it replaces the node pools). redis: managed Redis at rest (set at creation; changing it replaces the instance). Pub/Sub uses pipeline.kms\_key\_name. grant\_service\_agents gives the GKE, Compute Engine and Redis service agents roles/cloudkms.cryptoKeyEncrypterDecrypter on their key; set false when the key's owner grants it instead (it must then exist before apply). Keys are never created or destroyed here. | ```object({ secrets = optional(string) node_disks = optional(string) redis = optional(string) grant_service_agents = optional(bool, true) })``` | `{}` | no |
+| kms | Optional customer-managed Cloud KMS keys (full resource names, in the cluster's region), all null by default. secrets: application-layer encryption of Kubernetes Secrets in etcd (recommended; can be enabled and changed in place). node\_disks: node boot disks (changing it replaces the node pools). redis: managed Redis at rest (set at creation; changing it replaces the instance). Pub/Sub uses pipeline.kms\_key\_name. To change the secrets key, move the old key into previous\_secrets in the same apply: its grant is kept, because GKE needs the old key to read Secrets written under it until they are rewritten (kubectl get secrets -A -o json \| kubectl replace -f -); remove it from previous\_secrets afterwards. grant\_service\_agents gives the GKE, Compute Engine and Redis service agents roles/cloudkms.cryptoKeyEncrypterDecrypter on their key; set false when the key's owner grants it instead (it must then exist before apply). Keys are never created or destroyed here. | ```object({ secrets = optional(string) previous_secrets = optional(list(string), []) node_disks = optional(string) redis = optional(string) grant_service_agents = optional(bool, true) })``` | `{}` | no |
 | labels | Additional non-secret labels; environment/managed-by are reserved. | `map(string)` | `{}` | no |
 | node\_capacity | Ordinary node pool total min/max across the selected zones; initial count is per zone. Size for all selected application resources and PVC constraints. | `object({ machine_type = string, total_min = number, total_max = number })` | ```{ "machine_type": "e2-standard-4", "total_max": 6, "total_min": 3 }``` | no |
 | node\_image\_registry\_projects | Approved existing projects granting nodes Artifact Registry reader; no wildcard project-wide data/secret roles. Registry projects are explicit external inputs. | `set(string)` | `[]` | no |

@@ -306,3 +306,22 @@ run "key_version_or_short_name_refused" {
   }
   expect_failures = [var.kms]
 }
+# Changing the Secrets key: the new key is granted, and the old key's grant is
+# kept (previous_secrets) because GKE still reads Secrets written under it.
+run "secrets_key_change_keeps_the_previous_grant" {
+  command = apply
+  variables {
+    kms = {
+      secrets          = "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets-2"
+      previous_secrets = ["projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets"]
+    }
+  }
+  assert {
+    condition     = google_container_cluster.this.database_encryption[0].key_name == "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets-2"
+    error_message = "The cluster encrypts with the new key."
+  }
+  assert {
+    condition     = toset([for m in google_kms_crypto_key_iam_member.service_agent : m.crypto_key_id]) == toset(["projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets", "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets-2"]) && alltrue([for m in google_kms_crypto_key_iam_member.service_agent : m.member == "serviceAccount:service-123456789012@container-engine-robot.iam.gserviceaccount.com"])
+    error_message = "The GKE service agent keeps the previous key and gains the new one."
+  }
+}

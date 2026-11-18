@@ -295,8 +295,14 @@ resource "google_container_cluster" "this" {
 # nothing wider. The keys are existing, externally owned resources: this
 # module never creates, rotates or destroys a key.
 locals {
+  # Keyed by purpose and key, so changing a key adds the new key's grant
+  # before the cluster is updated and removes the old key's grant only after
+  # (Terraform destroys an instance after its dependents are updated). GKE
+  # still needs the previous key to read Secrets written under it:
+  # kms.previous_secrets keeps those grants until the Secrets are rewritten.
   kms_service_agents = var.kms.grant_service_agents ? merge(
     var.kms.secrets == null ? {} : { secrets = { key = var.kms.secrets, agent = "container-engine-robot" } },
+    { for k in var.kms.previous_secrets : "previous-secrets-${substr(sha256(k), 0, 8)}" => { key = k, agent = "container-engine-robot" } if k != var.kms.secrets },
     var.kms.node_disks == null ? {} : { node_disks = { key = var.kms.node_disks, agent = "compute-system" } },
     var.kms.redis == null || !var.redis.enabled ? {} : { redis = { key = var.kms.redis, agent = "cloud-redis" } },
   ) : {}
@@ -308,6 +314,12 @@ resource "google_kms_crypto_key_iam_member" "service_agent" {
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
   member        = "serviceAccount:service-${var.expected_project_number}@${each.value.agent}.iam.gserviceaccount.com"
   depends_on    = [terraform_data.fence]
+  # A changed key replaces this grant. Create the new key's grant, let the
+  # cluster (which depends on it) switch keys, and only then remove the old
+  # one: never a moment where the service agent has neither.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 locals {
