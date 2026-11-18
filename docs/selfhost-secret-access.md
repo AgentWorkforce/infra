@@ -148,18 +148,42 @@ kubectl -n $NS get rolebindings -o custom-columns='BINDING:.metadata.name,ROLE:.
 kubectl get clusterrolebindings -o custom-columns='BINDING:.metadata.name,ROLE:.roleRef.name,SUBJECTS:.subjects[*].name' | grep -E 'cluster-admin|admin|edit'
 ```
 
+Those commands list Kubernetes bindings only. Access granted by the cloud
+does not appear in them, so list it as well:
+
+```sh
+# EKS: access entries and the policies attached to each, with their scope.
+CLUSTER=<cluster name>
+for arn in $(aws eks list-access-entries --cluster-name $CLUSTER --query 'accessEntries[]' --output text); do
+  echo "== $arn"
+  aws eks list-associated-access-policies --cluster-name $CLUSTER --principal-arn "$arn" \
+    --query 'associatedAccessPolicies[].[policyArn,accessScope.type,join(`,`,accessScope.namespaces)]' --output text
+done
+# An install made with this repository's AWS foundation Terraform has cluster-wide
+# AmazonEKSClusterAdminPolicy entries for its operator principals: expect them here.
+
+# GKE: who holds a project role that reaches every namespace.
+gcloud projects get-iam-policy <project id> --flatten='bindings[].members' \
+  --filter='bindings.role:(roles/owner OR roles/editor OR roles/container.admin OR roles/container.developer OR roles/container.clusterAdmin)' \
+  --format='table(bindings.role,bindings.members)'
+```
+
 **Done when:** only your install operators answer `yes`, and every subject
-in the two lists is one you expect.
+in the Kubernetes lists and every principal in the cloud list is one you
+expect. An EKS policy other than `AmazonEKSViewPolicy`, or one with scope
+`cluster`, reads the Secrets.
 
 ### 5. Record reads
 
 Turn on audit logging for Secret reads so an unexpected one is visible:
 
 - **GKE:** enable Data Access audit logs (`DATA_READ`) for the Kubernetes
-  Engine API, then query
-  `protoPayload.methodName="io.k8s.core.v1.secrets.get" AND protoPayload.resourceName:"namespaces/agent-relay"`.
+  Engine API, then query all three read paths (`kubectl get secrets -o yaml`
+  is a `list`, not a `get`):
+  `protoPayload.methodName=("io.k8s.core.v1.secrets.get" OR "io.k8s.core.v1.secrets.list" OR "io.k8s.core.v1.secrets.watch") AND protoPayload.resourceName:"namespaces/agent-relay"`.
 - **EKS:** enable the `audit` control plane log type and search the audit
-  stream for `"resource":"secrets"` with `"namespace":"agent-relay"`.
+  stream for `"resource":"secrets"` with `"namespace":"agent-relay"` and a
+  `verb` of `get`, `list` or `watch`.
 
 ### 6. Also worth doing
 
@@ -167,10 +191,33 @@ Turn on audit logging for Secret reads so an unexpected one is visible:
   encryption with a Cloud KMS key on GKE, envelope encryption with a KMS key
   on EKS. It protects etcd and its backups, not the
   Kubernetes API, so it does not replace the steps above.
-- Rotate the administrator password after the people who hold it change. On
-  AWS the guide's `rds-setup.sh refresh-admin` rewrites both keys; on Google
-  Cloud, raise `admin_user.password_version` in Terraform and run
-  `cloud-sql-setup.sh` again.
+- Rotate the administrator password after the people who held it change.
+  Changing the password in the cloud does not change the two Secret keys
+  above, and the next upgrade's migration and bootstrap Jobs fail with an
+  authentication error until both hold the new URL. So rotation is three
+  steps:
+  1. Change the password. Google Cloud: raise `admin_user.password_version`
+     for the postgres module in Terraform and apply. AWS: RDS rotates a
+     managed master password by itself (every 7 days by default).
+  2. Write the new URL into **both** keys,
+     `agent-relay-secrets/HOOPDB_MIGRATION_URL` and
+     `search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET` (JSON:
+     `{"hoopdb_url": "<url>"}`), the same way you created the Secrets:
+     `kubectl`, helm-secrets, or your secret store with External Secrets
+     Operator. Only the password part of the URL changes. On AWS,
+     `rds-setup.sh refresh-admin` rewrites the two local credential files
+     with the current password, and `agent-relay-upgrade.sh --rds-setup`
+     also patches the two keys in the cluster before each upgrade; without
+     that flag, publish the files yourself.
+  3. Check before upgrading:
+
+     ```sh
+     kubectl -n agent-relay get secret agent-relay-secrets -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's#(://[^:]+):[^@]+@#\1:<password>@#'
+     ```
+
+     prints the URL with the password hidden; compare the user and host,
+     and confirm the Secret's `metadata.managedFields` time (or your secret
+     store's sync time) is after the rotation.
 
 ## What this does not fix
 
