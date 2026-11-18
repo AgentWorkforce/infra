@@ -17,7 +17,9 @@ Use it to check the shape of your own files. **Every value here is an example.**
 
 The secret values are fake. Don't hand-write real ones: `rds-setup.sh` and step 10
 generate them under `~/.agent-relay-install/secret-files/<Secret>/<key>` and create
-the Secrets from those files. To keep them in SOPS or SSM instead, see
+the Secrets from those files. If you can't run shell scripts, do the same
+setup by hand with [RDS database setup without rds-setup.sh](../../docs/self-hosted-rds-manual-setup.md)
+(added in #470). To keep them in SOPS or SSM instead, see
 [Secrets](https://agentrelay.com/docs/self-hosting/secrets). Never commit real values.
 
 Check the example renders against the release:
