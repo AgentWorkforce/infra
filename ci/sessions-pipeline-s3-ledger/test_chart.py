@@ -153,6 +153,8 @@ class S3Ledger(unittest.TestCase):
                 env = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"spread": True, "spreadGraceMs": grace}}})))
                 self.assertEqual(env["SELFHOST_ADMISSION_SPREAD"]["value"], "on")
                 self.assertEqual(env["SELFHOST_ADMISSION_SPREAD_GRACE_MS"]["value"], str(grace))
+        self.assertNotIn("SELFHOST_ADMISSION_SPREAD",
+                         self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"spread": None}}}))))
         for value in ("on", "true", 1):
             with self.subTest(spread=value):
                 self.render(merge(s3, {"ingestEdge": {"admission": {"spread": value}}}),

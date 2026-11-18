@@ -435,7 +435,7 @@ compatibility:
         - "ci/sessions-pipeline-profiles/matrix.sh"
         - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
         - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
-      notes: 'Carries 0.8.47. ingestEdge.admission.spread (default false) renders SELFHOST_ADMISSION_SPREAD=on: work younger than the grace is ordered by a per-process salted hash, so replicas sharing one inbox start on different items instead of all claiming the oldest; work older than the grace stays strict oldest-first. Meant for ingestEdge.replicas above 1. Requires admission.mode async or drain. ingestEdge.admission.spreadGraceMs (default unset: the image uses max(120000, 4 x scanIntervalMs)), an integer 1000..86400000, renders SELFHOST_ADMISSION_SPREAD_GRACE_MS and requires spread=true. ingestEdge.livenessTimeoutSeconds (default unset keeps 2), an integer 2..30, sets the ingest edge /healthz liveness timeoutSeconds. Default renders are unchanged apart from the helm.sh/chart labels.'
+      notes: 'Carries 0.8.47. ingestEdge.admission.spread (default false) renders SELFHOST_ADMISSION_SPREAD=on: work younger than the grace is ordered by a per-process salted hash, so replicas sharing one inbox mostly start on different items instead of all claiming the oldest (fewer contended claims, not none); work older than the grace stays strict oldest-first. Meant for ingestEdge.replicas above 1. Requires admission.mode async or drain. ingestEdge.admission.spreadGraceMs (default unset: the image uses max(120000, 4 x scanIntervalMs)), an integer 1000..86400000, renders SELFHOST_ADMISSION_SPREAD_GRACE_MS and requires spread=true. ingestEdge.livenessTimeoutSeconds (default unset keeps 2), an integer 2..30, sets the ingest edge /healthz liveness timeoutSeconds. Default renders are unchanged apart from the helm.sh/chart labels.'
     - id: sessions-pipeline-0.8.47
       status: planned
       charts: { sessions-pipeline: 0.8.47, sessions-pipeline-worker: 0.7.11, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
@@ -8762,8 +8762,8 @@ entries:
     description: |
       Default false renders nothing (strict oldest-first, unchanged). true renders
       SELFHOST_ADMISSION_SPREAD=on on the ingest edge: work younger than the grace is
-      ordered by a per-process salted hash, so replicas sharing one inbox start on
-      different items instead of all claiming the oldest. Work older than the grace
+      ordered by a per-process salted hash, so replicas sharing one inbox mostly start on
+      different items instead of all claiming the oldest (fewer contended claims, not none). Work older than the grace
       stays strict oldest-first, so nothing starves. Meant for ingestEdge.replicas
       above 1. Must be a boolean; true requires ingestEdge.admission.mode async or
       drain. spreadGraceMs unset renders nothing (the image uses

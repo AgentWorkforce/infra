@@ -582,7 +582,7 @@ ingestEdge:
     # refusing them. Requires ledger=s3 and admission.mode async or drain. Default false renders nothing.
     awaitAuthority: false
     # SELFHOST_ADMISSION_SPREAD: true renders "on". Work younger than the grace is ordered by a
-    # per-process salted hash, so replicas sharing one inbox start on different items instead of all
+    # per-process salted hash, so replicas sharing one inbox mostly start on different items instead of all
     # claiming the oldest; work older than the grace stays strict oldest-first. Meant for
     # ingestEdge.replicas > 1. Requires admission.mode async or drain. Default false renders nothing.
     spread: false

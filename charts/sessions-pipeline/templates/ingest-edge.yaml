@@ -38,7 +38,7 @@
 {{- end -}}
 {{- if not (kindIs "bool" $admission.awaitAuthority) }}{{ fail "ingestEdge.admission.awaitAuthority must be a boolean" }}{{ end -}}
 {{- if and $admission.awaitAuthority (or (ne $ledger "s3") (eq $admission.mode "sync")) }}{{ fail "ingestEdge.admission.awaitAuthority requires ingestEdge.ledger=s3 and admission.mode async or drain" }}{{ end -}}
-{{- if not (kindIs "bool" $admission.spread) }}{{ fail "ingestEdge.admission.spread must be a boolean" }}{{ end -}}
+{{- if not (or (kindIs "invalid" $admission.spread) (kindIs "bool" $admission.spread)) }}{{ fail "ingestEdge.admission.spread must be a boolean" }}{{ end -}}
 {{- if and $admission.spread (eq $admission.mode "sync") }}{{ fail "ingestEdge.admission.spread requires admission.mode async or drain" }}{{ end -}}
 {{- if not (kindIs "invalid" $admission.spreadGraceMs) -}}
 {{- if not $admission.spread }}{{ fail "ingestEdge.admission.spreadGraceMs requires ingestEdge.admission.spread=true" }}{{ end -}}
