@@ -1,7 +1,7 @@
 # EXAMPLE values.yaml for agent-relay-2026.11.16 (chart 0.7.54), filled in.
-# Every site value is an example: domain ar.example.com, orgId, org name, admin
-# email, region, bucket, OpenSearch URL, RDS CA sha256 (from
-# ~/.agent-relay-install/rds-ca.sha256; quote it if it is all digits), ALB
+# Every site value is an example: domain ar.selfhost-example.agentrelay.com, orgId, org name, admin
+# email, region, bucket, OpenSearch URL, RDS CA sha256 (keep it quoted; from
+# ~/.agent-relay-install/rds-ca.sha256), ALB
 # subnet CIDRs, and the nativeBrief model (disabled until after-install).
 # The unfilled template is https://agentrelay.com/self-hosting/files/eks/values.yaml.
 
@@ -70,7 +70,7 @@ relaycast:
   # A SQLite-only setting that this backend refuses.
   retention:
     messageTtlDays: null
-  baseUrl: https://cast.ar.example.com
+  baseUrl: https://cast.ar.selfhost-example.agentrelay.com
   existingSecret: agent-relay-secrets
   persistence:
     enabled: true
@@ -96,7 +96,7 @@ sessions-pipeline:
     output: { enabled: true }
     digest: { enabled: true }
     replicas: 1
-    origin: https://history.ar.example.com
+    origin: https://history.ar.selfhost-example.agentrelay.com
     completeSince: epoch
     directoryWorkspaces: "*"
     events: { messageIds: true }
@@ -110,7 +110,7 @@ sessions-pipeline:
       enabled: true
       configMap: rds-ca
       key: ca.crt
-      sha256: 9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a
+      sha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     search:
       backend: opensearch
       backendId: opensearch-main
@@ -127,7 +127,7 @@ sessions-pipeline:
           key: session-read-api-secret
     cors:
       allowedOrigins:
-        - https://ar.example.com
+        - https://ar.selfhost-example.agentrelay.com
     networkPolicy:
       enabled: true
       controlFrom:
@@ -157,7 +157,7 @@ sessions-pipeline:
   ingestEdge:
     enabled: true
     image: *services_image
-    origin: https://history.ar.example.com
+    origin: https://history.ar.selfhost-example.agentrelay.com
     allowInClusterHttp: true
     sessionSelection: true
     heartbeatAccept: true
@@ -169,7 +169,7 @@ sessions-pipeline:
       introspectSecretKey: introspect-secret
     postgres:
       caConfigMap: rds-ca
-      caSha256: 9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a
+      caSha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     serviceAccountName: agent-relay-session-ingest-api
     locker:
       bucket: example-agent-relay-sessions
@@ -195,7 +195,7 @@ sessions-pipeline:
     postgres:
       tlsProfile: custom-ca
       caConfigMap: rds-ca
-      caSha256: 9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a
+      caSha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     bootstrap:
       enabled: true
       existingSecret: search-indexer-owner
@@ -221,7 +221,7 @@ sessions-pipeline:
       enabled: true
       configMap: rds-ca
       key: ca.crt
-      sha256: 9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a
+      sha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     hoopdb:
       existingSecret: agent-relay-secrets
       key: HOOPDB_URL
@@ -279,7 +279,7 @@ sessions-pipeline:
       bucket: example-agent-relay-sessions
       region: us-east-1
     auth:
-      historyOrigin: https://history.ar.example.com
+      historyOrigin: https://history.ar.selfhost-example.agentrelay.com
       allowInterimRelayAuthBearer: false
     environment: production
 
@@ -319,22 +319,22 @@ relay-control:
   # Owner-only Usage and qualified MCP agent launch. Flows, Chief and Relayfile
   # remain outside this install.
   selectedFeatures: [usage, launch]
-  publicUrl: https://api.ar.example.com
-  dashboardUrl: https://ar.example.com/
+  publicUrl: https://api.ar.selfhost-example.agentrelay.com
+  dashboardUrl: https://ar.selfhost-example.agentrelay.com/
   services:
-    relaycastPublicUrl: https://cast.ar.example.com
+    relaycastPublicUrl: https://cast.ar.selfhost-example.agentrelay.com
     relayauthEnabled: false
     relayauthUrl: ""
     relayhistoryUrl: ""
     relayhistoryPublicUrl: ""
     relayhistoryBackend: native
     sessionReadApiUrl: http://agent-relay-read-api.agent-relay.svc.cluster.local
-    sessionReadApiPublicUrl: https://history.ar.example.com
+    sessionReadApiPublicUrl: https://history.ar.selfhost-example.agentrelay.com
     sessionReadApiMcpReads: true
   introspection:
     audiences:
-      - https://history.ar.example.com
-      - https://api.ar.example.com
+      - https://history.ar.selfhost-example.agentrelay.com
+      - https://api.ar.selfhost-example.agentrelay.com
   postgresCa:
     enabled: true
     configMap: rds-ca
@@ -350,7 +350,7 @@ relay-webapp:
   # The chart allows one replica.
   replicaCount: 1
   runtime:
-    publicUrl: https://ar.example.com
+    publicUrl: https://ar.selfhost-example.agentrelay.com
     sessionReadApiEnabled: true
     # The backend endpoint is enabled; keep its web view explicitly default-off.
     coordinationOverlapsEnabled: false
