@@ -38,19 +38,24 @@ locals {
   # client_ip_rules: admit the listed client addresses on the paths, then
   # deny everything else on those paths.
   client_rules = merge([for i, r in local.sp.client_ip_rules : merge({
-    for j, group in chunklist(r.cidrs, 4) : "${r.name}-allow-${j}" => {
+    for j, group in chunklist(r.cidrs, length(r.hosts) > 0 ? 3 : 4) : "${r.name}-allow-${j}" => {
       priority    = 2000 + i * 100 + j
       action      = "allow"
-      description = "${r.name}: listed client addresses on ${join(", ", r.path_prefixes)}"
+      description = "${r.name}: listed client addresses on ${join(", ", concat(r.hosts, r.path_prefixes))}"
       expression  = "${local.path_match[r.name]} && (${join(" || ", [for c in group : "inIpRange(origin.user_ip, '${c}')"])})"
     }
     }, { "${r.name}-deny" = {
       priority    = 2000 + i * 100 + 99
       action      = "deny(403)"
-      description = "${r.name}: any other client on ${join(", ", r.path_prefixes)}"
+      description = "${r.name}: any other client on ${join(", ", concat(r.hosts, r.path_prefixes))}"
       expression  = local.path_match[r.name]
   } })]...)
-  path_match = { for r in local.sp.client_ip_rules : r.name => "request.path.matches('^(${join("|", [for p in r.path_prefixes : replace(p, ".", "\\\\.")])})')" }
+  # The path (one subexpression) and, with hosts, the Host header (a second),
+  # which leaves three or four subexpressions for client ranges.
+  path_match = { for r in local.sp.client_ip_rules : r.name => join(" && ", compact([
+    length(r.hosts) > 0 ? "request.headers['host'].lower().matches('^(${join("|", [for h in r.hosts : replace(h, ".", "\\\\.")])})(:[0-9]+)?$')" : "",
+    "request.path.matches('^(${join("|", [for p in r.path_prefixes : replace(p, ".", "\\\\.")])})')",
+  ])) }
 }
 
 resource "google_compute_ssl_policy" "this" {

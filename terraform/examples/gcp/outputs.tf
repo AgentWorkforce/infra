@@ -113,7 +113,7 @@ output "chart_values" {
 }
 
 output "edge" {
-  description = "Edge policy names (edge.tf). security_policy is null unless edge_security_policy.create is set; put it in gkeIngress.securityPolicy together with the backend-config annotation the chart asks for. client_ip_header set means a proxy fronts the load balancer: raise relay-control.auth.trustedProxies by one from the value measured without it."
+  description = "Edge policy names (edge.tf). security_policy is null unless edge_security_policy.create is set; put it in gkeIngress.securityPolicy together with the backend-config annotation the chart asks for. client_ip_header set means a proxy fronts the load balancer: relay-control.auth.trustedProxies is 3 instead of 2."
   value = {
     ssl_policy       = module.edge_security.ssl_policy_name
     security_policy  = module.edge_security.security_policy_name

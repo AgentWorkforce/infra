@@ -45,7 +45,7 @@ variable "security_policy" {
     - source_ip_allowlist: when non-empty (or cloudflare.enabled), the default rule becomes deny 403 and only these connecting addresses are admitted: a pure source-IP allowlist.
     - cloudflare: admit Cloudflare's published ranges as the connecting addresses (origin lockdown) and read the client address from CF-Connecting-IP.
     - client_ip_header: header an upstream proxy sets with the real client address (Cloud Armor origin.user_ip). Only trustworthy when nothing but that proxy can reach the load balancer: combine with an allowlist of the proxy's ranges, or origin_secret_header.
-    - client_ip_rules: requests whose path starts with one of path_prefixes are denied unless the client address (origin.user_ip) is in cidrs. Requires origin_secret_header.
+    - client_ip_rules: per-client allowlists scoped to paths (and optionally hosts), evaluated in list order. A request whose path starts with one of a rule's path_prefixes (on one of its hosts, when given) is admitted if the client address (origin.user_ip) is in cidrs and denied 403 otherwise. A last rule with path_prefixes = ["/"] therefore closes every other path to everyone but its cidrs. Requires origin_secret_header.
     - adaptive_protection: Layer 7 DDoS detection (alerts; automatic deployment needs Cloud Armor Enterprise).
   EOT
   type = object({
@@ -91,6 +91,7 @@ variable "security_policy" {
     client_ip_rules = optional(list(object({
       name          = string
       path_prefixes = list(string)
+      hosts         = optional(list(string), [])
       cidrs         = list(string)
     })), [])
     adaptive_protection = optional(bool, false)
@@ -117,10 +118,11 @@ variable "security_policy" {
   }
   validation {
     condition = alltrue([for r in var.security_policy.client_ip_rules :
-      can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && length(r.cidrs) >= 1 && length(r.cidrs) <= 392 &&
-      length(r.path_prefixes) >= 1 && alltrue([for p in r.path_prefixes : can(regex("^/[A-Za-z0-9/._~-]*$", p))])
+      can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && length(r.cidrs) >= 1 && length(r.cidrs) <= 294 &&
+      length(r.path_prefixes) >= 1 && alltrue([for p in r.path_prefixes : can(regex("^/[A-Za-z0-9/._~-]*$", p))]) &&
+      alltrue([for h in r.hosts : can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", h))])
     ]) && length(var.security_policy.client_ip_rules) <= 9 && length(distinct(var.security_policy.client_ip_rules[*].name)) == length(var.security_policy.client_ip_rules)
-    error_message = "At most 9 client_ip_rules with unique lowercase names, 1-392 cidrs, and path_prefixes that start with / and hold only unreserved URL characters."
+    error_message = "At most 9 client_ip_rules with unique lowercase names, 1-294 cidrs, path_prefixes that start with / and hold only unreserved URL characters, and lowercase DNS hosts."
   }
   validation {
     condition     = var.security_policy.client_ip_header == null || can(regex("^[A-Za-z][A-Za-z0-9-]{0,63}$", var.security_policy.client_ip_header))

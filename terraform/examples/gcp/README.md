@@ -133,7 +133,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | ---- | ----------- |
 | chart\_values | Complete non-secret managed-service overlay for values-gcp.yaml plus values-gcp-native.yaml. Save with: terraform output -json chart\_values > managed-values.json. |
 | desktop\_feed | Values for relay-control's signed Desktop feed on GCS (null unless desktop\_feed\_bucket\_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys. |
-| edge | Edge policy names (edge.tf). security\_policy is null unless edge\_security\_policy.create is set; put it in gkeIngress.securityPolicy together with the backend-config annotation the chart asks for. client\_ip\_header set means a proxy fronts the load balancer: raise relay-control.auth.trustedProxies by one from the value measured without it. |
+| edge | Edge policy names (edge.tf). security\_policy is null unless edge\_security\_policy.create is set; put it in gkeIngress.securityPolicy together with the backend-config annotation the chart asks for. client\_ip\_header set means a proxy fronts the load balancer: relay-control.auth.trustedProxies is 3 instead of 2. |
 | functions | Pipeline function, topics and secret (null unless enable\_functions). |
 | image\_mirror\_root | MIRROR\_ROOT for install guide step 5 (null unless image\_mirror\_repository is set). |
 | pipeline | Native Sessions pipeline values. The Redis CA is public certificate material, not a credential. |

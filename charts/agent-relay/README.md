@@ -291,8 +291,8 @@ relay-webapp:
 ```
 
 Behind a proxy that fronts the load balancer (Cloudflare), also raise
-`relay-control.auth.trustedProxies` by one from the value that is correct
-without it, and measure it as the guide describes.
+`relay-control.auth.trustedProxies` by one (the Google load balancer alone
+needs 2; the guide shows how to check).
 
 ## Customer-neutral EKS with RDS native History
 

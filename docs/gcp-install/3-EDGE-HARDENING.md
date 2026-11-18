@@ -169,30 +169,53 @@ Cloudflare can reach it.
 
 4. **Client addresses.** relay-control finds the client's address by
    counting `relay-control.auth.trustedProxies` entries from the right of the
-   `X-Forwarded-For` header. Cloudflare adds one entry, so the right number is
-   **one more than the number that is right without Cloudflare**. Do not copy
-   a number: measure it. The Google load balancer appends two entries (the
-   address it received the request from, and its own), so behind Cloudflare
-   the header is `<client>, <Cloudflare>, <load balancer>` and the expected
-   value is 3. That has not been measured on a live install, and the same
-   reasoning says the guide's value of 1 without Cloudflare should be checked
-   too.
-
-   To measure: sign in from a network whose public address you know
-   (`curl -s https://ifconfig.me`), then open the audit log. If the entry
-   shows your address, the number is right. If it shows a Cloudflare address
-   or the load balancer's own address, raise `trustedProxies` by one, run
-   step 11's `helm upgrade`, and repeat. A number that is too high lets a
-   client forge its address, so stop at the first value that shows yours.
+   `X-Forwarded-For` header. The Google load balancer appends two entries:
+   the address it received the request from, and its own. Measured on a live
+   GKE install, the header is `<client>, <load balancer>` and the right value
+   is 2. Cloudflare adds one more, so behind Cloudflare the header is
+   `<client>, <Cloudflare>, <load balancer>` and the value is 3. The
+   Cloudflare case is expected, not yet measured; check it as below.
 
    ```yaml
    relay-control:
      auth:
-       trustedProxies: 3   # replace with the number you measured
+       trustedProxies: 3   # Cloudflare, then the Google load balancer's two entries
    ```
 
-   Sign-in rate limits and password lockout use this address. With the wrong
-   number every user shares one limit.
+   To check: load the dashboard from a network whose public address you know
+   (`curl -s https://ifconfig.me`), then read the header the pods received:
+
+   ```sh
+   kubectl -n $NAMESPACE logs deploy/relay-webapp -c dashboard --tail 5
+   ```
+
+   The last quoted field of each line is `X-Forwarded-For`. Count from the
+   right to your address: that count is `trustedProxies`. A number that is
+   too low makes every user share one sign-in limit and lockout; a number
+   that is too high lets a client forge its address.
+
+5. **Which clients may reach which paths** (optional). To let a vendor's
+   published ranges reach only the session upload paths, your own ranges
+   reach everything, and nobody else anything, add `client_ip_rules` to the
+   policy. Cloud Armor then decides by the client address Cloudflare reports
+   (`CF-Connecting-IP`), which the secret header from item 3 makes
+   trustworthy:
+
+   ```hcl
+   edge_security_policy = {
+     create     = true
+     cloudflare = { enabled = true }
+     client_ip_rules = [
+       { name = "vendors", hosts = ["history.<domain>"], path_prefixes = ["/v1/delivery", "/v1/turns", "/v1/auth/token/refresh"], cidrs = ["<vendor range>", "<your range>"] },
+       { name = "staff", path_prefixes = ["/"], cidrs = ["<your range>"] },
+     ]
+   }
+   ```
+
+   Rules apply in order; the last one closes every other path. The module's
+   README (`terraform/modules/gcp/edge-security`) explains the limits. A
+   vendor that publishes hundreds of ranges needs a higher Cloud Armor quota,
+   or that list enforced as a Cloudflare WAF custom rule instead.
 
 **Done when:**
 
@@ -201,8 +224,8 @@ curl -s -o /dev/null -w "through Cloudflare %{http_code}\n" "https://api.$DOMAIN
 curl -sk -o /dev/null -w "direct %{http_code}\n" --resolve "api.$DOMAIN:443:$(gcloud compute addresses describe $STATIC_IP_NAME --global --format='value(address)')" "https://api.$DOMAIN/readyz"
 ```
 
-`through Cloudflare 200` and `direct 403`, and the audit log shows your own
-address for your sign-in (item 4).
+`through Cloudflare 200` and `direct 403`, and the count in item 4 matches
+`trustedProxies`.
 
 - **Long-lived connections.** The desktop app, Relaycast and the flows worker
   queue hold WebSocket and event-stream connections open. Cloudflare proxies
@@ -211,11 +234,6 @@ address for your sign-in (item 4).
   has not been proven end to end.
 - **Upload size.** Cloudflare limits a request body to 100 MB on its Free and
   Pro plans.
-- **Restrict some paths to some clients** (for example session uploads to a
-  vendor's published ranges): use Cloudflare WAF custom rules. Cloudflare sees
-  the real client, and the rules do not count against Cloud Armor's limits.
-  When the proxy in front is not Cloudflare and cannot do this, use
-  `client_ip_rules` in `terraform/modules/gcp/edge-security`.
 - **Labels.** The Cloud Armor policy carries your `labels`. SSL policies, and
   the forwarding rules and backend services that GKE creates for the Ingress,
   have no labels in Google's API. For cost reports use
