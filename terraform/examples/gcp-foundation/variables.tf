@@ -155,3 +155,18 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
+variable "kms" {
+  description = "Optional customer-managed keys for Kubernetes Secrets (secrets), node boot disks (node_disks) and managed Redis (redis); see modules/gcp/foundation."
+  type = object({
+    secrets              = optional(string)
+    node_disks           = optional(string)
+    redis                = optional(string)
+    grant_service_agents = optional(bool, true)
+  })
+  default = {}
+}
+variable "binary_authorization_enforce" {
+  description = "Enforce the project's Binary Authorization policy at admission. Off by default; see modules/gcp/foundation."
+  type        = bool
+  default     = false
+}

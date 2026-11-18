@@ -32,6 +32,12 @@ variable "kms_key_name" {
   default     = null
 }
 
+variable "admin_secret_kms_key_name" {
+  description = "CMEK key for the Secret Manager secret that holds the Cloud SQL admin password (null: Google-managed, automatic replication). The key must be in var.region; the secret is then replicated to that region only. Grant the Secret Manager service agent (service-<project number>@gcp-sa-secretmanager.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: a secret's replication cannot be changed afterwards."
+  type        = string
+  default     = null
+}
+
 # --- Bring your own network and cluster ----------------------------------------
 
 variable "network_self_link" {
@@ -111,6 +117,12 @@ variable "pipeline_pubsub_kms_key_name" {
   default     = null
 }
 
+variable "pipeline_redis_kms_key_name" {
+  description = "CMEK key for the pipeline Redis instance at rest (null: Google-managed). Same region as the instance; grant the Memorystore service agent (service-<project number>@cloud-redis.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: changing it replaces the instance."
+  type        = string
+  default     = null
+}
+
 variable "pipeline_message_retention" {
   description = "Pub/Sub topic and subscription retention for the native Sessions pipeline."
   type        = string
@@ -179,6 +191,12 @@ variable "image_mirror_repository" {
     condition     = var.image_mirror_repository == "" || can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.image_mirror_repository))
     error_message = "image_mirror_repository must be a repository id: lowercase letters, digits and hyphens, starting with a letter."
   }
+}
+
+variable "image_mirror_kms_key_name" {
+  description = "CMEK key for the image mirror repository (null: Google-managed). Grant the Artifact Registry service agent (service-<project number>@gcp-sa-artifactregistry.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: changing it replaces the repository."
+  type        = string
+  default     = null
 }
 
 variable "gke_node_service_account" {

@@ -202,7 +202,7 @@ resource "google_container_cluster" "this" {
 
   #checkov:skip=CKV_GCP_12:Dataplane V2 (ADVANCED_DATAPATH) enforces NetworkPolicy natively; the legacy Calico network_policy toggle is incompatible.
   #checkov:skip=CKV_GCP_65:Customer Google Group/Workspace authority is external; operator IAM and Kubernetes RBAC must be approved in application state.
-  #checkov:skip=CKV_GCP_66:Binary Authorization attestors and project policy are external prerequisites, not invented by this foundation. Enable through a reviewed policy integration.
+  #checkov:skip=CKV_GCP_66:Off by default because enforcement without a project policy that admits the install's images blocks every pod. binary_authorization_enforce = true turns on PROJECT_SINGLETON_POLICY_ENFORCE once that policy exists (README).
 
   project                     = var.project_id
   name                        = local.prefix
@@ -223,6 +223,22 @@ resource "google_container_cluster" "this" {
   logging_service             = "logging.googleapis.com/kubernetes"
   monitoring_service          = "monitoring.googleapis.com/kubernetes"
   release_channel { channel = var.release_channel }
+  # Application-layer encryption of Kubernetes Secrets in etcd with a
+  # customer-managed key. Can be turned on (and the key changed) in place.
+  dynamic "database_encryption" {
+    for_each = var.kms.secrets == null ? [] : [1]
+    content {
+      state    = "ENCRYPTED"
+      key_name = var.kms.secrets
+    }
+  }
+  # Admission enforces the project's Binary Authorization policy. The policy
+  # itself (allowlist or attestors) is a project resource this module does not
+  # manage.
+  dynamic "binary_authorization" {
+    for_each = var.binary_authorization_enforce ? [1] : []
+    content { evaluation_mode = "PROJECT_SINGLETON_POLICY_ENFORCE" }
+  }
   workload_identity_config { workload_pool = local.wi_pool }
   ip_allocation_policy {
     cluster_secondary_range_name  = "pods"
@@ -260,9 +276,10 @@ resource "google_container_cluster" "this" {
   }
   # Even the temporary default pool must never use the Compute default identity.
   node_config {
-    service_account = google_service_account.nodes.email
-    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
-    image_type      = "COS_CONTAINERD"
+    service_account   = google_service_account.nodes.email
+    oauth_scopes      = ["https://www.googleapis.com/auth/cloud-platform"]
+    image_type        = "COS_CONTAINERD"
+    boot_disk_kms_key = var.kms.node_disks
     shielded_instance_config {
       enable_secure_boot          = true
       enable_integrity_monitoring = true
@@ -270,7 +287,27 @@ resource "google_container_cluster" "this" {
     workload_metadata_config { mode = "GKE_METADATA" }
     metadata = { disable-legacy-endpoints = "true" }
   }
-  depends_on = [google_project_iam_member.nodes, google_project_iam_member.registry, google_compute_firewall.deny_ingress]
+  depends_on = [google_project_iam_member.nodes, google_project_iam_member.registry, google_compute_firewall.deny_ingress, google_kms_crypto_key_iam_member.service_agent]
+}
+
+# Customer-managed keys (var.kms). Each Google service agent that encrypts
+# with a key needs roles/cloudkms.cryptoKeyEncrypterDecrypter on that key and
+# nothing wider. The keys are existing, externally owned resources: this
+# module never creates, rotates or destroys a key.
+locals {
+  kms_service_agents = var.kms.grant_service_agents ? merge(
+    var.kms.secrets == null ? {} : { secrets = { key = var.kms.secrets, agent = "container-engine-robot" } },
+    var.kms.node_disks == null ? {} : { node_disks = { key = var.kms.node_disks, agent = "compute-system" } },
+    var.kms.redis == null || !var.redis.enabled ? {} : { redis = { key = var.kms.redis, agent = "cloud-redis" } },
+  ) : {}
+}
+
+resource "google_kms_crypto_key_iam_member" "service_agent" {
+  for_each      = local.kms_service_agents
+  crypto_key_id = each.value.key
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:service-${var.expected_project_number}@${each.value.agent}.iam.gserviceaccount.com"
+  depends_on    = [terraform_data.fence]
 }
 
 locals {
@@ -310,14 +347,15 @@ resource "google_container_node_pool" "this" {
     max_unavailable = 0
   }
   node_config {
-    machine_type    = each.value.machine_type
-    disk_size_gb    = 100
-    disk_type       = "pd-balanced"
-    image_type      = "COS_CONTAINERD"
-    service_account = google_service_account.nodes.email
-    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
-    metadata        = { disable-legacy-endpoints = "true" }
-    labels          = { pool = each.key }
+    machine_type      = each.value.machine_type
+    disk_size_gb      = 100
+    disk_type         = "pd-balanced"
+    boot_disk_kms_key = var.kms.node_disks
+    image_type        = "COS_CONTAINERD"
+    service_account   = google_service_account.nodes.email
+    oauth_scopes      = ["https://www.googleapis.com/auth/cloud-platform"]
+    metadata          = { disable-legacy-endpoints = "true" }
+    labels            = { pool = each.key }
     shielded_instance_config {
       enable_secure_boot          = true
       enable_integrity_monitoring = true

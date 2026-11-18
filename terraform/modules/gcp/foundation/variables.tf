@@ -151,3 +151,26 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
+variable "kms" {
+  description = "Optional customer-managed Cloud KMS keys (full resource names, in the cluster's region), all null by default. secrets: application-layer encryption of Kubernetes Secrets in etcd (recommended; can be enabled and changed in place). node_disks: node boot disks (changing it replaces the node pools). redis: managed Redis at rest (set at creation; changing it replaces the instance). Pub/Sub uses pipeline.kms_key_name. grant_service_agents gives the GKE, Compute Engine and Redis service agents roles/cloudkms.cryptoKeyEncrypterDecrypter on their key; set false when the key's owner grants it instead (it must then exist before apply). Keys are never created or destroyed here."
+  type = object({
+    secrets              = optional(string)
+    node_disks           = optional(string)
+    redis                = optional(string)
+    grant_service_agents = optional(bool, true)
+  })
+  default = {}
+  validation {
+    condition     = alltrue([for k in [var.kms.secrets, var.kms.node_disks, var.kms.redis] : k == null || can(regex("^projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/[^/]+$", k))])
+    error_message = "Each key is projects/<project>/locations/<location>/keyRings/<ring>/cryptoKeys/<key>, without a version."
+  }
+  validation {
+    condition     = alltrue([for k in [var.kms.secrets, var.kms.node_disks, var.kms.redis] : k == null || try(split("/", k)[3] == var.region, false)])
+    error_message = "GKE, Compute Engine and Memorystore need a key in the cluster's region."
+  }
+}
+variable "binary_authorization_enforce" {
+  description = "Enforce the project's Binary Authorization policy at admission (PROJECT_SINGLETON_POLICY_ENFORCE). Off by default: the project policy must first admit the install's images (README), or no pod starts."
+  type        = bool
+  default     = false
+}

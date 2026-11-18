@@ -143,6 +143,33 @@ which can also fetch AUTH. IAM Redis Cluster is a different runtime/client contr
 this source does not claim compatibility. Never disable AUTH to satisfy a
 secret-free-state requirement. This assignment performs no credential retrieval.
 
+## Customer-managed keys and Binary Authorization
+
+Both are off by default. `docs/gcp-install/REGULATED-PROFILE.md` has the
+operator steps and `examples/gcp-foundation/regulated.tfvars.example` turns
+them all on.
+
+- `kms.secrets` adds `database_encryption { state = "ENCRYPTED" }`:
+  application-layer encryption of Kubernetes Secrets in etcd with an existing
+  Cloud KMS key. **Recommended.** It can be enabled, and the key changed, on a
+  running cluster without replacement.
+- `kms.node_disks` sets `boot_disk_kms_key` on every node pool (and the
+  temporary default pool). Changing it replaces the node pools.
+- `kms.redis` sets `customer_managed_key` on managed Redis. It is fixed at
+  creation; changing it replaces the instance.
+- Pub/Sub topics take `pipeline.kms_key_name`, as before.
+- With `kms.grant_service_agents` (default true) the module grants the GKE
+  (`container-engine-robot`), Compute Engine (`compute-system`) and Redis
+  (`cloud-redis`) service agents `roles/cloudkms.cryptoKeyEncrypterDecrypter`
+  on their own key only, before the cluster or instance is created. Set it
+  false when the key's owner grants it. Keys must be in the cluster's region
+  and are never created, rotated or destroyed here. The caller needs
+  `cloudkms.cryptoKeys.setIamPolicy` on the keys for the grant.
+- `binary_authorization_enforce = true` sets
+  `evaluation_mode = "PROJECT_SINGLETON_POLICY_ENFORCE"`. The project policy is
+  not managed here: import one that admits the install's image mirror first,
+  or no pod is admitted.
+
 ## Three states and output contract
 
 Use separate durable backends/keys and permissions for foundation, data and
@@ -258,6 +285,7 @@ Primary references: [VPC firewall priority](https://docs.cloud.google.com/firewa
 | [google_compute_subnetwork.nodes](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_subnetwork) | resource |
 | [google_container_cluster.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/container_cluster) | resource |
 | [google_container_node_pool.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/container_node_pool) | resource |
+| [google_kms_crypto_key_iam_member.service_agent](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/kms_crypto_key_iam_member) | resource |
 | [google_project_iam_member.nodes](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_iam_member) | resource |
 | [google_project_iam_member.registry](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_iam_member) | resource |
 | [google_pubsub_subscription.dead_letter](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_subscription) | resource |
@@ -292,9 +320,11 @@ Primary references: [VPC firewall priority](https://docs.cloud.google.com/firewa
 | region | Explicit regional GKE and managed-service location. | `string` | n/a | yes |
 | release\_channel | Explicit GKE managed upgrade channel. Control plane and nodes advance; a version is not a permanent pin. | `string` | n/a | yes |
 | actor\_hosts | Opt-in GCP Terse/durable-actors GKE Sandbox pool, not the EKS actor-host profile. Zone must match chart placement.zone. No multi-tenant or HA guarantee. | `object({ enabled = optional(bool, false), zone = optional(string), machine_type = optional(string, "e2-standard-4"), total_min = optional(number, 1), total_max = optional(number, 3) })` | `{}` | no |
+| binary\_authorization\_enforce | Enforce the project's Binary Authorization policy at admission (PROJECT\_SINGLETON\_POLICY\_ENFORCE). Off by default: the project policy must first admit the install's images (README), or no pod starts. | `bool` | `false` | no |
 | create\_connector | Create dedicated Serverless VPC Access connector for modules/gcp/functions. | `bool` | `true` | no |
 | deletion\_protection | GKE deletion protection. Disabling must be a separately approved retirement change applied before destroy; does not authorize deleting durable data. | `bool` | `true` | no |
 | enable\_nat | Reviewed internet egress through Cloud NAT for private nodes/connector. False permits Google API access but not arbitrary internet pulls or actor HTTPS egress. | `bool` | `false` | no |
+| kms | Optional customer-managed Cloud KMS keys (full resource names, in the cluster's region), all null by default. secrets: application-layer encryption of Kubernetes Secrets in etcd (recommended; can be enabled and changed in place). node\_disks: node boot disks (changing it replaces the node pools). redis: managed Redis at rest (set at creation; changing it replaces the instance). Pub/Sub uses pipeline.kms\_key\_name. grant\_service\_agents gives the GKE, Compute Engine and Redis service agents roles/cloudkms.cryptoKeyEncrypterDecrypter on their key; set false when the key's owner grants it instead (it must then exist before apply). Keys are never created or destroyed here. | ```object({ secrets = optional(string) node_disks = optional(string) redis = optional(string) grant_service_agents = optional(bool, true) })``` | `{}` | no |
 | labels | Additional non-secret labels; environment/managed-by are reserved. | `map(string)` | `{}` | no |
 | node\_capacity | Ordinary node pool total min/max across the selected zones; initial count is per zone. Size for all selected application resources and PVC constraints. | `object({ machine_type = string, total_min = number, total_max = number })` | ```{ "machine_type": "e2-standard-4", "total_max": 6, "total_min": 3 }``` | no |
 | node\_image\_registry\_projects | Approved existing projects granting nodes Artifact Registry reader; no wildcard project-wide data/secret roles. Registry projects are explicit external inputs. | `set(string)` | `[]` | no |
