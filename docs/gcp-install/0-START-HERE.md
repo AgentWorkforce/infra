@@ -137,8 +137,7 @@ This creates a regional Cloud SQL for PostgreSQL 17 instance (private IP only,
 Google-managed shared CA, admin password in Secret Manager), the sessions GCS
 bucket, a Standard HA Memorystore for Redis (TLS), a Pub/Sub topic and
 subscription with a dead-letter queue, a private DNS zone that resolves the
-Cloud SQL certificate name inside your VPC, the load balancer's TLS policy
-(TLS 1.2 minimum; 3-EDGE-HARDENING.md), and the Workload Identity grants
+Cloud SQL certificate name inside your VPC, and the Workload Identity grants
 (2-SERVICE-ACCOUNTS.md lists them; all are resource-level).
 
 ```sh
@@ -166,7 +165,7 @@ terraform output -json chart_values > ../../../../managed-values.json
 cd -
 ```
 
-**Done when:** the `grep` prints nothing, the plan shows `30 to add, 0 to
+**Done when:** the `grep` prints nothing, the plan shows `29 to add, 0 to
 change, 0 to destroy` (5 more with `desktop_feed_bucket_name`, 2 fewer
 without `image_mirror_repository`), the apply completes, and `managed-values.json` exists.
 
@@ -511,9 +510,10 @@ curl -s -o /dev/null -w "history %{http_code}\n" "https://history.$DOMAIN/v1/ses
 - **502 for a few minutes after `Active`:** the load balancer's health checks
   are still converging. Wait 5 minutes.
 
-The load balancer now refuses TLS 1.0 and 1.1 (step 4 created the policy).
-To check it, add Cloud Armor, or put Cloudflare in front, see
-[3-EDGE-HARDENING.md](3-EDGE-HARDENING.md).
+The load balancer accepts TLS 1.0 and later until it has an SSL policy. To
+require TLS 1.2, add Cloud Armor, or put Cloudflare in front, see
+[3-EDGE-HARDENING.md](3-EDGE-HARDENING.md) (from the first release with chart
+0.7.59; not the release this guide pins).
 
 ## 15. First sign-in, then add users
 

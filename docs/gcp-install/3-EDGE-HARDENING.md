@@ -5,9 +5,16 @@ after step 14 of [0-START-HERE.md](0-START-HERE.md), in any order.
 
 | Control | What it does | Default |
 | --- | --- | --- |
-| [TLS policy](#1-tls-policy) | Refuses TLS 1.0 and 1.1 | **On** when Terraform (step 4) created your resources |
+| [TLS policy](#1-tls-policy) | Refuses TLS 1.0 and 1.1 | **On** when this release's Terraform (step 4) created your resources |
 | [Cloud Armor](#2-cloud-armor) | OWASP rules, a sign-in rate limit, and optionally an allowlist of source addresses | Off |
 | [A proxy in front (Cloudflare)](#3-cloudflare-in-front) | Only the proxy may reach the load balancer | Off |
+
+**Which release.** These controls need the `agent-relay` chart 0.7.59 or
+later and the Terraform from the same release. The release that
+0-START-HERE.md currently pins (chart 0.7.54) has neither: its chart ignores
+`gkeIngress.sslPolicy`, `securityPolicy` and `tlsSecretName` without an
+error, and its Terraform has no `edge_*` inputs. Check with
+`helm show chart "$CHART" | grep '^version'` before you start.
 
 The chart and Terraform sides are covered by render and plan tests in this
 repository. They have not yet been proven on a live GKE install; follow the
@@ -18,11 +25,13 @@ repository. They have not yet been proven on a live GKE install; follow the
 Without an SSL policy a Google load balancer accepts TLS 1.0 and later.
 `terraform/examples/gcp` creates the policy `<name>-tls` (profile `MODERN`,
 TLS 1.2 minimum) and puts its name in `managed-values.json`
-(`gkeIngress.sslPolicy`), so an install that follows step 4 and step 11 has it
-already.
+(`gkeIngress.sslPolicy`), so an install made with this release's step 4 and
+step 11 has it already (step 4's plan then shows one resource more than the
+count the guide states for the earlier release).
 
-**An existing install:** run step 4's `terraform plan`/`apply` again (it adds
-one resource), write `managed-values.json` again, and run step 11's
+**An install made with an earlier release:** upgrade to this release's chart
+and Terraform first, then run step 4's `terraform plan`/`apply` again (it
+adds one resource), write `managed-values.json` again, and run step 11's
 `helm upgrade`.
 
 **Brought your own resources?** Create the policy and name it in `values.yaml`:
