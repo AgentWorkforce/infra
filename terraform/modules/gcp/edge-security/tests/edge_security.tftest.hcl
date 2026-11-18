@@ -124,7 +124,7 @@ run "cloudflare_origin_lockdown" {
         cidrs         = ["192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "192.0.2.128/25", "198.18.0.0/15"]
       }]
     }
-    origin_secret_header = { name = "x-origin-auth", value = "0123456789abcdef0123456789abcdef" }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
   }
 
   assert {
@@ -136,7 +136,7 @@ run "cloudflare_origin_lockdown" {
     error_message = "The client address comes from CF-Connecting-IP."
   }
   assert {
-    condition     = google_compute_security_policy_rule.origin_secret[0].priority == 100 && google_compute_security_policy_rule.origin_secret[0].action == "deny(403)" && nonsensitive(google_compute_security_policy_rule.origin_secret[0].match[0].expr[0].expression) == "!has(request.headers['x-origin-auth']) || request.headers['x-origin-auth'] != '0123456789abcdef0123456789abcdef'"
+    condition     = google_compute_security_policy_rule.origin_secret[0].priority == 100 && google_compute_security_policy_rule.origin_secret[0].action == "deny(403)" && nonsensitive(google_compute_security_policy_rule.origin_secret[0].match[0].expr[0].expression) == "!has(request.headers['x-origin-auth']) || !(request.headers['x-origin-auth'] == '0123456789abcdef0123456789abcdef')"
     error_message = "The secret-header rule is the first rule and denies a missing or wrong value."
   }
   # Throttle admits conforming requests, so each throttle rule also requires a Cloudflare address.
@@ -195,7 +195,30 @@ run "weak_secret_is_refused" {
   command = plan
   variables {
     security_policy      = { create = true }
-    origin_secret_header = { name = "x-origin-auth", value = "short" }
+    origin_secret_header = { name = "x-origin-auth", values = ["short"] }
+  }
+  expect_failures = [var.origin_secret_header]
+}
+
+# Rotation without an outage: the current and the next value are both accepted.
+run "secret_rotation_accepts_two_values" {
+  command = apply
+  variables {
+    security_policy      = { create = true }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"] }
+  }
+
+  assert {
+    condition     = nonsensitive(google_compute_security_policy_rule.origin_secret[0].match[0].expr[0].expression) == "!has(request.headers['x-origin-auth']) || !(request.headers['x-origin-auth'] == '0123456789abcdef0123456789abcdef' || request.headers['x-origin-auth'] == 'fedcba9876543210fedcba9876543210')"
+    error_message = "A request carrying either value passes; anything else is denied."
+  }
+}
+
+run "four_secret_values_are_refused" {
+  command = plan
+  variables {
+    security_policy      = { create = true }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcde1", "0123456789abcdef0123456789abcde2", "0123456789abcdef0123456789abcde3", "0123456789abcdef0123456789abcde4"] }
   }
   expect_failures = [var.origin_secret_header]
 }

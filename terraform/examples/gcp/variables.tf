@@ -227,10 +227,10 @@ variable "edge_security_policy" {
 }
 
 variable "edge_origin_secret_header" {
-  description = "Shared-secret request header a fronting proxy adds; requests without it are denied (modules/gcp/edge-security origin_secret_header). Stored in state."
+  description = "Shared-secret request header a fronting proxy adds; requests without one of the accepted values (1-3, for rotation) are denied (modules/gcp/edge-security origin_secret_header). Stored in state."
   type = object({
-    name  = string
-    value = string
+    name   = string
+    values = list(string)
   })
   default   = null
   sensitive = true

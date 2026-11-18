@@ -154,7 +154,7 @@ Cloudflare can reach it.
 
    ```hcl
    edge_security_policy      = { create = true, cloudflare = { enabled = true } }
-   edge_origin_secret_header = { name = "x-origin-auth", value = "<openssl rand -hex 32>" }
+   edge_origin_secret_header = { name = "x-origin-auth", values = ["<openssl rand -hex 32>"] }
    ```
 
    In Cloudflare, add a **request header transform rule** for the four names
@@ -162,19 +162,37 @@ Cloudflare can reach it.
    `gkeIngress.securityPolicy` as in section 2. Cloudflare's addresses are
    shared by all its customers; the header is what proves a request came
    through your zone. Its value is in the Terraform state and in the Cloud
-   Armor policy, so keep the state private.
+   Armor policy, so keep the state private. **To rotate it:** put the new
+   value second in `values` and apply, change the Cloudflare rule to the new
+   value, then remove the old value and apply. Requests keep flowing
+   throughout.
 
-4. **Client addresses.** There are now two proxies in front of the API. In
-   `values.yaml`:
+4. **Client addresses.** relay-control finds the client's address by
+   counting `relay-control.auth.trustedProxies` entries from the right of the
+   `X-Forwarded-For` header. Cloudflare adds one entry, so the right number is
+   **one more than the number that is right without Cloudflare**. Do not copy
+   a number: measure it. The Google load balancer appends two entries (the
+   address it received the request from, and its own), so behind Cloudflare
+   the header is `<client>, <Cloudflare>, <load balancer>` and the expected
+   value is 3. That has not been measured on a live install, and the same
+   reasoning says the guide's value of 1 without Cloudflare should be checked
+   too.
+
+   To measure: sign in from a network whose public address you know
+   (`curl -s https://ifconfig.me`), then open the audit log. If the entry
+   shows your address, the number is right. If it shows a Cloudflare address
+   or the load balancer's own address, raise `trustedProxies` by one, run
+   step 11's `helm upgrade`, and repeat. A number that is too high lets a
+   client forge its address, so stop at the first value that shows yours.
 
    ```yaml
    relay-control:
      auth:
-       trustedProxies: 2   # Cloudflare, then the Google load balancer
+       trustedProxies: 3   # replace with the number you measured
    ```
 
-   Sign-in rate limits and the audit log use this to find the client's
-   address.
+   Sign-in rate limits and password lockout use this address. With the wrong
+   number every user shares one limit.
 
 **Done when:**
 
@@ -183,8 +201,8 @@ curl -s -o /dev/null -w "through Cloudflare %{http_code}\n" "https://api.$DOMAIN
 curl -sk -o /dev/null -w "direct %{http_code}\n" --resolve "api.$DOMAIN:443:$(gcloud compute addresses describe $STATIC_IP_NAME --global --format='value(address)')" "https://api.$DOMAIN/readyz"
 ```
 
-`through Cloudflare 200` and `direct 403`. Then sign in, open the audit log,
-and check the entry shows your own address, not one of Cloudflare's.
+`through Cloudflare 200` and `direct 403`, and the audit log shows your own
+address for your sign-in (item 4).
 
 - **Long-lived connections.** The desktop app, Relaycast and the flows worker
   queue hold WebSocket and event-stream connections open. Cloudflare proxies
@@ -194,11 +212,18 @@ and check the entry shows your own address, not one of Cloudflare's.
 - **Upload size.** Cloudflare limits a request body to 100 MB on its Free and
   Pro plans.
 - **Restrict some paths to some clients** (for example session uploads to a
-  vendor's published ranges): `client_ip_rules` in
-  `terraform/modules/gcp/edge-security`.
-- **Cloudflare changes its ranges** rarely and announces it. Compare
-  <https://www.cloudflare.com/ips/> with `cloudflare.ipv4_cidrs` in the module
-  when it does.
+  vendor's published ranges): use Cloudflare WAF custom rules. Cloudflare sees
+  the real client, and the rules do not count against Cloud Armor's limits.
+  When the proxy in front is not Cloudflare and cannot do this, use
+  `client_ip_rules` in `terraform/modules/gcp/edge-security`.
+- **Labels.** The Cloud Armor policy carries your `labels`. SSL policies, and
+  the forwarding rules and backend services that GKE creates for the Ingress,
+  have no labels in Google's API. For cost reports use
+  [GKE cost allocation](https://cloud.google.com/kubernetes-engine/docs/how-to/cost-allocations),
+  which covers what runs in the cluster.
+- **Cloudflare changes its ranges** rarely and announces it. Before each
+  `terraform apply`, compare <https://www.cloudflare.com/ips/> with
+  `cloudflare.ipv4_cidrs` in the module (the list there is dated).
 
 ## Removing these
 

@@ -76,7 +76,7 @@ variable "security_policy" {
       enabled      = optional(bool, false)
       include_ipv6 = optional(bool, false)
       # https://www.cloudflare.com/ips/ as read on 2026-11-18. Cloudflare
-      # announces changes; review the list when it does.
+      # announces changes; compare the list with that page before each apply.
       ipv4_cidrs = optional(list(string), [
         "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18",
         "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17",
@@ -129,15 +129,15 @@ variable "security_policy" {
 }
 
 variable "origin_secret_header" {
-  description = "Optional shared-secret request header a fronting proxy adds on every request (for Cloudflare: a request header transform rule). Requests without the exact value are denied 403 before any other rule, which proves the request came through the proxy and makes its client-address header trustworthy. The value is stored in Terraform state and readable in the Cloud Armor policy by anyone with compute.securityPolicies.get: treat both as secret stores, and rotate by adding the new value at the proxy after applying it here in a maintenance window."
+  description = "Optional shared-secret request header a fronting proxy adds on every request (for Cloudflare: a request header transform rule). Requests without the exact value are denied 403 before any other rule, which proves the request came through the proxy and makes its client-address header trustworthy. values lists every accepted value (1 to 3), so a rotation has no outage: add the new value here and apply, switch the proxy to it, then remove the old value and apply. The values are stored in Terraform state and readable in the Cloud Armor policy by anyone with compute.securityPolicies.get: treat both as secret stores."
   type = object({
-    name  = string
-    value = string
+    name   = string
+    values = list(string)
   })
   default   = null
   sensitive = true
   validation {
-    condition     = var.origin_secret_header == null || (can(regex("^[a-z][a-z0-9-]{0,63}$", var.origin_secret_header.name)) && can(regex("^[A-Za-z0-9_-]{32,256}$", var.origin_secret_header.value)))
-    error_message = "origin_secret_header.name is a lowercase header name and value 32-256 characters from A-Z a-z 0-9 _ - (for example: openssl rand -hex 32)."
+    condition     = var.origin_secret_header == null || (can(regex("^[a-z][a-z0-9-]{0,63}$", var.origin_secret_header.name)) && length(var.origin_secret_header.values) >= 1 && length(var.origin_secret_header.values) <= 3 && length(distinct(var.origin_secret_header.values)) == length(var.origin_secret_header.values) && alltrue([for v in var.origin_secret_header.values : can(regex("^[A-Za-z0-9_-]{32,256}$", v))]))
+    error_message = "origin_secret_header.name is a lowercase header name; values holds 1-3 distinct values of 32-256 characters from A-Z a-z 0-9 _ - (for example: openssl rand -hex 32)."
   }
 }

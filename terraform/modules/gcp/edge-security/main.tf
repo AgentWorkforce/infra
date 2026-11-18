@@ -105,7 +105,8 @@ resource "google_compute_security_policy_rule" "origin_secret" {
   description     = "Requests without the fronting proxy's shared-secret header"
   match {
     expr {
-      expression = "!has(request.headers['${var.origin_secret_header.name}']) || request.headers['${var.origin_secret_header.name}'] != '${var.origin_secret_header.value}'"
+      # One subexpression for the missing header and one per accepted value.
+      expression = "!has(request.headers['${var.origin_secret_header.name}']) || !(${join(" || ", [for v in var.origin_secret_header.values : "request.headers['${var.origin_secret_header.name}'] == '${v}'"])})"
     }
   }
 }

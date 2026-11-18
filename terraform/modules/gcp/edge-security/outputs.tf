@@ -17,6 +17,6 @@ output "chart_values" {
 }
 
 output "client_ip_header" {
-  description = "Header Cloud Armor reads the client address from (null: the connecting address). When set there is one more proxy in front of the load balancer: raise relay-control.auth.trustedProxies by one."
+  description = "Header Cloud Armor reads the client address from (null: the connecting address). When set there is one more proxy in front of the load balancer: raise relay-control.auth.trustedProxies by one from the value measured without it (docs/gcp-install/3-EDGE-HARDENING.md)."
   value       = local.armor ? local.client_ip_header : null
 }

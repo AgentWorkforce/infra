@@ -190,7 +190,7 @@ run "edge_cloud_armor_behind_cloudflare" {
   command = apply
   variables {
     edge_security_policy      = { create = true, cloudflare = { enabled = true } }
-    edge_origin_secret_header = { name = "x-origin-auth", value = "0123456789abcdef0123456789abcdef" }
+    edge_origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
   }
 
   assert {
