@@ -266,6 +266,9 @@ curl -sk -o /dev/null -w "direct %{http_code}\n" --resolve "api.$DOMAIN:443:$(gc
 
 ## 4. Internal only, behind your VPN
 
+Needs the `agent-relay` chart 0.7.60 or later (an earlier chart ignores
+`gkeIngress.mode` and would create a public load balancer).
+
 Instead of a public load balancer, the install can have a private address
 that only your VPC and the networks routed to it (VPN, Interconnect) can
 reach. Decide this before step 6 of the guide: the address, DNS and
