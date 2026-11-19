@@ -107,7 +107,7 @@ security_policy = {
 origin_secret_header = { name = "x-origin-auth", values = [var.origin_secret] }
 ```
 
-- A path prefix ends at a path segment: `/mcp` covers `/mcp` and `/mcp/tools`, not `/mcpfoo`. With `hosts`, every listed host is paired with every listed path; use two rules when two hosts need different paths.
+- A path prefix ends at a path segment: `/mcp` covers `/mcp` and `/mcp/tools`, not `/mcpfoo`. A trailing slash is ignored, so `/.well-known/` also covers `/.well-known`. With `hosts`, every listed host is paired with every listed path; use two rules when two hosts need different paths.
 - Put narrower rules first. Repeat your own ranges (for example your VPN's egress range) in a vendor rule: your users' desktop uploads and MCP clients use those paths too, and a rule denies everyone it does not list.
 - Without the closing `["/"]` rule, paths that no rule names stay open to every client that comes through the proxy (and `rate_limits` still apply to them).
 - Each rule costs one advanced rule per nine client ranges (eight with `hosts`) plus one. See "Quotas" below before you list a vendor's published ranges.
@@ -131,6 +131,8 @@ Rules with an expression ("advanced" rules: everything here except the allowlist
 | `cloudflare.enabled` with `origin_secret_header` | 5 | 8 |
 | the above, with `rate_limits = []` and client rules: 96 host-scoped vendor ranges, a sign-in rule, a closing staff rule | 20 | 23 |
 | the same with 293 vendor ranges | 45: **refused** | |
+
+The `rule_counts` output is what the configuration needs, not what exists: after a failed apply it shows the planned numbers. The connecting check (`connecting_asns`) is itself one rule.
 
 With the secret header, two WAF rules and sign-in and staff rules, about 13 rules are left for a vendor list: roughly **100 client ranges** (8 per rule with `hosts`, 9 without). A vendor that publishes more than that does not fit in this policy. The options:
 

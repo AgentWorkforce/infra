@@ -115,18 +115,23 @@ backend services of the Ingress (6 for the default install).
 That list can be complete several minutes before every backend enforces the
 policy (4 minutes when measured). If your policy refuses some requests (an
 allowlist, Cloudflare, client rules), confirm with a request that it must
-refuse, **on each host**, before you rely on it:
+refuse, **on each backend**, before you rely on it. Each line below reaches a
+different backend service:
 
 ```sh
 IP=$(gcloud compute addresses describe $STATIC_IP_NAME --global --format='value(address)')
-for h in $DOMAIN api.$DOMAIN cast.$DOMAIN history.$DOMAIN; do
-  curl -sk -o /dev/null -w "$h %{http_code}\n" --resolve "$h:443:$IP" "https://$h/"
+for url in "$DOMAIN/" "api.$DOMAIN/readyz" "cast.$DOMAIN/health" \
+           "history.$DOMAIN/healthz" "history.$DOMAIN/v1/delivery/limits" "history.$DOMAIN/"; do
+  h=${url%%/*}
+  curl -sk -o /dev/null -w "$url %{http_code}\n" --resolve "$h:443:$IP" "https://$url"
 done
 ```
 
-From an address the policy does not admit, every line must end in `403`.
-Repeat until they all do. Warnings that mention `Translate` in
-`kubectl describe ingress` while the policy attaches are transient.
+The six are the dashboard, the API, Relaycast, the history reader, the
+history upload service and the deny service. From an address the policy does
+not admit, every line must end in `403`. Repeat until they all do. Warnings
+that mention `Translate` in `kubectl describe ingress` while the policy
+attaches are transient.
 
 **Turn the OWASP rules on.** Session transcripts and messages contain code,
 SQL and shell text, which is what those rules look for. Use the install
