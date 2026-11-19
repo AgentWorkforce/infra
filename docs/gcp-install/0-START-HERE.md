@@ -74,7 +74,8 @@ gcloud auth login && gcloud auth application-default login
 gcloud config set project <project id>
 gcloud services enable container.googleapis.com sqladmin.googleapis.com servicenetworking.googleapis.com \
   redis.googleapis.com pubsub.googleapis.com secretmanager.googleapis.com dns.googleapis.com \
-  artifactregistry.googleapis.com compute.googleapis.com iamcredentials.googleapis.com
+  artifactregistry.googleapis.com compute.googleapis.com iamcredentials.googleapis.com \
+  cloudresourcemanager.googleapis.com
 gcloud container clusters get-credentials <cluster> --location <region>   # add --internal-ip for a private endpoint
 kubectl auth can-i '*' '*' --all-namespaces
 gcloud container clusters describe <cluster> --location <region> \

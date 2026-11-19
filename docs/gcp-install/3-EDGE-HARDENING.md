@@ -78,7 +78,10 @@ when you run them.
    edge_security_policy = { create = true }
    ```
 
-   Run `terraform apply`. `terraform output edge` prints its name
+   Run `terraform plan` first and read `rule_counts` in the `edge` output: a
+   new project allows 20 rules with an expression and 100 rules in all, and
+   the plan tells you what this policy needs (the defaults need 3 and 4).
+   Then `terraform apply`. `terraform output edge` prints the policy's name
    (`<name>-edge`). This policy has the OWASP rules in **preview** (they log
    and do not block) and a limit of 60 sign-in requests a minute per client.
 
@@ -234,9 +237,17 @@ Cloudflare can reach it.
    other path. A request that a rule admits is not checked by any later
    rule, so each rule carries its own `rate_limit` (per client), and the
    sign-in limit is a rule of its own ahead of the closing one. The module's
-   README (`terraform/modules/gcp/edge-security`) explains the limits. A
-   vendor that publishes hundreds of ranges needs a higher Cloud Armor quota,
-   or that list enforced as a Cloudflare WAF custom rule instead.
+   README (`terraform/modules/gcp/edge-security`) explains the limits.
+
+   **Check the quota before you apply a vendor list.** Each rule takes three
+   or four ranges, so a vendor that publishes about 290 ranges needs about
+   105 rules with an expression, against a default of 20 per project (and 100
+   rules in all). `terraform plan` shows the numbers in the `edge` output's
+   `rule_counts`. Request `SECURITY_POLICY_CEVAL_RULES` and
+   `SECURITY_POLICY_RULES` increases for the Compute Engine API first (allow
+   headroom for the vendor adding ranges), or enforce that list as a
+   Cloudflare WAF custom rule and keep only your own ranges here. Without
+   either, the apply fails part-way with a quota error.
 
 **Done when:**
 

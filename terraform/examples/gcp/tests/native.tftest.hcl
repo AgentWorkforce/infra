@@ -237,3 +237,16 @@ run "edge_cloud_armor_behind_cloudflare" {
     error_message = "The Cloud Armor policy and the client-address header must be reported."
   }
 }
+
+run "edge_rule_counts_are_reported" {
+  command = apply
+  variables {
+    edge_security_policy = { create = true }
+  }
+
+  # Two WAF rules and the sign-in throttle have expressions; the default rule is basic.
+  assert {
+    condition     = output.edge.rule_counts.advanced == 3 && output.edge.rule_counts.total == 4
+    error_message = "The default Cloud Armor policy needs 3 advanced rules and 4 rules in all."
+  }
+}

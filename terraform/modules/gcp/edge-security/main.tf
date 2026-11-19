@@ -18,7 +18,7 @@ locals {
   # Basic rules take 10 ranges each; expressions take five subexpressions, so
   # an allowlist conjoined with a path match is cut into groups of four.
   allow_rules  = chunklist(local.allowlist, 10)
-  allow_groups = chunklist(local.allowlist, 4)
+  allow_groups = chunklist(local.allowlist, var.max_subexpressions - 1)
 
   client_ip_header = local.sp.client_ip_header != null ? local.sp.client_ip_header : (local.sp.cloudflare.enabled ? "CF-Connecting-IP" : null)
 
@@ -31,7 +31,7 @@ locals {
   # itself require an allowed connecting address.
   rate_rules = merge([for i, r in local.sp.rate_limits : {
     for j, group in(local.locked ? local.allow_groups : [[]]) : "${r.name}-${j}" => {
-      priority   = 3000 + i * 100 + j
+      priority   = 20000 + i * 1000 + j
       limit      = r
       expression = join(" && ", compact(["request.path.matches('${replace(r.path_regex, "\\", "\\\\")}')", length(group) > 0 ? "(${join(" || ", [for c in group : "inIpRange(origin.ip, '${c}')"])})" : ""]))
     }
@@ -42,22 +42,27 @@ locals {
   # and everyone else on those paths is denied. A Cloud Armor rule that admits
   # ends evaluation, so admitted requests meet no later rule: that is why each
   # rule states its own limit and why the secret header rule must come first.
-  client_groups = { for r in local.sp.client_ip_rules : r.name => chunklist(r.cidrs, length(r.hosts) > 0 ? 3 : 4) }
+  client_groups = { for r in local.sp.client_ip_rules : r.name => chunklist(r.cidrs, var.max_subexpressions - (length(r.hosts) > 0 ? 2 : 1)) }
   client_rules = merge([for i, r in local.sp.client_ip_rules : merge({
     for j, group in local.client_groups[r.name] : "${r.name}-allow-${j}" => {
-      priority    = 2000 + i * 100 + j
+      priority    = 10000 + i * 1000 + j
       action      = r.rate_limit == null ? "allow" : "throttle"
       rate        = { count = try(r.rate_limit.count, 0), interval_sec = try(r.rate_limit.interval_sec, 0) }
       description = "${r.name}: listed client addresses on ${join(", ", concat(r.hosts, r.path_prefixes))}"
       expression  = "${local.path_match[r.name]} && (${join(" || ", [for c in group : "inIpRange(origin.user_ip, '${c}')"])})"
     }
     }, { "${r.name}-deny" = {
-      priority    = 2000 + i * 100 + 99
+      priority    = 10000 + i * 1000 + 999
       action      = "deny(403)"
       rate        = { count = 0, interval_sec = 0 }
       description = "${r.name}: any other client on ${join(", ", concat(r.hosts, r.path_prefixes))}"
       expression  = local.path_match[r.name]
   } })]...)
+  # What the policy costs against the project's Cloud Armor quotas.
+  rule_counts = {
+    advanced = (local.secret_header ? 1 : 0) + length(local.waf_groups) + length(local.client_rules) + length(local.rate_rules)
+    basic    = length(local.allow_rules) + 1
+  }
   # The path (one subexpression) and, with hosts, the Host header (a second),
   # which leaves three or four subexpressions for client ranges.
   path_match = { for r in local.sp.client_ip_rules : r.name => join(" && ", compact([
@@ -101,6 +106,10 @@ resource "google_compute_security_policy" "this" {
     precondition {
       condition     = length(local.sp.client_ip_rules) == 0 || (local.secret_header && local.client_ip_header != null)
       error_message = "client_ip_rules trust a client-address header, so they need origin_secret_header (proof the request came through the proxy) and client_ip_header or cloudflare.enabled."
+    }
+    precondition {
+      condition     = alltrue([for r in local.sp.client_ip_rules : length(local.client_groups[r.name]) <= 999]) && length(local.allow_groups) <= 999
+      error_message = "A list needs more than 999 rules at this max_subexpressions. Shorten it, or enforce it at the fronting proxy."
     }
     precondition {
       condition     = alltrue([for r in local.sp.client_ip_rules : r.rate_limit != null || r.unthrottled])
@@ -198,7 +207,7 @@ resource "google_compute_security_policy_rule" "allowlist" {
   for_each        = local.armor ? { for i, group in local.allow_rules : tostring(i) => group } : {}
   project         = var.project_id
   security_policy = google_compute_security_policy.this[0].name
-  priority        = 9000 + tonumber(each.key)
+  priority        = 30000 + tonumber(each.key)
   action          = "allow"
   description     = "Allowed connecting addresses (${local.sp.cloudflare.enabled ? "Cloudflare and " : ""}source_ip_allowlist)"
   match {

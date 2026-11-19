@@ -333,3 +333,68 @@ run "rate_limit_regex_with_an_escape" {
     error_message = "The backslash is doubled inside the quoted expression string."
   }
 }
+
+# The policy reports what it costs against the project's rule quotas, and a
+# higher max_subexpressions packs a long client list into fewer rules.
+run "rule_counts_and_wider_expressions" {
+  command = apply
+  variables {
+    security_policy = {
+      create      = true
+      cloudflare  = { enabled = true }
+      rate_limits = []
+      client_ip_rules = [{
+        name          = "vendors"
+        hosts         = ["history.relay.example.com"]
+        path_prefixes = ["/v1/delivery"]
+        cidrs         = [for i in range(24) : "198.51.${i}.0/24"]
+        unthrottled   = true
+      }]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+
+  # 24 ranges at 3 per rule = 8 admitting rules + 1 deny; + secret header + 2 WAF = 12 advanced; + 2 allowlist + default = 15.
+  assert {
+    condition     = length(google_compute_security_policy_rule.client_ip) == 9 && output.rule_counts.advanced == 12 && output.rule_counts.total == 15
+    error_message = "rule_counts must equal the rules created."
+  }
+  assert {
+    condition     = output.rule_counts.total == length(google_compute_security_policy_rule.client_ip) + length(google_compute_security_policy_rule.waf) + length(google_compute_security_policy_rule.origin_secret) + length(google_compute_security_policy_rule.rate_limit) + length(google_compute_security_policy_rule.allowlist) + length(google_compute_security_policy_rule.default)
+    error_message = "total counts every rule resource."
+  }
+}
+
+run "ten_subexpressions_need_a_third_of_the_rules" {
+  command = apply
+  variables {
+    max_subexpressions = 10
+    security_policy = {
+      create      = true
+      cloudflare  = { enabled = true }
+      rate_limits = []
+      client_ip_rules = [{
+        name          = "vendors"
+        hosts         = ["history.relay.example.com"]
+        path_prefixes = ["/v1/delivery"]
+        cidrs         = [for i in range(24) : "198.51.${i}.0/24"]
+        unthrottled   = true
+      }]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+
+  # 8 ranges per rule (10 - host - path): 3 admitting rules + 1 deny.
+  assert {
+    condition     = length(google_compute_security_policy_rule.client_ip) == 4 && output.rule_counts.advanced == 7 && length(regexall("inIpRange", google_compute_security_policy_rule.client_ip["vendors-allow-0"].match[0].expr[0].expression)) == 8
+    error_message = "With 10 subexpressions a host-scoped rule carries 8 ranges."
+  }
+}
+
+run "policy_off_reports_zero_rules" {
+  command = apply
+  assert {
+    condition     = output.rule_counts.advanced == 0 && output.rule_counts.total == 0
+    error_message = "No policy, no rules."
+  }
+}

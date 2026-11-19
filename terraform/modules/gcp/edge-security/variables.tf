@@ -120,12 +120,12 @@ variable "security_policy" {
   }
   validation {
     condition = alltrue([for r in var.security_policy.client_ip_rules :
-      can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && length(r.cidrs) >= 1 && length(r.cidrs) <= 294 &&
+      can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && length(r.cidrs) >= 1 && length(r.cidrs) <= 2500 &&
       length(r.path_prefixes) >= 1 && alltrue([for p in r.path_prefixes : can(regex("^/[A-Za-z0-9/._~-]*$", p))]) &&
       alltrue([for h in r.hosts : can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", h))]) &&
       (r.rate_limit == null ? true : r.rate_limit.count >= 1 && contains([10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1800, 2700, 3600], r.rate_limit.interval_sec))
     ]) && length(var.security_policy.client_ip_rules) <= 9 && length(distinct(var.security_policy.client_ip_rules[*].name)) == length(var.security_policy.client_ip_rules)
-    error_message = "At most 9 client_ip_rules with unique lowercase names, 1-294 cidrs, path_prefixes that start with / and hold only unreserved URL characters, lowercase DNS hosts, and a rate_limit with count >= 1 and an interval_sec Cloud Armor accepts."
+    error_message = "At most 9 client_ip_rules with unique lowercase names, 1-2500 cidrs, path_prefixes that start with / and hold only unreserved URL characters, lowercase DNS hosts, and a rate_limit with count >= 1 and an interval_sec Cloud Armor accepts."
   }
   validation {
     condition     = var.security_policy.client_ip_header == null || can(regex("^[A-Za-z][A-Za-z0-9-]{0,63}$", var.security_policy.client_ip_header))
@@ -145,5 +145,15 @@ variable "origin_secret_header" {
     # A conditional, not ||: Terraform before 1.9 evaluates both sides of ||, and the attributes of null cannot be read.
     condition     = var.origin_secret_header == null ? true : (can(regex("^[a-z][a-z0-9-]{0,63}$", var.origin_secret_header.name)) && length(var.origin_secret_header.values) >= 1 && length(var.origin_secret_header.values) <= 3 && length(distinct(var.origin_secret_header.values)) == length(var.origin_secret_header.values) && alltrue([for v in var.origin_secret_header.values : can(regex("^[A-Za-z0-9_-]{32,256}$", v))]))
     error_message = "origin_secret_header.name is a lowercase header name; values holds 1-3 distinct values of 32-256 characters from A-Z a-z 0-9 _ - (for example: openssl rand -hex 32)."
+  }
+}
+
+variable "max_subexpressions" {
+  description = "Subexpressions Cloud Armor accepts in one rule expression. The rules language reference says 5; Google's quota page lists 10. A rule that matches a path (and host) and a list of client ranges uses one (two) for the match and the rest for ranges, so a higher value needs fewer rules for the same list: with 10, about a third as many. Raise it only after an apply in your project has accepted a rule of that size."
+  type        = number
+  default     = 5
+  validation {
+    condition     = contains([5, 6, 7, 8, 9, 10], var.max_subexpressions)
+    error_message = "max_subexpressions is 5 to 10."
   }
 }
