@@ -236,6 +236,18 @@ After the HoopDb migration Job succeeds, run `rds-setup.sh post` and restart the
 read API, ingest edge, and search indexer. The post phase refuses to activate
 those logins before migration evidence exists and verifies each login over TLS.
 
+On a fresh install, `agent-relay-secrets` (`HOOPDB_MIGRATION_URL`) and
+`search-indexer-owner` hold the plain `hoopdb_owner` URL, never the RDS master
+URL. An existing administrator-owned install creates the RDS master URL only
+in temporary `hoopdb-admin-jobs` while migration and bootstrap Jobs run.
+Anyone who can read Secrets in the namespace, or start a pod there, can use
+whichever database credential is present. EKS access entries with
+`AmazonEKSClusterAdminPolicy`, `AmazonEKSAdminPolicy` or
+`AmazonEKSEditPolicy` grant that. Keep them to the people who install and
+upgrade, give everyone else `AmazonEKSViewPolicy` scoped to the namespace, and
+follow [selfhost-secret-access.md](selfhost-secret-access.md) for the example
+Role and RoleBinding and the commands that check who has access.
+
 ### Optional operator eraser role (2026.11.1 pull update)
 
 The alpha.5 customer install predates operator hard-delete and needs no eraser login.

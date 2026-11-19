@@ -407,6 +407,12 @@ done
 **Done when:** five lines that end in `created` (`replaced` on a rerun). Copy `~/.agent-relay-install`
 to your secret store again (step 8 shows how): it now holds the encryption keys.
 
+These Secrets include the database-owner URL. A legacy administrator-owned
+install also creates a provider-administrator URL in temporary
+`hoopdb-admin-jobs` while migration/bootstrap Jobs run. Before other people
+get access to the cluster, restrict who can read Secrets in this namespace:
+[selfhost-secret-access.md](../selfhost-secret-access.md).
+
 **b. helm-secrets with SOPS** (every secret in one encrypted values file, for
 example encrypted with a Cloud KMS key):
 
@@ -879,6 +885,49 @@ index isn't ready yet".
 reads (`/turns`, replay, events) are fixed in 2026.11.6 and verified on a GKE
 install. If you uploaded sessions on 2026.11.1 to 2026.11.5, run "Re-stamp
 sessions uploaded before 2026.11.6" below once after upgrading.
+
+## Set `trustedProxies` to 2 (installs made from an earlier copy of this guide)
+
+Earlier copies of `values.yaml` had `relay-control.auth.trustedProxies: 1`.
+The Google load balancer adds two entries to `X-Forwarded-For` (the client's
+address, then its own), so with 1 the API takes the load balancer's address
+as every client's address. Sign-in then works, but all users share one
+per-address rate limit and one password lockout: a few wrong passwords from
+anyone can lock everyone out for a while.
+
+Check what your pods receive:
+
+```sh
+kubectl -n $NAMESPACE logs deploy/relay-webapp -c dashboard --tail 5
+```
+
+The last quoted field of each line is `X-Forwarded-For`. With the load
+balancer alone it is `<your address>, <load balancer address>`: two entries.
+In `values.yaml` set:
+
+```yaml
+relay-control:
+  auth:
+    trustedProxies: 2
+```
+
+and run step 11's `helm upgrade` again.
+
+**A proxy or CDN in front of the load balancer** adds one more entry, so the
+count is one higher. Raise it only once the load balancer refuses requests
+that do not come through the proxy (for example with a Cloud Armor policy
+that admits only the proxy's addresses). Until then keep 2: a caller who
+connects to the load balancer directly can put any address in
+`X-Forwarded-For`, and with the higher count the API would take that forged
+address as the client's.
+
+**Done when:**
+
+```sh
+kubectl -n $NAMESPACE get deploy relay-control -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_TRUSTED_PROXIES")].value}{"\n"}'
+```
+
+prints `2`.
 
 ## Re-stamp sessions uploaded before 2026.11.6 (upgrades only)
 

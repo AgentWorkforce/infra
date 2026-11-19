@@ -378,6 +378,10 @@ the upgrade must stop before Helm changes anything. The scripted equivalent is
 `rds-setup.sh prepare-admin-jobs`, followed after success by its key-removal
 flow and `rds-setup.sh delete-admin-jobs`.
 
+Restrict who can read this temporary administrator Secret as described in
+[Secret access](selfhost-secret-access.md); its short lifetime does not make
+its contents less privileged.
+
 For the by-hand flow, enter the current administrator URL without echoing it,
 stage it in a private temporary directory, and create the Secret from files so
 the credential never appears in process arguments:
