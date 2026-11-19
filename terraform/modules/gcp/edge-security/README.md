@@ -126,6 +126,14 @@ A long vendor list therefore fails on the first quota in a fresh project. Either
 - **request the quota first** (Console, IAM and Admin, Quotas: `SECURITY_POLICY_CEVAL_RULES` for the Compute Engine API, and `SECURITY_POLICY_RULES` if `total` nears 100, with the numbers from `rule_counts` plus headroom for the vendor adding ranges), and apply once Google grants it; or
 - **enforce that list at the fronting proxy** (a Cloudflare WAF custom rule sees the same client address) and keep only your own short ranges in `client_ip_rules`.
 
+`terraform plan` does not check the quota; the limit is met only at apply, which then fails with:
+
+```
+Error waiting to create SecurityPolicyRule: ... Quota 'SECURITY_POLICY_CEVAL_RULES' exceeded.  Limit: 20.0 globally.
+```
+
+**A failed apply leaves a partial policy. Do not attach it.** Terraform creates rules in parallel, so an arbitrary subset exists afterwards: in the measured case a deny rule for the sign-in paths without the rule that admits its clients, and 14 of 37 vendor rules. Attached like that, sign-in and most vendors get 403. Set `gkeIngress.securityPolicy` only after an apply has exited 0; after a failure, raise the quota or shorten the list and apply again until it does. (Measured on a new project: the same policy with the list cut to fit 20 advanced rules applied cleanly. The default rule does not count against `SECURITY_POLICY_RULES`.)
+
 One rule expression holds 10 subexpressions (`max_subexpressions`; the API accepted 10 and refused 11 when measured, although Google's rules language reference still says 5). A rule spends one on the path, one on the host when `hosts` is set, and the rest on client ranges: 8 or 9 ranges per rule. A list is limited to 2,500 ranges and 999 rules.
 
 Regular expressions must not contain capture groups: Cloud Armor refuses `(a|b)` with "Capture Groups are not allowed". The module writes `(?:a|b)` in everything it generates and refuses a capture group in `rate_limits[*].path_regex`.

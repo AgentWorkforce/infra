@@ -81,8 +81,8 @@ when you run them.
    Run `terraform plan` first and read `rule_counts` in the `edge` output: a
    new project allows 20 rules with an expression and 100 rules in all, and
    the plan tells you what this policy needs (the defaults need 3 and 4).
-   Then `terraform apply`. `terraform output edge` prints the policy's name
-   (`<name>-edge`). This policy has the OWASP rules in **preview** (they log
+   Then `terraform apply`, and continue only if it finishes without an
+   error. `terraform output edge` prints the policy's name (`<name>-edge`). This policy has the OWASP rules in **preview** (they log
    and do not block) and a limit of 60 sign-in requests a minute per client.
 
 2. Name it in `values.yaml`, and bind the dashboard Service to its
@@ -246,7 +246,14 @@ Cloudflare can reach it.
    `rule_counts`. Request a `SECURITY_POLICY_CEVAL_RULES` increase for the
    Compute Engine API first (allow headroom for the vendor adding ranges), or
    enforce that list as a Cloudflare WAF custom rule and keep only your own
-   ranges here. Without either, the apply fails part-way with a quota error.
+   ranges here. Without either, the apply fails part-way with
+   `Quota 'SECURITY_POLICY_CEVAL_RULES' exceeded. Limit: 20.0 globally`.
+
+   **If an apply fails, do not use the policy yet.** It then holds an
+   arbitrary part of its rules, for example the rule that denies the sign-in
+   paths without the rule that admits you. Raise the quota or shorten the
+   list, and run `terraform apply` again until it exits without an error.
+   Only then set `gkeIngress.securityPolicy`.
 
 **Done when:**
 
