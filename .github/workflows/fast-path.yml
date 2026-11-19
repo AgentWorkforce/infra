@@ -763,6 +763,11 @@ jobs:
         make dev-test
       env:
         TMPDIR: ${{ runner.temp }}
+    - name: Local dev launcher tests
+      run: |
+        python3 -B -m unittest discover -s scripts/dev -p 'test_*.py' -v
+        node --test scripts/dev/gateway.test.mjs
+        shellcheck dev.sh
     - name: Customer release gate regression tests
       run: python3 ci/customer-release-gate/test.py
     - name: Customer release records are consistent
