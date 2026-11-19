@@ -2,10 +2,9 @@
 
 `scripts/selfhost/rds-setup.sh` creates the Agent Relay databases and logins
 on Amazon RDS for PostgreSQL. This page is the same procedure as explicit
-commands, for operators who do not run the script. Every SQL statement below
-is what the script runs, in the same order. The SQL reuses databases and roles
-that already exist, but it sets every login's password: on a repeat run, use
-the passwords you generated the first time (step 1.3), or every connection
+commands, for operators who do not run the script. The fresh-install activation
+is deliberately one-shot and refuses an existing role graph. On later steps,
+use the passwords you generated the first time (step 1.3), or every connection
 string already deployed stops working. Pick one procedure per instance; to
 switch from `rds-setup.sh`, take its passwords from
 `~/.agent-relay-install/passwords/<role>` on the machine that ran it.
@@ -15,7 +14,8 @@ There are three phases:
 1. **Before the Helm install:** CA bundle, passwords, three databases, their
    logins, and the HoopDb bootstrap.
 2. **After the HoopDb migration Job succeeds:** activate three HoopDb logins.
-3. **When RDS rotates the admin password:** update two connection strings.
+3. **Existing installs only:** create one temporary administrator Job Secret
+   before an upgrade or guide Job, then delete it.
 
 ## What you need
 
@@ -24,7 +24,8 @@ There are three phases:
   `session_directory_search_worker` is server-wide.
 - An admin login on that instance with `rds_superuser` and `CREATEROLE` (the
   RDS master user, or a dedicated login granted `rds_superuser`). This page
-  calls it the admin login. It owns the HoopDb migrations.
+  calls it the admin login. A fresh install uses it only for setup; the plain
+  `hoopdb_owner` login owns the database and migrations afterwards.
 - A machine that can reach the instance on port 5432 (VPN, bastion, or a pod
   in the cluster) with `psql` 16 or later, `openssl` and `curl`.
 - The services image your release pins, by digest: the `services-image` line
@@ -50,6 +51,7 @@ export PGUSER=<admin login>
 export PGPASSWORD='<admin password>'
 export PGSSLMODE=verify-full
 export PGSSLROOTCERT="$PWD/rds-ca.pem"
+export HOOPDB_DATABASE=<your HoopDb database name>
 ```
 
 ### 1.2 RDS CA bundle and the `rds-ca` ConfigMap
@@ -73,8 +75,11 @@ example AWS SSM SecureString parameters); never commit them. On any later run
 of this page, export the stored passwords instead of generating new ones.
 
 ```bash
-for r in control_owner control_api_runtime relaycast_owner relaycast_runtime \
-         sessions_pipeline_runtime bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
+for r in control_owner control_api_runtime relaycast_owner relaycast_runtime hoopdb_owner \
+         sessions_pipeline_runtime bulls96_read_api bulls96_session_ingest search_consumer_runtime \
+         buffered_search_feed_runtime bulls96_acquisition_installer bulls96_analysis_admit \
+         bulls96_digest_narrative bulls96_legacy_export_privacy bulls96_privacy_eraser \
+         bulls96_project_events; do
   printf '%s=%s\n' "$r" "$(openssl rand -hex 24)"
 done
 ```
@@ -105,7 +110,7 @@ from this repository at your release tag into the same directory.
 ### 1.5 Refuse an instance that already has another HoopDb
 
 ```bash
-psql -X -A -t -d postgres -c "select (select count(*) from pg_database where datname='hoopdb') as hoopdb,
+psql -X -A -t -d postgres -v db="$HOOPDB_DATABASE" -c "select (select count(*) from pg_database where datname=:'db') as hoopdb,
   (select count(*) from pg_roles where rolname='session_directory_search_worker') as search_role"
 ```
 
@@ -115,7 +120,7 @@ separate instance. `0|0` (fresh) or `1|1` (a re-run) are fine.
 ### 1.6 Create the three databases
 
 ```bash
-for db in relaycontrol hoopdb relaycast; do
+for db in relaycontrol "$HOOPDB_DATABASE" relaycast; do
   printf '%s\n' "SELECT 'CREATE DATABASE $db' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname='$db') \\gexec" \
     | psql -X -q -v ON_ERROR_STOP=1 -d postgres
 done
@@ -153,35 +158,49 @@ GRANT CONNECT ON DATABASE relaycast TO relaycast_owner, relaycast_runtime;
 SQL
 ```
 
-### 1.9 hoopdb: extensions, roles and the runtime login
+### 1.9 HoopDb: extensions and the membership-free owner graph
 
-Run these in order, as the admin login, from the SQL directory of 1.4. Each
-must finish without an error before the next.
+Fetch `scripts/selfhost/rds-hoopdb-activate.sql` from the same infra release as
+this guide. It is the reviewed, database-name-agnostic activation used for the
+by-hand path. It uses `current_database()` for the ownership handoff. The
+disposable creator and all target roles are created and the creator is dropped
+in one transaction. This reaches the same graph technique as upstream's
+activation, but does not claim its fixed-name `rds-activation/v1` contract;
+the released migrator's `separate-database` preflight is the acceptance check.
+
+Run these in order as the admin login. Set `PGDATABASE` to the actual target
+database; do not assume it is named `hoopdb`.
 
 ```bash
-export PGDATABASE=hoopdb
+export PGDATABASE="$HOOPDB_DATABASE"
 P="psql -X -q -v ON_ERROR_STOP=1"
 
 $P -c 'CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public;'
 $P -f rds_owner_function_default_revoke.sql
 $P -c 'ALTER DEFAULT PRIVILEGES FOR ROLE rds_superuser REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC'
-$P -f rds_migration_roles.sql
-$P -v migration_owner="$PGUSER" -v runtime_role=sessions_pipeline_runtime -v runtime_login=true -f hoopdb_runtime_role_rds.sql
-printf '%s\n' "ALTER ROLE sessions_pipeline_runtime PASSWORD :'p1';" | $P -v p1="$PW_sessions_pipeline_runtime"
-$P -f session_directory_search_worker.sql
-$P -f session_token_verifier.sql
-$P -f session_ingest_roles.sql
-$P -f session_read_api_roles.sql
-$P -f session_consumer_roles.sql
-$P -v post=false -f rds-session-erase-search.sql
+$P -v DBNAME="$PGDATABASE" \
+  -v owner_password="$PW_hoopdb_owner" \
+  -v runtime_password="$PW_sessions_pipeline_runtime" \
+  -v search_password="$PW_search_consumer_runtime" \
+  -v read_password="$PW_bulls96_read_api" \
+  -v ingest_password="$PW_bulls96_session_ingest" \
+  -v buffered_password="$PW_buffered_search_feed_runtime" \
+  -v acquisition_password="$PW_bulls96_acquisition_installer" \
+  -v analysis_password="$PW_bulls96_analysis_admit" \
+  -v digest_password="$PW_bulls96_digest_narrative" \
+  -v legacy_password="$PW_bulls96_legacy_export_privacy" \
+  -v privacy_password="$PW_bulls96_privacy_eraser" \
+  -v project_password="$PW_bulls96_project_events" \
+  -f rds-hoopdb-activate.sql
 unset PGDATABASE
 ```
 
 Check:
 
 ```bash
-psql -X -A -t -d hoopdb -c "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
-psql -X -A -t -d hoopdb -c "select 'extensions: '||string_agg(extname,',' order by extname) from pg_extension"
+psql -X -A -t -d "$HOOPDB_DATABASE" -c "select current_database(), pg_get_userbyid(datdba) from pg_database where datname=current_database()"
+psql -X -A -t -d "$HOOPDB_DATABASE" -c "select rolsuper,rolcreaterole,rolcreatedb from pg_roles where rolname='hoopdb_owner'"
+psql -X -A -t -d "$HOOPDB_DATABASE" -c "select string_agg(extname,',' order by extname) from pg_extension"
 ```
 
 The extensions line must include `btree_gin`, `pg_trgm` and `vector`.
@@ -199,19 +218,19 @@ other than letters and digits, percent-encode it (`@` is `%40`, `:` is `%3A`,
 | | `database-migrations-url` | `postgresql://control_owner:<pw>@<endpoint>:5432/relaycontrol?sslmode=verify-full` |
 | | `database-runtime-url` | `postgres://relaycast_runtime:<pw>@<endpoint>:5432/relaycast?sslmode=verify-full` |
 | | `database-owner-url` | `postgres://relaycast_owner:<pw>@<endpoint>:5432/relaycast?sslmode=verify-full` |
-| | `HOOPDB_URL` | `postgresql://sessions_pipeline_runtime:<pw>@<endpoint>:5432/hoopdb?sslmode=verify-full` |
-| | `HOOPDB_MIGRATION_URL` | `postgresql://<admin login>:<admin pw>@<endpoint>:5432/hoopdb?sslmode=verify-full` |
-| `agent-relay-ingest-edge-runtime` | `database-url` | `postgresql://bulls96_session_ingest:<pw>@<endpoint>:5432/hoopdb?sslmode=verify-full` |
-| `agent-relay-read-api` | `RELAYHISTORY_READ_API_SECRET` | `{"supabase_url":"postgresql://bulls96_read_api:<pw>@<endpoint>:5432/hoopdb?sslmode=verify-full"}` |
-| `search-indexer-runtime` | `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` | `{"hoopdb_url":"postgresql://search_consumer_runtime:<pw>@<endpoint>:5432/hoopdb?sslmode=verify-full"}` |
+| | `HOOPDB_URL` | `postgresql://sessions_pipeline_runtime:<pw>@<endpoint>:5432/<HoopDb database>?sslmode=verify-full` |
+| | `HOOPDB_MIGRATION_URL` | `postgresql://hoopdb_owner:<pw>@<endpoint>:5432/<HoopDb database>?sslmode=verify-full` |
+| `agent-relay-ingest-edge-runtime` | `database-url` | `postgresql://bulls96_session_ingest:<pw>@<endpoint>:5432/<HoopDb database>?sslmode=verify-full` |
+| `agent-relay-read-api` | `RELAYHISTORY_READ_API_SECRET` | `{"supabase_url":"postgresql://bulls96_read_api:<pw>@<endpoint>:5432/<HoopDb database>?sslmode=verify-full"}` |
+| `search-indexer-runtime` | `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` | `{"hoopdb_url":"postgresql://search_consumer_runtime:<pw>@<endpoint>:5432/<HoopDb database>?sslmode=verify-full"}` |
 | `search-indexer-owner` | `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` | `{"hoopdb_url":"<the HOOPDB_MIGRATION_URL value>"}` |
 
 The last three are JSON. The names `RELAYHISTORY` and `supabase_url` are
 historical; all three are HoopDb logins on your RDS instance.
 
 The `bulls96_read_api`, `bulls96_session_ingest` and `search_consumer_runtime`
-logins are created in phase 2. Their URLs can be stored now; they only work
-after phase 2.
+logins are created in phase 1 with no creator edges. Phase 2 grants their
+object privileges after migrations create the objects.
 
 The remaining keys of `agent-relay-secrets` (`selfhost-bootstrap-token`,
 `selfhost-encryption-key`, `selfhost-setup-key`, `relaycast-internal-secret`,
@@ -236,26 +255,24 @@ kubectl -n agent-relay get jobs -l app.kubernetes.io/component=hoopdb-migrate
 1.1 and from the SQL directory of 1.4:
 
 ```bash
-export PGDATABASE=hoopdb
+export PGDATABASE="$HOOPDB_DATABASE"
+export PGUSER=hoopdb_owner
+export PGPASSWORD="$PW_hoopdb_owner"
 P="psql -X -q -v ON_ERROR_STOP=1"
 
 # Read API login
-$P -f session_read_api_role.sql
-printf '%s\n' "ALTER ROLE bulls96_read_api PASSWORD :'p1';" | $P -v p1="$PW_bulls96_read_api"
-$P -c 'GRANT CONNECT ON DATABASE hoopdb TO bulls96_read_api'
+sed '/^ALTER ROLE bulls96_read_api /d' session_read_api_role.sql | $P
+printf "%s\n" "SELECT format('GRANT CONNECT ON DATABASE %I TO bulls96_read_api', current_database()) \\gexec" | $P
 $P -f session_read_api_role_verify.sql
 
 # Ingest login
-$P -f session_ingest_role.sql
-printf '%s\n' "ALTER ROLE bulls96_session_ingest PASSWORD :'p1';" | $P -v p1="$PW_bulls96_session_ingest"
-$P -c 'GRANT CONNECT ON DATABASE hoopdb TO bulls96_session_ingest'
+sed '/^ALTER ROLE bulls96_session_ingest /d' session_ingest_role.sql | $P
+printf "%s\n" "SELECT format('GRANT CONNECT ON DATABASE %I TO bulls96_session_ingest', current_database()) \\gexec" | $P
 $P -f session_ingest_role_verify.sql
 $P -f session_ingest_verify.sql
 
-# Search consumer login (the migrations created the role)
+# Search consumer login (phase 1 created it)
 psql -X -A -t -c "select count(*) from pg_roles where rolname='search_consumer_runtime'"   # must print 1
-printf '%s\n' "ALTER ROLE search_consumer_runtime LOGIN NOINHERIT PASSWORD :'p1'; ALTER ROLE search_consumer_runtime SET statement_timeout = '60s';" \
-  | $P -v p1="$PW_search_consumer_runtime"
 unset PGDATABASE
 ```
 
@@ -264,7 +281,7 @@ Prove each login connects over TLS:
 ```bash
 for r in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
   pw_var="PW_$r"
-  PGUSER="$r" PGPASSWORD="${!pw_var}" psql -X -A -t -d hoopdb \
+  PGUSER="$r" PGPASSWORD="${!pw_var}" psql -X -A -t -d "$HOOPDB_DATABASE" \
     -c "select 'login ok: '||session_user||' tls='||(select ssl from pg_stat_ssl where pid=pg_backend_pid())"
 done
 ```
@@ -278,14 +295,90 @@ kubectl -n agent-relay rollout restart deploy/agent-relay-read-api deploy/agent-
 
 Then finish the search bootstrap as the install guide says.
 
-## Phase 3: when RDS rotates the admin password
+## Phase 3: existing administrator-owned installs
 
-`HOOPDB_MIGRATION_URL` and `search-indexer-owner` carry the admin password.
-After RDS rotates it (every 7 days by default for a managed master password),
-update both values before the next `helm upgrade`. No database change is
-needed. If the values come from SSM through External Secrets Operator, force a
-sync and check the ExternalSecret's `status.refreshTime` is after the update
-before upgrading.
+Do not transfer ownership yet. The pinned pipeline rejects the legacy creator
+edges after such a transfer. Existing installs remain administrator-owned until
+the follow-up described in
+[`upstream-hoopdb-legacy-creator-edge-transfer.md`](upstream-hoopdb-legacy-creator-edge-transfer.md).
+
+Immediately before an upgrade or a guide Job, create Secret
+`hoopdb-admin-jobs` with keys `HOOPDB_MIGRATION_URL` and
+`RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, point only the migrate/bootstrap Job
+values at that Secret, and delete it after those Jobs complete. Remove the same
+two keys from `agent-relay-secrets` and `search-indexer-owner`. If the temporary
+Secret is absent, the upgrade must stop before Helm changes anything. The
+scripted equivalent is `rds-setup.sh prepare-admin-jobs`, followed by
+`rds-setup.sh delete-admin-jobs`.
+
+For the by-hand flow, enter the current administrator URL without echoing it,
+stage it in a private temporary directory, and create the Secret from files so
+the credential never appears in process arguments:
+
+```bash
+umask 077
+ADMIN_JOB_DIR="$(mktemp -d)"
+read -r -s -p "Current administrator URL for $HOOPDB_DATABASE: " HOOPDB_ADMIN_URL; echo
+printf '%s' "$HOOPDB_ADMIN_URL" >"$ADMIN_JOB_DIR/HOOPDB_MIGRATION_URL"
+jq -cn --arg u "$HOOPDB_ADMIN_URL" '{hoopdb_url:$u}' \
+  >"$ADMIN_JOB_DIR/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
+unset HOOPDB_ADMIN_URL
+kubectl -n agent-relay delete secret hoopdb-admin-jobs --ignore-not-found
+kubectl -n agent-relay create secret generic hoopdb-admin-jobs \
+  --from-file="$ADMIN_JOB_DIR"
+
+# Only after the temporary Secret exists, remove the old long-lived copies.
+for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
+            search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
+  secret="${pair%%:*}"; key="${pair#*:}"
+  if kubectl -n agent-relay get secret "$secret" -o json | jq -e --arg k "$key" '.data[$k] != null' >/dev/null; then
+    kubectl -n agent-relay patch secret "$secret" --type=json \
+      -p="[{\"op\":\"remove\",\"path\":\"/data/$key\"}]"
+  fi
+done
+```
+
+Save this non-secret values overlay and pass it after the site values, before
+the release image overlay, to the upgrade or guide Job:
+
+```yaml
+sessions-pipeline:
+  worker:
+    migrations:
+      hoopdb:
+        existingSecret: hoopdb-admin-jobs
+        key: HOOPDB_MIGRATION_URL
+      rdsLayout: master-owner
+  searchIndexer:
+    bootstrap:
+      existingSecret: hoopdb-admin-jobs
+      key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+```
+
+Guard the Helm command with `kubectl -n agent-relay get secret
+hoopdb-admin-jobs >/dev/null || exit 1`; this is the fail-before-change check.
+After all migration/bootstrap Jobs complete, delete the credential and the
+local staging directory:
+
+```bash
+kubectl -n agent-relay delete secret hoopdb-admin-jobs
+rm -r -- "$ADMIN_JOB_DIR"
+```
+
+Verify after deletion:
+
+```bash
+kubectl -n agent-relay get secret hoopdb-admin-jobs --ignore-not-found
+kubectl -n agent-relay get secret agent-relay-secrets -o json | jq -e '.data.HOOPDB_MIGRATION_URL == null'
+kubectl -n agent-relay get secret search-indexer-owner -o json | jq -e '.data.RELAYHISTORY_PIPELINE_CONSUMER_SECRET == null'
+```
+
+Rollback: recreate `hoopdb-admin-jobs` from the current administrator password
+and use the same values overlay before rolling back a legacy Helm revision.
+Long-running pods do not use this Secret and are unaffected by its creation or
+deletion. The database stays administrator-owned; verify without assuming its
+name with `psql -X -A -t -d "$HOOPDB_DATABASE" -c 'select
+current_database(),current_user'`.
 
 ## Optional: the session-erase search login
 
@@ -294,9 +387,9 @@ bootstrap has completed, with the settings of 1.1 and a new password
 `PW_bulls96_session_erase_search`:
 
 ```bash
-PGDATABASE=hoopdb psql -X -q -v ON_ERROR_STOP=1 -v post=true -v p1="$PW_bulls96_session_erase_search" -f rds-session-erase-search.sql
+PGDATABASE="$HOOPDB_DATABASE" psql -X -q -v ON_ERROR_STOP=1 -v post=true -v p1="$PW_bulls96_session_erase_search" -f rds-session-erase-search.sql
 ```
 
-Its URL (`postgresql://bulls96_session_erase_search:<pw>@<endpoint>:5432/hoopdb?sslmode=verify-full`)
+Its URL (`postgresql://bulls96_session_erase_search:<pw>@<endpoint>:5432/<HoopDb database>?sslmode=verify-full`)
 goes in Secret `session-erase-search-runtime`, key
 `SESSION_ERASE_SEARCH_POSTGRES_URL`.

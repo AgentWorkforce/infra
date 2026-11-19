@@ -108,6 +108,10 @@ The referenced Secret must provide these keys:
 The read API, ingest edge and search indexer read their database settings from
 their own Secrets (`agent-relay-read-api`, `agent-relay-ingest-edge-runtime`,
 `search-indexer-runtime`, `search-indexer-owner` in `values-gcp.yaml`).
+On fresh Cloud SQL, RDS and Azure installs, both migration/bootstrap keys use
+the dedicated `hoopdb_owner` URL, never a provider administrator URL. Legacy
+administrator-owned installs use `hoopdb-admin-jobs` only while the relevant
+Jobs run and delete it immediately afterwards.
 
 With RelayAuth on, `relayauth-api-key` and `relayauth-bootstrap-api-key` must
 contain the same value. `selfhost-bootstrap-token` must be at least 32 bytes.
@@ -523,8 +527,8 @@ It also needs the Secrets `actors-credentials` (`postgres-url`,
 
 `selfhost-bootstrap-token` must be at least 32 bytes.
 `selfhost-encryption-key` must encode exactly 32 bytes as 64 hex characters or
-base64. Runtime database URLs should use least-privilege roles; migration URLs
-must use the corresponding migration-owner roles.
+base64. Runtime database URLs should use least-privilege roles; managed-database
+migration URLs use the plain `hoopdb_owner` role, not a cloud administrator.
 
 The portable shape additionally needs `HOOPDB_URL`, `HOOPDB_MIGRATION_URL`,
 `SUMMARY_MASTER_KEYS` and the native History keys named in

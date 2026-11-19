@@ -73,6 +73,7 @@ case " $* " in
   *" get namespace "*) ;;
   *" create namespace "*) ;;
   *" delete "*) ;;
+  *" logs job/agent-relay-cloud-sql-pre"*) printf 'setup output without credentials\nHOOPDB_LAYOUT=%s\n' "${MOCK_LAYOUT:-fresh-dedicated}" ;;
   *" logs job/"*) printf 'setup output without credentials\n' ;;
   *" get job agent-relay-worker-migrate-current -o json "*)
     if [[ "${MOCK_MIGRATION_STATUS:-complete}" == failed ]]; then
@@ -109,7 +110,8 @@ grep -F 'ALTER DATABASE relaycast OWNER TO CURRENT_USER' "$SCRIPT" >/dev/null ||
 if grep -Fq 'ALTER DATABASE relaycast OWNER TO relaycast_owner' "$SCRIPT"; then
   fail "Relaycast role incorrectly owns the database"
 fi
-grep -F 'session_consumer_roles.sql' "$SCRIPT" >/dev/null || fail "pre-migration consumer role bootstrap is missing"
+grep -F 'CREATE ROLE agent_relay_hoopdb_role_creator' "$SCRIPT" >/dev/null || fail "disposable owner/runtime role executor is missing"
+grep -F 'DROP ROLE agent_relay_hoopdb_role_creator' "$SCRIPT" >/dev/null || fail "disposable role executor is not removed"
 [[ -s "$CAPTURE/job-agent-relay-cloud-sql-pre.json" ]] || fail "pre Job manifest was not submitted"
 jq -e '.spec.template.spec.automountServiceAccountToken == false and
   any(.spec.template.spec.volumes[]; .name == "ca") and
@@ -121,10 +123,19 @@ if grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" | gre
 fi
 grep -F 'delete secret agent-relay-cloud-sql-pre-secret --ignore-not-found' "$LOG" >/dev/null || fail "temporary Secret was not cleaned up"
 [[ -s "$STATE/secret-files/agent-relay-secrets/HOOPDB_URL" ]] || fail "runtime credential file was not generated"
+grep -F 'hoopdb_owner:' "$STATE/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" >/dev/null || fail "migration URL does not use hoopdb_owner"
+grep -F 'hoopdb_owner:' "$STATE/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" >/dev/null || fail "search bootstrap URL does not use hoopdb_owner"
+[[ "$(cat "$STATE/hoopdb-layout")" == dedicated-owner ]] || fail "dedicated-owner layout marker is missing"
 grep -F 'sessions_pipeline_runtime:' "$STATE/secret-files/agent-relay-secrets/HOOPDB_URL" >/dev/null || fail "runtime URL uses the wrong role"
 grep -F 'sslmode=verify-full' "$STATE/secret-files/agent-relay-secrets/HOOPDB_URL" >/dev/null || fail "runtime URL does not verify Cloud SQL TLS"
 [[ "$(stat -c %a "$STATE/secret-files/agent-relay-secrets/HOOPDB_URL")" == 600 ]] || fail "credential file mode is not 0600"
 pass "pre creates hardened Job, create-only temporary Secret and credential files"
+
+: >"$LOG"
+MOCK_LAYOUT=dedicated-owner "$TEST_BASH" "$SCRIPT" pre >/dev/null
+grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/null || fail "dedicated rerun did not classify the database"
+grep -F 'hoopdb_owner:' "$STATE/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" >/dev/null || fail "dedicated rerun changed the owner URL"
+pass "dedicated-owner pre rerun reuses saved passwords"
 
 # Terraform's chart_values pin sha256(server_ca_cert): the PEM with exactly one
 # trailing newline. The bundle written for the ConfigMap must be those bytes.

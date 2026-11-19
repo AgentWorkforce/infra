@@ -27,8 +27,9 @@ cat > "$root/selfhost/rds-setup.sh" <<EOF
 #!/usr/bin/env bash
 echo "rds-setup \$1 NAMESPACE=\${NAMESPACE:-} RELEASE=\${RELEASE:-} MIGRATION_JOB=\${MIGRATION_JOB:-} SERVICES_IMAGE=\${SERVICES_IMAGE:-} PSQL_IMAGE=\${PSQL_IMAGE:-} STATE_DIR=\${STATE_DIR:-}" >> "$root/log"
 if [ "\$1" = refresh-admin ]; then
-  printf 'postgresql://admin:rotated-admin-pw@db/hoopdb' > "\$STATE_DIR/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL"
-  printf '{"hoopdb_url":"postgresql://admin:rotated-admin-pw@db/hoopdb"}' > "\$STATE_DIR/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
+  mkdir -p "\$STATE_DIR/secret-files/hoopdb-admin-jobs"
+  printf 'postgresql://admin:rotated-admin-pw@db/hoopdb' > "\$STATE_DIR/secret-files/hoopdb-admin-jobs/HOOPDB_MIGRATION_URL"
+  printf '{"hoopdb_url":"postgresql://admin:rotated-admin-pw@db/hoopdb"}' > "\$STATE_DIR/secret-files/hoopdb-admin-jobs/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
 fi
 EOF
 chmod +x "$root/selfhost/"*.sh
@@ -135,7 +136,7 @@ case "\$*" in
     cat "$root/secrets/\$ns/\$name.json" 2>/dev/null || echo '{"data":{}}' ;;
   *"-o json"*) echo '{"items":[]}' ;;
   *"get deploy -l"*"-o name"*) echo deployment.apps/agent-relay-read-api ;;
-  *"patch secret"*) for a in "\$@"; do case "\$a" in */patch.json) cat "\$a" >> "$root/patches"; echo >> "$root/patches";; esac; done ;;
+  *"patch secret"*) for a in "\$@"; do case "\$a" in */patch.json|*/remove-key.json) cat "\$a" >> "$root/patches"; echo >> "$root/patches";; esac; done ;;
 esac
 exit 0
 EOF
@@ -149,9 +150,16 @@ EOF
 # rds-setup.sh state as "pre" leaves it, plus the environment it reads.
 make_state() {
   rm -rf "$root/state"; mkdir -p "$root/state/passwords" "$root/state/secret-files/agent-relay-secrets" \
-    "$root/state/secret-files/search-indexer-owner"
+    "$root/state/secret-files/search-indexer-owner" "$root/state/secret-files/hoopdb-admin-jobs"
   for p in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do printf x > "$root/state/passwords/$p"; done
+  printf 'legacy-admin\n' > "$root/state/hoopdb-layout"
+  printf 'sessions-pipeline:\n  worker:\n    migrations:\n      hoopdb: {existingSecret: hoopdb-admin-jobs, key: HOOPDB_MIGRATION_URL}\n      rdsLayout: master-owner\n  searchIndexer:\n    bootstrap: {existingSecret: hoopdb-admin-jobs, key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET}\n' > "$root/state/hoopdb-layout-values.yaml"
   find "$root/state" -type d -exec chmod 700 {} +; find "$root/state" -type f -exec chmod 600 {} +
+}
+make_dedicated_state() {
+  make_state
+  printf 'dedicated-owner\n' >"$root/state/hoopdb-layout"
+  printf 'sessions-pipeline:\n  worker:\n    migrations:\n      hoopdb: {existingSecret: agent-relay-secrets, key: HOOPDB_MIGRATION_URL}\n      rdsLayout: separate-database\n  searchIndexer:\n    bootstrap: {existingSecret: search-indexer-owner, key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET}\n' >"$root/state/hoopdb-layout-values.yaml"
 }
 rds_env=(AWS_REGION=us-east-1 RDS_HOST=db.example.internal RDS_ADMIN_SECRET_ARN=arn:aws:secretsmanager:us-east-1:111111111111:secret:rds STATE_DIR="$root/state")
 
@@ -303,7 +311,7 @@ grep -q 'Installed agent-relay at 2026.11.1' <<<"$out" || fail "first install di
 pass "first install: snapshot, helm install --no-hooks, then the migration wait"
 
 # 17. first install with --rds-setup: install -> migration wait -> post -> restart -> rollout status
-make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"; printf '%s\n' "$migrate_job" > "$root/live-manifest.yaml"
+make_dedicated_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"; printf '%s\n' "$migrate_job" > "$root/live-manifest.yaml"
 out=$(run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) || fail "rds first install failed: $out"
 before 'helm .* install ' 'kubectl .*get job agent-relay-worker-migrate' || fail "install must precede the migration wait"
 before 'kubectl .*get job agent-relay-worker-migrate' '^rds-setup post' || fail "post must follow the migration wait"
@@ -321,7 +329,7 @@ grep -q '^rds-setup refresh-admin' "$root/log" && fail "first install ran refres
 pass "first install --rds-setup: install, migration wait, post, restart, in order"
 
 # 18. --rds-setup apply refuses before contacting anything without its environment or state
-make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+make_dedicated_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
 out=$(env -u RDS_HOST PATH="$root/bin:$PATH" AWS_REGION=x RDS_ADMIN_SECRET_ARN=y STATE_DIR="$root/state" \
   "$TEST_BASH" "$SCRIPT" "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) \
   && fail "--rds-setup without RDS_HOST was accepted"
@@ -332,30 +340,34 @@ grep -q "rds-setup.sh pre" <<<"$out" || fail "missing pre state refused for the 
 [ -s "$root/log" ] && fail "a refused --rds-setup apply contacted tools"
 pass "--rds-setup apply checks its environment and pre state first"
 
-# 19. eks-rds-native upgrade: snapshot -> refresh-admin -> Secret patches -> helm upgrade; values never in argv
+# 19. legacy eks-rds-native upgrade: snapshot -> temporary Secret -> remove old keys -> helm -> delete
 make_state; setup_mocks "$root/rel-ok" ok
+mkdir -p "$root/secrets/agent-relay"
+printf '{"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' >"$root/secrets/agent-relay/agent-relay-secrets.json"
+printf '{"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' >"$root/secrets/agent-relay/search-indexer-owner.json"
 out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
   --apply --db-instance prod-db --yes 2>&1) || fail "rds-native upgrade failed: $out"
-before 'aws rds create-db-snapshot' '^rds-setup refresh-admin' || fail "refresh-admin must follow the snapshot"
-before '^rds-setup refresh-admin' 'kubectl .*patch secret agent-relay-secrets' || fail "Secret update must follow refresh-admin"
-before 'kubectl .*patch secret search-indexer-owner' 'helm .* upgrade ' || fail "Secret updates must precede helm upgrade"
+before 'aws rds create-db-snapshot' '^rds-setup prepare-admin-jobs' || fail "temporary Secret must follow the snapshot"
+before '^rds-setup prepare-admin-jobs' 'kubectl .*patch secret agent-relay-secrets' || fail "old-key removal must follow temporary Secret creation"
+before 'kubectl .*patch secret search-indexer-owner' 'helm .* upgrade ' || fail "old-key removal must precede helm upgrade"
+before 'helm .* upgrade ' '^rds-setup delete-admin-jobs' || fail "temporary Secret was not deleted after Helm"
 grep 'kubectl .*patch secret' "$root/log" | grep -qv -- '--patch-file' && fail "Secret patched without a patch file"
 grep -q 'rotated-admin-pw' "$root/log" && fail "a credential appeared on a command line"
 grep -q 'rotated-admin-pw' <<<"$out" && fail "a credential was printed"
-want=$(printf 'postgresql://admin:rotated-admin-pw@db/hoopdb' | base64 | tr -d '\n')
-grep -q "{\"data\":{\"HOOPDB_MIGRATION_URL\":\"$want\"}}" "$root/patches" || fail "agent-relay-secrets patch is wrong: $(cat "$root/patches")"
-grep -q '"RELAYHISTORY_PIPELINE_CONSUMER_SECRET"' "$root/patches" || fail "search-indexer-owner was not patched"
+grep -q '"op": "remove"' "$root/patches" || fail "legacy keys were not removed: $(cat "$root/patches")"
+grep -q 'HOOPDB_MIGRATION_URL' "$root/patches" || fail "migration admin key was not removed"
+grep -q 'RELAYHISTORY_PIPELINE_CONSUMER_SECRET' "$root/patches" || fail "search admin key was not removed"
 grep -q '^rds-setup post' "$root/log" && fail "upgrade ran post"
-pass "rds-native upgrade runs refresh-admin and updates both Secrets before helm upgrade"
+pass "legacy rds-native upgrade uses and deletes one temporary admin Job Secret"
 
-# 20. eks-native upgrade with --rds-setup runs refresh-admin; without it, never
+# 20. eks-native legacy upgrade with --rds-setup prepares the temporary Secret; without it, never
 make_state; setup_mocks "$root/rel-ok" ok
 out=$(run_rds "${args[@]}" --rds-setup --apply --db-instance prod-db --yes 2>&1) || fail "eks-native --rds-setup upgrade failed: $out"
-grep -q '^rds-setup refresh-admin' "$root/log" || fail "--rds-setup upgrade did not refresh admin credentials"
+grep -q '^rds-setup prepare-admin-jobs' "$root/log" || fail "--rds-setup upgrade did not prepare the temporary Secret"
 setup_mocks "$root/rel-ok" ok
 out=$(run_rds "${args[@]}" --apply --db-instance prod-db --yes 2>&1) || fail "eks-native upgrade failed: $out"
 grep -q '^rds-setup ' "$root/log" && fail "eks-native upgrade without --rds-setup ran rds-setup.sh"
-pass "refresh-admin runs only when the install uses rds-setup"
+pass "temporary admin Job credentials run only for legacy installs using rds-setup"
 
 # 21. the plan reports any rendered change, not only image changes
 cfg() { printf 'kind: ConfigMap\nmetadata:\n  name: settings\ndata:\n  mode: "%s"\n' "$1"; }
@@ -384,7 +396,7 @@ bootstrap_job='kind: Job
 metadata:
   name: agent-relay-search-indexer-bootstrap-9f8e7d6c
   labels: { app.kubernetes.io/component: search-indexer-bootstrap }'
-make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+make_dedicated_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
 printf '%s\n---\n%s\n' "$migrate_job" "$bootstrap_job" > "$root/live-manifest.yaml"
 printf 'running\nrunning\ncomplete\n' > "$root/jobstate/agent-relay-search-indexer-bootstrap-9f8e7d6c"
 out=$(run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) || fail "first install with a pending Job failed: $out"
@@ -397,7 +409,7 @@ line_i=$(grep -n 'Installed agent-relay' <<<"$out" | cut -d: -f1)
 pass "first install waits for every release Job before reporting success"
 
 # 24. a failed release Job fails the first install with its name and last logs
-make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+make_dedicated_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
 printf '%s\n---\n%s\n' "$migrate_job" "$bootstrap_job" > "$root/live-manifest.yaml"
 printf 'running\nfailed\n' > "$root/jobstate/agent-relay-search-indexer-bootstrap-9f8e7d6c"
 out=$(run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) && fail "a failed Job reported success"
@@ -408,7 +420,7 @@ grep -q 'INSTALL FAILED' <<<"$out" || fail "failure hint missing: $out"
 pass "a failed release Job fails the first install with its name and logs"
 
 # 25. a Job still running at the deadline fails the first install
-make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+make_dedicated_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
 printf '%s\n' "$migrate_job" > "$root/live-manifest.yaml"; echo running > "$root/jobstate/agent-relay-worker-migrate-0a1b2c3d"
 out=$(AGENT_RELAY_JOB_TIMEOUT_SECONDS=0 run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) \
   && fail "a Job past the deadline reported success"
@@ -417,7 +429,7 @@ grep -q '^rds-setup post' "$root/log" && fail "post ran without a completed migr
 pass "Job waits are bounded"
 
 # 26. a Job deleted by ttlSecondsAfterFinished after it was seen complete is not awaited again
-make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+make_dedicated_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
 printf '%s\n---\n%s\n' "$migrate_job" "$bootstrap_job" > "$root/live-manifest.yaml"
 printf 'complete\nnotfound\n' > "$root/jobstate/agent-relay-worker-migrate-0a1b2c3d"
 out=$(AGENT_RELAY_JOB_TIMEOUT_SECONDS=0 run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) \
@@ -428,13 +440,13 @@ grep -q 'Installed agent-relay' <<<"$out" || fail "install not reported: $out"
 pass "a Job seen complete and then deleted counts as complete"
 
 # 27. a Job never found times out with a clear message; one that vanishes unseen-complete fails at once
-make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+make_dedicated_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
 printf '%s\n---\n%s\n' "$migrate_job" "$bootstrap_job" > "$root/live-manifest.yaml"
 echo notfound > "$root/jobstate/agent-relay-search-indexer-bootstrap-9f8e7d6c"
 out=$(AGENT_RELAY_JOB_TIMEOUT_SECONDS=0 run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) \
   && fail "a Job that never existed reported success"
 grep -q 'agent-relay-search-indexer-bootstrap-9f8e7d6c did not complete (timeout; the Job was never found)' <<<"$out" || fail "never-found Job message unclear: $out"
-make_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
+make_dedicated_state; setup_mocks "$root/rel-ok" ok; rm -f "$root/exists"
 printf '%s\n---\n%s\n' "$migrate_job" "$bootstrap_job" > "$root/live-manifest.yaml"
 printf 'running\nnotfound\n' > "$root/jobstate/agent-relay-search-indexer-bootstrap-9f8e7d6c"
 out=$(run_rds "${args[@]}" --rds-setup --first-install --apply --db-instance prod-db --yes 2>&1) && fail "a vanished running Job reported success"
@@ -768,7 +780,7 @@ pass "census: INT or TERM mid-census deletes the pod and ConfigMap"
 census_setup; census absent 0; make_state
 out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-native --values "$vals" --rds-setup 2>&1) || fail "rds-setup census plan failed: $out"
 before '^rds-setup refresh-admin' 'kubectl .*create secret generic agent-relay-index-census-' || fail "refresh-admin must run before the census Secret is made"
-grep -q 'kubectl .*create secret generic agent-relay-index-census-[0-9]* --from-file=HOOPDB_URL=.*/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL' "$root/log" \
+grep -q 'kubectl .*create secret generic agent-relay-index-census-[0-9]* --from-file=HOOPDB_URL=.*/secret-files/hoopdb-admin-jobs/HOOPDB_MIGRATION_URL' "$root/log" \
   || fail "the census Secret must come from the refreshed state file"
 pod=$(yq -o=json 'select(.kind == "Pod")' "$root/applied.yaml")
 jq -e '[.spec.containers[0].env[] | select(.name == "HOOPDB_URL") | .valueFrom.secretKeyRef] == [{"name": .metadata.name, "key": "HOOPDB_URL"}]' <<<"$pod" >/dev/null \
@@ -785,8 +797,8 @@ pass "census: --rds-setup refreshes the admin URL first and hands it over in a t
 # 49. a login failure names the admin-credential refresh
 census_setup; printf 'INDEX_CENSUS_ERROR 28P01 password authentication failed for user "admin"\n' > "$root/census.out"
 out=$(run "${args[@]}" 2>&1) && fail "a census login failure was accepted"
-grep -q 'If the RDS admin password rotated, refresh the admin inputs first' <<<"$out" || fail "a login failure did not name the refresh: $out"
-pass "census: a login failure points at refreshing the admin inputs"
+grep -q 'refresh the administrator Job credential with rds-setup.sh prepare-admin-jobs' <<<"$out" || fail "a login failure did not name the temporary-Secret flow: $out"
+pass "census: a login failure points at the temporary administrator Job credential flow"
 
 # 50. an upgrade that adds a migrate Job the deployed release lacked says no census ran
 setup_mocks "$root/rel-ok" ok; printf '%s\n' "$migrate_job" > "$root/rendered-extra.yaml"

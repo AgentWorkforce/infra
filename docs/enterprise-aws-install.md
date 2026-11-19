@@ -540,15 +540,18 @@ ship `values-eks-rds-native.yaml` (2026.11.0 does not).
 
 If `rds-setup.sh` bootstrapped the databases, add `--rds-setup` (implied by
 `eks-rds-native`) and export `AWS_REGION`, `RDS_HOST`, `RDS_ADMIN_SECRET_ARN`
-and `STATE_DIR` as for `pre`. Before every `helm upgrade` the upgrader then
-runs `rds-setup.sh refresh-admin` and writes the two rewritten keys
-(`agent-relay-secrets/HOOPDB_MIGRATION_URL` and
-`search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET`) into those
-Secrets with a merge patch read from a file, leaving their other keys alone.
-If an external secret controller owns those Secrets, update them through it
-instead and do not pass `--rds-setup`. When the values select
-`databaseMode: rds` without `--rds-setup`, the plan prints a note rather than
-guessing.
+and `STATE_DIR` as for `pre`. Fresh PostgreSQL 16+ installs store the dedicated
+`hoopdb_owner` URL in the two long-lived keys; no administrator URL enters the
+cluster. An existing administrator-owned install is detected and left in its
+legacy role graph. Immediately before its upgrade the upgrader creates
+`hoopdb-admin-jobs`, points only migrate/bootstrap Jobs at it, removes the old
+administrator-derived keys from the long-lived Secrets, and deletes the
+temporary Secret after the Jobs finish. If that Secret cannot be created, the
+upgrade stops before Helm changes anything. Existing installs keep this
+administrator-run migration until the pipeline accepts the legacy creator
+edge; see `docs/upstream-hoopdb-legacy-creator-edge-transfer.md`. When values
+select `databaseMode: rds` without `--rds-setup`, the plan prints a note rather
+than guessing.
 
 For a new installation, add `--first-install`; see step 4.
 

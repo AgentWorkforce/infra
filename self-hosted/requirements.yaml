@@ -80,7 +80,7 @@ profiles:
     services_image: ghcr-rds
     db: { hoopdb: external, db_mode: rds, boundary: global-default-revoke }
     install: helm install sessions-pipeline agentworkforce/sessions-pipeline -f profiles/external-rds.yaml --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=true
-    summary: No in-cluster SQL Jobs; the RDS master runs the rds_*.sql bootstrap before migrate.
+    summary: No in-cluster privileged SQL Jobs; the operator bootstrap creates a membership-free hoopdb_owner graph before migrate.
   - id: aws-rds-native
     title: AWS EKS native History with external RDS, S3 and OpenSearch
     chart: sessions-pipeline
@@ -92,7 +92,8 @@ profiles:
       Customer-neutral production shape. It fails closed until the release
       overlay supplies the approved services digest, customer resource IDs,
       origins, RDS CA hash and ALB subnet peers. No in-cluster database or
-      privileged SQL bootstrap Job is installed.
+      privileged SQL bootstrap Job is installed. Fresh installs migrate as
+      hoopdb_owner; legacy installs use one short-lived administrator Job Secret.
   - id: external-supabase
     title: External Supabase project as HoopDb (fail-closed)
     chart: sessions-pipeline
@@ -121,7 +122,7 @@ profiles:
     values_file: ci/gcp-cloudsql-values.yaml
     services_image: ghcr
     db: { hoopdb: external, db_mode: cloudsql, boundary: global-default-revoke }
-    summary: The stacks/gcp/config.ts shape. cloudsql mode, shim off, roleBootstrap false, a separate migration-owner URL; the operator runs the Cloud SQL bootstrap files as the migration owner.
+    summary: The stacks/gcp/config.ts shape. cloudsql mode, shim off, roleBootstrap false; the operator bootstrap creates a dedicated hoopdb_owner and stores only that migration-owner URL.
   # The other self-host charts: one install shape each.
   - id: relaycast
     title: Relaycast core (portable-single)
@@ -407,12 +408,12 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.49
+    - id: sessions-pipeline-0.8.50
       status: unreleased
       current: true
-      charts: { sessions-pipeline: 0.8.49, sessions-pipeline-worker: 0.7.11, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      charts: { sessions-pipeline: 0.8.50, sessions-pipeline-worker: 0.7.12, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
       depends:
-        sessions-pipeline: { worker: 0.7.11, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+        sessions-pipeline: { worker: 0.7.12, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
       images:
         sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
         session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
@@ -424,8 +425,8 @@ compatibility:
       db_combos:
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
         - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
-        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
-        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: fresh PG16+ installs use the membership-free separate-database owner graph; legacy and PG15 installs remain master-owner }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: the administrator runs the one-time bootstrap and the migration Job uses hoopdb_owner; roleBootstrap false }
         - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
         - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
         - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
@@ -435,7 +436,7 @@ compatibility:
         - "ci/sessions-pipeline-profiles/matrix.sh"
         - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
         - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
-      notes: 'Carries 0.8.48. searchIndexer.resources defaults to requests memory 1Gi and limits memory 3Gi (was 256Mi and 1Gi), sized for the streaming reconcile at the default budgets: about 3 KB per record of the scope, about 2 GB at 500000 records on top of the non-streaming sizing. searchIndexer is off by default; other default renders are unchanged apart from chart versions.'
+      notes: 'Adds migrations.rdsLayout to select the shipped name-agnostic RDS preflight. Fresh managed-database installs use the dedicated hoopdb_owner login; legacy installs can isolate the administrator URL in a short-lived Job Secret.'
     - id: sessions-pipeline-0.8.48
       status: planned
       charts: { sessions-pipeline: 0.8.48, sessions-pipeline-worker: 0.7.11, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
@@ -1956,20 +1957,20 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.57
+    - id: agent-relay-0.7.58
       status: unreleased
       current: true
-      charts: { agent-relay: 0.7.57, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      charts: { agent-relay: 0.7.58, relay-control: 0.4.22, relay-webapp: 0.2.7 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.49, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.50, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
       images:
         relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
         relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
         sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.7.56. Opt-in externalSecrets (default off): renders one External Secrets Operator ExternalSecret (external-secrets.io/v1) per externalSecrets.secrets entry, targeting the Kubernetes Secret of that name, so install Secrets can come from AWS SSM Parameter Store, AWS Secrets Manager or another ESO provider without chart edits; store.create renders a namespaced SecretStore from store.provider. Default renders differ only in the helm.sh/chart labels.'
+      notes: 'Carries sessions-pipeline 0.8.50. RDS migrate Jobs can select the name-agnostic separate-database preflight; fresh managed-database installs use the dedicated hoopdb_owner login and legacy upgrades can point migration/bootstrap Jobs at one short-lived Secret.'
     - id: agent-relay-0.7.56
       status: planned
       charts: { agent-relay: 0.7.56, relay-control: 0.4.22, relay-webapp: 0.2.7 }
@@ -4053,7 +4054,9 @@ entries:
     description: |
       On Cloud SQL and RDS the services connect as the least-privilege runtime role and only
       the migrate Job (and its wait-for-role) connects as the migration owner, from
-      migrations.hoopdb.existingSecret/key.
+      migrations.hoopdb.existingSecret/key. Fresh managed-database installs use
+      hoopdb_owner. A legacy administrator-owned install instead points Jobs at the
+      short-lived hoopdb-admin-jobs Secret, which is deleted after the Jobs finish.
     chart: sessions-pipeline
     values: [worker.migrations.hoopdb.existingSecret, worker.migrations.hoopdb.key]
     profiles: [gcp-cloudsql, external-rds, aws-rds-native]
@@ -4066,8 +4069,8 @@ entries:
           - { key: HOOPDB_MIGRATION_URL, key_path: worker.migrations.hoopdb.key }
     verify:
       default: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user)
-      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is the RDS master
-      aws-rds-native: psql "$(kubectl get secret agent-relay-secrets -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is the RDS master
+      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is hoopdb_owner
+      aws-rds-native: psql "$(kubectl get secret agent-relay-secrets -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is hoopdb_owner; a legacy install has no such long-lived key and uses hoopdb-admin-jobs only while Jobs run
     sources:
       - "charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:33"
       - "charts/sessions-pipeline-worker/values.yaml:93"
@@ -4322,8 +4325,8 @@ entries:
       The migrations GRANT to the Supabase roles. CNPG initdb creates them as
       superuser; on plain external Postgres the migrator's shim creates them
       (HOOPDB_SUPABASE_SHIM=true); on Cloud SQL the operator's
-      cloudsql_migration_roles.sql does (shim off); on RDS the master's
-      rds_migration_roles.sql does (shim off); Supabase has them natively.
+      cloudsql_migration_roles.sql does (shim off); on new RDS installs the
+      disposable infra role creator does (shim off); Supabase has them natively.
     chart: sessions-pipeline
     values: [hoopdb.cluster.initdb.postInitApplicationSQL, worker.migrations.supabaseShim]
     profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-supabase, gcp-cloudsql]
@@ -4359,8 +4362,8 @@ entries:
     verify:
       default: psql "$HOOPDB_URL" -Atc "select rolcanlogin, rolconfig from pg_roles where rolname='session_directory_search_worker'" is f|{statement_timeout=2s}
       external-selfhosted: run supabase/bootstrap/session_directory_search_worker.sql as a superuser; then the same query
-      external-rds: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
-      aws-rds-native: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
+      external-rds: the operator activation creates the role membership-free; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
+      aws-rds-native: rds-setup.sh pre creates the role membership-free; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
       external-supabase: run supabase/bootstrap/session_directory_search_worker_supabase.sql as postgres; then the same query
       gcp-cloudsql: run supabase/bootstrap/session_directory_search_worker.sql as the migration owner; then the same query
     sources:
@@ -4418,7 +4421,7 @@ entries:
       (-v migration_owner=hoop) and migrate waits for the exact default; external
       Postgres runs the same file as a superuser; Cloud SQL runs
       cloudsql_owner_function_default_revoke.sql as the migration owner; RDS runs
-      rds_owner_function_default_revoke.sql as the master.
+      rds_owner_function_default_revoke.sql during the one-time administrator bootstrap and installs the owner default as hoopdb_owner.
       event-trigger (Supabase only): hoopdb_sessions_function_boundary_supabase.sql as
       postgres (-v runtime_role=sessions_pipeline_runtime), then migrate.ts --activation-check
       must report event_trigger.verified true. Never run the default-revoke file on
@@ -4734,6 +4737,30 @@ entries:
     sources:
       - "charts/sessions-pipeline/values.yaml:56"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:18"
+
+  - id: opt.hoopdb.rds-layout
+    kind: option
+    title: RDS HoopDb ownership layout
+    description: |
+      Selects the shipped migrator's RDS ownership preflight. Fresh PostgreSQL
+      16+ installs use separate-database with hoopdb_owner and no creator edges.
+      Existing administrator-owned installs remain master-owner until the
+      upstream legacy-edge transfer support is released.
+    chart: sessions-pipeline
+    values: [worker.migrations.rdsLayout]
+    env: [HOOPDB_RDS_LAYOUT]
+    profiles: [external-rds, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: master-owner
+    profile_default: { external-rds: separate-database, aws-rds-native: separate-database }
+    choices:
+      - { value: master-owner, note: interim existing-install layout }
+      - { value: separate-database, note: fresh PG16+ dedicated hoopdb_owner layout }
+    verify: the migrate Job alone renders HOOPDB_RDS_LAYOUT with the selected value
+    sources:
+      - "charts/sessions-pipeline-worker/values.yaml:162"
+      - "charts/sessions-pipeline-worker/templates/_env.tpl:79"
 
   # =========================================================================
   # sessions-pipeline: Locker, images, observability, identity

@@ -7,6 +7,11 @@
 #                            files.
 #   cloud-sql-setup.sh post  After the HoopDb migrate Job. Activates the read,
 #                            ingest and search logins.
+#   cloud-sql-setup.sh prepare-admin-jobs
+#                            Existing installs only: creates the short-lived
+#                            hoopdb-admin-jobs Secret for an upgrade/guide Job.
+#   cloud-sql-setup.sh delete-admin-jobs
+#                            Deletes that short-lived Secret after the Jobs finish.
 #
 # SQL runs in short-lived Jobs inside GKE, so the instance needs no public IP.
 # Required environment:
@@ -33,20 +38,27 @@ set -euo pipefail
 umask 077
 
 MODE="${1:-}"
-case "$MODE" in pre|post) ;; *) echo "usage: $0 pre|post" >&2; exit 2 ;; esac
+case "$MODE" in pre|post|prepare-admin-jobs|delete-admin-jobs) ;; *) echo "usage: $0 pre|post|prepare-admin-jobs|delete-admin-jobs" >&2; exit 2 ;; esac
 
 : "${GCP_PROJECT_ID:?set GCP_PROJECT_ID}"
 : "${CLOUD_SQL_INSTANCE:?set CLOUD_SQL_INSTANCE}"
 : "${CLOUD_SQL_HOST:?set CLOUD_SQL_HOST (terraform output postgres.dns_name)}"
 : "${CLOUD_SQL_ADMIN_USER:?set CLOUD_SQL_ADMIN_USER}"
 : "${CLOUD_SQL_ADMIN_SECRET_ID:?set CLOUD_SQL_ADMIN_SECRET_ID}"
-: "${SERVICES_IMAGE:?set SERVICES_IMAGE to the sessions-pipeline image from images.md}"
+if [[ "$MODE" == pre || "$MODE" == post ]]; then
+  : "${SERVICES_IMAGE:?set SERVICES_IMAGE to the sessions-pipeline image from images.md}"
+else
+  SERVICES_IMAGE="${SERVICES_IMAGE:-unused@sha256:0}"
+fi
 PSQL_IMAGE="${PSQL_IMAGE:-ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3}"
 NS="${NAMESPACE:-agent-relay}"
 HELM_RELEASE="${HELM_RELEASE:-agent-relay}"
 STATE_DIR="${STATE_DIR:-$HOME/.agent-relay-install}"
 PW_DIR="$STATE_DIR/passwords"
 FILES="$STATE_DIR/secret-files"
+LAYOUT_FILE="$STATE_DIR/hoopdb-layout"
+ADMIN_JOBS_SECRET=hoopdb-admin-jobs
+OWNER=hoopdb_owner
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
 SQL_DIR=/app/supabase/bootstrap
 
@@ -167,7 +179,7 @@ run_job() {
     sleep 5; waited=$((waited + 5))
   done
   kubectl -n "$NS" logs "job/$name" --tail=80 2>/dev/null \
-    | grep -v -i -E 'password|postgres(ql)?://' | cut -c1-240 || true
+    | grep -v -i -E 'password|postgres(ql)?://' | cut -c1-240 | tee "$WORK/$name.log" || true
   kubectl -n "$NS" delete secret "$JOB_SECRET" --ignore-not-found >/dev/null
   JOB_SECRET=""
   kubectl -n "$NS" delete configmap "$name-run" --ignore-not-found >/dev/null
@@ -180,6 +192,33 @@ pw() { cat "$PW_DIR/$1"; }
 json_url() { jq -cn --arg k "$1" --arg v "$2" '{($k):$v}'; }
 admin_url() { url postgresql "$CLOUD_SQL_ADMIN_USER" "$(admin_password)" "$1"; }
 
+write_legacy_admin_files() {
+  local owner; owner="$(admin_url hoopdb)"
+  write_file "$ADMIN_JOBS_SECRET" HOOPDB_MIGRATION_URL < <(printf '%s' "$owner")
+  write_file "$ADMIN_JOBS_SECRET" RELAYHISTORY_PIPELINE_CONSUMER_SECRET < <(json_url hoopdb_url "$owner")
+  rm -f "$FILES/agent-relay-secrets/HOOPDB_MIGRATION_URL" \
+    "$FILES/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
+}
+
+write_layout_values() {
+  local migration_secret=agent-relay-secrets search_secret=search-indexer-owner
+  if [[ "$1" == legacy-admin ]]; then
+    migration_secret="$ADMIN_JOBS_SECRET"; search_secret="$ADMIN_JOBS_SECRET"
+  fi
+  printf '%s\n' \
+    'sessions-pipeline:' \
+    '  worker:' \
+    '    migrations:' \
+    '      hoopdb:' \
+    "        existingSecret: $migration_secret" \
+    '        key: HOOPDB_MIGRATION_URL' \
+    '  searchIndexer:' \
+    '    bootstrap:' \
+    "      existingSecret: $search_secret" \
+    '      key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET' >"$STATE_DIR/hoopdb-layout-values.yaml"
+  chmod 600 "$STATE_DIR/hoopdb-layout-values.yaml"
+}
+
 write_credential_files() {
   write_file agent-relay-secrets database-migrations-url < <(url postgresql control_owner "$(pw control_owner)" relaycontrol)
   write_file agent-relay-secrets database-url < <(url postgresql control_api_runtime "$(pw control_api_runtime)" relaycontrol)
@@ -189,7 +228,7 @@ write_credential_files() {
   write_file agent-relay-read-api RELAYHISTORY_READ_API_SECRET < <(json_url supabase_url "$(url postgresql bulls96_read_api "$(pw bulls96_read_api)" hoopdb)")
   write_file agent-relay-ingest-edge-runtime database-url < <(url postgresql bulls96_session_ingest "$(pw bulls96_session_ingest)" hoopdb)
   write_file search-indexer-runtime RELAYHISTORY_PIPELINE_CONSUMER_SECRET < <(json_url hoopdb_url "$(url postgresql search_consumer_runtime "$(pw search_consumer_runtime)" hoopdb)")
-  local owner; owner="$(admin_url hoopdb)"
+  local owner; owner="$(url postgresql "$OWNER" "$(pw "$OWNER")" hoopdb)"
   write_file agent-relay-secrets HOOPDB_MIGRATION_URL < <(printf '%s' "$owner")
   write_file search-indexer-owner RELAYHISTORY_PIPELINE_CONSUMER_SECRET < <(json_url hoopdb_url "$owner")
 }
@@ -197,9 +236,12 @@ write_credential_files() {
 do_pre() {
   kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
   ensure_ca
-  local p
-  for p in control_owner control_api_runtime sessions_pipeline_runtime relaycast_owner relaycast_runtime \
-           bulls96_read_api bulls96_session_ingest search_consumer_runtime; do password_for "$p"; done
+  local p missing_passwords=""
+  for p in control_owner control_api_runtime "$OWNER" sessions_pipeline_runtime relaycast_owner relaycast_runtime \
+           bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
+    [[ -s "$PW_DIR/$p" ]] || missing_passwords+=" $p"
+    password_for "$p"
+  done
 
   cat >"$WORK/run.sh" <<'EOS'
 set -eu
@@ -214,6 +256,22 @@ for db in relaycontrol hoopdb relaycast; do
   printf '%s\n' "SELECT 'CREATE DATABASE $db' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname='$db') \\gexec" | $P -d postgres
 done
 echo "databases ready"
+
+export PGDATABASE=hoopdb
+owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
+if [ "$owner" = "$PGUSER" ] && { [ -n "$($Q -c "select to_regnamespace('sessions')")" ] || [ -n "$($Q -c "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" ]; }; then
+  echo 'HOOPDB_LAYOUT=legacy-admin'
+  exit 0
+fi
+if [ "$owner" = 'hoopdb_owner' ]; then
+  echo 'HOOPDB_LAYOUT=dedicated-owner'
+  exit 0
+fi
+if [ "$owner" != "$PGUSER" ]; then
+  echo "HoopDb owner is neither the Cloud SQL administrator nor hoopdb_owner; refusing" >&2
+  exit 3
+fi
+unset PGDATABASE
 
 $P -d relaycontrol -v p1="$control_owner" -v p2="$control_api_runtime" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN', r) FROM unnest(ARRAY['control_owner','control_api_runtime']) r WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=r) \gexec
@@ -243,35 +301,32 @@ SQL
 echo "relaycast ready"
 
 export PGDATABASE=hoopdb
-printf '%s\n' "SELECT format('ALTER DATABASE hoopdb OWNER TO %I', current_user) \\gexec" | $P
-$P -c 'CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public;'
-$P -f /sql/cloudsql_owner_function_default_revoke.sql
-$P -f /sql/cloudsql_migration_roles.sql
-$P -f /sql/session_consumer_roles.sql
-echo "Cloud SQL owner boundary and migration roles ready"
 
-$P -v p1="$sessions_pipeline_runtime" <<'SQL'
--- \gset consumes the row locally; the password must never reach Job logs.
-SELECT set_config('agent_relay.runtime_password', :'p1', false) AS ignored \gset
-DO $runtime$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sessions_pipeline_runtime') THEN
-    CREATE ROLE agent_relay_runtime_seed NOLOGIN NOINHERIT CREATEROLE NOSUPERUSER NOCREATEDB NOREPLICATION NOBYPASSRLS;
-    GRANT agent_relay_runtime_seed TO CURRENT_USER WITH INHERIT FALSE, SET TRUE;
-    SET LOCAL ROLE agent_relay_runtime_seed;
-    CREATE ROLE sessions_pipeline_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-    EXECUTE format('ALTER ROLE sessions_pipeline_runtime PASSWORD %L', current_setting('agent_relay.runtime_password'));
-    RESET ROLE;
-    DROP ROLE agent_relay_runtime_seed;
-  ELSE
-    EXECUTE format('ALTER ROLE sessions_pipeline_runtime PASSWORD %L', current_setting('agent_relay.runtime_password'));
-  END IF;
-END $runtime$;
-RESET agent_relay.runtime_password;
+$P -c 'CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public;'
+$P -f /sql/cloudsql_migration_roles.sql
+$P -v owner_password="$hoopdb_owner" -v runtime_password="$sessions_pipeline_runtime" -v search_password="$search_consumer_runtime" <<'SQL'
+BEGIN;
+CREATE ROLE agent_relay_hoopdb_role_creator NOLOGIN NOINHERIT CREATEROLE NOSUPERUSER NOCREATEDB NOREPLICATION NOBYPASSRLS;
+GRANT agent_relay_hoopdb_role_creator TO CURRENT_USER WITH INHERIT FALSE, SET TRUE;
+SET LOCAL ROLE agent_relay_hoopdb_role_creator;
+CREATE ROLE hoopdb_owner LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'owner_password';
+CREATE ROLE sessions_pipeline_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'runtime_password';
+CREATE ROLE search_consumer_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'search_password';
+ALTER ROLE search_consumer_runtime SET statement_timeout = '60s';
+GRANT hoopdb_owner TO agent_relay_hoopdb_role_creator WITH INHERIT FALSE, SET TRUE;
+RESET ROLE;
+ALTER DATABASE hoopdb OWNER TO hoopdb_owner;
+SET LOCAL ROLE hoopdb_owner;
+CREATE SCHEMA sessions;
+CREATE SCHEMA search_index;
+\i /sql/cloudsql_owner_function_default_revoke.sql
 REVOKE TEMPORARY ON DATABASE hoopdb FROM PUBLIC;
 GRANT CONNECT ON DATABASE hoopdb TO sessions_pipeline_runtime;
+RESET ROLE;
+DROP ROLE agent_relay_hoopdb_role_creator;
+COMMIT;
 SQL
-echo "sessions runtime ready"
+echo "dedicated HoopDb owner and runtime roles ready"
 
 for f in session_directory_search_worker session_token_verifier session_ingest_roles session_read_api_roles; do
   $P -f "/sql/$f.sql"; echo "$f ok"
@@ -279,10 +334,37 @@ done
 $Q -c "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
 $Q -c "select 'tls: '||ssl from pg_stat_ssl where pid=pg_backend_pid()"
 $Q -c "select 'extensions: '||string_agg(extname,',' order by extname) from pg_extension"
+echo 'HOOPDB_LAYOUT=fresh-dedicated'
 EOS
-  run_job agent-relay-cloud-sql-pre "$WORK/run.sh" control_owner control_api_runtime sessions_pipeline_runtime relaycast_owner relaycast_runtime
-  write_credential_files
-  log "pre done; credential files are under $FILES"
+  run_job agent-relay-cloud-sql-pre "$WORK/run.sh" control_owner control_api_runtime "$OWNER" \
+    sessions_pipeline_runtime search_consumer_runtime relaycast_owner relaycast_runtime
+  local layout
+  layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-cloud-sql-pre.log" | tail -n 1)"
+  case "$layout" in
+    dedicated-owner)
+      if [[ -n "$missing_passwords" ]]; then
+        for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
+        die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
+      fi
+      printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
+      write_credential_files; write_layout_values "$layout"
+      log "dedicated hoopdb_owner layout already active; passwords and database were left unchanged"
+      ;;
+    fresh-dedicated)
+      layout=dedicated-owner
+      printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
+      write_credential_files; write_layout_values "$layout"
+      log "pre done; dedicated hoopdb_owner credentials are under $FILES"
+      ;;
+    legacy-admin)
+      for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
+      printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
+      write_legacy_admin_files; write_layout_values "$layout"
+      log "existing administrator-owned HoopDb detected; database and roles were left unchanged"
+      log "use '$0 prepare-admin-jobs' immediately before an upgrade or guide Job, then '$0 delete-admin-jobs'"
+      ;;
+    *) die "setup Job returned no recognised HoopDb layout; nothing was written to install Secrets" ;;
+  esac
 }
 
 do_post() {
@@ -325,7 +407,12 @@ echo "ingest role ok"
 if [ -z "$($Q -c "select 1 from pg_roles where rolname='search_consumer_runtime'")" ]; then
   echo "search_consumer_runtime missing: migrations have not completed" >&2; exit 3
 fi
-printf '%s\n' "ALTER ROLE search_consumer_runtime LOGIN NOINHERIT PASSWORD :'p1'; ALTER ROLE search_consumer_runtime SET statement_timeout='60s';" | $P -v p1="$search_consumer_runtime"
+if [ "$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")" = hoopdb_owner ]; then
+  $Q -c "select 1 from pg_roles where rolname='search_consumer_runtime' and rolcanlogin and not rolsuper and not rolcreaterole and not rolcreatedb" | grep -qx 1 \
+    || { echo 'dedicated search consumer role has drifted' >&2; exit 3; }
+else
+  printf '%s\n' "ALTER ROLE search_consumer_runtime LOGIN NOINHERIT PASSWORD :'p1'; ALTER ROLE search_consumer_runtime SET statement_timeout='60s';" | $P -v p1="$search_consumer_runtime"
+fi
 echo "search consumer role ok"
 for role in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
   eval "secret=\$$role"
@@ -334,6 +421,21 @@ done
 EOS
   run_job agent-relay-cloud-sql-post "$WORK/run.sh" bulls96_read_api bulls96_session_ingest search_consumer_runtime
   log "post done; restart the read API, ingest edge and search indexer"
+}
+
+do_prepare-admin-jobs() {
+  [[ -s "$LAYOUT_FILE" && "$(<"$LAYOUT_FILE")" == legacy-admin ]] \
+    || die "prepare-admin-jobs is only for an existing administrator-owned install; run '$0 pre' first"
+  write_legacy_admin_files
+  kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
+  kubectl -n "$NS" create secret generic "$ADMIN_JOBS_SECRET" \
+    --from-file="$FILES/$ADMIN_JOBS_SECRET" >/dev/null
+  log "$ADMIN_JOBS_SECRET created for migration/bootstrap Jobs only; delete it as soon as those Jobs finish"
+}
+
+do_delete-admin-jobs() {
+  kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
+  log "$ADMIN_JOBS_SECRET deleted; long-running pods are unaffected"
 }
 
 "do_$MODE"

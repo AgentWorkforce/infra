@@ -4,22 +4,21 @@
 #   helm template sessions-pipeline charts/sessions-pipeline -f charts/sessions-pipeline/profiles/external-rds.yaml \
 #     --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> \
 #     --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=true
-# RDS has no customer superuser, so the chart runs no privileged SQL. Operator
-# prerequisites, as the master (the migration owner) connected to the HoopDb
-# database, before the first migrate, in this order (files come from the
-# services image you deploy; see the sessions-pipeline bootstrap runbook):
-#   1. supabase/bootstrap/rds_owner_function_default_revoke.sql
-#   2. supabase/bootstrap/rds_migration_roles.sql
-#   3. supabase/bootstrap/hoopdb_runtime_role_rds.sql with -v migration_owner,
-#      -v runtime_role and -v runtime_login=true, then set the role's password.
-#   4. The phase 1 verifiers: session_directory_search_worker.sql,
-#      session_token_verifier.sql, session_ingest_roles.sql and
-#      session_read_api_roles.sql.
-#   5. Secret sessions-pipeline-hoopdb: HOOPDB_URL for the runtime role and
-#      HOOPDB_MIGRATION_URL for the master. RDS requires TLS. node-pg treats
+# RDS has no customer superuser, so the chart runs no privileged SQL. Before a
+# fresh PG16+ install, the administrator installs the extensions and provider
+# function defaults, then uses a disposable NOLOGIN CREATEROLE role to create
+# the complete membership-free graph, hand database/schema ownership to
+# hoopdb_owner, and drop the disposable role in the same transaction. The
+# infra rds-setup.sh and rds-hoopdb-activate.sql are the reviewed procedures.
+# The released migrator's name-agnostic separate-database preflight is the
+# acceptance check; this profile does not claim the fixed-name
+# rds-activation/v1 contract. Existing administrator-owned and PG15 installs
+# must override rdsLayout to master-owner and use a short-lived Job Secret.
+# Secret sessions-pipeline-hoopdb: HOOPDB_URL for the runtime role and
+#      HOOPDB_MIGRATION_URL for hoopdb_owner. RDS requires TLS. node-pg treats
 #      sslmode=require or verify-full as full verification and the image does
 #      not carry the RDS CA. To verify the server certificate, including for the
-#      master password, put the RDS CA bundle in a ConfigMap or Secret, enable
+#      owner password, put the RDS CA bundle in a ConfigMap or Secret, enable
 #      worker.postgresCa and alleyoop.postgresCa (the bundle is mounted at
 #      /etc/postgres-ca/ca.crt and NODE_EXTRA_CA_CERTS points at it), and use
 #      sslmode=verify-full in both URLs, with no uselibpqcompat. Without a CA
@@ -47,6 +46,10 @@ worker:
       existingSecret: sessions-pipeline-hoopdb
       key: HOOPDB_MIGRATION_URL
     databaseMode: rds
+    # New installs use the dedicated migration owner. Existing administrator-
+    # owned installs must override this to master-owner until ownership transfer
+    # is supported by the pinned sessions-pipeline release.
+    rdsLayout: separate-database
     supabaseShim: false
     runtimeRole: ""
     runtimeRoleLogin: null

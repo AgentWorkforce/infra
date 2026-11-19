@@ -308,6 +308,14 @@ and their roles (in a Job inside the cluster), and writes every database
 credential to `~/.agent-relay-install` (mode 0700). It reads the Cloud SQL
 admin password from Secret Manager and never prints it.
 
+For a fresh install, HoopDb is owned by the plain `hoopdb_owner` login; both
+long-lived migration/bootstrap keys use that URL. The Cloud SQL administrator
+is used only by these one-off setup Jobs and is never stored in a Kubernetes
+Secret. A rerun recognizes an older administrator-owned HoopDb and leaves its
+objects and legacy role edges unchanged. Before a legacy upgrade or guide Job,
+run `cloud-sql-setup.sh prepare-admin-jobs`; delete `hoopdb-admin-jobs`
+immediately afterwards with `cloud-sql-setup.sh delete-admin-jobs`.
+
 **Done when:** it ends with `pre done`, after `tls: true` and
 `extensions: btree_gin,pg_trgm,plpgsql,vector`.
 
@@ -438,11 +446,12 @@ same five Secrets with the same keys.
 helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.54.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
   -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
 ```
 
-The order matters: the two GCP profiles, then Terraform's managed services,
-then your site values, then the release images last.
+The order matters: the two GCP profiles, Terraform's managed services, your
+site values, the setup script's HoopDb layout, then the release images last.
 
 **Done when:** it prints `STATUS: deployed`. Don't add `--wait`.
 
@@ -468,6 +477,7 @@ for j in $(kubectl -n $NAMESPACE get jobs -o name | grep search-indexer-bootstra
 helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.54.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
   -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
 kubectl -n $NAMESPACE wait --for=condition=complete "$(kubectl -n $NAMESPACE get jobs -o name | grep search-indexer-bootstrap)" --timeout=10m
 kubectl -n $NAMESPACE rollout status deploy --timeout=10m
@@ -636,6 +646,7 @@ replaces the chart's default, so it holds only these two entries.
 helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.54.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
   -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
 kubectl -n $NAMESPACE rollout status deploy/agent-relay-worker-session-brief deploy/agent-relay-worker-session-summary-worker --timeout=10m
 ```
@@ -701,12 +712,17 @@ the first session has uploaded, or on a brand-new install with
 `--fresh-install` (below).
 
 **17a. Get the script and plan (read-only).** It runs in a pod in the
-cluster as the migration owner: the URL comes from `HOOPDB_MIGRATION_URL` in
-`agent-relay-secrets` and never reaches your shell. The script isn't in the
+cluster as the migration owner. A fresh install reads the dedicated
+`hoopdb_owner` URL from `agent-relay-secrets`; an existing administrator-owned
+install must run `cloud-sql-setup.sh prepare-admin-jobs` immediately first and
+set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`. Delete that temporary Secret with
+`cloud-sql-setup.sh delete-admin-jobs` as soon as the pod finishes. The URL
+never reaches your shell. The script isn't in the
 services image, so this fetches it from the commit the image was built from:
 
 ```sh
 REV="$(crane config "ghcr.io/agentworkforce/sessions-pipeline@${SERVICES_IMAGE#*@}" | jq -r '.config.Labels["org.opencontainers.image.revision"]')"
+HOOPDB_JOB_SECRET="${HOOPDB_JOB_SECRET:-agent-relay-secrets}"
 curl -fsSL -o catalog-activation.ts "https://raw.githubusercontent.com/AgentWorkforce/relayhistory-pipeline/$REV/scripts/native-agent-catalog-activation.ts"
 kubectl -n $NAMESPACE create configmap agent-catalog-activation --from-file=catalog-activation.ts --dry-run=client -o yaml | kubectl apply -f -
 catalog() {  # catalog --plan | catalog --apply <fingerprint>
@@ -732,7 +748,7 @@ spec:
       command: [bun, /app/scripts/native-agent-catalog-activation.ts$ARGS]
       env:
         - { name: HOOPDB_DB_MODE, value: selfhosted }
-        - { name: HOOPDB_URL, valueFrom: { secretKeyRef: { name: agent-relay-secrets, key: HOOPDB_MIGRATION_URL } } }
+        - { name: HOOPDB_URL, valueFrom: { secretKeyRef: { name: $HOOPDB_JOB_SECRET, key: HOOPDB_MIGRATION_URL } } }
         - { name: NODE_EXTRA_CA_CERTS, value: /etc/catalog-ca/ca.crt }
         - { name: HOME, value: /tmp }
       securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
@@ -857,10 +873,15 @@ bucket, writes nothing in plan mode, and is safe to rerun.
 
 Run it in a terminal where you ran `cd agent-relay-install && source settings.sh`
 (step 7): it needs `NAMESPACE`, `REGION` and `SESSIONS_BUCKET` from there.
+For a legacy administrator-owned install, prepare `hoopdb-admin-jobs` first,
+set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`, and delete it immediately after the
+restamp pod finishes. A missing temporary Secret makes the pod fail before any
+row is changed.
 
 ```sh
 IMG="$(kubectl -n $NAMESPACE get deploy agent-relay-read-api -o jsonpath='{.spec.template.spec.containers[0].image}')"
 CA_SHA="$(kubectl -n $NAMESPACE get deploy agent-relay-read-api -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SESSION_POSTGRES_CA_SHA256")].value}')"
+HOOPDB_JOB_SECRET="${HOOPDB_JOB_SECRET:-agent-relay-secrets}"
 restamp() {  # restamp plan | restamp apply
   [ -n "$NAMESPACE" ] && [ -n "$REGION" ] && [ -n "$SESSIONS_BUCKET" ] && [ -n "$CA_SHA" ] && [ -n "$IMG" ] \
     || { echo "missing settings: run 'source settings.sh' (step 7) first"; return 1; }
@@ -878,7 +899,7 @@ spec:
   volumes:
     - { name: tmp, emptyDir: { sizeLimit: 64Mi } }
     - { name: ca, configMap: { name: cloud-sql-ca } }
-    - { name: url, secret: { secretName: agent-relay-secrets, defaultMode: 0400, items: [ { key: HOOPDB_MIGRATION_URL, path: url } ] } }
+    - { name: url, secret: { secretName: $HOOPDB_JOB_SECRET, defaultMode: 0400, items: [ { key: HOOPDB_MIGRATION_URL, path: url } ] } }
   containers:
     - name: restamp
       image: $IMG
@@ -973,8 +994,9 @@ cd -
   empties the desktop update feed bucket, and runs only if you set
   `desktop_feed_bucket_name` in step 4.
 - **Databases and admin user:** `cloud-sql-setup.sh` gave the databases to
-  their own roles, so Terraform can't drop them, or the admin user who owns
-  them, one by one (`must be owner of database`, `role ... cannot be
+  their own roles (`hoopdb_owner` for a fresh HoopDb), so Terraform can't drop
+  them, or the bootstrap admin user with remaining dependencies, one by one
+  (`must be owner of database`, `role ... cannot be
   dropped`). The `state rm` loop takes the three databases and the admin user
   out of Terraform's state only; the instance deletion that follows removes
   them with it. Run it only as part of this full teardown.

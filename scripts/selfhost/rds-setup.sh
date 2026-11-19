@@ -6,11 +6,13 @@
 #   rds-setup.sh post   After the HoopDb migrate Job succeeds. Activates the
 #                       read API, ingest and search logins.
 #   rds-setup.sh refresh-admin
-#                       Before every later Helm upgrade. RDS rotates the admin
-#                       password (7 days by default), and the HoopDb migration
-#                       owner URL carries it. Rewrites only the two admin-derived
-#                       credential files; touches no database role. pre cannot be
-#                       re-run once post has given the session roles LOGIN.
+#                       Legacy installs only: refreshes local files for the
+#                       short-lived hoopdb-admin-jobs Secret. It never updates a
+#                       long-lived Kubernetes Secret.
+#   rds-setup.sh prepare-admin-jobs
+#                       Legacy installs only: refreshes and creates that Secret.
+#   rds-setup.sh delete-admin-jobs
+#                       Deletes it after the migration/bootstrap Jobs finish.
 #
 # RDS is private, so the SQL runs in short-lived Jobs inside your cluster. The
 # script needs aws, kubectl, jq, openssl and curl, and access to the cluster.
@@ -40,18 +42,20 @@ set -euo pipefail
 umask 077
 
 MODE="${1:-}"
-case "$MODE" in pre|post|refresh-admin) ;; *) echo "usage: $0 pre|post|refresh-admin" >&2; exit 2 ;; esac
+case "$MODE" in pre|post|refresh-admin|prepare-admin-jobs|delete-admin-jobs) ;; *) echo "usage: $0 pre|post|refresh-admin|prepare-admin-jobs|delete-admin-jobs" >&2; exit 2 ;; esac
 
 : "${AWS_REGION:?set AWS_REGION}"
 : "${RDS_HOST:?set RDS_HOST (terraform output -raw database_host)}"
 : "${RDS_ADMIN_SECRET_ARN:?set RDS_ADMIN_SECRET_ARN (terraform output -raw database_admin_secret_arn)}"
-if [[ "$MODE" == refresh-admin ]]; then SERVICES_IMAGE="${SERVICES_IMAGE:-unused@sha256:0}"; fi
+if [[ "$MODE" == refresh-admin || "$MODE" == prepare-admin-jobs || "$MODE" == delete-admin-jobs ]]; then SERVICES_IMAGE="${SERVICES_IMAGE:-unused@sha256:0}"; fi
 : "${SERVICES_IMAGE:?set SERVICES_IMAGE to the approved sessions-pipeline image digest}"
 PSQL_IMAGE="${PSQL_IMAGE:-ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3}"
 NS="${NAMESPACE:-agent-relay}"
 STATE_DIR="${STATE_DIR:-$HOME/.agent-relay-install}"
 PW_DIR="$STATE_DIR/passwords"
 FILES="$STATE_DIR/secret-files"
+LAYOUT_FILE="$STATE_DIR/hoopdb-layout"
+ADMIN_JOBS_SECRET=hoopdb-admin-jobs
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
 SQL_DIR=/app/supabase/bootstrap
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -109,10 +113,15 @@ run_job() {
   JOB_SECRET="$name-secret"
   local secret_dir="$WORK/$name-secret"
   mkdir -p "$secret_dir"
-  admin_json > "$WORK/admin.json"
-  jq -jr .username "$WORK/admin.json" > "$secret_dir/PGUSER"
-  jq -jr .password "$WORK/admin.json" > "$secret_dir/PGPASSWORD"
-  rm -f "$WORK/admin.json"
+  if [[ "${RUN_JOB_AS_OWNER:-0}" == 1 ]]; then
+    printf '%s' hoopdb_owner >"$secret_dir/PGUSER"
+    cp "$PW_DIR/hoopdb_owner" "$secret_dir/PGPASSWORD"
+  else
+    admin_json > "$WORK/admin.json"
+    jq -jr .username "$WORK/admin.json" > "$secret_dir/PGUSER"
+    jq -jr .password "$WORK/admin.json" > "$secret_dir/PGPASSWORD"
+    rm -f "$WORK/admin.json"
+  fi
   local p
   for p in "$@"; do cp "$PW_DIR/$p" "$secret_dir/$p"; done
 
@@ -160,7 +169,7 @@ run_job() {
   done
 
   kubectl -n "$NS" logs "job/$name" --tail=80 2>/dev/null \
-    | grep -v -i -E 'password|postgres(ql)?://' | cut -c1-240 || true
+    | grep -v -i -E 'password|postgres(ql)?://' | cut -c1-240 | tee "$WORK/$name.log" || true
   kubectl -n "$NS" delete secret "$JOB_SECRET" --ignore-not-found >/dev/null
   JOB_SECRET=""
   kubectl -n "$NS" delete configmap "$name-run" --ignore-not-found >/dev/null
@@ -206,21 +215,62 @@ write_credential_files() {
   write_file session-erase-search-runtime SESSION_ERASE_SEARCH_POSTGRES_URL \
     < <(url postgresql bulls96_session_erase_search "$(pw bulls96_session_erase_search)" hoopdb)
 
-  write_admin_files
 }
 
-# The HoopDb migration owner is the RDS admin, whose password RDS rotates. Run
-# refresh-admin (not pre) before a later Helm upgrade to refresh these two inputs.
+# A legacy HoopDb migration owner is the RDS admin, whose password RDS rotates.
+# These files feed only the short-lived hoopdb-admin-jobs Secret.
 write_admin_files() {
   local owner; owner="$(admin_url hoopdb)"
+  write_file "$ADMIN_JOBS_SECRET" HOOPDB_MIGRATION_URL < <(printf '%s' "$owner")
+  write_file "$ADMIN_JOBS_SECRET" RELAYHISTORY_PIPELINE_CONSUMER_SECRET < <(json_url hoopdb_url "$owner")
+  rm -f "$FILES/agent-relay-secrets/HOOPDB_MIGRATION_URL" \
+    "$FILES/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
+}
+
+write_owner_files() {
+  local owner; owner="$(url postgresql hoopdb_owner "$(pw hoopdb_owner)" hoopdb)"
   write_file agent-relay-secrets HOOPDB_MIGRATION_URL < <(printf '%s' "$owner")
   write_file search-indexer-owner RELAYHISTORY_PIPELINE_CONSUMER_SECRET < <(json_url hoopdb_url "$owner")
 }
 
+write_layout_values() {
+  local layout="$1" migration_secret=agent-relay-secrets search_secret=search-indexer-owner
+  local rds_layout=separate-database
+  if [[ "$layout" == legacy-admin ]]; then
+    migration_secret="$ADMIN_JOBS_SECRET"; search_secret="$ADMIN_JOBS_SECRET"; rds_layout=master-owner
+  fi
+  printf '%s\n' \
+    'sessions-pipeline:' \
+    '  worker:' \
+    '    migrations:' \
+    '      hoopdb:' \
+    "        existingSecret: $migration_secret" \
+    '        key: HOOPDB_MIGRATION_URL' \
+    "      rdsLayout: $rds_layout" \
+    '  searchIndexer:' \
+    '    bootstrap:' \
+    "      existingSecret: $search_secret" \
+    '      key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET' >"$STATE_DIR/hoopdb-layout-values.yaml"
+  chmod 600 "$STATE_DIR/hoopdb-layout-values.yaml"
+}
+
 do_refresh-admin() {
-  [[ -d "$FILES/agent-relay-secrets" && -d "$FILES/search-indexer-owner" ]] || die "no credential files under $FILES: run '$0 pre' first, on the host that holds STATE_DIR"
+  [[ -s "$LAYOUT_FILE" && "$(<"$LAYOUT_FILE")" == legacy-admin ]] || die "refresh-admin is only for an existing administrator-owned install; run '$0 pre' first"
   write_admin_files
-  log "admin credential files refreshed under $FILES; update the agent-relay-secrets and search-indexer-owner Secrets from them"
+  log "legacy administrator Job credential files refreshed under $FILES/$ADMIN_JOBS_SECRET; no Kubernetes Secret was changed"
+}
+
+do_prepare-admin-jobs() {
+  do_refresh-admin
+  kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
+  kubectl -n "$NS" create secret generic "$ADMIN_JOBS_SECRET" \
+    --from-file="$FILES/$ADMIN_JOBS_SECRET" >/dev/null
+  log "$ADMIN_JOBS_SECRET created for migration/bootstrap Jobs only; delete it as soon as those Jobs finish"
+}
+
+do_delete-admin-jobs() {
+  kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
+  log "$ADMIN_JOBS_SECRET deleted; long-running pods are unaffected"
 }
 
 ensure_ca() {
@@ -239,12 +289,61 @@ do_pre() {
   ensure_ca
 
   local p
-  for p in control_owner control_api_runtime sessions_pipeline_runtime relaycast_owner \
-           relaycast_runtime bulls96_read_api bulls96_session_ingest search_consumer_runtime bulls96_session_erase_search; do
-    password_for "$p"
-  done
+  local password_roles=(control_owner control_api_runtime hoopdb_owner sessions_pipeline_runtime relaycast_owner
+    relaycast_runtime bulls96_read_api bulls96_session_ingest search_consumer_runtime bulls96_session_erase_search
+    buffered_search_feed_runtime bulls96_acquisition_installer bulls96_analysis_admit
+    bulls96_digest_narrative bulls96_legacy_export_privacy bulls96_privacy_eraser bulls96_project_events)
 
-  cat > "$WORK/run.sh" <<'EOS'
+  cat >"$WORK/probe.sh" <<'EOS'
+set -eu
+Q="psql -X -A -t -v ON_ERROR_STOP=1"
+version="$($Q -d postgres -c "select current_setting('server_version_num')::integer")"
+if [ -z "$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")" ]; then
+  if [ "$version" -ge 160000 ]; then echo 'HOOPDB_LAYOUT=fresh-dedicated'; else echo 'HOOPDB_LAYOUT=fresh-legacy'; fi
+  exit 0
+fi
+owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
+if [ "$owner" = hoopdb_owner ]; then
+  echo 'HOOPDB_LAYOUT=dedicated-owner'; exit 0
+fi
+if [ -n "$($Q -d hoopdb -c "select to_regnamespace('sessions')")" ] || \
+   [ -n "$($Q -d postgres -c "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" ]; then
+  echo 'HOOPDB_LAYOUT=legacy-admin'; exit 0
+fi
+if [ "$version" -ge 160000 ]; then echo 'HOOPDB_LAYOUT=fresh-dedicated'; else echo 'HOOPDB_LAYOUT=fresh-legacy'; fi
+EOS
+  run_job agent-relay-rds-layout-probe "$WORK/probe.sh"
+  local layout
+  layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-rds-layout-probe.log" | tail -n 1)"
+  case "$layout" in
+    legacy-admin)
+      printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
+      write_admin_files; write_layout_values "$layout"
+      log "existing administrator-owned HoopDb detected; database and roles were left unchanged"
+      log "use '$0 prepare-admin-jobs' immediately before an upgrade or guide Job, then '$0 delete-admin-jobs'"
+      return
+      ;;
+    dedicated-owner)
+      local missing_passwords=""
+      for p in "${password_roles[@]}"; do [[ -s "$PW_DIR/$p" ]] || missing_passwords+=" $p"; done
+      [[ -z "$missing_passwords" ]] \
+        || die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
+      printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
+      write_credential_files; write_owner_files; write_layout_values "$layout"
+      log "dedicated-owner HoopDb already active; database and roles were left unchanged"
+      return
+      ;;
+    fresh-dedicated) ;;
+    fresh-legacy)
+      die "PostgreSQL 16 or later is required for a fresh dedicated-owner install; no database or role was changed. Existing PostgreSQL 15 installs stay on the legacy temporary-Secret path."
+      ;;
+    *) die "layout probe returned no recognised result; database was left unchanged" ;;
+  esac
+
+  for p in "${password_roles[@]}"; do password_for "$p"; done
+
+  printf 'hoopdb_layout=%q\n' "$layout" >"$WORK/run.sh"
+  cat >> "$WORK/run.sh" <<'EOS'
 set -eu
 P="psql -X -q -v ON_ERROR_STOP=1"
 Q="psql -X -A -t -v ON_ERROR_STOP=1"
@@ -289,7 +388,9 @@ GRANT CONNECT ON DATABASE relaycast TO relaycast_owner, relaycast_runtime;
 SQL
 echo "relaycast ready"
 
-# HoopDb, rds mode, in the required order, as the migration owner (the RDS admin).
+# HoopDb. PostgreSQL 16+ fresh installs use a disposable infra-owned role
+# creator, then hand ownership to hoopdb_owner and drop the creator. Existing
+# installs and fresh PG15 installs retain the administrator-owned layout.
 export PGDATABASE=hoopdb
 $P -c 'CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public;'
 echo "extensions ready"
@@ -297,26 +398,113 @@ $P -f /sql/rds_owner_function_default_revoke.sql
 echo "rds_owner_function_default_revoke ok"
 $P -c 'ALTER DEFAULT PRIVILEGES FOR ROLE rds_superuser REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC'
 echo "rds_superuser default revoke ok"
-$P -f /sql/rds_migration_roles.sql
-echo "rds_migration_roles ok"
-$P -v migration_owner="$PGUSER" -v runtime_role=sessions_pipeline_runtime -v runtime_login=true -f /sql/hoopdb_runtime_role_rds.sql
-echo "hoopdb_runtime_role_rds ok"
-printf '%s\n' "ALTER ROLE sessions_pipeline_runtime PASSWORD :'p1';" | $P -v p1="$sessions_pipeline_runtime"
-for f in session_directory_search_worker session_token_verifier session_ingest_roles session_read_api_roles session_consumer_roles; do
-  $P -f "/sql/$f.sql"
-  echo "$f ok"
-done
-$P -v post=false -f /run-script/session-erase-search.sql
-echo "erase search identity ready (no new login until post)"
+$P \
+    -v owner_password="$hoopdb_owner" \
+    -v runtime_password="$sessions_pipeline_runtime" \
+    -v search_password="$search_consumer_runtime" \
+    -v read_password="$bulls96_read_api" \
+    -v ingest_password="$bulls96_session_ingest" \
+    -v buffered_password="$buffered_search_feed_runtime" \
+    -v acquisition_password="$bulls96_acquisition_installer" \
+    -v analysis_password="$bulls96_analysis_admit" \
+    -v digest_password="$bulls96_digest_narrative" \
+    -v legacy_password="$bulls96_legacy_export_privacy" \
+    -v privacy_password="$bulls96_privacy_eraser" \
+    -v project_password="$bulls96_project_events" <<'SQL'
+BEGIN;
+CREATE ROLE agent_relay_hoopdb_role_creator NOLOGIN NOINHERIT CREATEROLE NOSUPERUSER NOCREATEDB NOREPLICATION NOBYPASSRLS;
+GRANT agent_relay_hoopdb_role_creator TO CURRENT_USER WITH INHERIT FALSE, SET TRUE;
+SET LOCAL ROLE agent_relay_hoopdb_role_creator;
+
+CREATE ROLE anon NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE authenticated NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE service_role NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE session_directory_search_worker NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE session_directory_search_worker SET statement_timeout = '2s';
+CREATE ROLE session_token_verifier NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE bulls96_session_ingest_seeder NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE bulls96_canonical_feature_producer NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE bulls96_babysitter_retention NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE bulls96_babysitter_retention SET idle_in_transaction_session_timeout = '10s';
+ALTER ROLE bulls96_babysitter_retention SET lock_timeout = '2s';
+ALTER ROLE bulls96_babysitter_retention SET statement_timeout = '5s';
+CREATE ROLE bulls96_session_erase_search NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE bulls96_session_erase_search SET idle_in_transaction_session_timeout = '10s';
+ALTER ROLE bulls96_session_erase_search SET lock_timeout = '2s';
+ALTER ROLE bulls96_session_erase_search SET statement_timeout = '5s';
+
+CREATE ROLE hoopdb_owner LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'owner_password';
+CREATE ROLE sessions_pipeline_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'runtime_password';
+CREATE ROLE search_consumer_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'search_password';
+ALTER ROLE search_consumer_runtime SET statement_timeout = '60s';
+CREATE ROLE bulls96_read_api LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'read_password';
+ALTER ROLE bulls96_read_api SET default_transaction_read_only = 'on';
+ALTER ROLE bulls96_read_api SET statement_timeout = '2s';
+CREATE ROLE bulls96_session_ingest LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'ingest_password';
+ALTER ROLE bulls96_session_ingest SET idle_in_transaction_session_timeout = '10s';
+ALTER ROLE bulls96_session_ingest SET lock_timeout = '2s';
+ALTER ROLE bulls96_session_ingest SET statement_timeout = '5s';
+CREATE ROLE buffered_search_feed_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'buffered_password';
+ALTER ROLE buffered_search_feed_runtime SET idle_in_transaction_session_timeout = '10s';
+ALTER ROLE buffered_search_feed_runtime SET lock_timeout = '2s';
+ALTER ROLE buffered_search_feed_runtime SET statement_timeout = '5s';
+CREATE ROLE bulls96_acquisition_installer LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'acquisition_password';
+ALTER ROLE bulls96_acquisition_installer SET idle_in_transaction_session_timeout = '10s';
+ALTER ROLE bulls96_acquisition_installer SET lock_timeout = '2s';
+ALTER ROLE bulls96_acquisition_installer SET statement_timeout = '5s';
+CREATE ROLE bulls96_analysis_admit LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'analysis_password';
+ALTER ROLE bulls96_analysis_admit SET default_transaction_read_only = 'off';
+ALTER ROLE bulls96_analysis_admit SET statement_timeout = '2s';
+CREATE ROLE bulls96_digest_narrative LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'digest_password';
+ALTER ROLE bulls96_digest_narrative SET idle_in_transaction_session_timeout = '10s';
+ALTER ROLE bulls96_digest_narrative SET lock_timeout = '2s';
+ALTER ROLE bulls96_digest_narrative SET statement_timeout = '5s';
+CREATE ROLE bulls96_legacy_export_privacy LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'legacy_password';
+ALTER ROLE bulls96_legacy_export_privacy SET idle_in_transaction_session_timeout = '30s';
+ALTER ROLE bulls96_legacy_export_privacy SET lock_timeout = '5s';
+ALTER ROLE bulls96_legacy_export_privacy SET statement_timeout = '20s';
+CREATE ROLE bulls96_privacy_eraser LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'privacy_password';
+ALTER ROLE bulls96_privacy_eraser SET idle_in_transaction_session_timeout = '10s';
+ALTER ROLE bulls96_privacy_eraser SET lock_timeout = '2s';
+ALTER ROLE bulls96_privacy_eraser SET statement_timeout = '5s';
+CREATE ROLE bulls96_project_events LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'project_password';
+ALTER ROLE bulls96_project_events SET idle_in_transaction_session_timeout = '10s';
+ALTER ROLE bulls96_project_events SET lock_timeout = '2s';
+ALTER ROLE bulls96_project_events SET statement_timeout = '5s';
+
+GRANT hoopdb_owner TO agent_relay_hoopdb_role_creator WITH INHERIT FALSE, SET TRUE;
+RESET ROLE;
+ALTER DATABASE hoopdb OWNER TO hoopdb_owner;
+SET LOCAL ROLE hoopdb_owner;
+REVOKE CREATE, TEMPORARY ON DATABASE hoopdb FROM PUBLIC;
+GRANT CONNECT ON DATABASE hoopdb TO sessions_pipeline_runtime,
+  bulls96_read_api, bulls96_session_ingest, buffered_search_feed_runtime,
+  bulls96_acquisition_installer, bulls96_analysis_admit, bulls96_digest_narrative,
+  bulls96_legacy_export_privacy, bulls96_privacy_eraser, bulls96_project_events;
+CREATE SCHEMA sessions;
+CREATE SCHEMA search_index;
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+RESET ROLE;
+DROP ROLE agent_relay_hoopdb_role_creator;
+COMMIT;
+SQL
+echo "dedicated HoopDb owner and membership-free roles ready"
 $Q -c "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
 $Q -c "select 'rdsadmin superuser: '||rolsuper from pg_roles where rolname='rdsadmin'"
 $Q -c "select 'extensions: '||string_agg(extname,',' order by extname) from pg_extension"
 EOS
 
-  run_job agent-relay-rds-pre "$WORK/run.sh" control_owner control_api_runtime \
-    sessions_pipeline_runtime relaycast_owner relaycast_runtime
+  run_job agent-relay-rds-pre "$WORK/run.sh" control_owner control_api_runtime hoopdb_owner \
+    sessions_pipeline_runtime search_consumer_runtime relaycast_owner relaycast_runtime \
+    bulls96_read_api bulls96_session_ingest buffered_search_feed_runtime bulls96_acquisition_installer \
+    bulls96_analysis_admit bulls96_digest_narrative bulls96_legacy_export_privacy \
+    bulls96_privacy_eraser bulls96_project_events
   write_credential_files
-  log "pre done; credential files are under $FILES"
+  layout=dedicated-owner
+  write_owner_files
+  log "pre done; dedicated hoopdb_owner credentials are under $FILES"
+  printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
+  write_layout_values "$layout"
 }
 
 do_post() {
@@ -324,6 +512,9 @@ do_post() {
   : "${MIGRATION_JOB:?set MIGRATION_JOB to the current rendered migrate Job name}"
   [[ "$MIGRATION_JOB" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || die "MIGRATION_JOB must be a DNS-1123 label"
   local p
+  local layout
+  [[ -s "$LAYOUT_FILE" ]] || die "missing HoopDb layout marker: run '$0 pre' first"
+  layout="$(<"$LAYOUT_FILE")"
   local post_passwords=(bulls96_read_api bulls96_session_ingest search_consumer_runtime)
   for p in "${post_passwords[@]}"; do
     [[ -s "$PW_DIR/$p" ]] || die "missing $p password: run '$0 pre' first"
@@ -342,26 +533,40 @@ do_post() {
     || die "current HoopDb migrate Job $MIGRATION_JOB has not succeeded for release $RELEASE"
 
   if [[ "$PROVISION_ERASE_SEARCH_LOGIN" == 1 ]]; then
+    [[ "$layout" == legacy-admin ]] \
+      || die "the dedicated-owner RDS layout leaves bulls96_session_erase_search NOLOGIN; no reviewed activation path exists"
     # Existing installs use refresh-admin, not pre. The optional SQL can create
     # this one identity after search bootstrap without re-running core role SQL.
     password_for bulls96_session_erase_search
     post_passwords+=(bulls96_session_erase_search)
   fi
-  printf 'provision_erase_search_login=%s\n' "$PROVISION_ERASE_SEARCH_LOGIN" > "$WORK/run.sh"
+  printf 'provision_erase_search_login=%s\nhoopdb_layout=%q\n' "$PROVISION_ERASE_SEARCH_LOGIN" "$layout" > "$WORK/run.sh"
   cat >> "$WORK/run.sh" <<'EOS'
 set -eu
 export PGDATABASE=hoopdb
 P="psql -X -q -v ON_ERROR_STOP=1"
 Q="psql -X -A -t -v ON_ERROR_STOP=1"
 
-$P -f /sql/session_read_api_role.sql
-printf '%s\n' "ALTER ROLE bulls96_read_api PASSWORD :'p1';" | $P -v p1="$bulls96_read_api"
+if [ "$hoopdb_layout" = dedicated-owner ]; then
+  sed '/^ALTER ROLE bulls96_read_api /d' /sql/session_read_api_role.sql | $P
+else
+  $P -f /sql/session_read_api_role.sql
+fi
+if [ "$hoopdb_layout" = legacy-admin ]; then
+  printf '%s\n' "ALTER ROLE bulls96_read_api PASSWORD :'p1';" | $P -v p1="$bulls96_read_api"
+fi
 $P -c 'GRANT CONNECT ON DATABASE hoopdb TO bulls96_read_api'
 $P -f /sql/session_read_api_role_verify.sql
 echo "read API role ok"
 
-$P -f /sql/session_ingest_role.sql
-printf '%s\n' "ALTER ROLE bulls96_session_ingest PASSWORD :'p1';" | $P -v p1="$bulls96_session_ingest"
+if [ "$hoopdb_layout" = dedicated-owner ]; then
+  sed '/^ALTER ROLE bulls96_session_ingest /d' /sql/session_ingest_role.sql | $P
+else
+  $P -f /sql/session_ingest_role.sql
+fi
+if [ "$hoopdb_layout" = legacy-admin ]; then
+  printf '%s\n' "ALTER ROLE bulls96_session_ingest PASSWORD :'p1';" | $P -v p1="$bulls96_session_ingest"
+fi
 $P -c 'GRANT CONNECT ON DATABASE hoopdb TO bulls96_session_ingest'
 $P -f /sql/session_ingest_role_verify.sql
 $P -f /sql/session_ingest_verify.sql
@@ -371,7 +576,9 @@ if [ -z "$($Q -c "select 1 from pg_roles where rolname='search_consumer_runtime'
   echo "search_consumer_runtime does not exist: the migrations have not created it" >&2
   exit 3
 fi
-printf '%s\n' "ALTER ROLE search_consumer_runtime LOGIN NOINHERIT PASSWORD :'p1'; ALTER ROLE search_consumer_runtime SET statement_timeout = '60s';" | $P -v p1="$search_consumer_runtime"
+if [ "$hoopdb_layout" = legacy-admin ]; then
+  printf '%s\n' "ALTER ROLE search_consumer_runtime LOGIN NOINHERIT PASSWORD :'p1'; ALTER ROLE search_consumer_runtime SET statement_timeout = '60s';" | $P -v p1="$search_consumer_runtime"
+fi
 echo "search consumer role ok"
 
 # Both search tables are created by the separate search-indexer bootstrap Job.
@@ -390,7 +597,9 @@ for role in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
 done
 EOS
 
-  run_job agent-relay-rds-post "$WORK/run.sh" "${post_passwords[@]}"
+  if [[ "$layout" == dedicated-owner ]]; then RUN_JOB_AS_OWNER=1 run_job agent-relay-rds-post "$WORK/run.sh" "${post_passwords[@]}"
+  else run_job agent-relay-rds-post "$WORK/run.sh" "${post_passwords[@]}"
+  fi
   if [[ "$PROVISION_ERASE_SEARCH_LOGIN" == 1 ]]; then
     write_file session-erase-search-runtime SESSION_ERASE_SEARCH_POSTGRES_URL \
       < <(url postgresql bulls96_session_erase_search "$(pw bulls96_session_erase_search)" hoopdb)

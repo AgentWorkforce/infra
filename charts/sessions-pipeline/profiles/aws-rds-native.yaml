@@ -49,6 +49,7 @@ worker:
       existingSecret: agent-relay-secrets
       key: HOOPDB_MIGRATION_URL
     databaseMode: rds
+    rdsLayout: separate-database
     supabaseShim: false
     runtimeRole: sessions_pipeline_runtime
     runtimeRoleLogin: true

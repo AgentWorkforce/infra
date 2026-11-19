@@ -73,10 +73,11 @@ case " $* " in
   *" apply -f - "*) cat >/dev/null; exit 0 ;;
   *" create secret generic "*) printf 'apiVersion: v1\nkind: Secret\nmetadata: {name: fixture}\n'; exit 0 ;;
   *" create configmap "*) printf 'apiVersion: v1\nkind: ConfigMap\nmetadata: {name: fixture}\n'; exit 0 ;;
-  *" get job agent-relay-rds-pre -o jsonpath="*|*" get job agent-relay-rds-post -o jsonpath="*) printf '1'; exit 0 ;;
+  *" get job agent-relay-rds-layout-probe -o jsonpath="*|*" get job agent-relay-rds-pre -o jsonpath="*|*" get job agent-relay-rds-post -o jsonpath="*) printf '1'; exit 0 ;;
   *" get job sessions-pipeline-worker-migrate-current -o json "*)
     printf '%s\n' '{"metadata":{"name":"sessions-pipeline-worker-migrate-current","labels":{"app.kubernetes.io/instance":"agent-relay","app.kubernetes.io/component":"hoopdb-migrate"}},"status":{"succeeded":1}}'
     exit 0 ;;
+  *" logs job/agent-relay-rds-layout-probe"*) printf 'HOOPDB_LAYOUT=%s\n' "${MOCK_LAYOUT:-fresh-dedicated}"; exit 0 ;;
   *" logs job/"*) printf 'fixture job completed\n'; exit 0 ;;
 esac
 exit 0
@@ -117,14 +118,35 @@ pre_output="$(bash "${RDS_SETUP}" pre 2>&1)"
 [[ "${pre_output}" != *"aaaaaaaaaaaaaaaa"* ]] || fail "generated password leaked to output"
 [[ -s "${STATE_DIR}/secret-files/agent-relay-secrets/HOOPDB_URL" ]] || fail "HoopDb runtime credential was not written"
 [[ -s "${STATE_DIR}/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" ]] || fail "search owner credential was not written"
+grep -q 'hoopdb_owner' "${STATE_DIR}/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" || fail "migration credential is not the dedicated owner"
+grep -q 'hoopdb_owner' "${STATE_DIR}/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" || fail "search bootstrap credential is not the dedicated owner"
+[[ "$(<"${STATE_DIR}/hoopdb-layout")" == dedicated-owner ]] || fail "dedicated layout marker was not written"
+grep -q 'rdsLayout: separate-database' "${STATE_DIR}/hoopdb-layout-values.yaml" || fail "dedicated layout values are missing"
 [[ "$(stat -c '%a' "${STATE_DIR}/passwords/control_owner")" == 600 ]] || fail "password file mode is not 0600"
 [[ "$(stat -c '%a' "${STATE_DIR}/secret-files/agent-relay-secrets")" == 700 ]] || fail "secret directory mode is not 0700"
 pass "pre mode creates private credential files without leaking secrets"
 
-# HoopDb migration 20261105043900 refuses to run unless search_consumer_runtime
-# already exists, so pre (not post) must provision it on a fresh database.
-grep -Eq '^for f in .*session_consumer_roles.*; do$' "${RDS_SETUP}" || fail "pre mode does not provision search_consumer_runtime before migrate"
-pass "pre mode provisions the consumer role the migrations require"
+# The shipped separate-database preflight requires every role to exist without
+# a creator edge before the first migration.
+grep -q 'CREATE ROLE agent_relay_hoopdb_role_creator' "${MOCK_CAPTURE_DIR}/run.sh" || fail "pre omitted disposable role creator"
+grep -q 'CREATE ROLE search_consumer_runtime LOGIN' "${MOCK_CAPTURE_DIR}/run.sh" || fail "pre omitted search runtime"
+grep -q 'DROP ROLE agent_relay_hoopdb_role_creator' "${MOCK_CAPTURE_DIR}/run.sh" || fail "pre did not drop disposable role creator"
+pass "pre mode submits the membership-free dedicated-owner role graph"
+
+: >"${COMMAND_LOG}"
+MOCK_LAYOUT=dedicated-owner bash "${RDS_SETUP}" pre >/dev/null
+! grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "dedicated-owner rerun changed the role graph"
+grep -q 'agent-relay-rds-layout-probe' "${COMMAND_LOG}" || fail "dedicated-owner rerun skipped classification"
+pass "dedicated-owner pre rerun leaves the database and role graph unchanged"
+
+: >"${COMMAND_LOG}"
+set +e
+pg15_output="$(MOCK_LAYOUT=fresh-legacy bash "${RDS_SETUP}" pre 2>&1)"
+pg15_rc=$?
+set -e
+[[ "$pg15_rc" != 0 && "$pg15_output" == *"PostgreSQL 16 or later is required"* ]] || fail "fresh PostgreSQL 15 did not fail clearly"
+! grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "fresh PostgreSQL 15 changed database roles"
+pass "fresh PostgreSQL 15 refuses before database changes"
 
 set +e
 wrong_release_output="$(RELEASE=another-release bash "${RDS_SETUP}" post 2>&1)"
@@ -151,14 +173,17 @@ pass "eraser credentials are separate and login activation defaults off"
 cp "$STATE_DIR/passwords/bulls96_session_erase_search" "$TEST_ROOT/original-password"
 bash "$RDS_SETUP" pre >/dev/null
 cmp "$STATE_DIR/passwords/bulls96_session_erase_search" "$TEST_ROOT/original-password" || fail "rerun rotated erase password"
-grep -q '\-v post=false -f /run-script/session-erase-search.sql' "$MOCK_CAPTURE_DIR/run.sh" || fail "pre does not create dormant role"
+grep -q 'CREATE ROLE bulls96_session_erase_search NOLOGIN' "$MOCK_CAPTURE_DIR/run.sh" || fail "pre does not create the dormant role"
 cmp "$MOCK_CAPTURE_DIR/erase.sql" "${TEST_DIR}/../rds-session-erase-search.sql" || fail "Job did not receive exact reviewed SQL"
-pass "pre reuses eraser credentials and ships reviewed role SQL"
+pass "pre reuses eraser credentials and creates the dormant identity"
 
-PROVISION_ERASE_SEARCH_LOGIN=1 bash "$RDS_SETUP" post >/dev/null
-grep -q '^provision_erase_search_login=1$' "$MOCK_CAPTURE_DIR/run.sh" || fail "post lost explicit activation request"
-grep -q '\-v post=true -v p1="$bulls96_session_erase_search"' "$MOCK_CAPTURE_DIR/run.sh" || fail "post omitted dedicated eraser credential"
-pass "post carries explicit optional provisioning and dedicated credentials"
+set +e
+erase_output="$(PROVISION_ERASE_SEARCH_LOGIN=1 bash "$RDS_SETUP" post 2>&1)"
+erase_rc=$?
+set -e
+[[ "$erase_rc" != 0 && "$erase_output" == *"dedicated-owner RDS layout leaves bulls96_session_erase_search NOLOGIN"* ]] \
+  || fail "dedicated owner did not refuse the unreviewed eraser activation"
+pass "dedicated-owner post refuses legacy-only optional eraser activation"
 
 mv "$STATE_DIR/passwords/bulls96_session_erase_search" "$TEST_ROOT/saved-password"
 rm "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL"
@@ -166,22 +191,21 @@ bash "$RDS_SETUP" post >/dev/null
 [[ ! -e "$STATE_DIR/passwords/bulls96_session_erase_search" ]] || fail "default post provisioned an optional credential"
 [[ ! -e "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" ]] || fail "default post rewrote optional input"
 pass "ordinary post upgrades do not require or provision the optional eraser credential"
-PROVISION_ERASE_SEARCH_LOGIN=1 bash "$RDS_SETUP" post >/dev/null
-[[ -s "$STATE_DIR/passwords/bulls96_session_erase_search" ]] || fail "explicit post upgrade did not create optional credential"
-[[ -s "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" ]] || fail "explicit post upgrade did not create optional input"
-pass "explicit optional provisioning upgrades an existing install without repeating pre"
+pass "ordinary dedicated-owner upgrades do not require the optional eraser credential"
 
 : > "${COMMAND_LOG}"
+printf '%s\n' legacy-admin >"${STATE_DIR}/hoopdb-layout"
 rm -f "${STATE_DIR}/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" "${STATE_DIR}/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
-cp "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" "$TEST_ROOT/eraser-input-before-refresh"
 refresh_output="$(PROVISION_ERASE_SEARCH_LOGIN=1 env -u SERVICES_IMAGE bash "${RDS_SETUP}" refresh-admin 2>&1)"
-[[ "${refresh_output}" == *"admin credential files refreshed"* ]] || fail "refresh-admin did not finish"
+[[ "${refresh_output}" == *"administrator Job credential files refreshed"* ]] || fail "refresh-admin did not finish"
 [[ "${refresh_output}" != *"admin-secret-material"* ]] || fail "admin password leaked in refresh-admin"
-[[ -s "${STATE_DIR}/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" ]] || fail "refresh-admin did not rewrite HOOPDB_MIGRATION_URL"
-[[ -s "${STATE_DIR}/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" ]] || fail "refresh-admin did not rewrite the search owner secret"
+[[ -s "${STATE_DIR}/secret-files/hoopdb-admin-jobs/HOOPDB_MIGRATION_URL" ]] || fail "refresh-admin did not write the temporary migration input"
+[[ -s "${STATE_DIR}/secret-files/hoopdb-admin-jobs/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" ]] || fail "refresh-admin did not write the temporary search input"
+[[ ! -e "${STATE_DIR}/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" ]] || fail "refresh-admin restored the long-lived administrator key"
+[[ ! -e "${STATE_DIR}/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" ]] || fail "refresh-admin restored the long-lived search administrator key"
 ! grep -q 'agent-relay-rds-' "${COMMAND_LOG}" || fail "refresh-admin must not run a database Job"
-cmp "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" "$TEST_ROOT/eraser-input-before-refresh" || fail "refresh-admin changed the optional eraser input"
-pass "refresh-admin rewrites only the admin-derived files, without SERVICES_IMAGE or a database Job"
+[[ ! -e "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" ]] || fail "refresh-admin recreated the optional eraser input"
+pass "refresh-admin writes only the short-lived Job inputs, without SERVICES_IMAGE or a database Job"
 
 set +e
 nostate_output="$(STATE_DIR="$(mktemp -d)" bash "${RDS_SETUP}" refresh-admin 2>&1)"
