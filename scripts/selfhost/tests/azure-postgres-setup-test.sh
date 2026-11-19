@@ -45,7 +45,15 @@ missing_state_line="$(line_of 'dedicated-owner HoopDb exists but STATE_DIR lacke
 first_control_write_line="$(line_of '# Control: its own database.')"
 [[ -n "$missing_state_line" && -n "$first_control_write_line" && "$missing_state_line" -lt "$first_control_write_line" ]] \
   || fail "missing dedicated-owner credential state can reach an ALTER ROLE, CREATE or GRANT"
-pass "dedicated-owner rerun resumes after an interrupted owner transaction"
+grep -Fq '! -s "$PENDING_ACTIVATION_FILE"' <<<"$owner_branch" \
+  || fail "an interrupted fresh activation is mistaken for missing dedicated-owner state"
+activation_mark_line="$(line_of "printf 'fresh activation in progress")"
+owner_transaction_line="$(line_of "printf 'BEGIN;")"
+[[ -n "$activation_mark_line" && -n "$owner_transaction_line" && "$activation_mark_line" -lt "$owner_transaction_line" ]] \
+  || fail "the fresh-activation marker is not durable before the owner transaction"
+grep -Fq 'rm -f "$PENDING_PASSWORDS_FILE" "$PENDING_ACTIVATION_FILE"' "$SCRIPT" \
+  || fail "successful setup does not clear both pending-state markers"
+pass "dedicated-owner rerun resumes an interrupted fresh activation but refuses missing saved state"
 
 prepare_body="$(awk '/^do_prepare-admin-jobs\(\)/{capture=1} capture{print} capture && /^}$/{exit}' "$SCRIPT")"
 remove_body="$(awk '/^do_remove-legacy-secret-keys\(\)/{capture=1} capture{print} capture && /^}$/{exit}' "$SCRIPT")"

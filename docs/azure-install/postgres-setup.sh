@@ -59,6 +59,7 @@ PW_DIR="$STATE_DIR/passwords"
 FILES="$STATE_DIR/secret-files"
 LAYOUT_FILE="$STATE_DIR/hoopdb-layout"
 PENDING_PASSWORDS_FILE="$STATE_DIR/.pending-hoopdb-passwords"
+PENDING_ACTIVATION_FILE="$STATE_DIR/.pending-hoopdb-activation"
 ADMIN_JOBS_SECRET=hoopdb-admin-jobs
 SQL_DIR=/app/supabase/bootstrap
 KUBE_CONTEXT="${KUBE_CONTEXT:-}"
@@ -277,7 +278,7 @@ do_pre() {
        legacy_runtime="$(query_su hoopdb "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" || die "could not inspect the HoopDb runtime role";
        [[ -n "$legacy_schema" || -n "$legacy_runtime" ]]; }; then
     for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
-    rm -f "$PENDING_PASSWORDS_FILE"
+    rm -f "$PENDING_PASSWORDS_FILE" "$PENDING_ACTIVATION_FILE"
     printf '%s\n' legacy-admin >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
     write_legacy_admin_files; write_layout_values legacy-admin
     log "existing administrator-owned HoopDb detected; database and roles were left unchanged"
@@ -285,7 +286,12 @@ do_pre() {
     return
   fi
   if [[ "$db_owner" == "$OWNER" ]]; then
-    if [[ -n "$missing_passwords" ]]; then
+    # A fresh activation records this durable marker before its ownership
+    # transaction. If that transaction committed but a later prerequisite
+    # failed, the generated files are the live credentials and must be reused.
+    # An ordinary dedicated-owner rerun has no marker, so a newly generated
+    # replacement for a missing saved password still fails closed.
+    if [[ -n "$missing_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
       for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
       rm -f "$PENDING_PASSWORDS_FILE"
       die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
@@ -327,6 +333,8 @@ SQL
   done
 
   if [[ "$existing_dedicated" == false ]]; then
+    printf 'fresh activation in progress\n' >"$PENDING_ACTIVATION_FILE"
+    chmod 600 "$PENDING_ACTIVATION_FILE"
     {
       quiet
       printf 'BEGIN;\n'
@@ -367,7 +375,7 @@ SQL
 
   query_su hoopdb "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
   query_su hoopdb "select 'extensions: '||string_agg(extname,',' order by extname) from pg_extension"
-  rm -f "$PENDING_PASSWORDS_FILE"
+  rm -f "$PENDING_PASSWORDS_FILE" "$PENDING_ACTIVATION_FILE"
   write_credential_files
   printf '%s\n' dedicated-owner >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
   write_layout_values dedicated-owner

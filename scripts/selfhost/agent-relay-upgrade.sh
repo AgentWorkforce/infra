@@ -85,8 +85,8 @@
 #   With --apply, after you confirm:
 #   4. Takes an RDS snapshot of --db-instance and waits for it.
 #   5. Upgrade: [--rds-setup legacy layout: prepare-admin-jobs], helm upgrade,
-#      deletes the temporary Secret, then waits for this
-#      release's migration Jobs and Deployments.
+#      waits for this release's Jobs and Deployments, then deletes the
+#      temporary Secret.
 #      First install: helm install --no-hooks (no --wait), waits for the HoopDb
 #      migrate Job, [--rds-setup: rds-setup.sh post and a restart of the read
 #      API, ingest edge and search indexer], then waits for every Job in the
@@ -704,17 +704,10 @@ if $admin_jobs_created; then
   # Keep the old revision's keys until the new Helm revision, all of its Jobs,
   # and every Deployment have succeeded. A failed upgrade can therefore use
   # the printed rollback command without first reconstructing credentials.
-  admin_job_names=$("${helmx[@]}" get manifest "$release" \
-    | yq -N -r 'select(.kind == "Job") |
-        select(.. | select(has("secretKeyRef")) | .secretKeyRef.name == "hoopdb-admin-jobs") |
-        .metadata.name' | sort -u)
-  admin_release_jobs=()
-  while IFS= read -r j; do [ -z "$j" ] || admin_release_jobs+=("$j"); done <<<"$admin_job_names"
-  if [ "${#admin_release_jobs[@]}" -gt 0 ] && ! wait_jobs "${admin_release_jobs[@]}"; then
-    say "   hoopdb-admin-jobs was retained because a dependent Job is still active or failed; delete it after the Job is stopped"
-    admin_jobs_created=false
-    false
-  fi
+  # Every Helm path that can create a dependent Job uses --wait-for-jobs; a
+  # successful Helm return is therefore the Job barrier. Do not look those
+  # Jobs up again here: ttlSecondsAfterFinished may already have deleted a
+  # successfully completed Job while Helm was waiting for other workloads.
   remove_legacy_long_lived_keys
   "${rds_env[@]}" "$here/rds-setup.sh" delete-admin-jobs
   admin_jobs_created=false

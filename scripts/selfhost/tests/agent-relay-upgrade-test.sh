@@ -348,6 +348,25 @@ pass "--rds-setup apply checks its environment and pre state first"
 
 # 19. legacy eks-rds-native upgrade: snapshot -> temporary Secret -> helm/Jobs -> remove old keys -> delete
 make_state; setup_mocks "$root/rel-ok" ok
+cat > "$root/live-manifest.yaml" <<'YAML'
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agent-relay-worker-migrate-expired
+spec:
+  ttlSecondsAfterFinished: 1
+  template:
+    spec:
+      containers:
+        - name: migrate
+          env:
+            - name: HOOPDB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: hoopdb-admin-jobs
+                  key: HOOPDB_MIGRATION_URL
+YAML
+echo notfound > "$root/jobstate/agent-relay-worker-migrate-expired"
 mkdir -p "$root/secrets/agent-relay"
 printf '{"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' >"$root/secrets/agent-relay/agent-relay-secrets.json"
 printf '{"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' >"$root/secrets/agent-relay/search-indexer-owner.json"
@@ -365,7 +384,9 @@ grep -q '"op": "remove"' "$root/patches" || fail "legacy keys were not removed: 
 grep -q 'HOOPDB_MIGRATION_URL' "$root/patches" || fail "migration admin key was not removed"
 grep -q 'RELAYHISTORY_PIPELINE_CONSUMER_SECRET' "$root/patches" || fail "search admin key was not removed"
 grep -q '^rds-setup post' "$root/log" && fail "upgrade ran post"
-pass "legacy rds-native upgrade uses and deletes one temporary admin Job Secret"
+grep -q 'kubectl .*get job agent-relay-worker-migrate-expired' "$root/log" \
+  && fail "a Job already accepted by helm --wait-for-jobs was polled after its TTL could delete it"
+pass "legacy rds-native upgrade uses and deletes one temporary admin Job Secret after Helm's Job barrier"
 
 # 20. a failed legacy Helm upgrade keeps both old keys for the printed rollback
 make_state; setup_mocks "$root/rel-ok" ok; write_helm "exit 1"
