@@ -160,3 +160,13 @@ variable "max_subexpressions" {
     error_message = "max_subexpressions is 5 to 10."
   }
 }
+
+variable "max_advanced_rules" {
+  description = "Rules with an expression that one Cloud Armor policy may hold. Google fixes this at 20 per policy (quota SECURITY_POLICY_ADVANCED_RULES_PER_SECURITY_POLICY, not adjustable), so a plan that needs more is refused here instead of failing half-way through the apply. Change it only if Google has given your project a different limit."
+  type        = number
+  default     = 20
+  validation {
+    condition     = var.max_advanced_rules >= 1 && floor(var.max_advanced_rules) == var.max_advanced_rules
+    error_message = "max_advanced_rules is a positive whole number."
+  }
+}

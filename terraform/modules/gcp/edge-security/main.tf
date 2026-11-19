@@ -110,6 +110,10 @@ resource "google_compute_security_policy" "this" {
       error_message = "client_ip_rules trust a client-address header, so they need origin_secret_header (proof the request came through the proxy) and client_ip_header or cloudflare.enabled."
     }
     precondition {
+      condition     = local.rule_counts.advanced <= var.max_advanced_rules
+      error_message = "This policy needs ${local.rule_counts.advanced} rules with an expression, and one Cloud Armor policy holds at most ${var.max_advanced_rules} (quota SECURITY_POLICY_ADVANCED_RULES_PER_SECURITY_POLICY, which Google does not raise). Nothing has been created. Shorten client_ip_rules (each rule holds ${var.max_subexpressions - 1} ranges, ${var.max_subexpressions - 2} with hosts), merge adjacent ranges, or enforce the long list at the fronting proxy; see the module README, Quotas."
+    }
+    precondition {
       condition     = alltrue([for r in local.sp.client_ip_rules : length(local.client_groups[r.name]) <= 999]) && length(local.allow_groups) <= 999
       error_message = "A list needs more than 999 rules at this max_subexpressions. Shorten it, or enforce it at the fronting proxy."
     }

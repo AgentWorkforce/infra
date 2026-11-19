@@ -111,28 +111,38 @@ origin_secret_header = { name = "x-origin-auth", values = [var.origin_secret] }
 
 ## Quotas: check before you apply
 
-A new project allows **20 rules with an expression** (`SECURITY_POLICY_CEVAL_RULES`) and **100 security policy rules** in all (`SECURITY_POLICY_RULES`), across every policy in the project. Google bills each rule monthly.
+Rules with an expression ("advanced" rules: everything here except the allowlist and the default rule) meet two limits. Both were measured on a live project.
 
-The `rule_counts` output says what this policy needs, and `terraform plan` shows it before anything is created:
+| Limit | Value | Can it be raised? |
+| --- | --- | --- |
+| Per **policy**: `SECURITY_POLICY_ADVANCED_RULES_PER_SECURITY_POLICY` | 20 | **No.** It is fixed; a request is refused |
+| Per **project**: `SECURITY_POLICY_CEVAL_RULES` | 20 | Yes. A request to 100 was granted automatically in seconds (`gcloud beta quotas preferences create`, needs `cloudquotas.googleapis.com`). A new project may be treated differently |
+| Per project, all rules: `SECURITY_POLICY_RULES` | 100 | Yes |
+
+**So one policy holds at most 20 advanced rules, whatever the project allows.** The module refuses a plan that needs more (`max_advanced_rules`), before anything is created. The `rule_counts` output shows the need:
 
 | Configuration | Advanced rules | Rules in all |
 | --- | --- | --- |
 | `create = true` (defaults) | 3 | 4 |
 | `cloudflare.enabled` with `origin_secret_header` | 5 | 8 |
-| plus a host-scoped client rule with 290 vendor ranges | about 45 | about 48 |
+| the above, with `rate_limits = []` and client rules: 96 host-scoped vendor ranges, a sign-in rule, a closing staff rule | 20 | 23 |
+| the same with 293 vendor ranges | 45: **refused** | |
 
-A long vendor list therefore fails on the first quota in a fresh project. Either:
+With the secret header, two WAF rules and sign-in and staff rules, about 13 rules are left for a vendor list: roughly **100 client ranges** (8 per rule with `hosts`, 9 without). A vendor that publishes more than that does not fit in this policy. The options:
 
-- **request the quota first** (Console, IAM and Admin, Quotas: `SECURITY_POLICY_CEVAL_RULES` for the Compute Engine API, and `SECURITY_POLICY_RULES` if `total` nears 100, with the numbers from `rule_counts` plus headroom for the vendor adding ranges), and apply once Google grants it; or
-- **enforce that list at the fronting proxy** (a Cloudflare WAF custom rule sees the same client address) and keep only your own short ranges in `client_ip_rules`.
+- **merge ranges**: published lists often contain adjacent blocks that one wider CIDR covers; a wider block also admits the addresses in between, so this is your decision to make;
+- **enforce the long list at the fronting proxy** (a Cloudflare WAF custom rule sees the same client address and has no such limit) and keep only your own short ranges in `client_ip_rules`;
+- Cloud Armor Enterprise address groups, which this module does not support.
 
-`terraform plan` does not check the quota; the limit is met only at apply, which then fails with:
+If the project quota (not the per-policy limit) is the one you hit, the apply fails part-way with:
 
 ```
 Error waiting to create SecurityPolicyRule: ... Quota 'SECURITY_POLICY_CEVAL_RULES' exceeded.  Limit: 20.0 globally.
 ```
 
-**A failed apply leaves a partial policy. Do not attach it.** Terraform creates rules in parallel, so an arbitrary subset exists afterwards: in the measured case a deny rule for the sign-in paths without the rule that admits its clients, and 14 of 37 vendor rules. Attached like that, sign-in and most vendors get 403. Set `gkeIngress.securityPolicy` only after an apply has exited 0; after a failure, raise the quota or shorten the list and apply again until it does. (Measured on a new project: the same policy with the list cut to fit 20 advanced rules applied cleanly. The default rule does not count against `SECURITY_POLICY_RULES`.)
+`terraform plan` does not check the project quota. It matters when other policies in the project also use advanced rules.
+
+**A failed apply leaves a partial policy. Do not attach it.** Terraform creates rules in parallel, so an arbitrary subset exists afterwards: in the measured case a deny rule for the sign-in paths without the rule that admits its clients, and 14 of 37 vendor rules. Attached like that, sign-in and most vendors get 403. Set `gkeIngress.securityPolicy` only after an apply has exited 0. The default rule does not count against `SECURITY_POLICY_RULES`.
 
 One rule expression holds 10 subexpressions (`max_subexpressions`; the API accepted 10 and refused 11 when measured, although Google's rules language reference still says 5). A rule spends one on the path, one on the host when `hosts` is set, and the rest on client ranges: 8 or 9 ranges per rule. A list is limited to 2,500 ranges and 999 rules.
 
@@ -176,6 +186,7 @@ Regular expressions must not contain capture groups: Cloud Armor refuses `(a|b)`
 | name | Name prefix: the SSL policy is <name>-tls and the Cloud Armor policy <name>-edge. | `string` | n/a | yes |
 | project\_id | Project of the GKE cluster. GKE Ingress resolves gkeIngress.sslPolicy and gkeIngress.securityPolicy by name in this project. | `string` | n/a | yes |
 | labels | Labels for every resource here that takes labels (the Cloud Armor policy; Compute SSL policies have none in the API). managed-by=terraform is always added. | `map(string)` | `{}` | no |
+| max\_advanced\_rules | Rules with an expression that one Cloud Armor policy may hold. Google fixes this at 20 per policy (quota SECURITY\_POLICY\_ADVANCED\_RULES\_PER\_SECURITY\_POLICY, not adjustable), so a plan that needs more is refused here instead of failing half-way through the apply. Change it only if Google has given your project a different limit. | `number` | `20` | no |
 | max\_subexpressions | Subexpressions in one rule expression. Cloud Armor accepts 10 and refuses 11 (measured against the API; the rules language reference still says 5). A rule that matches a path (and host) and a list of client ranges uses one (two) for the match and the rest for ranges, so fewer means more rules for the same list. Lower it only if your project's API refuses a rule. | `number` | `10` | no |
 | origin\_secret\_header | Optional shared-secret request header a fronting proxy adds on every request (for Cloudflare: a request header transform rule). Requests without the exact value are denied 403 before any other rule, which proves the request came through the proxy and makes its client-address header trustworthy. values lists every accepted value (1 to 3), so a rotation has no outage: add the new value here and apply, switch the proxy to it, then remove the old value and apply. The values are stored in Terraform state and readable in the Cloud Armor policy by anyone with compute.securityPolicies.get: treat both as secret stores. | ```object({ name = string values = list(string) })``` | `null` | no |
 | security\_policy | Cloud Armor backend security policy (chart value gkeIngress.securityPolicy), off unless create = true.  - waf: preconfigured OWASP rules (deny 403) at the given sensitivity (1 = fewest false positives). preview = true (the default) only logs matches: session transcripts and messages carry code, SQL and shell text, so read the logs before enforcing. - rate\_limits: per-client throttle (429) on the listed path regexes; the default covers password sign-in, setup-key and login paths. - source\_ip\_allowlist: when non-empty (or cloudflare.enabled), the default rule becomes deny 403 and only these connecting addresses are admitted: a pure source-IP allowlist. - cloudflare: admit Cloudflare's published ranges as the connecting addresses (origin lockdown) and read the client address from CF-Connecting-IP. - client\_ip\_header: header an upstream proxy sets with the real client address (Cloud Armor origin.user\_ip). Only trustworthy when nothing but that proxy can reach the load balancer: combine with an allowlist of the proxy's ranges, or origin\_secret\_header. - client\_ip\_rules: per-client allowlists scoped to paths (and optionally hosts), evaluated in list order. The first rule whose path\_prefixes (and hosts, when given) match a request decides it: admitted if the client address (origin.user\_ip) is in cidrs, denied 403 otherwise. A last rule with path\_prefixes = ["/"] therefore closes every other path to everyone but its cidrs. Requires origin\_secret\_header. An admitted request meets no later rule, including rate\_limits, so every rule states its own limit: rate\_limit (requests per interval per client address), or unthrottled = true. With a rule for "/" set rate\_limits = [] and express sign-in limits as an earlier, narrower rule. - adaptive\_protection: Layer 7 DDoS detection (alerts; automatic deployment needs Cloud Armor Enterprise). | ```object({ create = optional(bool, false) waf = optional(object({ enabled = optional(bool, true) preview = optional(bool, true) sensitivity = optional(number, 1) rules = optional(list(string), [ "sqli-v33-stable", "xss-v33-stable", "lfi-v33-stable", "rfi-v33-stable", "rce-v33-stable", "scannerdetection-v33-stable", "protocolattack-v33-stable", "sessionfixation-v33-stable", "cve-canary", ]) }), {}) rate_limits = optional(list(object({ name = string path_regex = string count = number interval_sec = number ban_duration_sec = optional(number, 0) })), [{ name = "sign-in" path_regex = "^/(?:login|(?:cloud/)?api/v1/auth/)" count = 60 interval_sec = 60 }]) source_ip_allowlist = optional(list(string), []) cloudflare = optional(object({ enabled = optional(bool, false) include_ipv6 = optional(bool, false) # https://www.cloudflare.com/ips/ as read on 2026-11-18. Cloudflare # announces changes; compare the list with that page before each apply. ipv4_cidrs = optional(list(string), [ "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22", ]) ipv6_cidrs = optional(list(string), [ "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32", ]) }), {}) client_ip_header = optional(string) client_ip_rules = optional(list(object({ name = string path_prefixes = list(string) hosts = optional(list(string), []) cidrs = list(string) rate_limit = optional(object({ count = number, interval_sec = number })) unthrottled = optional(bool, false) })), []) adaptive_protection = optional(bool, false) })``` | `{}` | no |

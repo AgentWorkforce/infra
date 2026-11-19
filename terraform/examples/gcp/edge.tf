@@ -19,4 +19,5 @@ module "edge_security" {
   security_policy      = var.edge_security_policy
   origin_secret_header = var.edge_origin_secret_header
   max_subexpressions   = var.edge_max_subexpressions
+  max_advanced_rules   = var.edge_max_advanced_rules
 }

@@ -3,6 +3,9 @@ mock_provider "google" {}
 variables {
   project_id = "proj"
   name       = "relay"
+  # Runs that build long lists to test rule splitting lift the per-policy
+  # limit; the limit itself has its own runs at the end.
+  max_advanced_rules = 1000
   # Most runs pin 5 subexpressions per rule so that small lists exercise the
   # splitting into several rules; the module's default (10) has its own runs.
   max_subexpressions = 5
@@ -543,4 +546,53 @@ run "capture_group_after_a_class_refused" {
     security_policy = { create = true, rate_limits = [{ name = "mixed", path_regex = "^/[(]x[)](a|b)", count = 10, interval_sec = 60 }] }
   }
   expect_failures = [var.security_policy]
+}
+
+# One policy holds 20 rules with an expression, and Google does not raise it.
+# A plan that needs more is refused before anything is created.
+run "more_than_twenty_advanced_rules_refused_at_plan" {
+  command = plan
+  variables {
+    max_subexpressions = 10
+    max_advanced_rules = 20
+    security_policy = {
+      create      = true
+      cloudflare  = { enabled = true }
+      rate_limits = []
+      client_ip_rules = [{
+        name          = "vendors"
+        hosts         = ["history.relay.example.com"]
+        path_prefixes = ["/v1/delivery"]
+        cidrs         = [for i in range(293) : "10.${floor(i / 256)}.${i % 256}.0/24"]
+        unthrottled   = true
+      }]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+  expect_failures = [google_compute_security_policy.this]
+}
+
+# The shape the live proof applied cleanly: exactly 20.
+run "twenty_advanced_rules_fit" {
+  command = apply
+  variables {
+    max_subexpressions = 10
+    max_advanced_rules = 20
+    security_policy = {
+      create      = true
+      cloudflare  = { enabled = true }
+      rate_limits = []
+      client_ip_rules = [
+        { name = "vendors", hosts = ["history.relay.example.com"], path_prefixes = ["/v1/delivery"], cidrs = [for i in range(96) : "10.0.${i}.0/24"], unthrottled = true },
+        { name = "sign-in", path_prefixes = ["/login"], cidrs = ["203.0.113.0/24"], rate_limit = { count = 60, interval_sec = 60 } },
+        { name = "staff", path_prefixes = ["/"], cidrs = ["203.0.113.0/24"], unthrottled = true },
+      ]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+  # 96 ranges at 8 = 12 admitting rules + deny; sign-in 2; staff 2; secret header; 2 WAF.
+  assert {
+    condition     = output.rule_counts.advanced == 20 && output.rule_counts.total == 23
+    error_message = "96 host-scoped vendor ranges with sign-in and staff rules need exactly 20 advanced rules."
+  }
 }

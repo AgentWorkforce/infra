@@ -259,3 +259,9 @@ variable "edge_max_subexpressions" {
   type        = number
   default     = 10
 }
+
+variable "edge_max_advanced_rules" {
+  description = "Rules with an expression one Cloud Armor policy may hold (modules/gcp/edge-security max_advanced_rules). Google fixes it at 20; a plan that needs more is refused."
+  type        = number
+  default     = 20
+}

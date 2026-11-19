@@ -78,12 +78,13 @@ when you run them.
    edge_security_policy = { create = true }
    ```
 
-   Run `terraform plan` first and read `rule_counts` in the `edge` output: a
-   new project allows 20 rules with an expression and 100 rules in all, and
-   the plan tells you what this policy needs (the defaults need 3 and 4).
-   Then `terraform apply`, and continue only if it finishes without an
-   error. `terraform output edge` prints the policy's name (`<name>-edge`). This policy has the OWASP rules in **preview** (they log
-   and do not block) and a limit of 60 sign-in requests a minute per client.
+   Run `terraform plan` first and read `rule_counts` in the `edge` output:
+   one policy holds at most 20 rules with an expression, and the plan tells
+   you what this policy needs (the defaults need 3). Then `terraform apply`,
+   and continue only if it finishes without an error. `terraform output edge`
+   prints the policy's name (`<name>-edge`). This policy has the OWASP rules
+   in **preview** (they log and do not block) and a limit of 60 sign-in
+   requests a minute per client.
 
 2. Name it in `values.yaml`, and bind the dashboard Service to its
    BackendConfig (`<gkeIngress.name>-dashboard`):
@@ -239,21 +240,26 @@ Cloudflare can reach it.
    sign-in limit is a rule of its own ahead of the closing one. The module's
    README (`terraform/modules/gcp/edge-security`) explains the limits.
 
-   **Check the quota before you apply a vendor list.** Each rule takes eight
-   or nine ranges, so a vendor that publishes about 290 ranges needs about
-   45 rules with an expression, against a default of 20 per project (and 100
-   rules in all). `terraform plan` shows the numbers in the `edge` output's
-   `rule_counts`. Request a `SECURITY_POLICY_CEVAL_RULES` increase for the
-   Compute Engine API first (allow headroom for the vendor adding ranges), or
-   enforce that list as a Cloudflare WAF custom rule and keep only your own
-   ranges here. Without either, the apply fails part-way with
+   **A long vendor list does not fit.** One Cloud Armor policy holds at most
+   20 rules with an expression, and Google does not raise that limit. After
+   the secret header, the two WAF rules and the sign-in and staff rules,
+   about 13 are left: roughly 100 vendor ranges. Terraform refuses a plan
+   that needs more and says how many it counted (`rule_counts` in the `edge`
+   output shows the same). For a vendor that publishes more, merge adjacent
+   ranges where you accept the wider block, or enforce that vendor's list as
+   a Cloudflare WAF custom rule and keep only your own ranges here.
+
+   The project also has a limit of 20 such rules across all its policies
+   (`SECURITY_POLICY_CEVAL_RULES`). That one can be raised, and a request was
+   granted in seconds when measured. If another policy in the project already
+   uses some, the apply fails part-way with
    `Quota 'SECURITY_POLICY_CEVAL_RULES' exceeded. Limit: 20.0 globally`.
 
    **If an apply fails, do not use the policy yet.** It then holds an
    arbitrary part of its rules, for example the rule that denies the sign-in
-   paths without the rule that admits you. Raise the quota or shorten the
-   list, and run `terraform apply` again until it exits without an error.
-   Only then set `gkeIngress.securityPolicy`.
+   paths without the rule that admits you. Fix the cause and run
+   `terraform apply` again until it exits without an error. Only then set
+   `gkeIngress.securityPolicy`.
 
 **Done when:**
 
