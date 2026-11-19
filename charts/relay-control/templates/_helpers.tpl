@@ -65,6 +65,14 @@ check what is rendered, including the gate-only SESSION_READ_API_URL. */ -}}
 {{- if ne (len .Values.selectedFeatures) (len (uniq .Values.selectedFeatures)) }}{{ fail "selectedFeatures must not contain duplicates" }}{{ end -}}
 {{- range .Values.selectedFeatures }}{{ if not (has . (list "flows" "relayfile" "chief" "usage" "launch" "usage_people")) }}{{ fail "selectedFeatures contains an unknown optional component" }}{{ end }}{{ end -}}
 {{- end -}}
+{{- $sharing := .Values.sharing | default dict -}}
+{{- $mode := $sharing.defaultMode | default "" -}}
+{{- if not (kindIs "string" $mode) }}{{ fail "sharing.defaultMode must be a string: all, new or selected" }}{{ end -}}
+{{- if and $mode (not (has $mode (list "all" "new" "selected"))) }}{{ fail (printf "sharing.defaultMode must be all, new or selected, not %q" $mode) }}{{ end -}}
+{{- $roles := $sharing.overrideRoles | default list -}}
+{{- if not (kindIs "slice" $roles) }}{{ fail "sharing.overrideRoles must be a list of roles: owner, admin" }}{{ end -}}
+{{- if ne (len $roles) (len (uniq $roles)) }}{{ fail "sharing.overrideRoles must not contain duplicates" }}{{ end -}}
+{{- range $roles }}{{ if not (has . (list "owner" "admin")) }}{{ fail (printf "sharing.overrideRoles: %v is not owner or admin" .) }}{{ end }}{{ end -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
 {{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}

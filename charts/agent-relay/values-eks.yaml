@@ -208,15 +208,15 @@ sessions-pipeline:
 relay-control:
   fullnameOverride: relay-control
   image:
-    # Release image (public GHCR, relay-control 0.5.24, edad6432: #134 desktop
-    # enrollment keys (migration 0050), #136 Grok Bot wake-ups (0051), #137 sender
-    # receipts and grant-bound OAuth launches, #138 optional Ed25519 file feed
-    # signer; publish run 43673082170).
+    # Release image (public GHCR, relay-control 0.5.35, b985c6f; publish run
+    # 44492248387, GitHub build-provenance attestation; FSL-1.1-ALv2). Adds
+    # Control migrations 0052-0077 over 0.5.24 (no operator step) and optional
+    # env only, including the deployment default sharing mode (#232).
     # Reads EKS Pod Identity / IRSA credentials (Desktop-feed role) and
     # supports the setup key and password sign-in without SMTP. Mirror it by
     # digest to your registry and override repository.
     repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc
+    digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9
   # The customer profile opts into the owner-only Usage page and qualified
   # MCP agent launch. Remove launch if the enrolled owner/admin Desktop target
   # fails its install-time lifecycle check; Usage remains independent.
