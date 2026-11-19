@@ -4,6 +4,11 @@ Customer-neutral install guide for **agent-relay-2026.11.16** on an existing GKE
 cluster, the GCP counterpart of the AWS EKS guide. Start with
 **0-START-HERE.md**.
 
+For a customer-managed corporate VPN connector, see the optional
+[VPN network profile](../vpn-networking.md). Review its NAT and ingress-address
+ownership notes before running the numbered guide; the connector is distinct
+from the foundation's Serverless VPC Access connector.
+
 | File | What it is |
 |---|---|
 | `0-START-HERE.md` | Numbered copy-paste steps, each with a "Done when" check |

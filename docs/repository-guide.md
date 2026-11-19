@@ -5,6 +5,7 @@ Public chart names and existing-release compatibility: [Control/Webapp rename](c
 Terraform modules and Helm charts for customer-owned Agent Relay installations on AWS and GCP. Terraform provisions cloud foundations and managed services; Helm installs the application workloads.
 
 - [Terraform modules and examples](../terraform/README.md): network, Kubernetes, PostgreSQL, object storage, optional search and functions.
+- [Optional VPN connector networking](vpn-networking.md): default-off AWS, GCP and Azure network prerequisites for an existing corporate VPN, with separate state and explicit routing/edge integration.
 - [Helm charts](#charts): application configuration, deployment and versioned dependencies under `charts/<service-name>/`.
 - [Local code loop](kind-development.md): `make dev` on an existing Kind stack, frontend HMR and backend code-watch rebuilds.
 - [Full application proof](terraform-helm-application-proof.md): required lifecycle evidence and current gaps.

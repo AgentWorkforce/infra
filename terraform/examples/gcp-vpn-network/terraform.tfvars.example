@@ -1,0 +1,18 @@
+# Documentation-only values: replace every identity, ID, range and destination.
+# No resource is created until explicitly enabled in a reviewed plan.
+enabled                = false
+name                   = "agent-relay"
+connector_cidr         = "10.60.2.0/28"
+existing_network_cidrs = ["10.60.0.0/24", "10.60.1.0/24"]
+outbound_rules = {
+  vpn  = { cidr = "203.0.113.9/32", protocol = "tcp", port = 443 }
+  edge = { cidr = "203.0.113.20/32", protocol = "tcp", port = 443 }
+  # Add the approved resolver and management destinations/ports as required.
+}
+project_id              = "approved-project-id"
+expected_project_number = "123456789012"
+region                  = "us-central1"
+network_name            = "agent-relay-vpc"
+create_ingress_ip       = false # only true if this root owns the guide's ingress IP
+allow_iap_ssh           = false
+labels                  = { app = "agent-relay" }
