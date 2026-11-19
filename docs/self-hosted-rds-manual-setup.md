@@ -123,8 +123,10 @@ separate instance. `0|0` (fresh) or `1|1` (a re-run) are fine.
 
 ```bash
 for db in relaycontrol "$HOOPDB_DATABASE" relaycast; do
-  printf '%s\n' "SELECT 'CREATE DATABASE $db' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname='$db') \\gexec" \
-    | psql -X -q -v ON_ERROR_STOP=1 -d postgres
+  psql -X -q -v ON_ERROR_STOP=1 -d postgres -v db="$db" <<'SQL'
+SELECT format('CREATE DATABASE %I', :'db')
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname=:'db') \gexec
+SQL
 done
 ```
 
@@ -370,10 +372,11 @@ Immediately before an upgrade or a guide Job, create Secret
 `hoopdb-admin-jobs` with keys `HOOPDB_MIGRATION_URL` and
 `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`, point only the migrate/bootstrap Job
 values at that Secret, and delete it after those Jobs complete. Remove the same
-two keys from `agent-relay-secrets` and `search-indexer-owner`. If the temporary
-Secret is absent, the upgrade must stop before Helm changes anything. The
-scripted equivalent is `rds-setup.sh prepare-admin-jobs`, followed by
-`rds-setup.sh delete-admin-jobs`.
+two keys from `agent-relay-secrets` and `search-indexer-owner` only after Helm,
+the affected Jobs, and Deployments succeed. If the temporary Secret is absent,
+the upgrade must stop before Helm changes anything. The scripted equivalent is
+`rds-setup.sh prepare-admin-jobs`, followed after success by its key-removal
+flow and `rds-setup.sh delete-admin-jobs`.
 
 For the by-hand flow, enter the current administrator URL without echoing it,
 stage it in a private temporary directory, and create the Secret from files so
@@ -390,16 +393,6 @@ unset HOOPDB_ADMIN_URL
 kubectl -n agent-relay delete secret hoopdb-admin-jobs --ignore-not-found
 kubectl -n agent-relay create secret generic hoopdb-admin-jobs \
   --from-file="$ADMIN_JOB_DIR"
-
-# Only after the temporary Secret exists, remove the old long-lived copies.
-for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
-            search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
-  secret="${pair%%:*}"; key="${pair#*:}"
-  if kubectl -n agent-relay get secret "$secret" -o json | jq -e --arg k "$key" '.data[$k] != null' >/dev/null; then
-    kubectl -n agent-relay patch secret "$secret" --type=json \
-      -p="[{\"op\":\"remove\",\"path\":\"/data/$key\"}]"
-  fi
-done
 ```
 
 Save this non-secret values overlay and pass it after the site values, before
@@ -421,10 +414,24 @@ sessions-pipeline:
 
 Guard the Helm command with `kubectl -n agent-relay get secret
 hoopdb-admin-jobs >/dev/null || exit 1`; this is the fail-before-change check.
-After all migration/bootstrap Jobs complete, delete the credential and the
-local staging directory:
+After Helm, all migration/bootstrap Jobs, and Deployments succeed, remove the
+old long-lived keys, then delete the temporary credential and local staging
+directory. A failed upgrade skips this block, retains the old keys for the
+previous revision, and deletes only `hoopdb-admin-jobs`.
 
 ```bash
+for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
+            search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
+  secret="${pair%%:*}"; key="${pair#*:}"
+  if ! kubectl -n agent-relay get secret "$secret" -o json >"$ADMIN_JOB_DIR/$secret.json"; then
+    echo "could not read $secret; leave hoopdb-admin-jobs in place and retry cleanup" >&2
+    exit 1
+  fi
+  if jq -e --arg k "$key" '.data[$k] != null' "$ADMIN_JOB_DIR/$secret.json" >/dev/null; then
+    kubectl -n agent-relay patch secret "$secret" --type=json \
+      -p="[{\"op\":\"remove\",\"path\":\"/data/$key\"}]"
+  fi
+done
 kubectl -n agent-relay delete secret hoopdb-admin-jobs
 rm -r -- "$ADMIN_JOB_DIR"
 ```
@@ -437,8 +444,24 @@ kubectl -n agent-relay get secret agent-relay-secrets -o json | jq -e '.data.HOO
 kubectl -n agent-relay get secret search-indexer-owner -o json | jq -e '.data.RELAYHISTORY_PIPELINE_CONSUMER_SECRET == null'
 ```
 
-Rollback: recreate `hoopdb-admin-jobs` from the current administrator password
-and use the same values overlay before rolling back a legacy Helm revision.
+Rollback after a failed upgrade: delete only `hoopdb-admin-jobs`; the old keys
+remain for the previous revision. After successful cleanup, a rollback to a
+revision that references the old keys must restore those keys from the staged
+files before `helm rollback` (re-enter the URL if the directory was removed):
+
+```bash
+jq -n --rawfile u "$ADMIN_JOB_DIR/HOOPDB_MIGRATION_URL" \
+  '{data:{HOOPDB_MIGRATION_URL:($u|@base64)}}' >"$ADMIN_JOB_DIR/migration-patch.json"
+kubectl -n agent-relay patch secret agent-relay-secrets --type=merge \
+  --patch-file="$ADMIN_JOB_DIR/migration-patch.json"
+jq -n --rawfile u "$ADMIN_JOB_DIR/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" \
+  '{data:{RELAYHISTORY_PIPELINE_CONSUMER_SECRET:($u|@base64)}}' >"$ADMIN_JOB_DIR/search-patch.json"
+kubectl -n agent-relay patch secret search-indexer-owner --type=merge \
+  --patch-file="$ADMIN_JOB_DIR/search-patch.json"
+```
+
+Recreate `hoopdb-admin-jobs` and use the same values overlay for any rollback
+Jobs that reference it.
 Long-running pods do not use this Secret and are unaffected by its creation or
 deletion. The database stays administrator-owned; verify without assuming its
 name with `psql -X -A -t -d "$HOOPDB_DATABASE" -c 'select

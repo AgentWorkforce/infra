@@ -719,10 +719,9 @@ the first session has uploaded, or on a brand-new install with
 cluster as the migration owner. A fresh install reads the dedicated
 `hoopdb_owner` URL from `agent-relay-secrets`; an existing administrator-owned
 install must run `cloud-sql-setup.sh prepare-admin-jobs` immediately first and
-set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`. After the pod succeeds, run
-`cloud-sql-setup.sh remove-legacy-secret-keys`; whether it succeeds or fails,
-delete the temporary Secret with `cloud-sql-setup.sh delete-admin-jobs`. The URL
-never reaches your shell. The script isn't in the
+set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`. Keep that temporary Secret through
+both the read-only plan and the final apply in 17b; both pods reference it. The
+URL never reaches your shell. The script isn't in the
 services image, so this fetches it from the commit the image was built from:
 
 ```sh
@@ -812,6 +811,17 @@ catalog --apply <fingerprint from the plan above> && resume &&
   kubectl -n $NAMESPACE delete pod/agent-catalog configmap/agent-catalog-activation
 ```
 
+On a legacy administrator-owned install, only after the apply, writer resume,
+and rollouts above succeed, remove the old keys and the temporary copy:
+
+```sh
+cloud-sql-setup.sh remove-legacy-secret-keys &&
+  cloud-sql-setup.sh delete-admin-jobs
+```
+
+After a failed attempt, run `cloud-sql-setup.sh delete-admin-jobs`; run
+`prepare-admin-jobs` again before retrying either catalog pod.
+
 **Done when:** the plan shows `"eligible":true`, the apply shows
 `"activated":true` and `exit 0`, both rollouts finish, and searching Sessions
 for `@<agent name>` lists sessions (or none) instead of "The session agent
@@ -827,7 +837,9 @@ index isn't ready yet".
   `agent-relay-ingest-edge` is at 0, and the apply itself locks the session
   index (it waits at most 1 second for those locks). Expect about a minute.
   Run it at a quiet time, and before anyone deletes a session.
-- **To give up or try later:** run `resume`. Uploads stay off until you do.
+- **To give up or try later:** run `resume`. Uploads stay off until you do. On
+  a legacy install, delete `hoopdb-admin-jobs` after the writers recover and
+  run `prepare-admin-jobs` again before retrying.
 - **`unprojected` above 0 in the paused plan:** the indexer hadn't caught up.
   Run `kubectl -n $NAMESPACE scale deploy/agent-relay-search-indexer --replicas=$SI`,
   wait a minute, then `pause agent-relay-search-indexer && catalog --plan`.

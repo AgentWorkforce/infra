@@ -342,7 +342,7 @@ sessions_index_check() {
   index_census_cleanup
   case "$census" in
     "INDEX_CENSUS "*) census=${census#INDEX_CENSUS } ;;
-    "INDEX_CENSUS_ERROR 28P01 "*) die "the index census could not log in to the Sessions database (${census#INDEX_CENSUS_ERROR }); nothing was changed. For a legacy RDS layout, refresh the administrator Job credential with rds-setup.sh prepare-admin-jobs (or pass --rds-setup), then re-run" ;;
+    "INDEX_CENSUS_ERROR 28P01 "*) die "the index census could not log in to the Sessions database (${census#INDEX_CENSUS_ERROR }); nothing was changed. For a legacy RDS layout, re-run this command with --rds-setup so the census uses the refreshed temporary administrator credential" ;;
     "INDEX_CENSUS_ERROR "*) die "the index census failed (${census#INDEX_CENSUS_ERROR }); nothing was changed. Fix that and re-run" ;;
     *) die "the index census pod ended $phase without a result; nothing was changed (kubectl -n $namespace describe pod $name, before it is gone)" ;;
   esac
@@ -581,16 +581,24 @@ if [ -n "$rta_phase" ]; then die() { printf 'agent-relay-upgrade: %s\n' "$*" >&2
 rds_env=(env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir")
 prepare_legacy_admin_jobs() {
   say "== 5. create the temporary administrator credential for migration/bootstrap Jobs"
-  "${rds_env[@]}" "$here/rds-setup.sh" prepare-admin-jobs
   admin_jobs_created=true
+  "${rds_env[@]}" "$here/rds-setup.sh" prepare-admin-jobs
   "${kube[@]}" get secret hoopdb-admin-jobs -o name >/dev/null \
     || { say "   hoopdb-admin-jobs is absent; refusing before Helm changes anything"; false; }
 }
 remove_legacy_long_lived_keys() {
-  local pair s k
+  local pair s k secret_json secret_error key_present
   for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
     s=${pair%%:*}; k=${pair#*:}
-    if "${kube[@]}" get secret "$s" -o json | jq -e --arg k "$k" '.data[$k] != null' >/dev/null; then
+    secret_json="$work/$s.json"; secret_error="$work/$s.err"
+    if ! "${kube[@]}" get secret "$s" -o json >"$secret_json" 2>"$secret_error"; then
+      grep -qi 'not[[:space:]]*found' "$secret_error" && continue
+      say "   could not read Secret $s while removing legacy administrator keys"
+      return 1
+    fi
+    key_present=$(jq -r --arg k "$k" 'if .data[$k] == null then "no" else "yes" end' "$secret_json") \
+      || { say "   could not parse Secret $s while removing legacy administrator keys"; return 1; }
+    if [ "$key_present" = yes ]; then
       ( umask 077; jq -n --arg path "/data/$k" '[{"op":"remove","path":$path}]' >"$work/remove-key.json" )
       "${kube[@]}" patch secret "$s" --type json --patch-file "$work/remove-key.json" >/dev/null
       rm -f "$work/remove-key.json"
@@ -696,6 +704,17 @@ if $admin_jobs_created; then
   # Keep the old revision's keys until the new Helm revision, all of its Jobs,
   # and every Deployment have succeeded. A failed upgrade can therefore use
   # the printed rollback command without first reconstructing credentials.
+  admin_job_names=$("${helmx[@]}" get manifest "$release" \
+    | yq -N -r 'select(.kind == "Job") |
+        select(.. | select(has("secretKeyRef")) | .secretKeyRef.name == "hoopdb-admin-jobs") |
+        .metadata.name' | sort -u)
+  admin_release_jobs=()
+  while IFS= read -r j; do [ -z "$j" ] || admin_release_jobs+=("$j"); done <<<"$admin_job_names"
+  if [ "${#admin_release_jobs[@]}" -gt 0 ] && ! wait_jobs "${admin_release_jobs[@]}"; then
+    say "   hoopdb-admin-jobs was retained because a dependent Job is still active or failed; delete it after the Job is stopped"
+    admin_jobs_created=false
+    false
+  fi
   remove_legacy_long_lived_keys
   "${rds_env[@]}" "$here/rds-setup.sh" delete-admin-jobs
   admin_jobs_created=false

@@ -819,7 +819,7 @@ pass "census: --rds-setup refreshes the admin URL first and hands it over in a t
 # 49. a login failure names the admin-credential refresh
 census_setup; printf 'INDEX_CENSUS_ERROR 28P01 password authentication failed for user "admin"\n' > "$root/census.out"
 out=$(run "${args[@]}" 2>&1) && fail "a census login failure was accepted"
-grep -q 'refresh the administrator Job credential with rds-setup.sh prepare-admin-jobs' <<<"$out" || fail "a login failure did not name the temporary-Secret flow: $out"
+grep -q 're-run this command with --rds-setup' <<<"$out" || fail "a login failure did not require the temporary-Secret substitution flow: $out"
 pass "census: a login failure points at the temporary administrator Job credential flow"
 
 # 50. an upgrade that adds a migrate Job the deployed release lacked says no census ran

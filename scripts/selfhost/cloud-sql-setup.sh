@@ -60,6 +60,7 @@ STATE_DIR="${STATE_DIR:-$HOME/.agent-relay-install}"
 PW_DIR="$STATE_DIR/passwords"
 FILES="$STATE_DIR/secret-files"
 LAYOUT_FILE="$STATE_DIR/hoopdb-layout"
+PENDING_PASSWORDS_FILE="$STATE_DIR/.pending-hoopdb-passwords"
 ADMIN_JOBS_SECRET=hoopdb-admin-jobs
 OWNER=hoopdb_owner
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
@@ -191,8 +192,13 @@ run_job() {
   kubectl -n "$NS" delete configmap "$name-run" --ignore-not-found >/dev/null
   if [[ "$ok" != 1 ]]; then
     if [[ "$name" == agent-relay-cloud-sql-pre ]] && \
+       grep -qx 'HOOPDB_STATE=fresh-credentials-committed' "$WORK/$name.log"; then
+      rm -f "$PENDING_PASSWORDS_FILE"
+    fi
+    if [[ "$name" == agent-relay-cloud-sql-pre ]] && \
        grep -qx 'HOOPDB_STATE=dedicated-owner-missing' "$WORK/$name.log"; then
       for p in $missing_state_names; do rm -f "$PW_DIR/$p"; done
+      rm -f "$PENDING_PASSWORDS_FILE"
       die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_state_names}; database and Secrets were left unchanged"
     fi
     die "job $name did not succeed (inspect the retained Job)"
@@ -203,7 +209,12 @@ run_job() {
 url() { printf '%s://%s:%s@%s:5432/%s?sslmode=verify-full' "$1" "$2" "$3" "$CLOUD_SQL_HOST" "$4"; }
 pw() { cat "$PW_DIR/$1"; }
 json_url() { jq -cn --arg k "$1" --arg v "$2" '{($k):$v}'; }
-admin_url() { url postgresql "$CLOUD_SQL_ADMIN_USER" "$(admin_password)" "$1"; }
+admin_url() {
+  local password
+  password="$(admin_password)" || die "could not read the Cloud SQL administrator password"
+  [[ -n "$password" ]] || die "the Cloud SQL administrator password is empty"
+  url postgresql "$CLOUD_SQL_ADMIN_USER" "$password" "$1"
+}
 
 write_legacy_admin_files() {
   local owner; owner="$(admin_url hoopdb)"
@@ -233,12 +244,18 @@ write_layout_values() {
 }
 
 remove_legacy_secret_keys() {
-  local pair secret key
+  local pair secret key secret_json secret_error key_present
   for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
               search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
     secret="${pair%%:*}"; key="${pair#*:}"
-    if kubectl -n "$NS" get secret "$secret" -o json \
-        | jq -e --arg key "$key" '.data[$key] != null' >/dev/null 2>&1; then
+    secret_json="$WORK/$secret.json"; secret_error="$WORK/$secret.err"
+    if ! kubectl -n "$NS" get secret "$secret" -o json >"$secret_json" 2>"$secret_error"; then
+      grep -qi 'not[[:space:]]*found' "$secret_error" && continue
+      die "could not read Secret $secret while removing legacy administrator keys"
+    fi
+    key_present="$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$secret_json")" \
+      || die "could not parse Secret $secret while removing legacy administrator keys"
+    if [[ "$key_present" == yes ]]; then
       kubectl -n "$NS" patch secret "$secret" --type=merge \
         -p "{\"data\":{\"$key\":null}}" >/dev/null
       log "removed legacy administrator key $secret/$key"
@@ -266,12 +283,16 @@ write_credential_files() {
 do_pre() {
   kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
   ensure_ca
-  local p missing_passwords=""
+  local p pending_passwords="" missing_passwords=""
+  [[ ! -s "$PENDING_PASSWORDS_FILE" ]] || pending_passwords="$(<"$PENDING_PASSWORDS_FILE")"
   for p in control_owner control_api_runtime "$OWNER" sessions_pipeline_runtime relaycast_owner relaycast_runtime \
            bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
-    [[ -s "$PW_DIR/$p" ]] || missing_passwords+=" $p"
+    if [[ ! -s "$PW_DIR/$p" || " $pending_passwords " == *" $p "* ]]; then missing_passwords+=" $p"; fi
     password_for "$p"
   done
+  if [[ -n "$missing_passwords" ]]; then
+    printf '%s\n' "${missing_passwords# }" >"$PENDING_PASSWORDS_FILE"; chmod 600 "$PENDING_PASSWORDS_FILE"
+  fi
 
   cat >"$WORK/run.sh" <<'EOS'
 set -eu
@@ -289,10 +310,15 @@ else
   export PGDATABASE=hoopdb
 fi
 existing_dedicated=0
-if [ -n "$hoopdb_exists" ] && [ "$owner" = "$PGUSER" ] && \
-   { [ -n "$($Q -c "select to_regnamespace('sessions')")" ] || [ -n "$($Q -c "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" ]; }; then
-  echo 'HOOPDB_LAYOUT=legacy-admin'
-  exit 0
+if [ -n "$hoopdb_exists" ] && [ "$owner" = "$PGUSER" ]; then
+  sessions_schema="$($Q -c "select to_regnamespace('sessions')")" \
+    || { echo 'could not inspect the HoopDb sessions schema; refusing' >&2; exit 3; }
+  runtime_role="$($Q -c "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" \
+    || { echo 'could not inspect the HoopDb runtime role; refusing' >&2; exit 3; }
+  if [ -n "$sessions_schema" ] || [ -n "$runtime_role" ]; then
+    echo 'HOOPDB_LAYOUT=legacy-admin'
+    exit 0
+  fi
 fi
 if [ "$owner" = 'hoopdb_owner' ]; then
   existing_dedicated=1
@@ -367,6 +393,7 @@ DROP ROLE agent_relay_hoopdb_role_creator;
 COMMIT;
 SQL
   echo "dedicated HoopDb owner and runtime roles ready"
+  echo 'HOOPDB_STATE=fresh-credentials-committed'
 else
   echo "dedicated HoopDb ownership already committed; finishing prerequisites"
 fi
@@ -410,18 +437,21 @@ EOS
         for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
         die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
       fi
+      rm -f "$PENDING_PASSWORDS_FILE"
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
       write_credential_files; write_layout_values "$layout"
       log "dedicated hoopdb_owner layout already active; passwords and database were left unchanged"
       ;;
     fresh-dedicated)
       layout=dedicated-owner
+      rm -f "$PENDING_PASSWORDS_FILE"
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
       write_credential_files; write_layout_values "$layout"
       log "pre done; dedicated hoopdb_owner credentials are under $FILES"
       ;;
     legacy-admin)
       for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
+      rm -f "$PENDING_PASSWORDS_FILE"
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
       write_legacy_admin_files; write_layout_values "$layout"
       log "existing administrator-owned HoopDb detected; database and roles were left unchanged"

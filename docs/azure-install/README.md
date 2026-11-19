@@ -333,14 +333,11 @@ mkdir "$NEW_DIR" && gh release download "$NEW_TAG" -R AgentWorkforce/infra -D "$
 and `echo "$CHART"` names the new chart package. Then:
 
 ```sh
-# Prints every Job whose pod reads the temporary administrator Secret. This
-# includes migrate, search bootstrap, output-facts bootstrap, and future Jobs
-# that adopt the same explicit Secret reference.
-admin_jobs() {
+# Prints every Job in the selected release. This includes migrate, search
+# bootstrap, output-facts bootstrap, and future release Jobs.
+release_jobs() {
   helm -n agent-relay get manifest agent-relay \
-    | yq -N -r 'select(.kind == "Job") |
-        select(.. | select(has("secretKeyRef")) | .secretKeyRef.name == "hoopdb-admin-jobs") |
-        .metadata.name' \
+    | yq -N -r 'select(.kind == "Job") | .metadata.name' \
     | sort -u
 }
 
@@ -362,16 +359,14 @@ upgrade_ok=false
 if helm upgrade agent-relay "$CHART" --namespace agent-relay \
     -f "$NEW_DIR/agent-relay/values-eks.yaml" -f values.yaml \
     -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
-    -f release-images.values.yaml --timeout 25m; then
+    -f release-images.values.yaml --wait --wait-for-jobs --timeout 25m; then
   upgrade_ok=true
-  if [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
-    JOBS="$(admin_jobs)"
-    [ -n "$JOBS" ] || upgrade_ok=false
-    while $upgrade_ok && IFS= read -r JOB; do
-      kubectl -n agent-relay wait --for=condition=complete "job/$JOB" --timeout=10m \
-        || upgrade_ok=false
-    done <<<"$JOBS"
-  fi
+  JOBS="$(release_jobs)"
+  [ -n "$JOBS" ] || upgrade_ok=false
+  while $upgrade_ok && IFS= read -r JOB; do
+    kubectl -n agent-relay wait --for=condition=complete "job/$JOB" --timeout=10m \
+      || upgrade_ok=false
+  done <<<"$JOBS"
   $upgrade_ok && kubectl -n agent-relay rollout status deploy --timeout=10m \
     || upgrade_ok=false
 fi
@@ -382,8 +377,10 @@ if $upgrade_ok && [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin
 fi
 
 # Always delete the temporary copy, including after a failed upgrade.
-bash postgres-setup.sh delete-admin-jobs
+cleanup_ok=true
+bash postgres-setup.sh delete-admin-jobs || cleanup_ok=false
 $upgrade_ok || { echo "upgrade or a temporary-credential Job failed" >&2; exit 1; }
+$cleanup_ok || { echo "temporary hoopdb-admin-jobs Secret was not deleted; run: bash postgres-setup.sh delete-admin-jobs" >&2; exit 1; }
 echo "upgrade ok"
 ```
 
@@ -396,10 +393,10 @@ for legacy installs is a follow-up under #480.
 
 If an earlier attempt left a failed bootstrap Job, delete it before retrying.
 A Job's pod template is immutable, so Helm does not rerun it. Define
-`admin_jobs` (above) in your shell, then:
+`release_jobs` (above) in your shell, then:
 
 ```sh
-admin_jobs | while IFS= read -r JOB; do kubectl -n agent-relay delete job "$JOB"; done
+release_jobs | while IFS= read -r JOB; do kubectl -n agent-relay delete job "$JOB"; done
 ```
 
 Then run steps 1 to 3 with the same release. Existing-install ownership
