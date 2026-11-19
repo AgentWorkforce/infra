@@ -1,5 +1,9 @@
 # Prepare edge and Desktop feed configuration
 
+This is an operator guide. For the customer-facing sequence, use
+[GCP customer setup](README.md); the operator prepares these overlays from the
+confirmed inputs.
+
 `scripts/selfhost/prepare-gcp-edge.py` prepares consistent public origins,
 Desktop links and signed-feed inputs for the external GKE install. It writes
 local JSON files accepted by Helm. It performs no cloud calls, deployment,
@@ -17,6 +21,10 @@ replace every placeholder. Supply the four final DNS names, the Desktop
 identity, the feed bucket and the signer's Ed25519 public key (canonical
 base64 of 32 bytes). Keep private keys, publisher credentials and origin
 header values in the approved secret-management system.
+
+For Cloudflare with corporate VPN access, use the
+[VPN + Cloudflare profile](CLOUDFLARE-VPN.md) and its
+[input template](edge-site-cloudflare-vpn.example.json).
 
 The `edge` options are:
 
@@ -47,6 +55,12 @@ output files. It produces three files, plus a fourth in Cloudflare mode:
 | `desktop-feed.values.json` | GCS storage and the existing signing Secret, enabled together |
 | `desktop-build.json` | Matching Desktop identity, site, public key and prepare-only workflow metadata |
 | `origin-locked.values.json` | Cloudflare only: trust three proxy entries after direct-origin denial has been proven |
+
+The preparer uses the fixed `agent-relay` resource names. Keep
+`name = "agent-relay"` in the VPN and platform Terraform roots for this profile,
+and confirm `gkeIngress.staticIpName` equals `vpn_network.ingress.name` or the
+manually reserved name. Custom resource names require separately reviewed Helm
+overrides after the generated files, including the Ingress IP and edge policies.
 
 Generate the ordinary `values.yaml` with organization, resource, network and
 Secret references from the install guide. Retain approved branding before

@@ -10,7 +10,7 @@ Terraform modules and Helm charts for customer-owned Agent Relay installations o
 - [Local code loop](kind-development.md): `make dev` on an existing Kind stack, frontend HMR and backend code-watch rebuilds.
 - [Full application proof](terraform-helm-application-proof.md): required lifecycle evidence and current gaps.
 - [Enterprise AWS installation and first-user guide](enterprise-aws-install.md): customer roles, SSO, Desktop downloads, device approval and acceptance; release preparation with explicit remaining gates.
-- [GCP (GKE) install guide](gcp-install/0-START-HERE.md): customer-neutral, tested copy-paste install of agent-relay-2026.11.1 on an existing GKE cluster (Terraform or bring-your-own Cloud SQL, GCS, Memorystore, Pub/Sub, Workload Identity), with what is not yet qualified on GKE.
+- [GCP customer setup](gcp-install/README.md): confirm inputs, review/apply Terraform and configure DNS; Agent Relay completes application setup with the approved operator. The [operator reference](gcp-install/0-START-HERE.md) holds the detailed commands, alternatives and recovery procedures.
 - [Enterprise operator controls](enterprise-customer-controls.md): generic operator controls, profile-specific downloads and disabled-Flows acceptance.
 - [Slack app](self-hosted-slack-relay.md) (optional): people talk to agents in Slack; each thread gets its own long-running, resumable agent on the install's relay.
 - [relaygate](self-hosted-relaygate.md) (optional): the governance gate between agents and Relaycast/Sessions: groups, mode bits and a classifier on everything that crosses a group boundary or leaves through Slack. [Diagram](diagrams/slack-relay-relaygate.png).

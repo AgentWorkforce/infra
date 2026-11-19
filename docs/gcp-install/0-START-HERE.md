@@ -1,5 +1,12 @@
 # Install Agent Relay on your GKE cluster
 
+**Customer handoff:** start with [GCP customer setup](README.md), the short path
+for inputs, Terraform and DNS. This page is the detailed operator reference,
+including alternative secret-delivery methods, optional features, upgrades,
+recovery and teardown. Use the sections that match the approved installation.
+Its release pins below describe this reference's release; a newer edge install
+needs the compatible release selected for that deployment.
+
 Numbered steps, in order. Copy each block, replace `<...>`, and check the
 **Done when** line before moving on. This takes about 1½ hours, most of it
 waiting on Google Cloud (the HTTPS certificate alone can take up to an hour).
