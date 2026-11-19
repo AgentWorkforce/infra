@@ -374,8 +374,9 @@ class ScriptTest(unittest.TestCase):
         (self.fake / "jobs.json").write_text(json.dumps({"items": [self.job("done")]}))
         p, report = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7", JOB_TIMEOUT_SECONDS="60")
         self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("job migrate-done: complete", p.stderr)
         jobs = (report / "jobs.txt").read_text()
-        self.assertIn("### job migrate-done", jobs)
+        self.assertIn("### job migrate-done Complete", jobs)
         self.assertIn("applied 0049_x", jobs)
         self.assertIn("migrations done, exit 0", jobs)
         self.assertEqual(jobs.count("[line withheld: may contain a credential]"), 2)
@@ -383,9 +384,17 @@ class ScriptTest(unittest.TestCase):
             if f.is_file():
                 self.assertNotIn("JOBSECRET", f.read_text(errors="ignore"))
                 self.assertNotIn("JOBPW2", f.read_text(errors="ignore"))
-        self.assertIn("job migrate-done: complete", p.stderr)
-        pod = json.loads(next(l for l in (report / "state.jsonl").read_text().splitlines() if '"pod"' in l))
-        self.assertEqual(pod, {"pod": "web-1", "ready": True, "restarts": 2, "imageIDs": ["img@sha256:abc"]})
+        lines = [json.loads(l) for l in (report / "state.jsonl").read_text().splitlines()]
+        self.assertIn({"pod": "web-1", "ready": True, "restarts": 2, "imageIDs": ["img@sha256:abc"]}, lines)
+        self.assertIn("Complete", [l.get("state") for l in lines if l.get("job") == "migrate-done"])
+
+    def test_apply_without_new_jobs_says_so_and_still_records_old_ones(self):
+        self.render({"a": 2}, DEPLOY)
+        (self.fake / "jobs.json").write_text(json.dumps({"items": [self.job("done", created="2000-01-01T00:00:00Z")]}))
+        p, report = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7", JOB_TIMEOUT_SECONDS="60")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("no Jobs created by this upgrade", p.stderr)
+        self.assertIn("### job migrate-done Complete", (report / "jobs.txt").read_text())
 
     def test_apply_fails_on_failed_release_job(self):
         self.render({"a": 2}, DEPLOY)

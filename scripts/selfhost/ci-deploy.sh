@@ -220,6 +220,27 @@ health(){
   done
 }
 
+# record_jobs <release> <ns>: every Job of the release now in the cluster, whatever its age (a chart Job keeps its
+# name while its inputs are unchanged, so a re-run sees the one an earlier upgrade created): name, Complete/Failed,
+# completionTime on stderr and in state.jsonl, and the last JOB_LOG_LINES (40) lines of its log in jobs.txt.
+# Lines that look like they carry a credential (a URL with userinfo, or password/secret/token followed by = or :)
+# are replaced, never copied.
+record_jobs(){
+  local r=$1 ns=$2 name
+  kubectl -n "$ns" get jobs -o json | jq -c --arg r "$r" '.items[]
+    | select(.metadata.annotations["meta.helm.sh/release-name"] == $r or .metadata.labels["app.kubernetes.io/instance"] == $r)
+    | {job: .metadata.name, created: .metadata.creationTimestamp, completed: .status.completionTime,
+       state: (if ((.status.conditions // []) | any(.type == "Failed" and .status == "True")) then "Failed"
+               elif ((.status.conditions // []) | any(.type == "Complete" and .status == "True")) then "Complete" else "Active" end)}' |
+    while read -r j; do
+      echo "$j"; name=$(jq -r .job <<<"$j")
+      { echo "### job $name $(jq -r .state <<<"$j")"
+        kubectl -n "$ns" logs "job/$name" --all-containers --tail="${JOB_LOG_LINES:-40}" 2>&1 |
+          sed -E '/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/[:space:]]*@|([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])[^[:space:]]*[=:]/c\[line withheld: may contain a credential]' || true
+        echo; } >> "$REPORT_DIR/jobs.txt"
+    done
+}
+
 record_state(){ # versions now running, for the run record
   local r ns
   for r in $(releases); do
@@ -230,21 +251,8 @@ record_state(){ # versions now running, for the run record
     kubectl -n "$ns" get pods -l "app.kubernetes.io/instance=$r" -o json |
       jq -c '.items[] | select(.status.phase == "Running") | {pod: .metadata.name, ready: ((.status.conditions // []) | any(.type == "Ready" and .status == "True")),
         restarts: ([.status.containerStatuses[]?.restartCount] | add), imageIDs: [.status.containerStatuses[]?.imageID]}'
+    record_jobs "$r" "$ns"
   done | tee "$REPORT_DIR/state.jsonl" >&2
-}
-
-# job_proof <ns> <jobs json>: record each completed Job and the last lines of its log (migration ids, exit),
-# so the run itself proves what ran. Logs go to the run report only. Lines that look like they carry a credential
-# (a URL with userinfo, or password/secret/token=) are replaced, never copied.
-job_proof(){
-  local ns=$1 name
-  for name in $(jq -r '.[].name' <<<"$2"); do
-    log "job $name: complete"
-    { echo "### job $name"
-      kubectl -n "$ns" logs "job/$name" --all-containers --tail="${JOB_LOG_LINES:-40}" 2>&1 |
-        sed -E '/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/[:space:]]*@|([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])[^[:space:]]*[=:]/c\[line withheld: may contain a credential]' || true
-      echo; } >> "$REPORT_DIR/jobs.txt"
-  done
 }
 
 # wait_release_jobs <release> <ns> <RFC3339 start> <timeout seconds>: helm --wait does not wait for plain Jobs
@@ -261,7 +269,11 @@ wait_release_jobs(){
     failed=$(jq -r '[.[] | select(.failed) | .name] | join(" ")' <<<"$jobs")
     [ -z "$failed" ] || { log "jobs failed: $failed"; return 1; }
     active=$(jq -r '[.[] | select((.done or .failed) | not) | .name] | join(" ")' <<<"$jobs")
-    [ -n "$active" ] || { job_proof "$ns" "$jobs"; return 0; }
+    if [ -z "$active" ]; then
+      if [ "$(jq length <<<"$jobs")" = 0 ]; then log "no Jobs created by this upgrade"
+      else jq -r '.[].name' <<<"$jobs" | while read -r j; do log "job $j: complete"; done; fi
+      return 0
+    fi
     [ $SECONDS -lt $deadline ] || { log "jobs still running at the timeout: $active"; return 1; }
     sleep "${POLL_SECONDS:-10}"
   done
