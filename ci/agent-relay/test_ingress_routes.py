@@ -54,6 +54,9 @@ class Routes(unittest.TestCase):
             ("single-host", (), (*CONTROL_PATHS, "/api")),
             ("default", ("--set", "runtime.apiBasePath=/custom/api"),
              tuple(p.replace("/cloud", "/custom") for p in CONTROL_PATHS)),
+            ("default", ("--set", "runtime.apiBasePath=/api"),
+             tuple(dict.fromkeys(p.replace("/cloud", "") for p in CONTROL_PATHS
+                                 if p != "/cloud/.well-known"))),
         ):
             with self.subTest(fixture=fixture, extra=extra):
                 docs = documents(run("helm", "template", "ci", "charts/relay-webapp", "-f",
@@ -78,7 +81,10 @@ class Routes(unittest.TestCase):
         for chief in (False, True):
             for flows in (False, True):
                 with self.subTest(chief=chief, flows=flows):
-                    env = {**os.environ, "EKS_ALB_DOMAIN": "relay.example.com", "EKS_ALB_CERT_ARN": "render-only",
+                    # Fixtures must not inherit an operator's install settings.
+                    clean_env = {k: v for k, v in os.environ.items()
+                                 if not k.startswith("EKS_ALB_") and k != "EKS_INGRESS_CLASS"}
+                    env = {**clean_env, "EKS_ALB_DOMAIN": "relay.example.com", "EKS_ALB_CERT_ARN": "render-only",
                            "EKS_ALB_CHIEF_SERVICE": "relaychief-control" if chief else "",
                            "EKS_ALB_RELAYFILE_CONTROL": str(flows).lower()}
                     self.assert_routes(dashboard(documents(run("bash", "scripts/selfhost/eks-alb-ingress.sh", env=env))), chief=chief)

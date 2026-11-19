@@ -127,8 +127,11 @@ Never claim all of /.well-known: ACME uses /.well-known/acme-challenge. */ -}}
   "/mcp" (printf "%s/mcp" $base)
   "/.well-known/oauth-protected-resource"
   "/.well-known/oauth-authorization-server"
-  "/.well-known/openid-configuration"
-  (printf "%s/.well-known" $base) (printf "%s/oauth" $base) -}}
+  "/.well-known/openid-configuration" -}}
+{{- /* An API mounted at /api has no app base: claim only named root
+discovery paths, leaving ACME and unrelated /.well-known routes alone. */ -}}
+{{- if $base }}{{ $paths = append $paths (printf "%s/.well-known" $base) }}{{ end -}}
+{{- $paths = append $paths (printf "%s/oauth" $base) -}}
 {{- if include "relay-webapp.singleHost" . }}{{ $paths = append $paths "/api" }}{{ end -}}
 {{- $paths | uniq | toJson -}}
 {{- end -}}

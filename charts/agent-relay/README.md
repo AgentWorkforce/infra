@@ -261,6 +261,8 @@ revocation already use `/cloud/api`. Only the named root discovery prefixes
 are claimed; `/.well-known/acme-challenge` remains available for ACME.
 The leaf and GKE Ingress share `relay-webapp.controlPaths`; app-prefixed paths
 are derived from the parent of `runtime.apiBasePath` (default `/cloud`).
+With `/api` at the root, only named root discovery prefixes are routed;
+the broad `/.well-known` route is omitted.
 
 The GKE dashboard rule has 11 Prefix paths in split-host mode and 12 in
 single-host mode. All Control paths reuse the `api` backend and its
