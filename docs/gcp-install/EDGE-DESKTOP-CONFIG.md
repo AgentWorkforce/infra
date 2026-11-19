@@ -113,8 +113,8 @@ in [relay-app](https://github.com/AgentWorkforce/relay-app). Its
 in GitHub **secrets** so customer metadata is masked in workflow logs. Retain
 branding, signing and notarization configuration. Provision the publisher
 credential directly into that environment. A cloud feed leaves
-`RELEASES_REPOSITORY` unset. When using `desktop-feed-provision.sh`, explicitly
-set `DESKTOP_REPO=AgentWorkforce/relay-app`.
+`RELEASES_REPOSITORY` unset. `desktop-feed-provision.sh` uses `relay-app` by
+default; set `DESKTOP_REPO` only for an approved alternative repository.
 
 Prepare from an exact source commit with successful Desktop CI, matching
 `expected-source-sha` and `ci-run-id`, the selected profile and channel, and
