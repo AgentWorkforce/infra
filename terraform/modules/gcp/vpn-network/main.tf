@@ -35,6 +35,10 @@ resource "terraform_data" "guard" {
       error_message = "Project ID does not match the independently approved project number."
     }
     precondition {
+      condition     = !var.enforce_deny_rules || length(var.outbound_rules) > 0
+      error_message = "Explicit deny rules require a non-empty reviewed outbound_rules map; hosted VPN FQDNs may need operator-owned egress policy instead."
+    }
+    precondition {
       condition     = local.private_connector && local.no_overlap
       error_message = "The connector must use unused RFC1918 space, disjoint from every supplied routed range."
     }
@@ -114,7 +118,7 @@ resource "google_compute_firewall" "outbound" {
   depends_on = [terraform_data.guard]
 }
 resource "google_compute_firewall" "deny" {
-  for_each           = var.enabled ? toset(["INGRESS", "EGRESS"]) : toset([])
+  for_each           = var.enabled && var.enforce_deny_rules ? toset(["INGRESS", "EGRESS"]) : toset([])
   project            = var.project_id
   name               = "${var.name}-vpn-deny-${lower(each.key)}"
   network            = data.google_compute_network.this[0].id

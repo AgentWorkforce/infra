@@ -52,10 +52,11 @@ All three clouds have static/mock validation only, not live tunnel qualification
 | allow\_iap\_ssh | Allow IAP TCP forwarding to port 22 on connector-tagged VMs; IAM and the VM remain operator-owned. | `bool` | `false` | no |
 | create\_ingress\_ip | Also reserve the external GKE Ingress IP; skip the guide's manual address creation or import it first. | `bool` | `false` | no |
 | enabled | Explicit opt-in. False creates no resources or cloud data reads. | `bool` | `false` | no |
+| enforce\_deny\_rules | Opt in to explicit 0.0.0.0/0 ingress/egress deny rules for connector-tagged VMs. Requires outbound\_rules; false preserves the existing VPC/hierarchical policy for hosted VPN control planes. | `bool` | `false` | no |
 | existing\_network\_cidrs | Existing node, pod, service, connector, peered and corporate ranges to check for overlap. Include every routed range, not the enclosing VPC/VNet address space. | `list(string)` | `[]` | no |
 | labels | Labels on supported resources. Subnets, routers, NAT and firewall rules do not support labels. | `map(string)` | `{}` | no |
 | name | Unique resource prefix in the existing network. | `string` | `"agent-relay"` | no |
-| outbound\_rules | Explicit IPv4 destinations and single TCP/UDP ports for the connector (VPN server, DNS, HTTPS edge, management). The module creates no outbound allow without a rule; provider-reserved metadata and DNS may bypass network filters. | `map(object({ cidr = string, protocol = string, port = number }))` | `{}` | no |
+| outbound\_rules | Optional IPv4/port allow rules for the connector. Existing VPC policy controls egress unless enforce\_deny\_rules is explicitly enabled; provider-reserved metadata/DNS may bypass filters. | `map(object({ cidr = string, protocol = string, port = number }))` | `{}` | no |
 
 ### Outputs
 

@@ -15,4 +15,5 @@ region                  = "us-central1"
 network_name            = "agent-relay-vpc"
 create_ingress_ip       = false # only true if this root owns the guide's ingress IP
 allow_iap_ssh           = false
+enforce_deny_rules      = false # strict CIDR-based mode; review hosted VPN hostname requirements first
 labels                  = { app = "agent-relay" }

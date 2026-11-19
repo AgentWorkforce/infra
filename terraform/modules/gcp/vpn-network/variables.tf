@@ -30,7 +30,7 @@ variable "existing_network_cidrs" {
   }
 }
 variable "outbound_rules" {
-  description = "Explicit IPv4 destinations and single TCP/UDP ports for the connector (VPN server, DNS, HTTPS edge, management). The module creates no outbound allow without a rule; provider-reserved metadata and DNS may bypass network filters."
+  description = "Optional IPv4/port allow rules for the connector. Existing VPC policy controls egress unless enforce_deny_rules is explicitly enabled; provider-reserved metadata/DNS may bypass filters."
   type        = map(object({ cidr = string, protocol = string, port = number }))
   default     = {}
   validation {
@@ -77,4 +77,10 @@ variable "labels" {
   description = "Labels on supported resources. Subnets, routers, NAT and firewall rules do not support labels."
   type        = map(string)
   default     = {}
+}
+
+variable "enforce_deny_rules" {
+  description = "Opt in to explicit 0.0.0.0/0 ingress/egress deny rules for connector-tagged VMs. Requires outbound_rules; false preserves the existing VPC/hierarchical policy for hosted VPN control planes."
+  type        = bool
+  default     = false
 }

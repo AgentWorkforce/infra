@@ -14,7 +14,10 @@ variables {
   resource_group_name  = "rg"
   virtual_network_name = "vnet"
   connector_cidr       = "10.60.0.0/28"
-  outbound_rules       = { vpn = { cidr = "203.0.113.9/32", protocol = "udp", port = 1194 } }
+  outbound_rules = {
+    edge = { cidr = "203.0.113.20/32", protocol = "tcp", port = 443, priority = 100 }
+    vpn  = { cidr = "203.0.113.9/32", protocol = "udp", port = 1194, priority = 200 }
+  }
 }
 run "default_off" {
   command = plan
@@ -58,6 +61,43 @@ run "public_connector_refused" {
 }
 run "invalid_vpn_port_refused" {
   command = plan
-  variables { outbound_rules = { bad = { cidr = "203.0.113.9/32", protocol = "udp", port = 0 } } }
+  variables { outbound_rules = { bad = { cidr = "203.0.113.9/32", protocol = "udp", port = 0, priority = 300 } } }
+  expect_failures = [var.outbound_rules]
+}
+
+run "insert_earlier_key_keeps_priorities" {
+  command = apply
+  variables {
+    outbound_rules = {
+      dns  = { cidr = "168.63.129.16/32", protocol = "udp", port = 53, priority = 300 }
+      edge = { cidr = "203.0.113.20/32", protocol = "tcp", port = 443, priority = 100 }
+      vpn  = { cidr = "203.0.113.9/32", protocol = "udp", port = 1194, priority = 200 }
+    }
+  }
+  assert {
+    condition     = azurerm_network_security_rule.outbound["edge"].priority == 100 && azurerm_network_security_rule.outbound["vpn"].priority == 200 && azurerm_network_security_rule.outbound["dns"].priority == 300
+    error_message = "Inserting an alphabetically earlier key must not change existing Azure priorities."
+  }
+}
+run "remove_earlier_key_keeps_priorities" {
+  command = apply
+  assert {
+    condition     = length(azurerm_network_security_rule.outbound) == 2 && azurerm_network_security_rule.outbound["edge"].priority == 100 && azurerm_network_security_rule.outbound["vpn"].priority == 200
+    error_message = "Removing the earlier key must preserve the remaining live priorities."
+  }
+}
+run "duplicate_priorities_refused" {
+  command = plan
+  variables {
+    outbound_rules = {
+      one = { cidr = "203.0.113.9/32", protocol = "udp", port = 1194, priority = 100 }
+      two = { cidr = "203.0.113.20/32", protocol = "tcp", port = 443, priority = 100 }
+    }
+  }
+  expect_failures = [var.outbound_rules]
+}
+run "reserved_deny_priority_refused" {
+  command = plan
+  variables { outbound_rules = { bad = { cidr = "203.0.113.9/32", protocol = "udp", port = 1194, priority = 4096 } } }
   expect_failures = [var.outbound_rules]
 }

@@ -30,14 +30,20 @@ variable "existing_network_cidrs" {
   }
 }
 variable "outbound_rules" {
-  description = "Explicit IPv4 destinations and single TCP/UDP ports for the connector (VPN server, DNS, HTTPS edge, management). The module creates no outbound allow without a rule; provider-reserved metadata and DNS may bypass network filters."
-  type        = map(object({ cidr = string, protocol = string, port = number }))
+  description = "Explicit IPv4 destinations and single TCP/UDP ports with stable caller-assigned priorities (100-4095, unique per outbound direction). The module creates no outbound allow without a rule; provider-reserved metadata and DNS may bypass network filters."
+  type        = map(object({ cidr = string, protocol = string, port = number, priority = number }))
   default     = {}
   validation {
     condition = length(var.outbound_rules) <= 100 && alltrue([
       for key in keys(var.outbound_rules) : can(regex("^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$", key))
     ])
     error_message = "Use at most 100 outbound rules, with lowercase resource keys of at most 20 characters."
+  }
+  validation {
+    condition = length(distinct([for r in values(var.outbound_rules) : r.priority])) == length(var.outbound_rules) && alltrue([
+      for r in values(var.outbound_rules) : r.priority >= 100 && r.priority < 4096 && floor(r.priority) == r.priority
+    ])
+    error_message = "Outbound priorities must be unique integers from 100 to 4095; 4096 is reserved for deny. Preserve existing rule priorities when adding or removing keys."
   }
   validation {
     condition = alltrue([for r in values(var.outbound_rules) :
@@ -64,3 +70,5 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# Never derive priorities from map order: inserting a key must not renumber live rules.

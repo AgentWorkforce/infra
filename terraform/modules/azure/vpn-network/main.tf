@@ -98,7 +98,7 @@ resource "azurerm_network_security_group" "connector" {
 resource "azurerm_network_security_rule" "outbound" {
   for_each                    = var.enabled ? var.outbound_rules : {}
   name                        = "out-${each.key}"
-  priority                    = 100 + index(sort(keys(var.outbound_rules)), each.key)
+  priority                    = each.value.priority
   direction                   = "Outbound"
   access                      = "Allow"
   protocol                    = title(each.value.protocol)

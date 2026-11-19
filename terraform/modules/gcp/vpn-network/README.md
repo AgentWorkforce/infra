@@ -2,7 +2,7 @@
 
 Opt-in network prerequisites for a customer-managed corporate VPN connector:
 a new private connector subnet, a dedicated fixed egress address/NAT, and
-explicit connector firewall rules. `enabled = false` by default creates no
+optional connector firewall rules. `enabled = false` by default creates no
 resources and performs no cloud data reads. Existing install roots are unchanged.
 
 An optional global external ingress IP is available separately from the VPN egress IP. It does not create a load balancer or a certificate.
@@ -15,6 +15,12 @@ provider configuration. The customer supplies the VM, VPN software and credentia
 
 Provider-schema validated and covered by mock-provider tests only; no live
 VPN or application qualification is implied. No HA claim.
+
+GCP's explicit ingress/egress catch-all deny rules are separately opt-in with
+`enforce_deny_rules = true`. The default uses the existing network firewall
+policy so a hosted VPN control plane is not blocked by an empty static
+allowlist. Strict mode requires reviewed outbound rules; hostname-aware
+controls belong in the operator's existing firewall/proxy policy.
 
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
@@ -59,10 +65,11 @@ VPN or application qualification is implied. No HA claim.
 | allow\_iap\_ssh | Allow IAP TCP forwarding to port 22 on connector-tagged VMs; IAM and the VM remain operator-owned. | `bool` | `false` | no |
 | create\_ingress\_ip | Also reserve the external GKE Ingress IP; skip the guide's manual address creation or import it first. | `bool` | `false` | no |
 | enabled | Explicit opt-in. False creates no resources or cloud data reads. | `bool` | `false` | no |
+| enforce\_deny\_rules | Opt in to explicit 0.0.0.0/0 ingress/egress deny rules for connector-tagged VMs. Requires outbound\_rules; false preserves the existing VPC/hierarchical policy for hosted VPN control planes. | `bool` | `false` | no |
 | existing\_network\_cidrs | Existing node, pod, service, connector, peered and corporate ranges to check for overlap. Include every routed range, not the enclosing VPC/VNet address space. | `list(string)` | `[]` | no |
 | labels | Labels on supported resources. Subnets, routers, NAT and firewall rules do not support labels. | `map(string)` | `{}` | no |
 | name | Unique resource prefix in the existing network. | `string` | `"agent-relay"` | no |
-| outbound\_rules | Explicit IPv4 destinations and single TCP/UDP ports for the connector (VPN server, DNS, HTTPS edge, management). The module creates no outbound allow without a rule; provider-reserved metadata and DNS may bypass network filters. | `map(object({ cidr = string, protocol = string, port = number }))` | `{}` | no |
+| outbound\_rules | Optional IPv4/port allow rules for the connector. Existing VPC policy controls egress unless enforce\_deny\_rules is explicitly enabled; provider-reserved metadata/DNS may bypass filters. | `map(object({ cidr = string, protocol = string, port = number }))` | `{}` | no |
 
 ### Outputs
 

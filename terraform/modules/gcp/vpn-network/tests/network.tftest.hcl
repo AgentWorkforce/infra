@@ -25,6 +25,7 @@ run "default_off" {
 }
 run "dedicated_egress" {
   command = apply
+  variables { enforce_deny_rules = true }
   assert {
     condition     = google_compute_router_nat.this[0].nat_ip_allocate_option == "MANUAL_ONLY" && toset(google_compute_router_nat.this[0].nat_ips) == toset([google_compute_address.egress[0].self_link]) && google_compute_router_nat.this[0].source_subnetwork_ip_ranges_to_nat == "LIST_OF_SUBNETWORKS" && one(google_compute_router_nat.this[0].subnetwork).name == google_compute_subnetwork.connector[0].id
     error_message = "Only the new connector subnet can use the reserved NAT address."
@@ -65,4 +66,21 @@ run "invalid_vpn_port_refused" {
   command = plan
   variables { outbound_rules = { bad = { cidr = "203.0.113.9/32", protocol = "udp", port = 0 } } }
   expect_failures = [var.outbound_rules]
+}
+
+run "default_egress_uses_existing_policy" {
+  command = apply
+  variables { outbound_rules = {} }
+  assert {
+    condition     = length(google_compute_firewall.deny) == 0 && length(google_compute_firewall.outbound) == 0 && length(google_compute_router_nat.this) == 1
+    error_message = "Default enabled networking must not add explicit catch-all firewall rules or block hosted VPN control planes with an empty allowlist."
+  }
+}
+run "strict_mode_needs_reviewed_destinations" {
+  command = plan
+  variables {
+    enforce_deny_rules = true
+    outbound_rules     = {}
+  }
+  expect_failures = [terraform_data.guard]
 }

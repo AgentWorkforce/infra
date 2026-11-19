@@ -51,7 +51,7 @@ All three clouds have static/mock validation only, not live tunnel qualification
 | enabled | Explicit opt-in. False creates no resources or cloud data reads. | `bool` | `false` | no |
 | existing\_network\_cidrs | Existing node, pod, service, connector, peered and corporate ranges to check for overlap. Include every routed range, not the enclosing VPC/VNet address space. | `list(string)` | `[]` | no |
 | name | Unique resource prefix in the existing network. | `string` | `"agent-relay"` | no |
-| outbound\_rules | Explicit IPv4 destinations and single TCP/UDP ports for the connector (VPN server, DNS, HTTPS edge, management). The module creates no outbound allow without a rule; provider-reserved metadata and DNS may bypass network filters. | `map(object({ cidr = string, protocol = string, port = number }))` | `{}` | no |
+| outbound\_rules | Explicit IPv4 destinations and single TCP/UDP ports with stable caller-assigned priorities (100-4095, unique per outbound direction). The module creates no outbound allow without a rule; provider-reserved metadata and DNS may bypass network filters. | `map(object({ cidr = string, protocol = string, port = number, priority = number }))` | `{}` | no |
 | tags | Tags applied to supported resources. | `map(string)` | `{}` | no |
 
 ### Outputs

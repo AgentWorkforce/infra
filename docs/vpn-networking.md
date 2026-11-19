@@ -14,7 +14,7 @@ plan before any apply. They use existing cloud accounts/projects, VPCs/VNets and
 
 | Cloud | Module | Standalone example | Resources when enabled |
 | --- | --- | --- | --- |
-| GCP | [gcp/vpn-network](../terraform/modules/gcp/vpn-network) | [gcp-vpn-network](../terraform/examples/gcp-vpn-network) | Connector subnet, dedicated Cloud Router/NAT and regional static IP, connector-tagged firewall rules; optional external GKE ingress IP and IAP SSH |
+| GCP | [gcp/vpn-network](../terraform/modules/gcp/vpn-network) | [gcp-vpn-network](../terraform/examples/gcp-vpn-network) | Connector subnet, dedicated Cloud Router/NAT and regional static IP, optional connector-tagged firewall rules, external GKE ingress IP and IAP SSH |
 | AWS | [aws/vpn-network](../terraform/modules/aws/vpn-network) | [aws-vpn-network](../terraform/examples/aws-vpn-network) | Private connector subnet, dedicated route table, NAT Gateway/EIP in an existing public subnet, connector security group with no inbound rules |
 | Azure | [azure/vpn-network](../terraform/modules/azure/vpn-network) | [azure-vpn-network](../terraform/examples/azure-vpn-network) | Connector subnet, Standard static public IP/NAT Gateway, subnet associations and an NSG with explicit inbound/outbound denies |
 
@@ -70,8 +70,24 @@ No existing workload subnet or route table is adopted or edited. New resources
 have a separate `vpn-connector` / `vpn-egress` name. GCP's existing foundation
 `connector` is a Serverless VPC Access connector, not a VPN connector.
 
-`outbound_rules` is empty by default. Add only the destinations and TCP/UDP
-ports required by the VPN vendor, edge, resolver and approved management path.
+`outbound_rules` is empty by default. On AWS and Azure the connector has no
+module-provided outbound access until rules are supplied. On **GCP**, explicit
+catch-all deny rules are a separate opt-in, `enforce_deny_rules = true` (default
+false). Without it, the existing VPC/hierarchical firewall policy controls
+traffic; no explicit `0.0.0.0/0` deny rules are created. Inspect that existing
+policy rather than assuming either connectivity or isolation.
+
+GCP strict mode requires a non-empty reviewed `outbound_rules` map. Static
+CIDRs cannot reliably describe a hosted VPN control plane whose hostname
+addresses change. For those deployments, keep strict mode off and use the
+operator's existing FQDN-aware firewall or egress proxy policy; this module
+does not resolve hostnames into a permanent IP allowlist.
+
+Add only the destinations and TCP/UDP ports required by the VPN vendor, edge,
+resolver and approved management path. Each rule permits one port: use two
+keys for ports 443 and 1194 to the same CIDR. Azure additionally requires a
+unique caller-assigned `priority` (100-4095) on every rule; preserve existing
+priorities when adding or removing entries. Priority 4096 is reserved for deny.
 The example uses documentation-only addresses: replace them with reviewed
 values. Provider-reserved metadata/DNS traffic may bypass firewall or security
 group rules; these rules do not establish a complete data-egress or PHI boundary.
@@ -150,6 +166,8 @@ Before handing over an enabled profile, record:
 NAT gateways/static addresses incur provider charges when enabled. This is a
 single-connector network path; it makes no high-availability claim.
 
-Provider references: [AWS appliance forwarding](https://docs.aws.amazon.com/vpc/latest/userguide/work-with-nat-instances.html),
+Provider references: [GCP firewall behavior](https://cloud.google.com/firewall/docs/firewalls),
+[Azure stable rule priorities](https://learn.microsoft.com/en-us/azure/virtual-network/network-security-groups-overview),
+[AWS appliance forwarding](https://docs.aws.amazon.com/vpc/latest/userguide/work-with-nat-instances.html),
 [Azure NAT routing precedence](https://learn.microsoft.com/en-us/azure/nat-gateway/nat-gateway-design),
 [Azure static NAT addresses](https://learn.microsoft.com/en-us/azure/nat-gateway/nat-gateway-snat).

@@ -14,7 +14,7 @@ variables {
   resource_group_name  = "rg"
   virtual_network_name = "vnet"
   connector_cidr       = "10.60.0.0/28"
-  outbound_rules       = { vpn = { cidr = "203.0.113.9/32", protocol = "udp", port = 1194 } }
+  outbound_rules       = { vpn = { cidr = "203.0.113.9/32", protocol = "udp", port = 1194, priority = 200 } }
 }
 run "disabled_example" {
   command = plan

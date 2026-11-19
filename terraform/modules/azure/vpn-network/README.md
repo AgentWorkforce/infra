@@ -16,6 +16,10 @@ provider configuration. The customer supplies the VM, VPN software and credentia
 Provider-schema validated and covered by mock-provider tests only; no live
 VPN or application qualification is implied. No HA claim.
 
+Each outbound rule requires a stable, unique `priority` from 100 to 4095.
+Keep those values when adding/removing rule keys; do not renumber rules by
+alphabetical order. Priority 4096 is reserved for the default deny.
+
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
 
@@ -59,7 +63,7 @@ VPN or application qualification is implied. No HA claim.
 | enabled | Explicit opt-in. False creates no resources or cloud data reads. | `bool` | `false` | no |
 | existing\_network\_cidrs | Existing node, pod, service, connector, peered and corporate ranges to check for overlap. Include every routed range, not the enclosing VPC/VNet address space. | `list(string)` | `[]` | no |
 | name | Unique resource prefix in the existing network. | `string` | `"agent-relay"` | no |
-| outbound\_rules | Explicit IPv4 destinations and single TCP/UDP ports for the connector (VPN server, DNS, HTTPS edge, management). The module creates no outbound allow without a rule; provider-reserved metadata and DNS may bypass network filters. | `map(object({ cidr = string, protocol = string, port = number }))` | `{}` | no |
+| outbound\_rules | Explicit IPv4 destinations and single TCP/UDP ports with stable caller-assigned priorities (100-4095, unique per outbound direction). The module creates no outbound allow without a rule; provider-reserved metadata and DNS may bypass network filters. | `map(object({ cidr = string, protocol = string, port = number, priority = number }))` | `{}` | no |
 | tags | Tags applied to supported resources. | `map(string)` | `{}` | no |
 
 ### Outputs
