@@ -42,14 +42,22 @@ locals {
   # and everyone else on those paths is denied. A Cloud Armor rule that admits
   # ends evaluation, so admitted requests meet no later rule: that is why each
   # rule states its own limit and why the secret header rule must come first.
-  client_groups = { for r in local.sp.client_ip_rules : r.name => chunklist(r.cidrs, var.max_subexpressions - (length(r.hosts) > 0 ? 2 : 1)) }
+  # A rule's clients are terms: one per address group (a single subexpression
+  # for the whole list) and one per CIDR. Address groups are existing project
+  # resources named here; the google provider below 8.0 cannot create one with
+  # purpose CLOUD_ARMOR, so they are made with gcloud (README).
+  client_terms = { for r in local.sp.client_ip_rules : r.name => concat(
+    [for g in r.address_groups : "evaluateAddressGroup('${g}', origin.user_ip)"],
+    [for c in r.cidrs : "inIpRange(origin.user_ip, '${c}')"],
+  ) }
+  client_groups = { for r in local.sp.client_ip_rules : r.name => chunklist(local.client_terms[r.name], var.max_subexpressions - (length(r.hosts) > 0 ? 2 : 1)) }
   client_rules = merge([for i, r in local.sp.client_ip_rules : merge({
     for j, group in local.client_groups[r.name] : "${r.name}-allow-${j}" => {
       priority    = 10000 + i * 1000 + j
       action      = r.rate_limit == null ? "allow" : "throttle"
       rate        = { count = try(r.rate_limit.count, 0), interval_sec = try(r.rate_limit.interval_sec, 0) }
       description = "${r.name}: listed client addresses on ${join(", ", concat(r.hosts, r.path_prefixes))}"
-      expression  = "${local.path_match[r.name]} && (${join(" || ", [for c in group : "inIpRange(origin.user_ip, '${c}')"])})"
+      expression  = "${local.path_match[r.name]} && (${join(" || ", group)})"
     }
     }, { "${r.name}-deny" = {
       priority    = 10000 + i * 1000 + 999

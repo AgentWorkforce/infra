@@ -45,7 +45,7 @@ variable "security_policy" {
     - source_ip_allowlist: when non-empty (or cloudflare.enabled), the default rule becomes deny 403 and only these connecting addresses are admitted: a pure source-IP allowlist.
     - cloudflare: admit Cloudflare's published ranges as the connecting addresses (origin lockdown) and read the client address from CF-Connecting-IP.
     - client_ip_header: header an upstream proxy sets with the real client address (Cloud Armor origin.user_ip). Only trustworthy when nothing but that proxy can reach the load balancer: combine with an allowlist of the proxy's ranges, or origin_secret_header.
-    - client_ip_rules: per-client allowlists scoped to paths (and optionally hosts), evaluated in list order. The first rule whose path_prefixes (and hosts, when given) match a request decides it: admitted if the client address (origin.user_ip) is in cidrs, denied 403 otherwise. A last rule with path_prefixes = ["/"] therefore closes every other path to everyone but its cidrs. Requires origin_secret_header. An admitted request meets no later rule, including rate_limits, so every rule states its own limit: rate_limit (requests per interval per client address), or unthrottled = true. With a rule for "/" set rate_limits = [] and express sign-in limits as an earlier, narrower rule.
+    - client_ip_rules: per-client allowlists scoped to paths (and optionally hosts), evaluated in list order. The first rule whose path_prefixes (and hosts, when given) match a request decides it: admitted if the client address (origin.user_ip) is in cidrs, denied 403 otherwise. A last rule with path_prefixes = ["/"] therefore closes every other path to everyone but its cidrs. Requires origin_secret_header. A rule lists its clients as cidrs, as address_groups, or both. address_groups are names of existing project-scoped Cloud Armor address groups (purpose CLOUD_ARMOR, created outside this module; needs Cloud Armor Enterprise): each is one subexpression whatever its size, so a vendor's long published list fits in one rule. An admitted request meets no later rule, including rate_limits, so every rule states its own limit: rate_limit (requests per interval per client address), or unthrottled = true. With a rule for "/" set rate_limits = [] and express sign-in limits as an earlier, narrower rule.
     - connecting_asns, connecting_address_groups: where the fronting proxy connects from, as autonomous system numbers (Cloudflare: 13335) or names of existing Cloud Armor address groups holding its ranges (Cloud Armor Enterprise). A connection from anywhere else is denied 403 right after the secret-header check. client_ip_rules require one of them: a request those rules admit is not checked against the allowlist of connecting addresses, so otherwise a caller that holds the secret header could skip the proxy and choose its own client address. secret_header_only = true accepts that instead.
     - adaptive_protection: Layer 7 DDoS detection (alerts; automatic deployment needs Cloud Armor Enterprise).
   EOT
@@ -93,12 +93,13 @@ variable "security_policy" {
     connecting_address_groups = optional(list(string), [])
     secret_header_only        = optional(bool, false)
     client_ip_rules = optional(list(object({
-      name          = string
-      path_prefixes = list(string)
-      hosts         = optional(list(string), [])
-      cidrs         = list(string)
-      rate_limit    = optional(object({ count = number, interval_sec = number }))
-      unthrottled   = optional(bool, false)
+      name           = string
+      path_prefixes  = list(string)
+      hosts          = optional(list(string), [])
+      cidrs          = optional(list(string), [])
+      address_groups = optional(list(string), [])
+      rate_limit     = optional(object({ count = number, interval_sec = number }))
+      unthrottled    = optional(bool, false)
     })), [])
     adaptive_protection = optional(bool, false)
   })
@@ -127,12 +128,12 @@ variable "security_policy" {
   }
   validation {
     condition = alltrue([for r in var.security_policy.client_ip_rules :
-      can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && length(r.cidrs) >= 1 && length(r.cidrs) <= 2500 &&
+      can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && length(r.cidrs) + length(r.address_groups) >= 1 && length(r.cidrs) <= 2500 && length(r.address_groups) <= 8 && alltrue([for g in r.address_groups : can(regex("^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$", g))]) &&
       length(r.path_prefixes) >= 1 && alltrue([for p in r.path_prefixes : can(regex("^/[A-Za-z0-9/._~-]*$", p))]) &&
       alltrue([for h in r.hosts : can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", h))]) &&
       (r.rate_limit == null ? true : r.rate_limit.count >= 1 && contains([10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1800, 2700, 3600], r.rate_limit.interval_sec))
     ]) && length(var.security_policy.client_ip_rules) <= 9 && length(distinct(var.security_policy.client_ip_rules[*].name)) == length(var.security_policy.client_ip_rules)
-    error_message = "At most 9 client_ip_rules with unique lowercase names, 1-2500 cidrs, path_prefixes that start with / and hold only unreserved URL characters, lowercase DNS hosts, and a rate_limit with count >= 1 and an interval_sec Cloud Armor accepts."
+    error_message = "At most 9 client_ip_rules with unique lowercase names, at least one of cidrs (up to 2500) or address_groups (up to 8 names, not full paths), path_prefixes that start with / and hold only unreserved URL characters, lowercase DNS hosts, and a rate_limit with count >= 1 and an interval_sec Cloud Armor accepts."
   }
   validation {
     condition     = length(var.security_policy.connecting_asns) + length(var.security_policy.connecting_address_groups) <= 8 && alltrue([for a in var.security_policy.connecting_asns : a >= 1 && a <= 4294967295 && floor(a) == a]) && alltrue([for g in var.security_policy.connecting_address_groups : can(regex("^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$", g))])

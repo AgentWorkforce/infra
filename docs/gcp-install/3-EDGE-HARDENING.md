@@ -293,9 +293,28 @@ Cloudflare can reach it.
    the secret header, the two WAF rules and the sign-in and staff rules,
    about 13 are left: roughly 100 vendor ranges. Terraform refuses a plan
    that needs more and says how many it counted (`rule_counts` in the `edge`
-   output shows the same). For a vendor that publishes more, merge adjacent
-   ranges where you accept the wider block, or enforce that vendor's list as
-   a Cloudflare WAF custom rule and keep only your own ranges here.
+   output shows the same). For a vendor that publishes more, there are two
+   ways:
+
+   - **An address group** (needs Cloud Armor Enterprise, which is billed and
+     takes up to an hour to activate). The whole list then counts as one
+     entry in one rule:
+
+     ```sh
+     gcloud compute project-info update --cloud-armor-tier CA_ENTERPRISE_PAYGO
+     gcloud network-security address-groups create agent-relay-vendor-a --location global \
+       --type IPv4 --capacity 600 --purpose CLOUD_ARMOR
+     gcloud network-security address-groups add-items agent-relay-vendor-a --location global \
+       --items <range>,<range>,...
+     ```
+
+     and in the rule, add `address_groups = ["agent-relay-vendor-a"]` and
+     remove only that vendor's ranges from `cidrs`. Keep your own ranges
+     there (`cidrs = ["<your range>"]`): the rule denies everyone it does not
+     list, so without them your users' uploads would get 403. When the vendor changes its list, update the
+     group with `add-items` and `remove-items`; Terraform is not involved.
+   - **A Cloudflare WAF custom rule** for that vendor's list, keeping only
+     your own ranges here. No extra Google cost.
 
    The project also has a limit of 20 such rules across all its policies
    (`SECURITY_POLICY_CEVAL_RULES`). That one can be raised, and a request was
