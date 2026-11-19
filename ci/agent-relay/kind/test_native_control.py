@@ -170,6 +170,24 @@ class NativeControlTests(unittest.TestCase):
         modern["/readyz"]["capabilities"].update(usage_people=False, events_shim=False)
         result = run(modern, ["usage", "launch"])
         self.assertEqual(result.returncode, 0, result.stderr)
+        # Exact shape at the pinned 0.5.24 image's source edad6432: session_delete is false without erase wiring.
+        current = deepcopy(modern)
+        current["/readyz"]["capabilities"].update(session_delete=False, enrollment_keys=True)
+        result = run(current, ["usage", "launch"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        current_core = deepcopy(current)
+        current_core["/readyz"]["capabilities"].update(usage=False, launch=False)
+        self.assertEqual(run(current_core).returncode, 0)
+        for kind in ("session-delete-enabled", "session-delete-nonboolean", "enrollment-keys-disabled", "enrollment-keys-nonboolean"):
+            changed = deepcopy(current)
+            if kind == "session-delete-enabled": changed["/readyz"]["capabilities"]["session_delete"] = True
+            if kind == "session-delete-nonboolean": changed["/readyz"]["capabilities"]["session_delete"] = 0
+            if kind == "enrollment-keys-disabled": changed["/readyz"]["capabilities"]["enrollment_keys"] = False
+            if kind == "enrollment-keys-nonboolean": changed["/readyz"]["capabilities"]["enrollment_keys"] = 1
+            with self.subTest(capability=kind):
+                refused = run(changed, ["usage", "launch"])
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertEqual(refused.stdout, "")
         modern_core = deepcopy(modern)
         modern_core["/readyz"]["capabilities"].update(usage=False, launch=False)
         self.assertEqual(run(modern_core).returncode, 0)
