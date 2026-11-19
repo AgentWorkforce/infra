@@ -19,15 +19,18 @@ output "db_owner_secret_name" {
 }
 
 output "private_subnet_id" {
-  value = aws_subnet.private.id
+  description = "Id of the private subnet the runner instance launches in."
+  value       = aws_subnet.private.id
 }
 
 output "nat_gateway_id" {
-  value = aws_nat_gateway.this.id
+  description = "Id of the NAT gateway that gives the private subnet outbound access."
+  value       = aws_nat_gateway.this.id
 }
 
 output "security_group_id" {
-  value = aws_security_group.this.id
+  description = "Id of the runner security group (no ingress; HTTPS egress only)."
+  value       = aws_security_group.this.id
 }
 
 output "ssm_session_command" {
