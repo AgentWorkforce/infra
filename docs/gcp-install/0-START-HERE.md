@@ -581,6 +581,11 @@ curl -s -o /dev/null -w "history %{http_code}\n" "https://history.$DOMAIN/v1/ses
 - **502 for a few minutes after `Active`:** the load balancer's health checks
   are still converging. Wait 5 minutes.
 
+The load balancer accepts TLS 1.0 and later until it has an SSL policy. To
+require TLS 1.2, add Cloud Armor, or put Cloudflare in front, see
+[3-EDGE-HARDENING.md](3-EDGE-HARDENING.md) (from the first release with chart
+0.7.59; not the release this guide pins).
+
 ## 15. First sign-in, then add users
 
 The first admin does this **before signing in any other way**, including the

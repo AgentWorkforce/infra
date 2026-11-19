@@ -9,6 +9,7 @@ cluster, the GCP counterpart of the AWS EKS guide. Start with
 | `0-START-HERE.md` | Numbered copy-paste steps, each with a "Done when" check |
 | `1-BRING-YOUR-OWN.md` | Specs for creating Cloud SQL, GCS, Memorystore, Pub/Sub, search and certificates yourself instead of Terraform |
 | `2-SERVICE-ACCOUNTS.md` | Workload Identity: every grant the install needs, and who needs which roles |
+| `3-EDGE-HARDENING.md` | Optional: the load balancer's TLS policy, Cloud Armor, and Cloudflare in front |
 | `NOT-QUALIFIED.md` | What 2026.11.16 does not yet qualify on GKE. Read before a production rollout |
 | `images.md` | The release images and how they are mirrored |
 | `values.yaml` | Site values template (placeholders filled in step 9) |

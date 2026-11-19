@@ -63,6 +63,7 @@ before installing. The required value overrides are:
 | `global.imageRegistry` | Artifact Registry hostname for the selected region, such as `us-central1-docker.pkg.dev`. |
 | `global.tenant.orgId` | Stable customer organization ID. Do not change it after data has been written. |
 | `gkeIngress.name`, `staticIpName`, `managedCertificateName`, `frontendConfigName` | Customer-selected names. `staticIpName` must name a reserved global external IPv4 address; the chart creates the other resources. |
+| `gkeIngress.sslPolicy` | Recommended. Name of a Compute SSL policy with a TLS 1.2 minimum; see [GKE edge hardening](#gke-edge-hardening). |
 | `gkeIngress.hosts.{root,api,cast,history}` | Four customer-controlled public DNS names whose A records point at the reserved address. |
 | `relaycast.image.{repository,digest}` | Customer-accessible Relaycast image mirror and its real immutable digest. |
 | `sessions-pipeline.worker.image.{repository,digest}` and `sessions-pipeline.alleyoop.image.{repository,digest}` | Repository path under `global.imageRegistry` and the same immutable Sessions services digest. |
@@ -251,6 +252,48 @@ For a base domain `relay.example.com`:
 
 Leaf ingresses are disabled and each ClusterIP backend uses a GKE standalone
 NEG. Sensitive Relaycast paths still route to an endpoint-less deny Service.
+
+## GKE edge hardening
+
+Three optional `gkeIngress` values, each empty by default. Each names
+something the chart cannot create, which must exist before the upgrade;
+[`terraform/modules/gcp/edge-security`](https://github.com/AgentWorkforce/infra/blob/main/terraform/modules/gcp/edge-security)
+creates the two policies. The operator steps and checks are in
+[`docs/gcp-install/3-EDGE-HARDENING.md`](https://github.com/AgentWorkforce/infra/blob/main/docs/gcp-install/3-EDGE-HARDENING.md).
+
+| Value | Effect |
+| --- | --- |
+| `gkeIngress.sslPolicy` | Compute SSL policy for the HTTPS listener (`FrontendConfig.spec.sslPolicy`). Without it Google's default policy applies, which still accepts TLS 1.0 and 1.1. Use a policy with `min_tls_version = TLS_1_2`. |
+| `gkeIngress.securityPolicy` | Cloud Armor backend security policy, set as `spec.securityPolicy.name` on the BackendConfig of **every** backend behind the Ingress. |
+| `gkeIngress.tlsSecretName` | A `kubernetes.io/tls` Secret served instead of the ManagedCertificate (which is then not rendered). For an edge whose DNS points at a proxy or CDN, where Google cannot issue a managed certificate. The certificate must cover every host. |
+
+The chart leaves `sslPolicy` empty by default because a name that does not
+exist in the project stops the Ingress from syncing. `terraform/examples/gcp`
+creates the policy and exports it in `chart_values`, so an install made from
+the GKE guide has it set.
+
+With `securityPolicy`, the api, cast, history, actors and relaygate
+BackendConfigs gain the policy, and the chart renders policy-only BackendConfigs
+for the backends that had none: `<gkeIngress.name>-dashboard`,
+`<gkeIngress.name>-edge-deny` and, with `gkeIngress.hosts.files`,
+`<gkeIngress.name>-files`. The dashboard and Relayfile Services belong to child
+charts, so bind them in values (the render fails with the exact value
+otherwise):
+
+```yaml
+gkeIngress:
+  sslPolicy: agent-relay-tls
+  securityPolicy: agent-relay-edge
+relay-webapp:
+  service:
+    annotations:
+      cloud.google.com/neg: '{"ingress": true}'
+      cloud.google.com/backend-config: '{"default": "agent-relay-dashboard"}'
+```
+
+Behind a proxy that fronts the load balancer (Cloudflare), also raise
+`relay-control.auth.trustedProxies` by one (the Google load balancer alone
+needs 2; the guide shows how to check).
 
 ## Customer-neutral EKS with RDS native History
 

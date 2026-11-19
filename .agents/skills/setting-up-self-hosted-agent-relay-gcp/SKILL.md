@@ -58,6 +58,10 @@ Obtain these from the operator; do not discover or guess cloud identifiers:
 - release and namespace, normally `agent-relay`;
 - names of the global static IP, managed certificate, FrontendConfig, GCS
   bucket, Kubernetes service accounts, and existing Kubernetes Secret;
+- name of the Compute SSL policy (TLS 1.2 minimum) for `gkeIngress.sslPolicy`,
+  and, when the customer wants them, the Cloud Armor policy
+  (`gkeIngress.securityPolicy`) or a TLS Secret (`gkeIngress.tlsSecretName`);
+  see `docs/gcp-install/3-EDGE-HARDENING.md`;
 - Artifact Registry repositories and immutable `sha256:` image digests;
 - a customer-specific, non-secret Helm overlay exported as
   `CUSTOMER_VALUES_FILE`;
