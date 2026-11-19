@@ -271,12 +271,129 @@ def cluster_checks(options, report):
             report.unknown('cluster.'+resource,str(exc) if isinstance(exc,DiagnosticError) else 'invalid-response')
 
 
+def _yaml_scalar(raw):
+    raw = raw.strip()
+    if raw[:1] == '"':
+        end = 1
+        while end < len(raw):
+            if raw[end] == '\\':
+                end += 2
+                continue
+            if raw[end] == '"':
+                break
+            end += 1
+        if end >= len(raw):
+            raise DiagnosticError('manifest-unterminated-quote')
+        return json.loads(raw[:end+1])
+    if raw[:1] == "'":
+        out, i = [], 1
+        while i < len(raw):
+            if raw[i] == "'":
+                if raw[i+1:i+2] == "'":
+                    out.append("'")
+                    i += 2
+                    continue
+                return ''.join(out)
+            out.append(raw[i])
+            i += 1
+        raise DiagnosticError('manifest-unterminated-quote')
+    return re.split(r'\s+#', raw, 1)[0].strip()
+
+
+def _parse_manifest_doc(lines):
+    """Minimal parser for Kubernetes Secret manifests (no PyYAML on operator machines)."""
+    kind = name = section = None
+    values = {}
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip('\n')
+        i += 1
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        indent = len(line) - len(line.lstrip(' '))
+        key, sep, rest = line.strip().partition(':')
+        if not sep:
+            continue
+        if indent == 0:
+            section = key
+            if key == 'kind':
+                kind = _yaml_scalar(rest)
+            continue
+        if section == 'metadata' and key == 'name' and indent == 2:
+            name = _yaml_scalar(rest)
+        elif section in ('stringData', 'data') and indent == 2:
+            rest = rest.strip()
+            if rest[:1] in ('|', '>'):
+                block = []
+                while i < len(lines) and (not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip(' ')) > indent):
+                    block.append(lines[i].strip())
+                    i += 1
+                value = ('\n' if rest[0] == '|' else ' ').join(block).strip()
+            else:
+                value = _yaml_scalar(rest)
+            if section == 'data':
+                value = base64.b64decode(value, validate=True).decode()
+            values[key] = value
+    return kind, name, values
+
+
+def load_secret_manifests(paths):
+    """Return {secret_name: {key: value}} from Secret manifest files or directories (YAML or kubectl JSON)."""
+    files = []
+    for path in paths:
+        if path.is_dir():
+            files += sorted(f for f in path.iterdir() if f.suffix in ('.yaml', '.yml', '.json') and f.is_file())
+        elif path.is_file():
+            files.append(path)
+        else:
+            raise DiagnosticError('manifest-path-missing')
+    secrets = {}
+    for f in files:
+        text = f.read_text()
+        if f.stat().st_mode & 0o077:
+            print('warning: '+f.name+' is readable by other users; chmod 600 it after this run.', file=sys.stderr)
+        docs = []
+        if text.lstrip().startswith('{'):
+            obj = json.loads(text)
+            for item in obj.get('items', [obj]):
+                data = {k: base64.b64decode(v, validate=True).decode() for k, v in (item.get('data') or {}).items()}
+                data.update(item.get('stringData') or {})
+                docs.append((item.get('kind'), (item.get('metadata') or {}).get('name'), data))
+        else:
+            chunk = []
+            for line in text.splitlines(True) + ['---\n']:
+                if line.rstrip() == '---':
+                    if chunk:
+                        docs.append(_parse_manifest_doc(chunk))
+                    chunk = []
+                else:
+                    chunk.append(line)
+        for kind, name, data in docs:
+            if kind == 'Secret' and name:
+                secrets.setdefault(name, {}).update(data)
+    return secrets
+
+
 def load_credentials(options, report):
     secrets = {}
     credentials = {}
+    manifests = None
+    if getattr(options, 'secret_manifests', None):
+        try:
+            manifests = load_secret_manifests(options.secret_manifests)
+        except (DiagnosticError, ValueError, OSError):
+            manifests = DiagnosticError('manifest-unreadable')
     for slot,(secret,key,wrapper,role,group) in SLOTS.items():
         try:
-            if options.secret_dir:
+            if manifests is not None:
+                if isinstance(manifests, DiagnosticError):
+                    raise manifests
+                if secret not in manifests:
+                    raise DiagnosticError('manifest-secret-missing')
+                if key not in manifests[secret]:
+                    raise DiagnosticError('secret-key-missing')
+                value = manifests[secret][key].strip()
+            elif options.secret_dir:
                 path = options.secret_dir/secret/key
                 if not path.is_file():
                     raise DiagnosticError('credential-file-missing')
@@ -392,14 +509,18 @@ def parse_args(argv=None):
     parser.add_argument('--scope',choices=('cluster','database','all'),default='all',
                         help='Split runs when cluster and database VPNs cannot coexist.')
     parser.add_argument('--secret-dir',type=Path,help='Existing secret-files tree from the setup script; no Secrets API reads.')
+    parser.add_argument('--secret-manifests',type=Path,nargs='+',
+                        help='Filled-in Secret manifest files or a directory of them (YAML or kubectl JSON); no Secrets API reads.')
     parser.add_argument('--ca-file',type=Path,help='Local DB CA bundle; replaces in-container CA paths for this process.')
     for group in ('control','cast','hoop'):
         parser.add_argument('--'+group+'-database',help='Expected database name, including custom names.')
     parser.add_argument('--timeout',type=int,default=20)
     parser.add_argument('--output',type=Path,help='New JSON report file, created mode 0600; never overwrites.')
     options = parser.parse_args(argv)
-    if not options.context and (options.scope!='database' or not options.secret_dir):
-        parser.error('--context is required for cluster access; database-only offline input requires --secret-dir')
+    if options.secret_dir and options.secret_manifests:
+        parser.error('use either --secret-dir or --secret-manifests, not both')
+    if not options.context and (options.scope!='database' or not (options.secret_dir or options.secret_manifests)):
+        parser.error('--context is required for cluster access; database-only offline input requires --secret-dir or --secret-manifests')
     if not 1<=options.timeout<=120:
         parser.error('--timeout must be 1..120 seconds')
     return options
@@ -417,7 +538,7 @@ def main(argv=None):
         report.unknown('database','not-requested-cluster-only')
     result = report.result()
     result['scope'] = options.scope
-    result['credentialSource'] = 'local-files' if options.secret_dir else 'named-kubernetes-secrets'
+    result['credentialSource'] = 'local-manifests' if options.secret_manifests else 'local-files' if options.secret_dir else 'named-kubernetes-secrets'
     if options.output:
         try:
             with open(options.output,'x',opener=lambda path,flags:os.open(path,flags,0o600)) as output:

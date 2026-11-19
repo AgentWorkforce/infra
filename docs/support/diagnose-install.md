@@ -71,6 +71,27 @@ python3 scripts/support/diagnose-install.py \
   --output ./install-diagnostic-database.json
 ```
 
+If you set up the database by hand and have no `secret-files` directory, point
+the diagnostic at the Secret manifests you filled in from `examples/aws/secrets/`
+instead (files or a directory; YAML with `stringData`/`data`, or
+`kubectl get secret -o json` output):
+
+```bash
+python3 scripts/support/diagnose-install.py \
+  --scope database \
+  --secret-manifests ./secrets \
+  --control-database "$DB_CONTROL" \
+  --cast-database "$DB_CAST" \
+  --hoop-database "$DB_HOOP" \
+  --ca-file "$PWD/database-ca.pem" \
+  --output ./install-diagnostic-database.json
+```
+
+Only `kind: Secret` documents are read; other documents are skipped. A warning
+is printed for manifest files readable by other users. Like local files, a
+manifest proves only that copy: if it differs from what was applied, rerun
+against the cluster.
+
 This mode needs no Kubernetes access. Each input is a file named
 `SECRET_NAME/KEY_NAME` containing that key's value, with mode `0600` (or stricter).
 Read-API and search files retain their JSON wrappers. No credential export is

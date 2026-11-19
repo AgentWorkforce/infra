@@ -20,7 +20,7 @@ SPEC.loader.exec_module(diag)
 
 def options(**kwargs):
     values = dict(context='isolated',namespace='agent-relay',release='agent-relay',
-                  timeout=5,ca_file=None,secret_dir=None,scope='all',
+                  timeout=5,ca_file=None,secret_dir=None,secret_manifests=None,scope='all',
                   control_database=None,cast_database=None,hoop_database=None)
     values.update(kwargs)
     return SimpleNamespace(**values)
@@ -86,6 +86,35 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(kube.call_count,5)
         self.assertNotIn('p@ss',json.dumps(report.result()))
         self.assertTrue(all(c['status']=='PASS' for c in report.checks))
+
+    def test_secret_manifests_from_examples(self):
+        examples = Path(__file__).resolve().parents[3]/'examples'/'aws'/'secrets'
+        report = diag.Report()
+        credentials = diag.load_credentials(options(secret_manifests=[examples]),report)
+        self.assertEqual(set(credentials), set(diag.SLOTS))
+        self.assertTrue(all(c['status']=='PASS' for c in report.checks if c['check'].startswith('credential.')))
+
+    def test_secret_manifest_quoting_data_and_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp)/'s.yaml'
+            enc = base64.b64encode(url('relaycast_runtime').encode()).decode()
+            f.write_text("# c\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: agent-relay-secrets\n"
+                         "stringData:\n  database-owner-url: '" + url('relaycast_owner') + "'  # note\n"
+                         "data:\n  database-runtime-url: " + enc + "\n---\nkind: ConfigMap\nmetadata:\n  name: x\n")
+            secrets = diag.load_secret_manifests([f])
+            self.assertEqual(secrets['agent-relay-secrets']['database-owner-url'], url('relaycast_owner'))
+            self.assertEqual(secrets['agent-relay-secrets']['database-runtime-url'], url('relaycast_runtime'))
+            report = diag.Report()
+            diag.load_credentials(options(secret_manifests=[f]),report)
+            text = json.dumps(report.result())
+            self.assertIn('manifest-secret-missing', text)
+            self.assertNotIn('p%40ss', text)
+
+    def test_secret_manifest_args(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            diag.parse_args(['--scope','database','--secret-dir','a','--secret-manifests','b'])
+        o = diag.parse_args(['--scope','database','--secret-manifests','b'])
+        self.assertEqual(o.secret_manifests, [Path('b')])
 
     def test_local_files_private_and_wrong_expected_database(self):
         with tempfile.TemporaryDirectory() as directory:
