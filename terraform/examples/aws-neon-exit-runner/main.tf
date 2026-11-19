@@ -102,7 +102,9 @@ resource "aws_vpc_security_group_egress_rule" "dns_tcp" {
 # password writes the value (put-secret-value); it never passes through Relay
 # or this configuration.
 resource "aws_secretsmanager_secret" "db_owner" {
-  name                    = var.db_owner_secret_name
+  #checkov:skip=CKV_AWS_149:Short-lived container read by one instance role in the same account; the AWS-managed Secrets Manager key, no extra KMS lifecycle.
+  #checkov:skip=CKV2_AWS_57:The value is written out of band by whoever holds the credential; there is no rotation function to attach.
+  name                   = var.db_owner_secret_name
   description             = "Owner credential of the relayhistory-legacy target database (written out of band)"
   recovery_window_in_days = 0
 }
@@ -111,6 +113,8 @@ resource "aws_secretsmanager_secret" "db_owner" {
 # written out of band; the runner reads them on the box so that no URL appears
 # in SSM command history.
 resource "aws_secretsmanager_secret" "copy_urls" {
+  #checkov:skip=CKV_AWS_149:Short-lived container read by one instance role in the same account; the AWS-managed Secrets Manager key, no extra KMS lifecycle.
+  #checkov:skip=CKV2_AWS_57:The value is written out of band by whoever holds the URLs; there is no rotation function to attach.
   name                    = var.copy_urls_secret_name
   description             = "Connection URLs for the Cloud database copy, read on the runner (written out of band)"
   recovery_window_in_days = 0
@@ -163,7 +167,8 @@ resource "aws_iam_instance_profile" "runner" {
 }
 
 resource "aws_instance" "runner" {
-  ami                         = data.aws_ssm_parameter.ami.value
+  #checkov:skip=CKV_AWS_126:Short-lived runner driven over SSM; nothing reads one-minute EC2 metrics.
+  ami                        = data.aws_ssm_parameter.ami.value
   instance_type               = var.instance_type
   subnet_id                   = aws_subnet.private.id
   vpc_security_group_ids      = [aws_security_group.this.id]
