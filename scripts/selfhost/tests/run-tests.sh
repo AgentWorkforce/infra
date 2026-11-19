@@ -10,6 +10,7 @@ REPO_ROOT="$(cd -- "${SELFHOST_DIR}/../.." && pwd)"
 RECOVERY_DIR="${REPO_ROOT}/charts/agent-relay/scripts"
 # Run the scripts under TEST_BASH (for example /bin/bash 3.2 on macOS).
 TEST_BASH="${TEST_BASH:-bash}"
+python3 -m unittest discover -s "${TEST_DIR}" -p 'test_prepare_gcp_edge.py' -v
 # The Node helper uses injected API responses; it never contacts a cluster.
 node --test "${TEST_DIR}/operator-device-login.test.mjs"
 tmp_root="$(mktemp -d)"

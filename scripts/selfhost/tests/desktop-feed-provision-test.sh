@@ -190,13 +190,15 @@ common_args=(
   --version 2026.11.5
 )
 
+unset DESKTOP_REPO
 plan_output="$(
-  RELAY_ADMIN_TOKEN="${admin_token}" DESKTOP_REPO=AgentWorkforce/relay-desktop \
+  RELAY_ADMIN_TOKEN="${admin_token}" \
     bash "${PROVISIONER}" "${common_args[@]}"
 )"
 [[ "${plan_output}" == *"plan-only"* ]] || fail "plan did not identify itself"
 [[ "${plan_output}" == *"candidate 42903809516 embeds this site's feed key: OK"* ]] || fail "plan did not verify the candidate key"
 grep -Fxq 'detach' "${hdiutil_log}" || fail "plan did not detach the candidate volume"
+grep -Fxq 'arg:AgentWorkforce/relay-app' "${gh_log}" || fail "default repository is not relay-app"
 if grep -Fxq 'arg:secret' "${gh_log}" || grep -Fxq 'arg:workflow' "${gh_log}"; then
   fail "plan invoked a mutating GitHub command"
 fi
@@ -207,7 +209,7 @@ pass "plan verifies the candidate without mutations"
 : >"${gh_log}"
 : >"${hdiutil_log}"
 apply_output="$(
-  RELAY_ADMIN_TOKEN="${admin_token}" DESKTOP_REPO=AgentWorkforce/relay-desktop \
+  RELAY_ADMIN_TOKEN="${admin_token}" DESKTOP_REPO=Fixture/desktop-app \
     bash "${PROVISIONER}" "${common_args[@]}" --apply
 )"
 [[ "${apply_output}" == *"publisher token minted and stored"* ]] || fail "apply did not store the publisher token"
@@ -226,12 +228,13 @@ grep -Fq -- "Authorization: Bearer ${admin_token}" "${curl_config_log}" || fail 
 grep -Fxq 'secret-public-key:ok' "${gh_log}" || fail "public key secret was not set from stdin"
 grep -Fxq 'secret-publisher-token:ok' "${gh_log}" || fail "publisher token secret was not set from stdin"
 grep -Fxq 'workflow-dispatch:ok' "${gh_log}" || fail "Promote workflow was not dispatched"
+grep -Fxq 'arg:Fixture/desktop-app' "${gh_log}" || fail "explicit repository override was ignored"
 grep -Fxq 'detach' "${hdiutil_log}" || fail "apply did not detach the candidate volume"
 pass "apply streams secrets, keeps the bearer out of argv, and detaches the candidate"
 
 set +e
 lookup_output="$(
-  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_PROFILE_STATUS=500 DESKTOP_REPO=AgentWorkforce/relay-desktop \
+  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_PROFILE_STATUS=500 DESKTOP_REPO=Fixture/desktop-app \
     bash "${PROVISIONER}" "${common_args[@]}" 2>&1
 )"
 lookup_rc=$?
@@ -242,7 +245,7 @@ set -e
 pass "profile lookup failures are not treated as a missing profile"
 
 missing_output="$(
-  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_PROFILE_STATUS=404 DESKTOP_REPO=AgentWorkforce/relay-desktop \
+  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_PROFILE_STATUS=404 DESKTOP_REPO=Fixture/desktop-app \
     bash "${PROVISIONER}" "${common_args[@]}" 2>&1
 )"
 [[ "${missing_output}" == *"would register profile"* ]] || fail "profile HTTP 404 was not treated as absence"
@@ -251,7 +254,7 @@ pass "only profile HTTP 404 is treated as absence"
 : >"${gh_log}"
 set +e
 mismatch_output="$(
-  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_CANDIDATE_KEY_MISMATCH=1 DESKTOP_REPO=AgentWorkforce/relay-desktop \
+  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_CANDIDATE_KEY_MISMATCH=1 DESKTOP_REPO=Fixture/desktop-app \
     bash "${PROVISIONER}" "${common_args[@]}" --apply 2>&1
 )"
 mismatch_rc=$?
@@ -266,7 +269,7 @@ pass "candidate key mismatch fails apply before secrets or Promote"
 : >"${gh_log}"
 set +e
 missing_key_output="$(
-  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_PROFILE_PUBLIC_KEY_EMPTY=1 DESKTOP_REPO=AgentWorkforce/relay-desktop \
+  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_PROFILE_PUBLIC_KEY_EMPTY=1 DESKTOP_REPO=Fixture/desktop-app \
     bash "${PROVISIONER}" "${common_args[@]}" --apply 2>&1
 )"
 missing_key_rc=$?
@@ -280,7 +283,7 @@ pass "missing profile public key fails apply before binding, secrets, or Promote
 
 set +e
 detach_output="$(
-  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_HDIUTIL_DETACH_FAIL=1 DESKTOP_REPO=AgentWorkforce/relay-desktop \
+  RELAY_ADMIN_TOKEN="${admin_token}" MOCK_HDIUTIL_DETACH_FAIL=1 DESKTOP_REPO=Fixture/desktop-app \
     bash "${PROVISIONER}" "${common_args[@]}" 2>&1
 )"
 detach_rc=$?
@@ -291,7 +294,7 @@ pass "candidate detach failures are fatal and reported"
 
 set +e
 invalid_output="$(
-  RELAY_ADMIN_TOKEN='invalid bearer with spaces' DESKTOP_REPO=AgentWorkforce/relay-desktop \
+  RELAY_ADMIN_TOKEN='invalid bearer with spaces' DESKTOP_REPO=Fixture/desktop-app \
     bash "${PROVISIONER}" "${common_args[@]}" 2>&1
 )"
 invalid_rc=$?
