@@ -18,7 +18,7 @@
 // from the transcript, so a retried batch is an exact replay, never a
 // duplicate. Transcript content and tokens are never logged.
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** Where Claude Code keeps a session started in `cwd`: <home>/.claude/projects/<cwd with every non-alphanumeric as ->/<id>.jsonl. */
@@ -82,6 +82,8 @@ export interface UploaderOptions {
   attempts?: number;
   /** Transcript bytes read per pass (a longer single line is still read whole). */
   readBytes?: number;
+  /** The window reader (a seam for tests that count reads). */
+  readLines?: typeof readLinesFrom;
   /** Upper bound on any wait, whatever Retry-After says. */
   maxWaitMs?: number;
 }
@@ -122,6 +124,7 @@ export class SessionUploader {
       maxBytes: 1_500_000,
       attempts: 4,
       readBytes: 4 * 1024 * 1024,
+      readLines: readLinesFrom,
       maxWaitMs: 5 * 60_000,
       ...o,
       baseUrl: o.baseUrl.replace(/\/$/, ""),
@@ -173,14 +176,26 @@ export class SessionUploader {
     if (!file) return "missing";
     let result: UploadResult = "nothing";
     // One batch at a time, from a bounded window of the transcript, so a large backlog never sits in memory whole.
+    // The window is kept across batches and its remaining lines are consumed before another is read, so short
+    // lines are not read and decoded again for every batch. It is dropped when the file was replaced (another
+    // device or inode) or shrank below what the window read, and a failed batch returns, dropping it too.
+    let win: ReturnType<typeof readLinesFrom> | null = null;
+    let at = 0;
     for (;;) {
-      const { lines } = readLinesFrom(file, cursor.offset, this.#o.readBytes);
+      if (win && !(at < win.lines.length && win.lines[at]!.start === cursor.offset && sameFile(file, win))) win = null;
+      if (!win) {
+        win = this.#o.readLines(file, cursor.offset, this.#o.readBytes);
+        at = 0;
+      }
+      const lines = win.lines;
       if (!lines.length) return result;
       const next: Cursor = { ...cursor, models: [...(cursor.models ?? [])] };
       const records: Rec[] = [];
       // The request size in UTF-8 bytes: every batch also carries the envelope and the session record.
       let bytes = BATCH_OVERHEAD;
-      for (const line of lines) {
+      let i = at;
+      for (; i < lines.length; i++) {
+        const line = lines[i]!;
         const ev = eventOf(line.text);
         if (ev) {
           const rec = this.#record(`cc:${t.sessionId}:${ev.id}`, 1, "session_event", t.sessionId, {
@@ -215,6 +230,7 @@ export class SessionUploader {
       }
       Object.assign(cursor, next);
       this.#writeCursor(t.sessionId, cursor);
+      at = i;
     }
   }
 
@@ -365,16 +381,33 @@ function errorCode(text: string): string {
   }
 }
 
+/** Whether `file` is still the file the window was read from and has not shrunk below what the window read. */
+function sameFile(file: string, w: { dev: number; ino: number; readEnd: number }): boolean {
+  try {
+    const st = statSync(file);
+    return st.dev === w.dev && st.ino === w.ino && st.size >= w.readEnd;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Complete lines (ending in \n) from `offset`, reading at most about `maxBytes` (more only when a single line is
  * longer: the window grows until it holds one whole line). Each line has its start and the offset past its \n.
+ * `dev`, `ino` and `readEnd` (the file offset the read reached) let a caller tell whether the file changed since.
  */
-export function readLinesFrom(file: string, offset: number, maxBytes = 4 * 1024 * 1024): { lines: Array<{ text: string; start: number; end: number }>; end: number } {
+export function readLinesFrom(
+  file: string,
+  offset: number,
+  maxBytes = 4 * 1024 * 1024,
+): { lines: Array<{ text: string; start: number; end: number }>; end: number; dev: number; ino: number; readEnd: number } {
+  // A zero or fractional window would never grow (0 * 2 is 0) or never fill: refuse it rather than loop.
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0) throw new RangeError(`readLinesFrom: maxBytes must be a positive integer, got ${maxBytes}`);
   const fd = openSync(file, "r");
   try {
-    const size = fstatSync(fd).size;
+    const { size, dev, ino } = fstatSync(fd);
     for (let window = maxBytes; ; window *= 2) {
-      if (offset >= size) return { lines: [], end: offset };
+      if (offset >= size) return { lines: [], end: offset, dev, ino, readEnd: offset };
       const len = Math.min(window, size - offset);
       const buf = Buffer.alloc(len);
       const got = readSync(fd, buf, 0, len, offset);
@@ -386,7 +419,7 @@ export function readLinesFrom(file: string, offset: number, maxBytes = 4 * 1024 
         start = i + 1;
       }
       // No complete line in the window: a longer line, or the tail Claude is still writing.
-      if (lines.length || offset + got >= size) return { lines, end: offset + start };
+      if (lines.length || offset + got >= size) return { lines, end: offset + start, dev, ino, readEnd: offset + got };
     }
   } finally {
     closeSync(fd);

@@ -1,7 +1,7 @@
 // The headless session uploader against a fake relaygate Sessions proxy
 // (POST /sessions/v1/delivery/batches, relaygate docs/contract.md "Session uploads").
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -375,4 +375,126 @@ test("readLinesFrom grows the window for a line longer than it, and holds back a
   assert.deepEqual(r2.lines.map((l) => l.text), ["ab"]);
   assert.equal(r2.end, 104);
   assert.deepEqual(readLinesFrom(f, 104, 8).lines, []);
+});
+
+/** Counts window reads (and the bytes each one covered) through the uploader's reader seam. */
+function countingReader() {
+  const reads: Array<{ offset: number; bytes: number }> = [];
+  const readLines: typeof readLinesFrom = (file, offset, maxBytes) => {
+    const r = readLinesFrom(file, offset, maxBytes);
+    reads.push({ offset, bytes: r.readEnd - offset });
+    return r;
+  };
+  return { reads, readLines };
+}
+
+test("a backlog of short lines is read once per window, not once per batch", async () => {
+  const g = await fakeGate();
+  const s = setup();
+  const lines = Array.from({ length: 400 }, (_, i) => line(i % 2 ? "assistant" : "user", `s${i}`));
+  writeFileSync(s.file, lines.join(""));
+  const size = Buffer.byteLength(lines.join(""));
+  const { reads, readLines } = countingReader();
+  // 4 events per batch (100 batches); a window holding the whole backlog.
+  const { up } = uploader(g, s, { maxRecords: 5, readBytes: size + 1, readLines });
+  try {
+    assert.equal(await up.upload(target(s)), "uploaded");
+    assert.equal(g.reqs.length, 100);
+    assert.deepEqual(g.reqs.flatMap((r) => r.body.batch.records.slice(1).map((x: any) => x.payload.text)), lines.map((_, i) => `s${i}`));
+    // One window read plus the final empty read: before, this was one read of the remaining window per batch
+    // (101 reads, about 50 times the file size in bytes).
+    assert.equal(reads.length, 2);
+    assert.equal(reads.reduce((a, r) => a + r.bytes, 0), size);
+  } finally {
+    g.server.close();
+  }
+});
+
+test("the cursor after each batch is the end of the last line sent, windowed or not", async () => {
+  const lines = Array.from({ length: 12 }, (_, i) => line(i % 2 ? "assistant" : "user", `c${i}`));
+  const ends = lines.map((_, i) => Buffer.byteLength(lines.slice(0, i + 1).join("")));
+  for (const readBytes of [Buffer.byteLength(lines[0]!) * 3 + 10, 1 << 20]) {
+    const g = await fakeGate();
+    const s = setup();
+    writeFileSync(s.file, lines.join(""));
+    const cursors: number[] = [];
+    // The cursor on disk when each request arrives is the one persisted by the batch before it.
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      let off = 0;
+      try {
+        off = JSON.parse(readFileSync(join(s.stateDir, `${SID}.json`), "utf8")).offset;
+      } catch {}
+      cursors.push(off);
+      return fetch(url, init);
+    }) as typeof fetch;
+    const { up } = uploader(g, s, { maxRecords: 4, readBytes, fetch: fetchFn });
+    try {
+      assert.equal(await up.upload(target(s)), "uploaded");
+      // Before each request the cursor is the end of the last line of everything sent so far (all events here).
+      let sent = 0;
+      cursors.forEach((c, k) => {
+        assert.equal(c, sent ? ends[sent - 1] : 0, `cursor before batch ${k}`);
+        sent += g.reqs[k]!.body.batch.records.length - 1;
+      });
+      assert.equal(sent, 12);
+      assert.ok(cursors.length >= 4);
+      assert.equal(JSON.parse(readFileSync(join(s.stateDir, `${SID}.json`), "utf8")).offset, ends[11]);
+    } finally {
+      g.server.close();
+    }
+  }
+});
+
+test("a window carried across batches is dropped when the file shrinks or is replaced", async () => {
+  const lines = Array.from({ length: 12 }, (_, i) => line(i % 2 ? "assistant" : "user", `m${i}`));
+  const texts = (g: FakeGate) => g.reqs.flatMap((r) => r.body.batch.records.slice(1).map((x: any) => x.payload.text));
+  const afterFirst = (s: ReturnType<typeof setup>, change: () => void) =>
+    (async (url: string, init: RequestInit) => {
+      const res = await fetch(url, init);
+      if (!changed.has(s)) {
+        changed.add(s);
+        change();
+      }
+      return res;
+    }) as typeof fetch;
+  const changed = new WeakSet<object>();
+
+  // Truncated after the first batch to less than the cursor: nothing more goes up (no stale lines from memory).
+  {
+    const g = await fakeGate();
+    const s = setup();
+    writeFileSync(s.file, lines.join(""));
+    const { up } = uploader(g, s, { maxRecords: 5, readBytes: 1 << 20, fetch: afterFirst(s, () => writeFileSync(s.file, lines[0]!)) });
+    try {
+      assert.equal(await up.upload(target(s)), "uploaded");
+      assert.deepEqual(texts(g), ["m0", "m1", "m2", "m3"]);
+    } finally {
+      g.server.close();
+    }
+  }
+  // Replaced by a new file (new inode) with the same line lengths: the next batch comes from the new file.
+  {
+    const g = await fakeGate();
+    const s = setup();
+    writeFileSync(s.file, lines.join(""));
+    const swap = () => {
+      writeFileSync(`${s.file}.new`, lines.join("").replace(/"m(\d)/g, '"z$1'));
+      renameSync(`${s.file}.new`, s.file);
+    };
+    const { up } = uploader(g, s, { maxRecords: 5, readBytes: 1 << 20, fetch: afterFirst(s, swap) });
+    try {
+      assert.equal(await up.upload(target(s)), "uploaded");
+      assert.deepEqual(texts(g), ["m0", "m1", "m2", "m3", ...Array.from({ length: 8 }, (_, i) => `z${i + 4}`)]);
+    } finally {
+      g.server.close();
+    }
+  }
+});
+
+test("readLinesFrom rejects a window that is not a positive integer, instead of looping", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sr-read-"));
+  const f = join(dir, "t.jsonl");
+  writeFileSync(f, "abc\n");
+  for (const bad of [0, -1, 1.5, NaN, Infinity]) assert.throws(() => readLinesFrom(f, 0, bad), { name: "RangeError", message: /positive integer/ });
+  assert.equal(readLinesFrom(f, 0, 1).lines.length, 1);
 });
