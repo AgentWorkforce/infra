@@ -435,38 +435,54 @@ previous revision, and deletes only `hoopdb-admin-jobs`.
 If either long-lived Secret is owned by an `ExternalSecret` or has the
 `reconcile.external-secrets.io/managed` label, do not run a Kubernetes patch.
 The loop below stops and names the key: remove that mapping from the
-ExternalSecret and delete its backing-store value, wait for reconciliation,
-then retry cleanup. Keep `hoopdb-admin-jobs` until this succeeds.
+Helm release values used for later upgrades and from the live ExternalSecret,
+delete its backing-store value, wait for reconciliation, then retry cleanup.
+Keep `hoopdb-admin-jobs` until this succeeds. The loop checks the mapping even
+when the generated Secret or key is already absent, so ESO cannot restore it.
 
 ```bash
 for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
             search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
   secret="${pair%%:*}"; key="${pair#*:}"
-  if ! kubectl -n agent-relay get secret "$secret" -o json \
-      >"$ADMIN_JOB_DIR/$secret.json" 2>"$ADMIN_JOB_DIR/$secret.err"; then
-    if grep -qi 'not[[:space:]]*found' "$ADMIN_JOB_DIR/$secret.err"; then
-      continue
-    fi
+  if ! kubectl -n agent-relay get secret "$secret" --ignore-not-found -o json \
+      >"$ADMIN_JOB_DIR/$secret.json"; then
     echo "could not read $secret; leave hoopdb-admin-jobs in place and retry cleanup" >&2
     exit 1
   fi
-  if ! key_present=$(jq -r --arg k "$key" 'if .data[$k] == null then "no" else "yes" end' \
-      "$ADMIN_JOB_DIR/$secret.json"); then
-    echo "could not parse $secret; leave hoopdb-admin-jobs in place and retry cleanup" >&2
-    exit 1
+  if [ -s "$ADMIN_JOB_DIR/$secret.json" ]; then
+    key_present=$(jq -r --arg k "$key" 'if .data[$k] == null then "no" else "yes" end' \
+      "$ADMIN_JOB_DIR/$secret.json") || exit 1
+    externally_managed=$(jq -r '
+        any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
+        ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' \
+        "$ADMIN_JOB_DIR/$secret.json") || exit 1
+  else
+    key_present=no; externally_managed=false
   fi
-  if [ "$key_present" = no ]; then
-    continue
+  if [ "$externally_managed" = true ] || [ "$key_present" = no ]; then
+    if kubectl -n agent-relay get externalsecrets.external-secrets.io --ignore-not-found -o json \
+        >"$ADMIN_JOB_DIR/externalsecrets.json" 2>"$ADMIN_JOB_DIR/externalsecrets.err"; then
+      mapping_rc=0
+      jq -e --arg target "$secret" --arg key "$key" '
+          any(.items[]?; ((.spec.target.name // .metadata.name) == $target) and
+            (any(.spec.data[]?; .secretKey == $key) or ((.spec.dataFrom // []) | length > 0)))' \
+          "$ADMIN_JOB_DIR/externalsecrets.json" >/dev/null || mapping_rc=$?
+      if [ "$mapping_rc" = 0 ]; then
+        echo "External Secrets still maps $secret/$key: remove it from the Helm release values, ExternalSecret and backing store; leave hoopdb-admin-jobs in place" >&2
+        exit 1
+      elif [ "$mapping_rc" != 1 ]; then
+        echo "could not parse ExternalSecret mappings; leave hoopdb-admin-jobs in place" >&2
+        exit 1
+      fi
+    elif ! grep -Eqi "(doesn't have a resource type|could not find the requested resource|no matches for kind.*ExternalSecret)" \
+        "$ADMIN_JOB_DIR/externalsecrets.err"; then
+      echo "could not inspect ExternalSecret mappings; leave hoopdb-admin-jobs in place" >&2
+      exit 1
+    fi
   fi
-  if ! externally_managed=$(jq -r '
-      any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
-      ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' \
-      "$ADMIN_JOB_DIR/$secret.json"); then
-    echo "could not parse $secret ownership; leave hoopdb-admin-jobs in place and retry cleanup" >&2
-    exit 1
-  fi
+  [ "$key_present" = no ] && continue
   if [ "$externally_managed" = true ]; then
-    echo "$secret is managed by External Secrets: remove the $key mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, and retry; leave hoopdb-admin-jobs in place" >&2
+    echo "$secret is managed by External Secrets: remove the $key mapping from its Helm release values and ExternalSecret and delete the backing-store value, wait for reconciliation, and retry; leave hoopdb-admin-jobs in place" >&2
     exit 1
   fi
   if ! kubectl -n agent-relay patch secret "$secret" --type=json \
@@ -504,7 +520,11 @@ kubectl -n agent-relay patch secret search-indexer-owner --type=merge \
 ```
 
 Recreate `hoopdb-admin-jobs` and use the same values overlay for any rollback
-Jobs that reference it.
+Jobs that reference it. After rollback Jobs and workloads finish, remove the
+two restored long-lived keys with the cleanup loop above and delete
+`hoopdb-admin-jobs` again. For ESO-managed Secrets, make the temporary restore
+and removal through the rollback release values, ExternalSecrets and backing
+store; never patch the generated Secrets.
 Long-running pods do not use this Secret and are unaffected by its creation or
 deletion. The database stays administrator-owned; verify without assuming its
 name with `psql -X -A -t -d "$HOOPDB_DATABASE" -c 'select

@@ -82,11 +82,16 @@ mkdir -p "$STATE_DIR" "$PW_DIR" "$FILES"
 chmod 700 "$STATE_DIR" "$PW_DIR" "$FILES"
 WORK="$(mktemp -d "$STATE_DIR/.work.XXXXXX")"
 JOB_SECRET=""
+ADMIN_JOBS_CREATE_ATTEMPTED=false
+ADMIN_JOBS_PREPARED=false
 cleanup() {
-  rm -rf "$WORK"
   if [[ -n "$JOB_SECRET" ]]; then
     kubectl -n "$NS" delete secret "$JOB_SECRET" --ignore-not-found >/dev/null 2>&1 || true
   fi
+  if $ADMIN_JOBS_CREATE_ATTEMPTED && ! $ADMIN_JOBS_PREPARED; then
+    kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null 2>&1 || true
+  fi
+  rm -rf "$WORK"
 }
 trap cleanup EXIT
 
@@ -149,11 +154,17 @@ run_job() {
   JOB_SECRET="$name-secret"
   local secret_dir="$WORK/$name-secret" p
   mkdir -p "$secret_dir"
-  printf '%s' "$CLOUD_SQL_ADMIN_USER" >"$secret_dir/PGUSER"
-  admin_password >"$secret_dir/PGPASSWORD"
+  if [[ "${RUN_JOB_AS_OWNER:-0}" == 1 ]]; then
+    printf '%s' "$OWNER" >"$secret_dir/PGUSER"
+    cp "$PW_DIR/$OWNER" "$secret_dir/PGPASSWORD"
+  else
+    printf '%s' "$CLOUD_SQL_ADMIN_USER" >"$secret_dir/PGUSER"
+    admin_password >"$secret_dir/PGPASSWORD"
+  fi
   # Names only: the in-cluster classifier must refuse an existing dedicated
   # owner before it uses any newly generated credential value.
   printf '%s' "$missing_state_names" >"$secret_dir/MISSING_STATE_NAMES"
+  printf '%s' "${ACTIVATION_RETRY:-0}" >"$secret_dir/ACTIVATION_RETRY"
   for p in "$@"; do cp "$PW_DIR/$p" "$secret_dir/$p"; done
 
   kubectl -n "$NS" delete job "$name" --ignore-not-found >/dev/null
@@ -205,7 +216,11 @@ run_job() {
   log "job $name succeeded"
 }
 
-url() { printf '%s://%s:%s@%s:5432/%s?sslmode=verify-full' "$1" "$2" "$3" "$CLOUD_SQL_HOST" "$4"; }
+url() {
+  local password
+  password="$(printf '%s' "$3" | jq -Rr @uri)"
+  printf '%s://%s:%s@%s:5432/%s?sslmode=verify-full' "$1" "$2" "$password" "$CLOUD_SQL_HOST" "$4"
+}
 pw() { cat "$PW_DIR/$1"; }
 json_url() { jq -cn --arg k "$1" --arg v "$2" '{($k):$v}'; }
 admin_url() {
@@ -243,25 +258,51 @@ write_layout_values() {
   chmod 600 "$STATE_DIR/hoopdb-layout-values.yaml"
 }
 
+external_secret_mapping_active() { # target-secret key: 0 active, 1 absent, 2 unknown
+  local target="$1" key="$2" json="$WORK/externalsecrets.json" error="$WORK/externalsecrets.err" rc=0
+  if ! kubectl -n "$NS" get externalsecrets.external-secrets.io --ignore-not-found -o json >"$json" 2>"$error"; then
+    if grep -Eqi "(doesn't have a resource type|could not find the requested resource|no matches for kind.*ExternalSecret)" "$error"; then
+      return 1
+    fi
+    return 2
+  fi
+  jq -e --arg target "$target" --arg key "$key" '
+    any(.items[]?;
+      ((.spec.target.name // .metadata.name) == $target) and
+      (any(.spec.data[]?; .secretKey == $key) or ((.spec.dataFrom // []) | length > 0)))' "$json" >/dev/null || rc=$?
+  case "$rc" in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
+}
+
 remove_legacy_secret_keys() {
-  local pair secret key secret_json secret_error key_present externally_managed
+  local pair secret key secret_json key_present externally_managed mapping_rc
   for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
               search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
     secret="${pair%%:*}"; key="${pair#*:}"
-    secret_json="$WORK/$secret.json"; secret_error="$WORK/$secret.err"
-    if ! kubectl -n "$NS" get secret "$secret" -o json >"$secret_json" 2>"$secret_error"; then
-      grep -qi 'not[[:space:]]*found' "$secret_error" && continue
-      die "could not read Secret $secret while removing legacy administrator keys"
+    secret_json="$WORK/$secret.json"
+    kubectl -n "$NS" get secret "$secret" --ignore-not-found -o json >"$secret_json" \
+      || die "could not read Secret $secret while removing legacy administrator keys"
+    if [[ -s "$secret_json" ]]; then
+      key_present="$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$secret_json")" \
+        || die "could not parse Secret $secret while removing legacy administrator keys"
+      externally_managed="$(jq -r '
+        any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
+        ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json")" \
+        || die "could not parse Secret $secret while checking its owner"
+    else
+      key_present=no; externally_managed=false
     fi
-    key_present="$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$secret_json")" \
-      || die "could not parse Secret $secret while removing legacy administrator keys"
+    mapping_rc=1
+    if [[ "$externally_managed" == true || "$key_present" == no ]]; then
+      if external_secret_mapping_active "$secret" "$key"; then mapping_rc=0; else mapping_rc=$?; fi
+      if [[ "$mapping_rc" == 0 ]]; then
+        die "External Secrets still maps $secret/$key: remove that mapping from the Helm release values and ExternalSecret, delete the backing-store value, and wait for reconciliation; $ADMIN_JOBS_SECRET was retained"
+      elif [[ "$mapping_rc" == 2 ]]; then
+        die "could not inspect ExternalSecret mappings while removing $secret/$key; $ADMIN_JOBS_SECRET was retained"
+      fi
+    fi
     [[ "$key_present" == no ]] && continue
-    externally_managed="$(jq -r '
-      any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
-      ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json")" \
-      || die "could not parse Secret $secret while checking its owner"
     if [[ "$externally_managed" == true ]]; then
-      die "Secret $secret is managed by External Secrets: remove the $key mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, then rerun cleanup; $ADMIN_JOBS_SECRET was retained"
+      die "Secret $secret is managed by External Secrets: remove the $key mapping from the Helm release values and ExternalSecret, delete the backing-store value, wait for reconciliation, then rerun cleanup; $ADMIN_JOBS_SECRET was retained"
     fi
     kubectl -n "$NS" patch secret "$secret" --type=merge \
       -p "{\"data\":{\"$key\":null}}" >/dev/null
@@ -365,7 +406,7 @@ EOS
     printf '%s\n' "${untrusted_passwords# }" >"$PENDING_PASSWORDS_FILE"; chmod 600 "$PENDING_PASSWORDS_FILE"
   fi
   if [[ "$probed_layout" == dedicated-owner && -n "$untrusted_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
-    for p in $generated_passwords; do rm -f "$PW_DIR/$p"; done
+    for p in $untrusted_passwords; do rm -f "$PW_DIR/$p"; done
     rm -f "$PENDING_PASSWORDS_FILE"
     die "dedicated-owner HoopDb exists but STATE_DIR lacked trusted saved passwords for:${untrusted_passwords}; database and Secrets were left unchanged"
   fi
@@ -373,9 +414,10 @@ EOS
     printf 'fresh activation in progress\n' >"$PENDING_ACTIVATION_FILE"
     chmod 600 "$PENDING_ACTIVATION_FILE"
   fi
-  local missing_for_job="$untrusted_passwords"
+  local missing_for_job="$untrusted_passwords" activation_retry=0
   if [[ "$probed_layout" == dedicated-owner && -s "$PENDING_ACTIVATION_FILE" ]]; then
     missing_for_job=""
+    activation_retry=1
   fi
 
   cat >"$WORK/run.sh" <<'EOS'
@@ -410,6 +452,17 @@ if [ -n "$hoopdb_exists" ] && [ "$owner" = "$PGUSER" ]; then
 fi
 if [ "$owner" = 'hoopdb_owner' ]; then
   existing_dedicated=1
+  if [ "${ACTIVATION_RETRY:-0}" = 1 ]; then
+    for role in hoopdb_owner sessions_pipeline_runtime search_consumer_runtime; do
+      eval "candidate=\$$role"
+      if ! PGUSER="$role" PGPASSWORD="$candidate" $Q -d hoopdb -c 'select 1' | grep -qx 1; then
+        echo 'HOOPDB_STATE=activation-marker-unverified'
+        echo 'saved activation candidates do not authenticate; refusing before database changes and retaining pending state' >&2
+        exit 3
+      fi
+    done
+    echo 'saved activation candidates verified against the committed owner roles'
+  fi
   if [ -n "$MISSING_STATE_NAMES" ]; then
     echo 'HOOPDB_STATE=dedicated-owner-missing'
     echo "dedicated-owner HoopDb exists but saved credential state lacks:$MISSING_STATE_NAMES; refusing before database changes" >&2
@@ -515,7 +568,7 @@ else
   echo 'HOOPDB_LAYOUT=fresh-dedicated'
 fi
 EOS
-  run_job agent-relay-cloud-sql-pre "$WORK/run.sh" "$missing_for_job" \
+  ACTIVATION_RETRY="$activation_retry" run_job agent-relay-cloud-sql-pre "$WORK/run.sh" "$missing_for_job" \
     control_owner control_api_runtime "$OWNER" sessions_pipeline_runtime \
     search_consumer_runtime relaycast_owner relaycast_runtime
   local layout
@@ -572,17 +625,61 @@ do_post() {
   [[ "$(jq -r '[.status.conditions[]? | select(.type == "Complete" and .status == "True")] | length' <<<"$migration_json")" == 1 ]] || \
     die "current HoopDb migrate Job $migration_job has not completed"
 
-  cat >"$WORK/run.sh" <<'EOS'
+  local layout
+  [[ -s "$LAYOUT_FILE" ]] || die "missing HoopDb layout marker: run '$0 pre' first"
+  layout="$(<"$LAYOUT_FILE")"
+  if [[ "$layout" == dedicated-owner ]]; then
+    cat >"$WORK/post-roles.sh" <<'EOS'
 set -eu
 export PGDATABASE=hoopdb
 P="psql -X -q -v ON_ERROR_STOP=1"; Q="psql -X -A -t -v ON_ERROR_STOP=1"
-$P -f /sql/session_read_api_role.sql
-printf '%s\n' "ALTER ROLE bulls96_read_api PASSWORD :'p1';" | $P -v p1="$bulls96_read_api"
+for role in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
+  exists="$($Q -c "select 1 from pg_roles where rolname='$role'")" \
+    || { echo "could not inspect $role; refusing" >&2; exit 3; }
+  [ -n "$exists" ] || { echo "$role is missing: run pre and migrate first" >&2; exit 3; }
+done
+printf '%s\n' "ALTER ROLE bulls96_read_api LOGIN NOINHERIT PASSWORD :'p1'; ALTER ROLE bulls96_read_api SET statement_timeout='2s'; ALTER ROLE bulls96_read_api SET default_transaction_read_only=on;" | $P -v p1="$bulls96_read_api"
+printf '%s\n' "ALTER ROLE bulls96_session_ingest LOGIN NOINHERIT PASSWORD :'p1'; ALTER ROLE bulls96_session_ingest SET statement_timeout='5s'; ALTER ROLE bulls96_session_ingest SET lock_timeout='2s'; ALTER ROLE bulls96_session_ingest SET idle_in_transaction_session_timeout='10s';" | $P -v p1="$bulls96_session_ingest"
+echo 'dedicated runtime role passwords activated by the Cloud SQL administrator'
+EOS
+    run_job agent-relay-cloud-sql-post-roles "$WORK/post-roles.sh" "" \
+      bulls96_read_api bulls96_session_ingest
+  fi
+
+  printf 'hoopdb_layout=%q\n' "$layout" >"$WORK/run.sh"
+  cat >>"$WORK/run.sh" <<'EOS'
+set -eu
+export PGDATABASE=hoopdb
+P="psql -X -q -v ON_ERROR_STOP=1"; Q="psql -X -A -t -v ON_ERROR_STOP=1"
+if [ "$hoopdb_layout" = dedicated-owner ]; then
+  read_role_exists="$($Q -c "select 1 from pg_roles where rolname='bulls96_read_api')" \
+    || { echo 'could not inspect bulls96_read_api; refusing' >&2; exit 3; }
+  [ -n "$read_role_exists" ] || { echo 'bulls96_read_api is missing: run pre first' >&2; exit 3; }
+  sed '/^ALTER ROLE bulls96_read_api /d' /sql/session_read_api_role.sql > /tmp/session_read_api_role.sql
+  if grep -Eq '^(ALTER|CREATE)[[:space:]]+ROLE([[:space:]]|$)' /tmp/session_read_api_role.sql; then
+    echo 'filtered session_read_api_role.sql still contains a top-level ALTER ROLE or CREATE ROLE' >&2; exit 3
+  fi
+  $P -f /tmp/session_read_api_role.sql
+else
+  $P -f /sql/session_read_api_role.sql
+  printf '%s\n' "ALTER ROLE bulls96_read_api PASSWORD :'p1';" | $P -v p1="$bulls96_read_api"
+fi
 $P -c 'GRANT CONNECT ON DATABASE hoopdb TO bulls96_read_api'
 $P -f /sql/session_read_api_role_verify.sql
 echo "read API role ok"
-$P -f /sql/session_ingest_role.sql
-printf '%s\n' "ALTER ROLE bulls96_session_ingest PASSWORD :'p1';" | $P -v p1="$bulls96_session_ingest"
+if [ "$hoopdb_layout" = dedicated-owner ]; then
+  ingest_role_exists="$($Q -c "select 1 from pg_roles where rolname='bulls96_session_ingest')" \
+    || { echo 'could not inspect bulls96_session_ingest; refusing' >&2; exit 3; }
+  [ -n "$ingest_role_exists" ] || { echo 'bulls96_session_ingest is missing: run pre first' >&2; exit 3; }
+  sed '/^ALTER ROLE bulls96_session_ingest /d' /sql/session_ingest_role.sql > /tmp/session_ingest_role.sql
+  if grep -Eq '^(ALTER|CREATE)[[:space:]]+ROLE([[:space:]]|$)' /tmp/session_ingest_role.sql; then
+    echo 'filtered session_ingest_role.sql still contains a top-level ALTER ROLE or CREATE ROLE' >&2; exit 3
+  fi
+  $P -f /tmp/session_ingest_role.sql
+else
+  $P -f /sql/session_ingest_role.sql
+  printf '%s\n' "ALTER ROLE bulls96_session_ingest PASSWORD :'p1';" | $P -v p1="$bulls96_session_ingest"
+fi
 $P -c 'GRANT CONNECT ON DATABASE hoopdb TO bulls96_session_ingest'
 $P -f /sql/session_ingest_role_verify.sql
 $P -f /sql/session_ingest_verify.sql
@@ -606,8 +703,13 @@ for role in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
   PGUSER="$role" PGPASSWORD="$secret" $Q -c "select 'login ok: '||session_user||' tls='||(select ssl from pg_stat_ssl where pid=pg_backend_pid())"
 done
 EOS
-  run_job agent-relay-cloud-sql-post "$WORK/run.sh" "" \
-    bulls96_read_api bulls96_session_ingest search_consumer_runtime
+  if [[ "$layout" == dedicated-owner ]]; then
+    RUN_JOB_AS_OWNER=1 run_job agent-relay-cloud-sql-post "$WORK/run.sh" "" \
+      bulls96_read_api bulls96_session_ingest search_consumer_runtime
+  else
+    run_job agent-relay-cloud-sql-post "$WORK/run.sh" "" \
+      bulls96_read_api bulls96_session_ingest search_consumer_runtime
+  fi
   log "post done; restart the read API, ingest edge and search indexer"
 }
 
@@ -616,8 +718,10 @@ do_prepare-admin-jobs() {
     || die "prepare-admin-jobs is only for an existing administrator-owned install; run '$0 pre' first"
   write_legacy_admin_files
   kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
+  ADMIN_JOBS_CREATE_ATTEMPTED=true
   kubectl -n "$NS" create secret generic "$ADMIN_JOBS_SECRET" \
     --from-file="$FILES/$ADMIN_JOBS_SECRET" >/dev/null
+  ADMIN_JOBS_PREPARED=true
   log "$ADMIN_JOBS_SECRET created for migration/bootstrap Jobs only; retain the old keys until Helm, Jobs and Deployments succeed"
 }
 

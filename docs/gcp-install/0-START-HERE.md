@@ -521,11 +521,23 @@ start by themselves once it does.
   ```
 - **Existing administrator-owned install:** the first upgrade uses the
   temporary `hoopdb-admin-jobs` Secret. To remove the old long-lived keys from
-  ESO-managed Secrets, delete the `HOOPDB_MIGRATION_URL` and
-  `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` mappings from their ExternalSecrets
-  and delete those two values from Secret Manager. Wait for reconciliation;
-  do not patch the generated Kubernetes Secrets. Delete `hoopdb-admin-jobs`
-  only after the upgrade Jobs, Deployments, and this store-side cleanup succeed.
+  ESO-managed Secrets, first remove their mappings from the `values.yaml` used
+  by every later Helm command (the template remains unchanged for fresh installs):
+
+  ```sh
+  yq -i '
+    del(.externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_MIGRATION_URL) |
+    del(.externalSecrets.secrets.search-indexer-owner.data.RELAYHISTORY_PIPELINE_CONSUMER_SECRET)
+  ' values.yaml
+  ```
+
+  Apply that values file with the successful upgrade, then remove the same
+  mappings from the live ExternalSecrets and delete the two values from Secret
+  Manager. Wait for reconciliation; do not patch the generated Kubernetes
+  Secrets. Delete `hoopdb-admin-jobs` only after the upgrade Jobs, Deployments,
+  and this store-side cleanup succeed. Do not append
+  `external-secrets-values.yaml` to this existing install again: it would
+  restore the removed mappings.
 - **`helm uninstall` deletes these five Secrets** (ESO owns them). The values
   stay in Secret Manager.
 
@@ -907,11 +919,12 @@ catalog --apply <fingerprint from the plan above> && resume &&
 ```
 
 On a legacy administrator-owned install, only after the apply, writer resume,
-and rollouts above succeed, remove the old keys and the temporary copy:
+and rollouts above succeed, delete the temporary copy. Do not remove the old
+rollback keys here: that happens only after the first Helm upgrade through the
+temporary-Secret flow succeeds, including all of its Jobs and Deployments:
 
 ```sh
-cloud-sql-setup.sh remove-legacy-secret-keys &&
-  cloud-sql-setup.sh delete-admin-jobs
+cloud-sql-setup.sh delete-admin-jobs
 ```
 
 After a failed attempt, run `cloud-sql-setup.sh delete-admin-jobs`; run
@@ -1029,9 +1042,10 @@ bucket, writes nothing in plan mode, and is safe to rerun.
 Run it in a terminal where you ran `cd agent-relay-install && source settings.sh`
 (step 7): it needs `NAMESPACE`, `REGION` and `SESSIONS_BUCKET` from there.
 For a legacy administrator-owned install, prepare `hoopdb-admin-jobs` first,
-set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`, and after a successful re-stamp run
-`cloud-sql-setup.sh remove-legacy-secret-keys`. Always run
-`cloud-sql-setup.sh delete-admin-jobs` afterwards, including on failure. A
+set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`. Always run
+`cloud-sql-setup.sh delete-admin-jobs` afterwards, including on failure. Keep
+the old rollback keys until the first Helm upgrade through the temporary-Secret
+flow, all of its Jobs, and its Deployments succeed. A
 missing temporary Secret makes the pod fail before any row is changed.
 
 ```sh

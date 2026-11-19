@@ -569,24 +569,49 @@ aws rds wait db-snapshot-available --db-snapshot-identifier "$snapshot"
 say "   snapshot $snapshot is available"
 
 rollback_hint() {
-  local rollback_prepare rollback_delete rollback_helm
+  local rollback_prepare rollback_delete rollback_helm rollback_manifest rollback_uses_old_keys=false
   say ""; say "$($first_install && echo INSTALL || echo UPGRADE) FAILED. Nothing further was changed."
   if [ -n "$current_rev" ]; then
     if $rds_setup && [ "$hoopdb_layout" = legacy-admin ]; then
-      printf -v rollback_prepare \
-        'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q prepare-admin-jobs' \
-        "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
-      printf -v rollback_delete \
-        'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q delete-admin-jobs' \
-        "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+      rollback_manifest=$("${helmx[@]}" get manifest "$release" --revision "$current_rev" 2>/dev/null || true)
+      if yq -e '
+        .. | select(tag == "!!map") |
+        select((.name == "agent-relay-secrets" and .key == "HOOPDB_MIGRATION_URL") or
+               (.name == "search-indexer-owner" and .key == "RELAYHISTORY_PIPELINE_CONSUMER_SECRET"))' \
+          <<<"$rollback_manifest" >/dev/null 2>&1; then
+        rollback_uses_old_keys=true
+      fi
+      if $rollback_uses_old_keys; then
+        printf -v rollback_prepare \
+          'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q prepare-rollback-admin-keys' \
+          "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+        printf -v rollback_delete \
+          'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q remove-rollback-admin-keys' \
+          "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+      else
+        printf -v rollback_prepare \
+          'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q prepare-admin-jobs' \
+          "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+        printf -v rollback_delete \
+          'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q delete-admin-jobs' \
+          "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+      fi
       rollback_helm="helm -n $(printf '%q' "$namespace")"
       [ -z "$context" ] || rollback_helm+=" --kube-context $(printf '%q' "$context")"
       rollback_helm+=" rollback $(printf '%q' "$release") $(printf '%q' "$current_rev") --wait --wait-for-jobs --timeout 15m"
-      say "   the failed run asked its exit handler to delete the temporary administrator Job Secret; a WARNING after this block means manual cleanup is still required. Roll back in this order:"
+      if $rollback_uses_old_keys; then
+        say "   revision $current_rev still references the two legacy long-lived keys. Temporarily restore them with the current RDS administrator credential, roll back, then remove them after rollback Jobs and workloads finish:"
+      else
+        say "   revision $current_rev references the temporary Job Secret. The failed run asked its exit handler to delete it; a WARNING after this block means manual cleanup is still required. Roll back in this order:"
+      fi
       say "     $rollback_prepare"
       say "     $rollback_helm"
       say "     $rollback_delete"
-      say "   delete hoopdb-admin-jobs only after the rollback Jobs and workloads finish"
+      if $rollback_uses_old_keys; then
+        say "   the restored administrator keys are rollback-only; the final command must run after rollback Jobs and workloads finish"
+      else
+        say "   delete hoopdb-admin-jobs only after the rollback Jobs and workloads finish"
+      fi
     else
       say "   roll back the release:  helm -n $namespace ${context:+--kube-context $context }rollback $release $current_rev"
     fi
@@ -611,25 +636,53 @@ prepare_legacy_admin_jobs() {
   "${kube[@]}" get secret hoopdb-admin-jobs -o name >/dev/null \
     || { say "   hoopdb-admin-jobs is absent; refusing before Helm changes anything"; false; }
 }
+external_secret_mapping_active() { # target-secret key: 0 active, 1 absent, 2 unknown
+  local target="$1" key="$2" json="$work/externalsecrets.json" error="$work/externalsecrets.err" rc=0
+  if ! "${kube[@]}" get externalsecrets.external-secrets.io --ignore-not-found -o json >"$json" 2>"$error"; then
+    if grep -Eqi "(doesn't have a resource type|could not find the requested resource|no matches for kind.*ExternalSecret)" "$error"; then
+      return 1
+    fi
+    return 2
+  fi
+  jq -e --arg target "$target" --arg key "$key" '
+    any(.items[]?;
+      ((.spec.target.name // .metadata.name) == $target) and
+      (any(.spec.data[]?; .secretKey == $key) or ((.spec.dataFrom // []) | length > 0)))' "$json" >/dev/null || rc=$?
+  case "$rc" in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
+}
 remove_legacy_long_lived_keys() {
-  local pair s k secret_json secret_error key_present externally_managed
+  local pair s k secret_json key_present externally_managed mapping_rc
   for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
     s=${pair%%:*}; k=${pair#*:}
-    secret_json="$work/$s.json"; secret_error="$work/$s.err"
-    if ! "${kube[@]}" get secret "$s" -o json >"$secret_json" 2>"$secret_error"; then
-      grep -qi 'not[[:space:]]*found' "$secret_error" && continue
+    secret_json="$work/$s.json"
+    if ! "${kube[@]}" get secret "$s" --ignore-not-found -o json >"$secret_json"; then
       say "   could not read Secret $s while removing legacy administrator keys"
       return 1
     fi
-    key_present=$(jq -r --arg k "$k" 'if .data[$k] == null then "no" else "yes" end' "$secret_json") \
-      || { say "   could not parse Secret $s while removing legacy administrator keys"; return 1; }
+    if [ -s "$secret_json" ]; then
+      key_present=$(jq -r --arg k "$k" 'if .data[$k] == null then "no" else "yes" end' "$secret_json") \
+        || { say "   could not parse Secret $s while removing legacy administrator keys"; return 1; }
+      externally_managed=$(jq -r '
+        any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
+        ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json") \
+        || { say "   could not parse Secret $s while checking its owner"; return 1; }
+    else
+      key_present=no; externally_managed=false
+    fi
+    mapping_rc=1
+    if [ "$externally_managed" = true ] || [ "$key_present" = no ]; then
+      if external_secret_mapping_active "$s" "$k"; then mapping_rc=0; else mapping_rc=$?; fi
+      if [ "$mapping_rc" = 0 ]; then
+        say "   External Secrets still maps $s/$k: remove that mapping from the Helm release values and ExternalSecret, delete the backing-store value, and wait for reconciliation; hoopdb-admin-jobs was retained"
+        return 1
+      elif [ "$mapping_rc" = 2 ]; then
+        say "   could not inspect ExternalSecret mappings while removing $s/$k; hoopdb-admin-jobs was retained"
+        return 1
+      fi
+    fi
     [ "$key_present" = no ] && continue
-    externally_managed=$(jq -r '
-      any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
-      ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json") \
-      || { say "   could not parse Secret $s while checking its owner"; return 1; }
     if [ "$externally_managed" = true ]; then
-      say "   Secret $s is managed by External Secrets: remove the $k mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, then rerun this upgrade; hoopdb-admin-jobs was retained"
+      say "   Secret $s is managed by External Secrets: remove the $k mapping from the Helm release values and ExternalSecret, delete the backing-store value, wait for reconciliation, then rerun this upgrade; hoopdb-admin-jobs was retained"
       return 1
     fi
     ( umask 077; jq -n --arg path "/data/$k" '[{"op":"remove","path":$path}]' >"$work/remove-key.json" )
@@ -686,6 +739,32 @@ wait_jobs() {
     say "   Job $job completed"
   done
 }
+wait_release_jobs_quiescent() {
+  local deadline json failed running
+  deadline=$(( $(date +%s) + job_timeout ))
+  while :; do
+    if json=$("${kube[@]}" get jobs -l "$release_selector" -o json 2>"$work/release-jobs.err"); then
+      failed=$(jq -r '[.items[] | select(any(.status.conditions[]?; .type == "Failed" and .status == "True")) | .metadata.name] | join(",")' <<<"$json") \
+        || { say "   could not parse release Jobs"; return 1; }
+      [ -z "$failed" ] || { say "   failed Jobs: $failed"; return 1; }
+      running=$(jq -r '[.items[] | select(
+        (any(.status.conditions[]?; .type == "Complete" and .status == "True") | not) and
+        (any(.status.conditions[]?; .type == "Failed" and .status == "True") | not)) | .metadata.name] | join(",")' <<<"$json") \
+        || { say "   could not parse release Jobs"; return 1; }
+      if [ -z "$running" ]; then
+        say "   every observed release Job is terminal (TTL-deleted Jobs count as complete)"
+        return 0
+      fi
+    else
+      running="API read failed"
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      say "   release Jobs did not become terminal before the deadline: $running"
+      return 1
+    fi
+    sleep "$job_poll"
+  done
+}
 mirrored_ref() { jq -r --arg n "$1" --arg root "${registry}/${prefix}" '[.images[] | select(.name == $n) | "\($root)/\(.ref)"] | first // empty' "$manifest"; }
 
 if [ -n "$rta_phase" ]; then
@@ -740,10 +819,12 @@ if $admin_jobs_created; then
   # Keep the old revision's keys until the new Helm revision, all of its Jobs,
   # and every Deployment have succeeded. A failed upgrade can therefore use
   # the printed rollback command without first reconstructing credentials.
-  # Every Helm path that can create a dependent Job uses --wait-for-jobs; a
-  # successful Helm return is therefore the Job barrier. Do not look those
-  # Jobs up again here: ttlSecondsAfterFinished may already have deleted a
-  # successfully completed Job while Helm was waiting for other workloads.
+  # A resumed durable-actors phase may skip Helm after its previous process
+  # applied the release but before that process observed Job completion. Wait
+  # for the currently observable release Jobs to become terminal; an empty
+  # list is safe because Helm either rendered none or TTL cleanup removed jobs
+  # that had already completed.
+  if [ -n "$rta_phase" ]; then wait_release_jobs_quiescent; fi
   if ! remove_legacy_long_lived_keys; then
     say "   deployment succeeded, but administrator-key cleanup is incomplete; do not roll back"
     say "   hoopdb-admin-jobs was retained. Fix cluster access and rerun this same upgrade; key removal is idempotent"

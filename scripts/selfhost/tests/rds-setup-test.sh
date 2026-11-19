@@ -84,6 +84,10 @@ case " $* " in
   *" get job sessions-pipeline-worker-migrate-current -o json "*)
     printf '%s\n' '{"metadata":{"name":"sessions-pipeline-worker-migrate-current","labels":{"app.kubernetes.io/instance":"agent-relay","app.kubernetes.io/component":"hoopdb-migrate"}},"status":{"succeeded":1}}'
     exit 0 ;;
+  *" get secret agent-relay-secrets -o json "*|*" get secret agent-relay-secrets --ignore-not-found -o json "*)
+    printf '%s\n' '{"metadata":{},"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}'; exit 0 ;;
+  *" get secret search-indexer-owner -o json "*|*" get secret search-indexer-owner --ignore-not-found -o json "*)
+    printf '%s\n' '{"metadata":{},"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}'; exit 0 ;;
   *" logs job/agent-relay-rds-layout-probe"*) printf 'HOOPDB_LAYOUT=%s\n' "${MOCK_LAYOUT:-fresh-dedicated}"; exit 0 ;;
   *" logs job/"*) printf 'fixture job completed\n'; exit 0 ;;
 esac
@@ -338,6 +342,27 @@ refresh_output="$(PROVISION_ERASE_SEARCH_LOGIN=1 env -u SERVICES_IMAGE bash "${R
 ! grep -q 'agent-relay-rds-' "${COMMAND_LOG}" || fail "refresh-admin must not run a database Job"
 [[ ! -e "$STATE_DIR/secret-files/session-erase-search-runtime/SESSION_ERASE_SEARCH_POSTGRES_URL" ]] || fail "refresh-admin recreated the optional eraser input"
 pass "refresh-admin writes only the short-lived Job inputs, without SERVICES_IMAGE or a database Job"
+
+: >"${COMMAND_LOG}"
+set +e
+prepare_rollback_output="$(env -u SERVICES_IMAGE bash "$RDS_SETUP" prepare-rollback-admin-keys 2>&1)"
+prepare_rollback_rc=$?
+set -e
+[[ "$prepare_rollback_rc" == 0 ]] || fail "rollback-key preparation failed: $prepare_rollback_output"
+[[ "$prepare_rollback_output" == *"temporarily restored"* ]] || fail "rollback-key preparation did not finish"
+grep -q 'patch secret agent-relay-secrets --type=merge --patch-file' "$COMMAND_LOG" \
+  || fail "rollback-key preparation did not restore the migration key from a private patch file"
+grep -q 'patch secret search-indexer-owner --type=merge --patch-file' "$COMMAND_LOG" \
+  || fail "rollback-key preparation did not restore the search key from a private patch file"
+[[ "$prepare_rollback_output" != *"admin-secret-material"* ]] || fail "rollback-key preparation printed the administrator password"
+: >"${COMMAND_LOG}"
+remove_rollback_output="$(env -u SERVICES_IMAGE bash "$RDS_SETUP" remove-rollback-admin-keys 2>&1)"
+[[ "$remove_rollback_output" == *"rollback administrator keys removed"* ]] || fail "rollback-key removal did not finish"
+grep -q 'patch secret agent-relay-secrets --type=json --patch-file' "$COMMAND_LOG" \
+  || fail "rollback-key removal did not remove the migration key"
+grep -q 'patch secret search-indexer-owner --type=json --patch-file' "$COMMAND_LOG" \
+  || fail "rollback-key removal did not remove the search key"
+pass "legacy rollback restores only the target revision's keys and removes them afterward"
 
 set +e
 nostate_output="$(STATE_DIR="$(mktemp -d)" bash "${RDS_SETUP}" refresh-admin 2>&1)"

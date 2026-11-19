@@ -96,8 +96,8 @@ EOF
 
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
   local bin="$root/bin"; rm -rf "$bin"; mkdir -p "$bin"; : > "$root/log"
-  rm -f "$root/rekey-fail" "$root/crane-missing" "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml"; rm -rf "$root/secrets"; touch "$root/exists"
-  rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version" "$root/applied.yaml" "$root/census.out" "$root/census-phase" "$root/can-i-denied"
+  rm -f "$root/rekey-fail" "$root/crane-missing" "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml" "$root/external-secrets.json"; rm -rf "$root/secrets"; touch "$root/exists"
+  rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version" "$root/applied.yaml" "$root/census.out" "$root/census-phase" "$root/can-i-denied" "$root/release-job-states"
   printf 'v1\napps/v1\nbatch/v1\npolicy/v1\nautoscaling/v2\n' > "$root/api-versions"
   cat > "$bin/gh" <<EOF
 #!/usr/bin/env bash
@@ -133,8 +133,20 @@ case "\$*" in
       notfound) echo "Error from server (NotFound): jobs.batch \"\$n\" not found" >&2; exit 1 ;;
       *) echo '{"status":{"active":1}}' ;;
     esac ;;
+  *"get jobs -l"*"-o json"*)
+    st=complete
+    if [ -s "$root/release-job-states" ]; then
+      st=\$(head -1 "$root/release-job-states")
+      if [ "\$(wc -l < "$root/release-job-states")" -gt 1 ]; then tail -n +2 "$root/release-job-states" > "$root/release-job-states.t"; mv "$root/release-job-states.t" "$root/release-job-states"; fi
+    fi
+    case "\$st" in
+      running) echo '{"items":[{"metadata":{"name":"pending-bootstrap"},"status":{"active":1}}]}' ;;
+      failed) echo '{"items":[{"metadata":{"name":"failed-bootstrap"},"status":{"conditions":[{"type":"Failed","status":"True"}]}}]}' ;;
+      *) echo '{"items":[]}' ;;
+    esac ;;
   *"logs job/"*) echo "bootstrap: relation sessions.search_documents does not exist" ;;
   *" exec "*relaycast-rekey*) [ -f "$root/rekey-fail" ] && { echo '{"event":"relaycast_rekey.summary","failed":1}'; exit 1; }; echo '{"event":"relaycast_rekey.credential","table":"workspaces","outcome":"rotated"}'; echo '{"event":"relaycast_rekey.summary","run_id":"rekey-run-1","by_column":{}}' ;;
+  *"get externalsecrets.external-secrets.io "*"-o json"*) cat "$root/external-secrets.json" 2>/dev/null || echo '{"items":[]}' ;;
   *"get secret "*"-o json"*) # $root/secrets/<namespace>/<name>.json, else an empty Secret
     ns=""; name=""; prev=""; for a in "\$@"; do [ "\$prev" = -n ] && ns=\$a; [ "\$prev" = secret ] && name=\$a; prev=\$a; done
     cat "$root/secrets/\$ns/\$name.json" 2>/dev/null || echo '{"data":{}}' ;;
@@ -400,11 +412,22 @@ make_state; setup_mocks "$root/rel-ok" ok; write_helm "exit 1"
 mkdir -p "$root/secrets/agent-relay"
 printf '{"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' >"$root/secrets/agent-relay/agent-relay-secrets.json"
 printf '{"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' >"$root/secrets/agent-relay/search-indexer-owner.json"
+cat >"$root/live-manifest.yaml" <<'YAML'
+kind: Job
+spec:
+  template:
+    spec:
+      containers:
+        - env:
+            - valueFrom: {secretKeyRef: {name: agent-relay-secrets, key: HOOPDB_MIGRATION_URL}}
+YAML
 out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
   --apply --db-instance prod-db --yes 2>&1) && fail "failed legacy Helm upgrade reported success"
 grep -q 'UPGRADE FAILED' <<<"$out" || fail "failed legacy upgrade omitted rollback guidance: $out"
 grep -q 'kubectl .*patch secret' "$root/log" && fail "failed upgrade removed a long-lived administrator key"
 grep -q '^rds-setup delete-admin-jobs' "$root/log" || fail "failed upgrade did not clean up the temporary Secret"
+grep -q 'prepare-rollback-admin-keys' <<<"$out" || fail "old-revision rollback did not restore the keys that revision reads: $out"
+grep -q 'remove-rollback-admin-keys' <<<"$out" || fail "old-revision rollback did not remove restored keys after success: $out"
 pass "failed legacy upgrade preserves old keys for rollback and cleans up only the temporary Secret"
 
 # A later upgrade has no administrator URL in the long-lived Secrets. Its
@@ -487,7 +510,7 @@ for managed in owner label; do
   external_rc=$?
   set -e
   [[ "$external_rc" != 0 ]] || fail "$managed-managed External Secret cleanup reported success"
-  grep -q 'HOOPDB_MIGRATION_URL mapping from its ExternalSecret' <<<"$out" \
+  grep -q 'HOOPDB_MIGRATION_URL mapping from the Helm release values and ExternalSecret' <<<"$out" \
     || fail "$managed-managed cleanup did not name the ExternalSecret mapping: $out"
   grep -q 'delete the backing-store value' <<<"$out" \
     || fail "$managed-managed cleanup did not name the backing-store action: $out"
@@ -513,6 +536,21 @@ for managed in owner label; do
   grep -q '^rds-setup delete-admin-jobs' "$root/log" \
     || fail "$managed-managed completed cleanup retained the temporary credential"
 done
+make_state; setup_mocks "$root/rel-ok" ok
+mkdir -p "$root/secrets/agent-relay"
+printf '{"metadata":{"ownerReferences":[{"kind":"ExternalSecret","name":"agent-relay-secrets"}]},"data":{}}\n' \
+  >"$root/secrets/agent-relay/agent-relay-secrets.json"
+printf '{"metadata":{},"data":{}}\n' >"$root/secrets/agent-relay/search-indexer-owner.json"
+printf '%s\n' '{"items":[{"metadata":{"name":"agent-relay-secrets"},"spec":{"target":{"name":"agent-relay-secrets"},"data":[{"secretKey":"HOOPDB_MIGRATION_URL"}]}}]}' \
+  >"$root/external-secrets.json"
+if out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
+    --apply --db-instance prod-db --yes 2>&1); then
+  fail "absent administrator key with an active ExternalSecret mapping reported cleanup complete"
+fi
+grep -q 'remove that mapping from the Helm release values' <<<"$out" \
+  || fail "active ExternalSecret mapping refusal omitted its values source: $out"
+grep -q '^rds-setup delete-admin-jobs' "$root/log" \
+  && fail "active ExternalSecret mapping deleted the retained temporary credential"
 pass "legacy cleanup refuses managed keys and finishes after ESO removes them"
 
 # 21. eks-native legacy upgrade with --rds-setup prepares the temporary Secret; without it, never
@@ -743,9 +781,12 @@ pass "cutover uses a Relaycast-only overlay and refuses CA, keyring, image, engi
 setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yaml"; keyring; make_state
 st="$root/state/relaycast-actors/agent-relay-agent-relay"
 ( umask 077; mkdir -p "$root/state/relaycast-actors"; echo 1700000000 > "$st.ar-since" )
+printf 'running\ncomplete\n' >"$root/release-job-states"
 out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials --apply --db-instance prod-db --yes 2>&1) || fail "credentials apply failed: $out"
 before '^rds-setup prepare-admin-jobs' 'helm .* upgrade ' || fail "actors credentials phase did not prepare the legacy Job Secret before Helm"
 before 'helm .* upgrade ' '^rds-setup delete-admin-jobs' || fail "actors credentials phase did not retain the legacy Job Secret through Helm"
+before 'kubectl .*get jobs -l' '^rds-setup delete-admin-jobs' || fail "actors phase deleted the administrator Secret before release Jobs became terminal"
+[[ "$(grep -c 'kubectl .*get jobs -l' "$root/log")" -ge 2 ]] || fail "actors phase did not wait for a running release Job"
 [ "$(cat "$st.ar-since")" = 1700000000 ] || fail "a retried credentials phase overwrote the first switch time"
 grep -qx rekey-run-1 "$st.rekey-runs" || fail "the relaycast-rekey run id was not recorded"
 grep -q 'relaycast_rekey.summary' "$st.rekey-rekey-run-1.jsonl" || fail "the relaycast-rekey report was not kept"

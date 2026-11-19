@@ -82,13 +82,19 @@ grep -Fq 'any(.metadata.ownerReferences[]?; .kind == "ExternalSecret")' "$SCRIPT
   || fail "Azure cleanup does not detect ExternalSecret ownership"
 grep -Fq 'has("reconcile.external-secrets.io/managed")' "$SCRIPT" \
   || fail "Azure cleanup does not detect the ESO managed label"
-grep -Fq 'remove the $key mapping from its ExternalSecret and delete the backing-store value' "$SCRIPT" \
+grep -Fq 'remove the $key mapping from the Helm release values and ExternalSecret, delete the backing-store value' "$SCRIPT" \
   || fail "Azure cleanup does not name the ESO mapping and store actions"
 key_check_line="$(line_of 'key_present="$(jq -r --arg key "$key"')"
 external_check_line="$(line_of 'externally_managed="$(jq -r')"
 [[ -n "$key_check_line" && -n "$external_check_line" && "$key_check_line" -lt "$external_check_line" ]] \
   || fail "Azure cleanup checks ESO ownership before seeing that the mapped key is already absent"
-pass "Azure cleanup refuses managed keys but accepts an already-absent ESO key"
+grep -Fq 'external_secret_mapping_active "$secret" "$key"' "$SCRIPT" \
+  || fail "Azure cleanup does not check for an active mapping after the generated key disappears"
+pass "Azure cleanup refuses managed keys and checks active mappings after key removal"
+
+grep -Fq 'for p in $untrusted_passwords; do rm -f "$PW_DIR/$p"; done' "$SCRIPT" \
+  || fail "Azure leaves a rejected pending password file available to a later retry"
+pass "Azure removes rejected pending candidates before clearing their marker"
 
 finalize_guard="$(line_of '[[ -s "$LAYOUT_FILE" ]] || die "missing HoopDb layout marker: run')"
 finalize_read="$(line_of 'layout="$(<"$LAYOUT_FILE")"')"

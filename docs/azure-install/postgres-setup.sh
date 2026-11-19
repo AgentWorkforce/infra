@@ -216,25 +216,51 @@ write_layout_values() {
   chmod 600 "$STATE_DIR/hoopdb-layout-values.yaml"
 }
 
+external_secret_mapping_active() { # target-secret key: 0 active, 1 absent, 2 unknown
+  local target="$1" key="$2" json="$WORK/externalsecrets.json" error="$WORK/externalsecrets.err" rc=0
+  if ! kubectl -n "$NS" get externalsecrets.external-secrets.io --ignore-not-found -o json >"$json" 2>"$error"; then
+    if grep -Eqi "(doesn't have a resource type|could not find the requested resource|no matches for kind.*ExternalSecret)" "$error"; then
+      return 1
+    fi
+    return 2
+  fi
+  jq -e --arg target "$target" --arg key "$key" '
+    any(.items[]?;
+      ((.spec.target.name // .metadata.name) == $target) and
+      (any(.spec.data[]?; .secretKey == $key) or ((.spec.dataFrom // []) | length > 0)))' "$json" >/dev/null || rc=$?
+  case "$rc" in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
+}
+
 remove_legacy_secret_keys() {
-  local pair secret key secret_json secret_error key_present externally_managed
+  local pair secret key secret_json key_present externally_managed mapping_rc
   for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
               search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
     secret="${pair%%:*}"; key="${pair#*:}"
-    secret_json="$WORK/$secret.json"; secret_error="$WORK/$secret.err"
-    if ! kubectl -n "$NS" get secret "$secret" -o json >"$secret_json" 2>"$secret_error"; then
-      grep -qi 'not[[:space:]]*found' "$secret_error" && continue
-      die "could not read Secret $secret while removing legacy administrator keys"
+    secret_json="$WORK/$secret.json"
+    kubectl -n "$NS" get secret "$secret" --ignore-not-found -o json >"$secret_json" \
+      || die "could not read Secret $secret while removing legacy administrator keys"
+    if [[ -s "$secret_json" ]]; then
+      key_present="$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$secret_json")" \
+        || die "could not parse Secret $secret while removing legacy administrator keys"
+      externally_managed="$(jq -r '
+        any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
+        ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json")" \
+        || die "could not parse Secret $secret while checking its owner"
+    else
+      key_present=no; externally_managed=false
     fi
-    key_present="$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$secret_json")" \
-      || die "could not parse Secret $secret while removing legacy administrator keys"
+    mapping_rc=1
+    if [[ "$externally_managed" == true || "$key_present" == no ]]; then
+      if external_secret_mapping_active "$secret" "$key"; then mapping_rc=0; else mapping_rc=$?; fi
+      if [[ "$mapping_rc" == 0 ]]; then
+        die "External Secrets still maps $secret/$key: remove that mapping from the Helm release values and ExternalSecret, delete the backing-store value, and wait for reconciliation; $ADMIN_JOBS_SECRET was retained"
+      elif [[ "$mapping_rc" == 2 ]]; then
+        die "could not inspect ExternalSecret mappings while removing $secret/$key; $ADMIN_JOBS_SECRET was retained"
+      fi
+    fi
     [[ "$key_present" == no ]] && continue
-    externally_managed="$(jq -r '
-      any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
-      ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json")" \
-      || die "could not parse Secret $secret while checking its owner"
     if [[ "$externally_managed" == true ]]; then
-      die "Secret $secret is managed by External Secrets: remove the $key mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, then rerun cleanup; $ADMIN_JOBS_SECRET was retained"
+      die "Secret $secret is managed by External Secrets: remove the $key mapping from the Helm release values and ExternalSecret, delete the backing-store value, wait for reconciliation, then rerun cleanup; $ADMIN_JOBS_SECRET was retained"
     fi
     kubectl -n "$NS" patch secret "$secret" --type=merge \
       -p "{\"data\":{\"$key\":null}}" >/dev/null
@@ -307,7 +333,7 @@ do_pre() {
     # An ordinary dedicated-owner rerun has no marker, so a newly generated
     # replacement for a missing saved password still fails closed.
     if [[ -n "$untrusted_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
-      for p in $generated_passwords; do rm -f "$PW_DIR/$p"; done
+      for p in $untrusted_passwords; do rm -f "$PW_DIR/$p"; done
       rm -f "$PENDING_PASSWORDS_FILE"
       die "dedicated-owner HoopDb exists but STATE_DIR lacked trusted saved passwords for:${untrusted_passwords}; database and Secrets were left unchanged"
     fi

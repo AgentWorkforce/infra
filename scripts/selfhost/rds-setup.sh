@@ -13,6 +13,9 @@
 #                       Legacy installs only: refreshes and creates that Secret.
 #   rds-setup.sh delete-admin-jobs
 #                       Deletes it after the migration/bootstrap Jobs finish.
+#   rds-setup.sh prepare-rollback-admin-keys / remove-rollback-admin-keys
+#                       Legacy rollback only: temporarily restores, then removes,
+#                       the administrator keys required by an older chart revision.
 #
 # RDS is private, so the SQL runs in short-lived Jobs inside your cluster. The
 # script needs aws, kubectl, jq, openssl and curl, and access to the cluster.
@@ -42,12 +45,12 @@ set -euo pipefail
 umask 077
 
 MODE="${1:-}"
-case "$MODE" in pre|post|refresh-admin|prepare-admin-jobs|delete-admin-jobs) ;; *) echo "usage: $0 pre|post|refresh-admin|prepare-admin-jobs|delete-admin-jobs" >&2; exit 2 ;; esac
+case "$MODE" in pre|post|refresh-admin|prepare-admin-jobs|delete-admin-jobs|prepare-rollback-admin-keys|remove-rollback-admin-keys) ;; *) echo "usage: $0 pre|post|refresh-admin|prepare-admin-jobs|delete-admin-jobs|prepare-rollback-admin-keys|remove-rollback-admin-keys" >&2; exit 2 ;; esac
 
 : "${AWS_REGION:?set AWS_REGION}"
 : "${RDS_HOST:?set RDS_HOST (terraform output -raw database_host)}"
 : "${RDS_ADMIN_SECRET_ARN:?set RDS_ADMIN_SECRET_ARN (terraform output -raw database_admin_secret_arn)}"
-if [[ "$MODE" == refresh-admin || "$MODE" == prepare-admin-jobs || "$MODE" == delete-admin-jobs ]]; then SERVICES_IMAGE="${SERVICES_IMAGE:-unused@sha256:0}"; fi
+if [[ "$MODE" == refresh-admin || "$MODE" == prepare-admin-jobs || "$MODE" == delete-admin-jobs || "$MODE" == prepare-rollback-admin-keys || "$MODE" == remove-rollback-admin-keys ]]; then SERVICES_IMAGE="${SERVICES_IMAGE:-unused@sha256:0}"; fi
 : "${SERVICES_IMAGE:?set SERVICES_IMAGE to the approved sessions-pipeline image digest}"
 PSQL_IMAGE="${PSQL_IMAGE:-ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3}"
 NS="${NAMESPACE:-agent-relay}"
@@ -285,6 +288,50 @@ do_prepare-admin-jobs() {
 do_delete-admin-jobs() {
   kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
   log "$ADMIN_JOBS_SECRET deleted; long-running pods are unaffected"
+}
+
+secret_is_external() {
+  local secret="$1" json managed
+  json="$(kubectl -n "$NS" get secret "$secret" -o json)" || die "could not read Secret $secret"
+  managed="$(jq -er '
+    if (any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
+        ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed")))
+    then "yes" else "no" end' <<<"$json")" \
+    || die "could not parse Secret $secret while checking its owner"
+  [[ "$managed" == yes ]]
+}
+
+do_prepare-rollback-admin-keys() {
+  do_refresh-admin
+  local secret key source patch
+  for secret in agent-relay-secrets search-indexer-owner; do
+    if secret_is_external "$secret"; then
+      die "Secret $secret is managed by External Secrets; restore the rollback key through the release values, ExternalSecret and backing store instead of patching it"
+    fi
+  done
+  for secret in agent-relay-secrets search-indexer-owner; do
+    if [[ "$secret" == agent-relay-secrets ]]; then key=HOOPDB_MIGRATION_URL; else key=RELAYHISTORY_PIPELINE_CONSUMER_SECRET; fi
+    source="$FILES/$ADMIN_JOBS_SECRET/$key"; patch="$WORK/$secret-rollback.json"
+    jq -n --rawfile value "$source" --arg key "$key" '{data:{($key):($value|@base64)}}' >"$patch"
+    kubectl -n "$NS" patch secret "$secret" --type=merge --patch-file "$patch" >/dev/null
+  done
+  log "temporarily restored the administrator keys required by an older rollback revision; remove them immediately after rollback Jobs and workloads succeed"
+}
+
+do_remove-rollback-admin-keys() {
+  local secret key patch
+  for secret in agent-relay-secrets search-indexer-owner; do
+    kubectl -n "$NS" get secret "$secret" --ignore-not-found -o json >"$WORK/$secret.json" \
+      || die "could not read Secret $secret while removing rollback keys"
+    [[ -s "$WORK/$secret.json" ]] || continue
+    if [[ "$secret" == agent-relay-secrets ]]; then key=HOOPDB_MIGRATION_URL; else key=RELAYHISTORY_PIPELINE_CONSUMER_SECRET; fi
+    [[ "$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$WORK/$secret.json")" == yes ]] || continue
+    secret_is_external "$secret" && die "Secret $secret became managed by External Secrets; remove $key through its release values, ExternalSecret and backing store"
+    patch="$WORK/$secret-remove.json"
+    jq -n --arg path "/data/$key" '[{"op":"remove","path":$path}]' >"$patch"
+    kubectl -n "$NS" patch secret "$secret" --type=json --patch-file "$patch" >/dev/null
+  done
+  log "temporary legacy rollback administrator keys removed"
 }
 
 ensure_ca() {

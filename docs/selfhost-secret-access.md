@@ -6,9 +6,10 @@ Applies to every Kubernetes install (GKE, EKS, AKS).
 
 On a fresh install, two long-lived Secrets hold the dedicated `hoopdb_owner`
 URL for HoopDb, the sessions database. On an existing administrator-owned
-install, that statement becomes true only after the first successful upgrade
-through the temporary-Secret flow; until then the old keys may still contain
-the provider administrator URL. The dedicated login is not a provider
+install, the database remains administrator-owned: after the first successful
+upgrade through the temporary-Secret flow, both old keys are absent rather
+than replaced by `hoopdb_owner` URLs; until then they may still contain the
+provider administrator URL. The dedicated login is not a provider
 administrator, superuser, role creator or database creator, but it owns the
 HoopDb database and its objects:
 
@@ -30,8 +31,11 @@ kubectl -n agent-relay get secret search-indexer-owner -o json \
 
 If either Secret is owned by an `ExternalSecret` (or carries the
 `reconcile.external-secrets.io/managed` label), do not patch it. Remove the
-named key from the ExternalSecret mapping and its backing-store value, wait
-for reconciliation, and repeat the checks. The setup and upgrade helpers
+named key from the Helm release values used by every later upgrade, the live
+ExternalSecret mapping, and its backing-store value; wait for reconciliation,
+and repeat the checks. The setup and upgrade helpers also check for a mapping
+when the generated Secret key is already absent, so a later reconciliation
+cannot restore the administrator URL. They
 refuse to patch an ESO-managed Secret and retain `hoopdb-admin-jobs` until the
 operator completes those store-side changes.
 
@@ -219,18 +223,12 @@ Turn on audit logging for Secret reads so an unexpected one is visible:
   on EKS. It protects etcd and its backups, not the
   Kubernetes API, so it does not replace the steps above.
 - Rotate database credentials after the people who held them change. There is
-  no `hoopdb_owner` rotation helper today. For a dedicated-owner install:
-  generate a new private password file; as the provider administrator run
-  `ALTER ROLE hoopdb_owner PASSWORD ...` with the password supplied on SQL
-  stdin (never argv); replace
-  `$STATE_DIR/passwords/hoopdb_owner`; rerun the platform setup script's `pre`
-  mode to regenerate its two local owner URL files; then update
-  `agent-relay-secrets/HOOPDB_MIGRATION_URL` and
-  `search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET` from those
-  files. If ESO owns either Secret, update its backing-store values instead
-  and wait for both ExternalSecrets to refresh. Verify a one-off migration
-  connection before deleting the old password. The ownership-transfer and
-  rotation helper remains follow-up work under
+  no supported `hoopdb_owner` rotation helper today: the setup scripts' `pre`
+  mode is an install/recovery state machine and must not be used to regenerate
+  URLs after changing a completed install's password. Do not change that role's
+  password until a helper can atomically update its saved state, both owner
+  URLs (or both ESO backing-store values), and verify a migration connection.
+  The ownership-transfer and rotation helper remains follow-up work under
   [#480](https://github.com/AgentWorkforce/infra/issues/480).
   On an existing administrator-owned install, rotate
   the provider administrator normally, then rerun the platform setup helper's

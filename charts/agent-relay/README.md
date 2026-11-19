@@ -530,17 +530,22 @@ Notes:
   set `creationPolicy: Merge` on those entries or delete the Secrets first.
 - A rotated parameter updates the Secret within `refreshInterval`; running pods
   see it only after a restart (`kubectl rollout restart`). Fresh installs store
-  the dedicated `hoopdb_owner` URL, never the RDS administrator URL. Rotate
-  `hoopdb_owner` as the provider administrator, update both owner URL
-  parameters (`HOOPDB_MIGRATION_URL` and
-  `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`), force a sync
-  (`kubectl annotate externalsecret agent-relay-secrets -n <namespace> force-sync=$(date +%s) --overwrite`),
-  confirm the ExternalSecret's `status.refreshTime` is later than the update
-  (`Ready=True` alone does not prove it), and only then run `helm upgrade`.
+  the dedicated `hoopdb_owner` URL, never the RDS administrator URL. There is
+  no supported `hoopdb_owner` rotation helper yet; do not change its password
+  until [#480](https://github.com/AgentWorkforce/infra/issues/480) provides the
+  coordinated database, saved-state and Secret update. That flow must update
+  both owner URL parameters (`HOOPDB_MIGRATION_URL` and
+  `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`), force both resources to sync
+  (`kubectl annotate externalsecret agent-relay-secrets search-indexer-owner -n <namespace> force-sync=$(date +%s) --overwrite`),
+  confirm each ExternalSecret's `status.refreshTime` is later than the update
+  (`kubectl get externalsecret agent-relay-secrets search-indexer-owner -n <namespace>
+  -o custom-columns='NAME:.metadata.name,REFRESHED:.status.refreshTime,READY:.status.conditions[0].status'`;
+  `Ready=True` alone does not prove it), and only then run `helm upgrade`.
 - Existing administrator-owned installs use `hoopdb-admin-jobs` temporarily.
   When removing their old long-lived keys, never patch an ESO-owned Secret.
-  Remove each key's mapping from the ExternalSecret and delete its backing-store
-  value, wait for reconciliation, and then delete `hoopdb-admin-jobs`.
+  Remove each key's mapping from the Helm values used for every upgrade and
+  from the live ExternalSecret, delete its backing-store value, wait for
+  reconciliation, and then delete `hoopdb-admin-jobs`.
 - The `rds-ca` ConfigMap is not a Secret; create it as before.
 
 ## Single-host mode
@@ -673,8 +678,10 @@ It also needs the Secrets `actors-credentials` (`postgres-url`,
 
 `selfhost-bootstrap-token` must be at least 32 bytes.
 `selfhost-encryption-key` must encode exactly 32 bytes as 64 hex characters or
-base64. Runtime database URLs should use least-privilege roles; managed-database
-migration URLs use the plain `hoopdb_owner` role, not a cloud administrator.
+base64. Runtime database URLs should use least-privilege roles. The HoopDb
+`HOOPDB_MIGRATION_URL` and search bootstrap credential use the plain
+`hoopdb_owner` role, not a cloud administrator; Relay Control's
+`database-migrations-url` instead uses `control_owner` on `relaycontrol`.
 
 The portable shape additionally needs `HOOPDB_URL`, `HOOPDB_MIGRATION_URL`,
 `SUMMARY_MASTER_KEYS` and the native History keys named in
