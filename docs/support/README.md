@@ -1,5 +1,9 @@
 # Redacted support bundles
 
+For database login, Relaycast role/ownership/grant and failed-install checks,
+run the [read-only installation diagnostic](diagnose-install.md). It supports
+separate cluster and database VPN runs and produces a shareable JSON report.
+
 `scripts/support/collect-support-bundle.py` creates a read-only support archive
 for one Helm release. It does not mutate the cluster and does not collect raw
 manifests, pod logs, response bodies, certificate bodies, Kubernetes Secrets,

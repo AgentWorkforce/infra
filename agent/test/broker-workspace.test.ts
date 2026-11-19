@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Broker } from "../broker/src/broker.ts";
 import { defaultDeliverer } from "../broker/src/deliver.ts";
-import { checkWorkspaceAuto, workspaceAutoProblems, type Allowlist, type CredentialRequest } from "../broker/src/policy.ts";
+import { checkWorkspaceAuto, workspaceAutoProblems, type Allowlist, type CredentialRequest, type PolicyStatement } from "../broker/src/policy.ts";
 import { dmChannelId, type RelayAgent, type RelayApi, type RelayMessage } from "../broker/src/relay.ts";
 import type { StsClient } from "../broker/src/sts.ts";
 
@@ -57,7 +57,7 @@ const msg = (id: string, from: string, text: string, ws = agents[from]!.workspac
 
 function setup(list: Allowlist = shipped) {
   const dir = mkdtempSync(join(tmpdir(), "broker-ws-"));
-  const calls: { roleArn: string; policy: { Statement: { Sid: string }[] } }[] = [];
+  const calls: { roleArn: string; policy: { Statement: PolicyStatement[] } }[] = [];
   const sts: StsClient = { async assumeRole(i) { calls.push(i as never); return { accessKeyId: "ASIAFAKE", secretAccessKey: "s".repeat(40), sessionToken: "t".repeat(300), expiration: new Date(NOW.getTime() + i.durationSeconds * 1000).toISOString() }; } };
   let n = 0;
   const broker = new Broker({ allowlist: list, stateDir: join(dir, "state"), sts, deliverer: defaultDeliverer(join(dir, "creds")), now: () => NOW, newId: () => `cb-${(++n).toString(16).padStart(12, "0")}`, newNamespaceSuffix: () => "0a1b2c3d" });
@@ -69,7 +69,7 @@ test("the shipped workspaceAuto: our workspace, granted by Khaliq, one narrow ca
   assert.equal(w.workspaceId, "rw_7ccfea89");
   assert.equal(w.grantedBy, "khaliq-gant");
   assert.deepEqual(workspaceAutoProblems(shipped), []);
-  assert.deepEqual(w.capabilities.map((c) => c.id), ["project-neon-exit"]);
+  assert.deepEqual(w.capabilities.map((c) => c.id), ["project-neon-exit", "dev-cluster-read"]);
   const c = w.capabilities[0]!;
   assert.deepEqual(c.accounts, [HOSTS]);
   assert.deepEqual(c.grants.flatMap((g) => g.actions).sort(), ["secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue", "ssm:SendCommand", "ssm:StartSession"]);
@@ -174,4 +174,109 @@ test("review fixes: humans aren't auto-issued, another agent's run tag stays on 
     assert.match(r.reasons.join("; "), /config is unsound/);
     assert.equal(calls.length, 0);
   }
+});
+
+// Read-only access to the dev cluster (capability dev-cluster-read): eks:DescribeCluster on one named cluster
+// in one region of one account, which is what `aws eks update-kubeconfig` calls. The Kubernetes side is the
+// role's EKS access entry (terraform/dev), not this policy.
+const DEV = Object.entries(shipped.accounts).find(([, a]) => a.label === "agentrelay-dev")![0];
+const CLUSTER = `arn:aws:eks:us-west-2:${DEV}:cluster/agent-relay-dev`;
+const devReq = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
+  account: DEV,
+  purpose: "dev proof: EKS token for kubectl get pods, jobs and logs (read-only)",
+  actions: ["eks:DescribeCluster"],
+  durationMinutes: 30,
+  runTag: "dev-read-test",
+  scope: "account",
+  resources: [CLUSTER],
+  regions: ["us-west-2"],
+  delivery: { kind: "file" },
+  ...over,
+});
+
+test("dev cluster: a verified workspace agent gets eks:DescribeCluster on exactly agent-relay-dev, with no approval", async () => {
+  const { broker, calls } = setup();
+  const r = await broker.requestViaRelay(relay([msg("7100001", AGENT, JSON.stringify(devReq()))]), "7100001", BROKER);
+  assert.equal(r.outcome, "issued", r.reasons.join("; "));
+  assert.equal(calls[0]!.roleArn, shipped.accounts[DEV]!.roles.elevated);
+  assert.match(r.reasons.join("; "), /issued without approval: any-workspace-agent .*dev-cluster-read \(dev-cluster-describe\)/);
+  const allows = calls[0]!.policy.Statement.filter((s) => s.Effect === "Allow");
+  assert.deepEqual(allows.map((s) => ({ a: s.Action, r: s.Resource })), [{ a: ["eks:DescribeCluster"], r: CLUSTER }]);
+  const lines = readFileSync(broker.auditPath, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { kind: string; approver?: unknown });
+  assert.deepEqual(lines.find((l) => l.kind === "approved")!.approver, { name: "workspace-auto", address: "rw_7ccfea89", kind: "policy" });
+  // The session can't leave the account's one region either.
+  assert.ok(calls[0]!.policy.Statement.some((s) => s.Sid === "DenyOutsideRegions"));
+});
+
+test("dev cluster: anything but that one read goes to Khaliq (or is refused), and nothing is issued", async () => {
+  const cases: [Partial<CredentialRequest>, "pending-approval" | "denied", RegExp][] = [
+    [{ resources: [`arn:aws:eks:us-west-2:${DEV}:cluster/agent-relay-prod`] }, "pending-approval", /outside it/],
+    [{ resources: [`arn:aws:eks:us-west-2:${DEV}:cluster/agent-relay-dev-2`] }, "pending-approval", /outside it/],
+    [{ resources: [CLUSTER, `arn:aws:eks:us-west-2:${DEV}:cluster/other`] }, "pending-approval", /outside it/],
+    [{ resources: [`arn:aws:eks:us-east-1:${DEV}:cluster/agent-relay-dev`] }, "pending-approval", /outside it/],
+    [{ resources: [`arn:aws:eks:us-west-2:${HOSTS}:cluster/agent-relay-dev`] }, "pending-approval", /outside it/],
+    [{ resources: [`arn:aws:eks:us-west-2:${DEV}:cluster/agent-relay-*`] }, "pending-approval", /wildcard/],
+    [{ resources: undefined }, "pending-approval", /outside it/],
+    [{ resources: [`arn:aws:eks:us-west-2:${DEV}:nodegroup/agent-relay-dev/ng/0a1b2c3d-0000-0000-0000-000000000000`] }, "pending-approval", /outside it/],
+    [{ regions: undefined }, "pending-approval", /must name its regions/],
+    [{ regions: ["us-east-1"] }, "denied", /not allowed in agentrelay-dev/],
+    [{ regions: ["us-west-2", "us-east-1"] }, "denied", /not allowed in agentrelay-dev/],
+    [{ actions: ["eks:DescribeCluster", "eks:ListClusters"] }, "pending-approval", /outside it/],
+    [{ actions: ["eks:DescribeCluster", "eks:DescribeNodegroup"] }, "pending-approval", /outside it/],
+    [{ actions: ["eks:DescribeCluster", "ec2:DescribeInstances"] }, "pending-approval", /outside it/],
+    [{ actions: ["eks:AccessKubernetesApi"] }, "pending-approval", /outside it/],
+    [{ actions: ["eks:UpdateClusterConfig"] }, "pending-approval", /outside it/],
+    [{ actions: ["eks:CreateAccessEntry"] }, "pending-approval", /outside it/],
+    [{ actions: ["eks:AssociateAccessPolicy"] }, "pending-approval", /outside it/],
+    [{ actions: ["eks:DeleteCluster"] }, "pending-approval", /deletes/],
+    [{ actions: ["eks:*"] }, "pending-approval", /wildcard/],
+    [{ actions: ["eks:Describe*"] }, "pending-approval", /wildcard/],
+    [{ actions: ["iam:PassRole"] }, "pending-approval", /IAM/],
+    [{ actions: ["sts:AssumeRole"] }, "denied", /never issued/],
+    [{ account: "111122223333" }, "denied", /not on the broker allowlist/],
+    [{ delegate: "neon-exit-lead-2" }, "pending-approval", /names a delegate/],
+  ];
+  for (const [over, outcome, re] of cases) {
+    const { broker, calls } = setup();
+    const r = await broker.requestViaRelay(relay([msg("7100002", AGENT, JSON.stringify(devReq(over)))]), "7100002", BROKER);
+    assert.equal(r.outcome, outcome, `${JSON.stringify(over)}: ${r.reasons.join("; ")}`);
+    assert.match(r.reasons.join("; "), re, JSON.stringify(over));
+    assert.equal(calls.length, 0, JSON.stringify(over));
+  }
+});
+
+test("dev cluster: the default scope with the exact cluster ARN is the same read; humans and outsiders still don't get it automatically", async () => {
+  const { broker, calls } = setup();
+  const r = await broker.requestViaRelay(relay([msg("7100003", AGENT, JSON.stringify(devReq({ scope: undefined })))]), "7100003", BROKER);
+  assert.equal(r.outcome, "issued", r.reasons.join("; "));
+  assert.deepEqual(calls[0]!.policy.Statement.filter((s) => s.Effect === "Allow").flatMap((s) => s.Action ?? []), ["eks:DescribeCluster"]);
+  agents["dev-human"] = { id: "300000000000000015", name: "dev-human", type: "human", workspaceId: WS };
+  for (const who of ["dev-human"]) {
+    const h = await setup().broker.requestViaRelay(relay([msg("7100004", who, JSON.stringify(devReq()))]), "7100004", BROKER);
+    assert.equal(h.outcome, "pending-approval");
+  }
+  const o = await setup().broker.requestViaRelay(relay([msg("7100005", "outsider-agent", JSON.stringify(devReq()), WS)]), "7100005", BROKER);
+  assert.equal(o.outcome, "denied");
+});
+
+test("dev cluster: the capability is read-only by construction; a config that tries to widen it is unsound", () => {
+  assert.deepEqual(workspaceAutoProblems(shipped), []);
+  const grant = shipped.workspaceAuto!.capabilities.find((c) => c.id === "dev-cluster-read")!.grants[0]!;
+  assert.deepEqual(grant.actions, ["eks:DescribeCluster"]);
+  assert.deepEqual(grant.eksClusters, ["agent-relay-dev"]);
+  const withGrant = (g: object): Allowlist => ({ ...shipped, workspaceAuto: { ...shipped.workspaceAuto!, capabilities: [{ ...shipped.workspaceAuto!.capabilities.find((c) => c.id === "dev-cluster-read")!, grants: [g as never] }] } });
+  const bad: [object, RegExp][] = [
+    [{ ...grant, actions: ["eks:DescribeCluster", "eks:UpdateClusterConfig"] }, /not a read action/],
+    [{ ...grant, actions: ["eks:CreateAccessEntry"] }, /not a read action/],
+    [{ ...grant, actions: ["eks:AccessKubernetesApi"] }, /not a read action/],
+    [{ ...grant, actions: ["eks:DeleteCluster"] }, /deletes, never delegable/],
+    [{ ...grant, actions: ["eks:*"] }, /wildcard/],
+    [{ ...grant, eksClusters: ["agent-relay-*"] }, /literal cluster name/],
+    [{ ...grant, eksClusters: ["*"] }, /literal cluster name/],
+    [{ ...grant, eksClusters: [] }, /needs literal eksClusters/],
+    [{ ...grant, actions: ["eks:DescribeCluster", "ec2:DescribeInstances"] }, /a grant is/],
+    [{ ...grant, secretPrefixes: ["neon-exit/"] }, /a grant is/],
+    [{ ...grant, eksClusters: "agent-relay-dev" }, /lists of names/],
+  ];
+  for (const [g, re] of bad) assert.match(workspaceAutoProblems(withGrant(g)).join("; "), re, JSON.stringify(g));
 });

@@ -216,6 +216,12 @@ variable "desktop_feed_bucket_name" {
   default     = ""
 }
 
+variable "desktop_feed_has_signing_keys" {
+  description = "Whether relay-control has the feed's file signer (relay-control.desktopFeed.signingKeys in your values). true: chart_values and desktop_feed carry the SELFHOST_DESKTOP_FEED_STORAGE env. Set false to create the bucket and service account before the signing keys exist: the env is left out, because relay-control exits when storage is set without a signer. Once the keys are in place set it back to true, apply (outputs change only on apply), and save chart_values again."
+  type        = bool
+  default     = true
+}
+
 variable "desktop_feed_service_account_id" {
   description = "account_id of the Google service account relay-control uses for the Desktop feed bucket (6-30 characters)."
   type        = string
