@@ -265,9 +265,16 @@ Cloudflare can reach it.
    After applying it, wait until it is enforced before you rely on it: a new
    rule took almost 4 minutes to reach every backend when measured, and until
    then a direct request with the header was still admitted. Repeat the loop
-   from section 2 with the header added
-   (`-H "x-origin-auth: <value>"`), from a machine that is not behind
-   Cloudflare, until all six lines end in `403`.
+   from section 2 from a machine that is not behind Cloudflare, adding the
+   secret header **and** a client address your staff rule admits:
+
+   ```sh
+   -H "x-origin-auth: <value>" -H "CF-Connecting-IP: <an address in your range>"
+   ```
+
+   until all six lines end in `403`. Both headers matter: without the
+   claimed address the client rules themselves answer 403, which would look
+   like success while the bypass is still open.
 
    One gap this cannot close: another Cloudflare customer who learned your
    secret header could send requests through their own Cloudflare zone, which
