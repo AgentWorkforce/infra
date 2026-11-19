@@ -78,6 +78,9 @@ for argument in "$@"; do
 done
 case " $* " in
   *" apply -f - "*) cat >/dev/null; exit 0 ;;
+  *" create secret generic search-indexer-owner "*)
+    touch "$MOCK_CAPTURE_DIR/search-secret-created"
+    printf 'apiVersion: v1\nkind: Secret\nmetadata: {name: search-indexer-owner}\n'; exit 0 ;;
   *" create secret generic "*) printf 'apiVersion: v1\nkind: Secret\nmetadata: {name: fixture}\n'; exit 0 ;;
   *" create configmap "*) printf 'apiVersion: v1\nkind: ConfigMap\nmetadata: {name: fixture}\n'; exit 0 ;;
   *" get job agent-relay-rds-layout-probe -o jsonpath="*|*" get job agent-relay-rds-pre -o jsonpath="*|*" get job agent-relay-rds-post -o jsonpath="*) printf '1'; exit 0 ;;
@@ -87,7 +90,9 @@ case " $* " in
   *" get secret agent-relay-secrets -o json "*|*" get secret agent-relay-secrets --ignore-not-found -o json "*)
     printf '%s\n' '{"metadata":{},"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}'; exit 0 ;;
   *" get secret search-indexer-owner -o json "*|*" get secret search-indexer-owner --ignore-not-found -o json "*)
+    if [[ "${MOCK_SEARCH_SECRET_ABSENT:-0}" == 1 && ! -e "$MOCK_CAPTURE_DIR/search-secret-created" ]]; then exit 0; fi
     printf '%s\n' '{"metadata":{},"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}'; exit 0 ;;
+  *" get externalsecrets.external-secrets.io "*) printf '%s\n' '{"items":[]}'; exit 0 ;;
   *" logs job/agent-relay-rds-layout-probe"*) printf 'HOOPDB_LAYOUT=%s\n' "${MOCK_LAYOUT:-fresh-dedicated}"; exit 0 ;;
   *" logs job/"*) printf 'fixture job completed\n'; exit 0 ;;
 esac
@@ -363,6 +368,27 @@ grep -q 'patch secret agent-relay-secrets --type=json --patch-file' "$COMMAND_LO
 grep -q 'patch secret search-indexer-owner --type=json --patch-file' "$COMMAND_LOG" \
   || fail "rollback-key removal did not remove the search key"
 pass "legacy rollback restores only the target revision's keys and removes them afterward"
+
+rm -f "$MOCK_CAPTURE_DIR/search-secret-created"
+: >"${COMMAND_LOG}"
+absent_search_output="$(MOCK_SEARCH_SECRET_ABSENT=1 env -u SERVICES_IMAGE bash "$RDS_SETUP" prepare-rollback-admin-keys 2>&1)"
+[[ "$absent_search_output" == *"recreated absent unmanaged rollback Secret search-indexer-owner"* ]] \
+  || fail "rollback preparation did not reconstruct an absent unmanaged bootstrap Secret"
+grep -q 'create secret generic search-indexer-owner --from-file=RELAYHISTORY_PIPELINE_CONSUMER_SECRET=' "$COMMAND_LOG" \
+  || fail "absent bootstrap Secret was not reconstructed from the private rollback value"
+pass "rollback preparation reconstructs an absent unmanaged bootstrap Secret"
+
+printf '%s\n' dedicated-owner >"${STATE_DIR}/hoopdb-layout"
+: >"${COMMAND_LOG}"
+set +e
+dedicated_remove_output="$(env -u SERVICES_IMAGE bash "$RDS_SETUP" remove-rollback-admin-keys 2>&1)"
+dedicated_remove_rc=$?
+set -e
+[[ "$dedicated_remove_rc" != 0 && "$dedicated_remove_output" == *"only for an existing administrator-owned install"* ]] \
+  || fail "dedicated-owner install did not refuse rollback-key removal"
+! grep -q 'patch secret' "$COMMAND_LOG" || fail "dedicated-owner rollback-key refusal patched a live Secret"
+printf '%s\n' legacy-admin >"${STATE_DIR}/hoopdb-layout"
+pass "rollback-key removal is restricted to validated legacy layouts"
 
 set +e
 nostate_output="$(STATE_DIR="$(mktemp -d)" bash "${RDS_SETUP}" refresh-admin 2>&1)"

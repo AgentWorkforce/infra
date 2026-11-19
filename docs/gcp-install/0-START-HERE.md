@@ -509,16 +509,10 @@ start by themselves once it does.
   added since.
 - **A value changed in Secret Manager** reaches the Secret within an hour
   (`refreshInterval`); restart the pods that use it.
-- **After rotating `hoopdb_owner`**, update both generated owner URL values in
-  Secret Manager. Ask for a sync, then wait until both ExternalSecrets report
-  a refresh **later than your change** before you upgrade (the annotation only
-  asks; `Ready` alone does not prove it):
-
-  ```sh
-  kubectl -n $NAMESPACE annotate externalsecret agent-relay-secrets search-indexer-owner force-sync=$(date +%s) --overwrite
-  kubectl -n $NAMESPACE get externalsecret agent-relay-secrets search-indexer-owner \
-    -o custom-columns='NAME:.metadata.name,REFRESHED:.status.refreshTime,STATUS:.status.conditions[0].reason'
-  ```
+- **Do not rotate `hoopdb_owner` by changing only Secret Manager.** There is no
+  supported helper yet that atomically changes the database login, saved setup
+  state, and both owner URLs. Follow the current limitation and verification
+  guidance in [Database Secret access](../selfhost-secret-access.md#6-also-worth-doing).
 - **Existing administrator-owned install:** the first upgrade uses the
   temporary `hoopdb-admin-jobs` Secret. To remove the old long-lived keys from
   ESO-managed Secrets, first remove their mappings from the `values.yaml` used

@@ -670,15 +670,13 @@ remove_legacy_long_lived_keys() {
       key_present=no; externally_managed=false
     fi
     mapping_rc=1
-    if [ "$externally_managed" = true ] || [ "$key_present" = no ]; then
-      if external_secret_mapping_active "$s" "$k"; then mapping_rc=0; else mapping_rc=$?; fi
-      if [ "$mapping_rc" = 0 ]; then
-        say "   External Secrets still maps $s/$k: remove that mapping from the Helm release values and ExternalSecret, delete the backing-store value, and wait for reconciliation; hoopdb-admin-jobs was retained"
-        return 1
-      elif [ "$mapping_rc" = 2 ]; then
-        say "   could not inspect ExternalSecret mappings while removing $s/$k; hoopdb-admin-jobs was retained"
-        return 1
-      fi
+    if external_secret_mapping_active "$s" "$k"; then mapping_rc=0; else mapping_rc=$?; fi
+    if [ "$mapping_rc" = 0 ]; then
+      say "   External Secrets still maps $s/$k: remove that mapping from the Helm release values and ExternalSecret, delete the backing-store value, and wait for reconciliation; hoopdb-admin-jobs was retained"
+      return 1
+    elif [ "$mapping_rc" = 2 ]; then
+      say "   could not inspect ExternalSecret mappings while removing $s/$k; hoopdb-admin-jobs was retained"
+      return 1
     fi
     [ "$key_present" = no ] && continue
     if [ "$externally_managed" = true ]; then

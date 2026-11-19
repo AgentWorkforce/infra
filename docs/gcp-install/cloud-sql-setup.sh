@@ -62,6 +62,7 @@ FILES="$STATE_DIR/secret-files"
 LAYOUT_FILE="$STATE_DIR/hoopdb-layout"
 PENDING_PASSWORDS_FILE="$STATE_DIR/.pending-hoopdb-passwords"
 PENDING_ACTIVATION_FILE="$STATE_DIR/.pending-hoopdb-activation"
+ACTIVATION_TARGET="cloudsql:$GCP_PROJECT_ID:$CLOUD_SQL_INSTANCE:$CLOUD_SQL_HOST:hoopdb"
 ADMIN_JOBS_SECRET=hoopdb-admin-jobs
 OWNER=hoopdb_owner
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
@@ -292,13 +293,11 @@ remove_legacy_secret_keys() {
       key_present=no; externally_managed=false
     fi
     mapping_rc=1
-    if [[ "$externally_managed" == true || "$key_present" == no ]]; then
-      if external_secret_mapping_active "$secret" "$key"; then mapping_rc=0; else mapping_rc=$?; fi
-      if [[ "$mapping_rc" == 0 ]]; then
-        die "External Secrets still maps $secret/$key: remove that mapping from the Helm release values and ExternalSecret, delete the backing-store value, and wait for reconciliation; $ADMIN_JOBS_SECRET was retained"
-      elif [[ "$mapping_rc" == 2 ]]; then
-        die "could not inspect ExternalSecret mappings while removing $secret/$key; $ADMIN_JOBS_SECRET was retained"
-      fi
+    if external_secret_mapping_active "$secret" "$key"; then mapping_rc=0; else mapping_rc=$?; fi
+    if [[ "$mapping_rc" == 0 ]]; then
+      die "External Secrets still maps $secret/$key: remove that mapping from the Helm release values and ExternalSecret, delete the backing-store value, and wait for reconciliation; $ADMIN_JOBS_SECRET was retained"
+    elif [[ "$mapping_rc" == 2 ]]; then
+      die "could not inspect ExternalSecret mappings while removing $secret/$key; $ADMIN_JOBS_SECRET was retained"
     fi
     [[ "$key_present" == no ]] && continue
     if [[ "$externally_managed" == true ]]; then
@@ -374,6 +373,8 @@ EOS
   local probed_layout
   probed_layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-cloud-sql-probe.log" | tail -n 1)"
   if [[ ( "$probed_layout" == legacy-admin || "$probed_layout" == pristine-admin ) && -s "$PENDING_ACTIVATION_FILE" ]]; then
+    [[ "$(<"$PENDING_ACTIVATION_FILE")" == "$ACTIVATION_TARGET" ]] \
+      || die "the pending activation marker belongs to a different Cloud SQL target; refusing before database changes"
     probed_layout=fresh-dedicated
     log "resuming an interrupted fresh activation"
   fi
@@ -394,32 +395,34 @@ EOS
     *) die "HoopDb owner is neither the Cloud SQL administrator nor hoopdb_owner; refusing" ;;
   esac
 
-  local p pending_passwords="" pending_candidates="" missing_passwords="" generated_passwords="" untrusted_passwords=""
+  local p pending_passwords="" pending_candidates="" missing_passwords="" untrusted_passwords=""
   [[ ! -s "$PENDING_PASSWORDS_FILE" ]] || pending_passwords="$(<"$PENDING_PASSWORDS_FILE")"
   for p in control_owner control_api_runtime "$OWNER" sessions_pipeline_runtime relaycast_owner relaycast_runtime \
            bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
     if [[ ! -s "$PW_DIR/$p" ]]; then
-      missing_passwords+=" $p"; generated_passwords+=" $p"
+      missing_passwords+=" $p"
     elif [[ " $pending_passwords " == *" $p "* ]]; then
       pending_candidates+=" $p"
     fi
-    password_for "$p"
   done
   if [[ -s "$PENDING_ACTIVATION_FILE" && -n "$missing_passwords" ]]; then
-    for p in $generated_passwords; do rm -f "$PW_DIR/$p"; done
-    die "an interrupted activation lacks saved passwords for:${missing_passwords}; generated replacements were removed and the database and Secrets were left unchanged"
+    die "an interrupted activation lacks saved passwords for:${missing_passwords}; no replacements were generated and the database and Secrets were left unchanged"
   fi
   untrusted_passwords="$missing_passwords$pending_candidates"
   if [[ -n "$untrusted_passwords" ]]; then
     printf '%s\n' "${untrusted_passwords# }" >"$PENDING_PASSWORDS_FILE"; chmod 600 "$PENDING_PASSWORDS_FILE"
   fi
   if [[ "$probed_layout" == dedicated-owner && -n "$untrusted_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
-    for p in $untrusted_passwords; do rm -f "$PW_DIR/$p"; done
+    for p in $pending_candidates; do rm -f "$PW_DIR/$p"; done
     rm -f "$PENDING_PASSWORDS_FILE"
     die "dedicated-owner HoopDb exists but STATE_DIR lacked trusted saved passwords for:${untrusted_passwords}; database and Secrets were left unchanged"
   fi
+  for p in control_owner control_api_runtime "$OWNER" sessions_pipeline_runtime relaycast_owner relaycast_runtime \
+           bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
+    password_for "$p"
+  done
   if [[ "$probed_layout" == fresh-dedicated && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
-    printf 'fresh activation in progress\n' >"$PENDING_ACTIVATION_FILE"
+    printf '%s\n' "$ACTIVATION_TARGET" >"$PENDING_ACTIVATION_FILE"
     chmod 600 "$PENDING_ACTIVATION_FILE"
   fi
   local missing_for_job="$untrusted_passwords" activation_retry=0
@@ -459,9 +462,9 @@ existing_dedicated=0
 if [ -n "$hoopdb_exists" ] && [ "$administrator_owns" = 1 ]; then
   sessions_schema="$($Q -c "select to_regnamespace('sessions')")" \
     || { echo 'could not inspect the HoopDb sessions schema; refusing' >&2; exit 3; }
-  runtime_role="$($Q -c "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" \
-    || { echo 'could not inspect the HoopDb runtime role; refusing' >&2; exit 3; }
-  if [ -n "$sessions_schema" ] || [ -n "$runtime_role" ]; then
+  hoopdb_role="$($Q -c "select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker') limit 1")" \
+    || { echo 'could not inspect the HoopDb role graph; refusing' >&2; exit 3; }
+  if [ -n "$sessions_schema" ] || [ -n "$hoopdb_role" ]; then
     echo 'HOOPDB_LAYOUT=legacy-admin'
     exit 0
   fi

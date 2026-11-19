@@ -439,6 +439,12 @@ Helm release values used for later upgrades and from the live ExternalSecret,
 delete its backing-store value, wait for reconciliation, then retry cleanup.
 Keep `hoopdb-admin-jobs` until this succeeds. The loop checks the mapping even
 when the generated Secret or key is already absent, so ESO cannot restore it.
+If an ExternalSecret uses `dataFrom`, the loop deliberately treats that import
+as potentially containing either administrator key because Kubernetes cannot
+show which remote keys it may produce later. Replace that `dataFrom` entry with
+equivalent explicit `data` mappings for the runtime keys you still need,
+excluding the administrator key, wait for reconciliation, and rerun cleanup;
+do not delete or replace unrelated runtime values.
 
 ```bash
 for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
@@ -459,26 +465,24 @@ for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
   else
     key_present=no; externally_managed=false
   fi
-  if [ "$externally_managed" = true ] || [ "$key_present" = no ]; then
-    if kubectl -n agent-relay get externalsecrets.external-secrets.io --ignore-not-found -o json \
-        >"$ADMIN_JOB_DIR/externalsecrets.json" 2>"$ADMIN_JOB_DIR/externalsecrets.err"; then
-      mapping_rc=0
-      jq -e --arg target "$secret" --arg key "$key" '
-          any(.items[]?; ((.spec.target.name // .metadata.name) == $target) and
-            (any(.spec.data[]?; .secretKey == $key) or ((.spec.dataFrom // []) | length > 0)))' \
-          "$ADMIN_JOB_DIR/externalsecrets.json" >/dev/null || mapping_rc=$?
-      if [ "$mapping_rc" = 0 ]; then
-        echo "External Secrets still maps $secret/$key: remove it from the Helm release values, ExternalSecret and backing store; leave hoopdb-admin-jobs in place" >&2
-        exit 1
-      elif [ "$mapping_rc" != 1 ]; then
-        echo "could not parse ExternalSecret mappings; leave hoopdb-admin-jobs in place" >&2
-        exit 1
-      fi
-    elif ! grep -Eqi "(doesn't have a resource type|could not find the requested resource|no matches for kind.*ExternalSecret)" \
-        "$ADMIN_JOB_DIR/externalsecrets.err"; then
-      echo "could not inspect ExternalSecret mappings; leave hoopdb-admin-jobs in place" >&2
+  if kubectl -n agent-relay get externalsecrets.external-secrets.io --ignore-not-found -o json \
+      >"$ADMIN_JOB_DIR/externalsecrets.json" 2>"$ADMIN_JOB_DIR/externalsecrets.err"; then
+    mapping_rc=0
+    jq -e --arg target "$secret" --arg key "$key" '
+        any(.items[]?; ((.spec.target.name // .metadata.name) == $target) and
+          (any(.spec.data[]?; .secretKey == $key) or ((.spec.dataFrom // []) | length > 0)))' \
+        "$ADMIN_JOB_DIR/externalsecrets.json" >/dev/null || mapping_rc=$?
+    if [ "$mapping_rc" = 0 ]; then
+      echo "External Secrets still maps $secret/$key: remove it from the Helm release values, ExternalSecret and backing store; leave hoopdb-admin-jobs in place" >&2
+      exit 1
+    elif [ "$mapping_rc" != 1 ]; then
+      echo "could not parse ExternalSecret mappings; leave hoopdb-admin-jobs in place" >&2
       exit 1
     fi
+  elif ! grep -Eqi "(doesn't have a resource type|could not find the requested resource|no matches for kind.*ExternalSecret)" \
+      "$ADMIN_JOB_DIR/externalsecrets.err"; then
+    echo "could not inspect ExternalSecret mappings; leave hoopdb-admin-jobs in place" >&2
+    exit 1
   fi
   [ "$key_present" = no ] && continue
   if [ "$externally_managed" = true ]; then

@@ -206,6 +206,7 @@ write_layout_values() {
     'sessions-pipeline:' \
     '  worker:' \
     '    migrations:' \
+    '      roleBootstrap: false' \
     '      hoopdb:' \
     "        existingSecret: $migration_secret" \
     '        key: HOOPDB_MIGRATION_URL' \
@@ -250,13 +251,11 @@ remove_legacy_secret_keys() {
       key_present=no; externally_managed=false
     fi
     mapping_rc=1
-    if [[ "$externally_managed" == true || "$key_present" == no ]]; then
-      if external_secret_mapping_active "$secret" "$key"; then mapping_rc=0; else mapping_rc=$?; fi
-      if [[ "$mapping_rc" == 0 ]]; then
-        die "External Secrets still maps $secret/$key: remove that mapping from the Helm release values and ExternalSecret, delete the backing-store value, and wait for reconciliation; $ADMIN_JOBS_SECRET was retained"
-      elif [[ "$mapping_rc" == 2 ]]; then
-        die "could not inspect ExternalSecret mappings while removing $secret/$key; $ADMIN_JOBS_SECRET was retained"
-      fi
+    if external_secret_mapping_active "$secret" "$key"; then mapping_rc=0; else mapping_rc=$?; fi
+    if [[ "$mapping_rc" == 0 ]]; then
+      die "External Secrets still maps $secret/$key: remove that mapping from the Helm release values and ExternalSecret, delete the backing-store value, and wait for reconciliation; $ADMIN_JOBS_SECRET was retained"
+    elif [[ "$mapping_rc" == 2 ]]; then
+      die "could not inspect ExternalSecret mappings while removing $secret/$key; $ADMIN_JOBS_SECRET was retained"
     fi
     [[ "$key_present" == no ]] && continue
     if [[ "$externally_managed" == true ]]; then
@@ -293,32 +292,29 @@ do_pre() {
   ensure_ca
   fetch_sql
 
-  local p pending_passwords="" pending_candidates="" missing_passwords="" generated_passwords="" untrusted_passwords=""
+  local p pending_passwords="" pending_candidates="" missing_passwords="" untrusted_passwords=""
   [[ ! -s "$PENDING_PASSWORDS_FILE" ]] || pending_passwords="$(<"$PENDING_PASSWORDS_FILE")"
   for p in control_owner control_api_runtime "$OWNER" "$RUNTIME" bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
     if [[ ! -s "$PW_DIR/$p" ]]; then
-      missing_passwords+=" $p"; generated_passwords+=" $p"
+      missing_passwords+=" $p"
     elif [[ " $pending_passwords " == *" $p "* ]]; then
       pending_candidates+=" $p"
     fi
-    password_for "$p"
   done
   if [[ -s "$PENDING_ACTIVATION_FILE" && -n "$missing_passwords" ]]; then
-    for p in $generated_passwords; do rm -f "$PW_DIR/$p"; done
-    die "an interrupted activation lacks saved passwords for:${missing_passwords}; generated replacements were removed and the database and Secrets were left unchanged"
+    die "an interrupted activation lacks saved passwords for:${missing_passwords}; no replacements were generated and the database and Secrets were left unchanged"
   fi
   untrusted_passwords="$missing_passwords$pending_candidates"
   if [[ -n "$untrusted_passwords" ]]; then
     printf '%s\n' "${untrusted_passwords# }" >"$PENDING_PASSWORDS_FILE"; chmod 600 "$PENDING_PASSWORDS_FILE"
   fi
 
-  local db_owner legacy_schema legacy_runtime existing_dedicated=false
+  local db_owner legacy_schema legacy_role existing_dedicated=false
   db_owner="$(query_su postgres "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
   if [[ "$db_owner" == "$LEGACY_OWNER" ]] && \
      { legacy_schema="$(query_su hoopdb "select to_regnamespace('sessions')")" || die "could not inspect the HoopDb sessions schema";
-       legacy_runtime="$(query_su hoopdb "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" || die "could not inspect the HoopDb runtime role";
-       [[ -n "$legacy_schema" || -n "$legacy_runtime" ]]; }; then
-    for p in $generated_passwords; do rm -f "$PW_DIR/$p"; done
+       legacy_role="$(query_su hoopdb "select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker') limit 1")" || die "could not inspect the HoopDb role graph";
+       [[ -n "$legacy_schema" || -n "$legacy_role" ]]; }; then
     rm -f "$PENDING_PASSWORDS_FILE" "$PENDING_ACTIVATION_FILE"
     printf '%s\n' legacy-admin >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
     write_legacy_admin_files; write_layout_values legacy-admin
@@ -333,7 +329,7 @@ do_pre() {
     # An ordinary dedicated-owner rerun has no marker, so a newly generated
     # replacement for a missing saved password still fails closed.
     if [[ -n "$untrusted_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
-      for p in $untrusted_passwords; do rm -f "$PW_DIR/$p"; done
+      for p in $pending_candidates; do rm -f "$PW_DIR/$p"; done
       rm -f "$PENDING_PASSWORDS_FILE"
       die "dedicated-owner HoopDb exists but STATE_DIR lacked trusted saved passwords for:${untrusted_passwords}; database and Secrets were left unchanged"
     fi
@@ -341,6 +337,10 @@ do_pre() {
   fi
   [[ "$db_owner" == "$LEGACY_OWNER" || "$existing_dedicated" == true ]] \
     || die "HoopDb owner is neither $LEGACY_OWNER nor $OWNER; refusing"
+
+  for p in control_owner control_api_runtime "$OWNER" "$RUNTIME" bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
+    password_for "$p"
+  done
 
   # Control: its own database. The owner runs migrations, the runtime role
   # serves requests.

@@ -61,6 +61,9 @@ case "$*" in
   *"select 1 from pg_roles where rolname='sessions_pipeline_runtime'"*)
     if [[ "${MOCK_RUNTIME_ROLE_EXISTS:-0}" == 1 ]]; then printf '1\n'; fi
     ;;
+  *"select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker') limit 1"*)
+    if [[ "${MOCK_HOOPDB_ROLE_EXISTS:-0}" == 1 ]]; then printf '1\n'; fi
+    ;;
   *"select count(*) from pg_auth_members"*) printf '0\n' ;;
   *"select 1 where"*) [[ "${MOCK_PRISTINE:-0}" == 1 ]] && printf '1\n' ;;
   *"-c select 1"*) printf '1\n' ;;
@@ -209,6 +212,7 @@ export CLOUD_SQL_ADMIN_SECRET_ID=agent-relay-pg-admin
 export SERVICES_IMAGE=ghcr.io/agentworkforce/sessions-pipeline@sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
 export STATE_DIR="$STATE"
 export JOB_TIMEOUT_SECONDS=5
+ACTIVATION_TARGET_VALUE='cloudsql:example:agent-relay-pg:db.example.sql-psa.goog.:hoopdb'
 
 for mode in fail empty; do
   bad_state="$ROOT/admin-$mode"
@@ -288,7 +292,7 @@ printf '%048d' 0 >"$password_for_repair"; chmod 600 "$password_for_repair"
 pass "dedicated-owner rerun refuses missing saved state before database or Secret writes"
 
 printf 'relaycast_runtime\n' >"$STATE/.pending-hoopdb-passwords"
-printf 'fresh activation in progress\n' >"$STATE/.pending-hoopdb-activation"
+printf '%s\n' "$ACTIVATION_TARGET_VALUE" >"$STATE/.pending-hoopdb-activation"
 : >"$LOG"
 MOCK_LAYOUT=dedicated-owner "$TEST_BASH" "$SCRIPT" pre >/dev/null \
   || fail "an interrupted fresh activation could not resume"
@@ -366,7 +370,17 @@ if grep -Fq 'stdin ' "$SQL_LOG"; then
 fi
 pass "Cloud SQL setup Job refuses cloudsqlsuperuser ownership for a non-member"
 
-printf 'fresh activation in progress\n' >"$STATE/.pending-hoopdb-activation"
+: >"$SQL_LOG"
+job_out="$(env PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloud-admin \
+  MOCK_HOOPDB_ROLE_EXISTS=1 MISSING_STATE_NAMES='' ACTIVATION_RETRY=0 \
+  sh "$CAPTURE/run.sh")" || fail "partial HoopDb role graph did not take the legacy path"
+[[ "$job_out" == *'HOOPDB_LAYOUT=legacy-admin'* ]] \
+  || fail "partial HoopDb role graph was not classified legacy-admin"
+grep -Eq 'ALTER ROLE control_owner|CREATE ROLE agent_relay_hoopdb_role_creator|ALTER DATABASE hoopdb' "$SQL_LOG" \
+  && fail "partial HoopDb role graph reached mutating SQL"
+pass "Cloud SQL setup Job refuses a partial legacy role graph before writes"
+
+printf '%s\n' "$ACTIVATION_TARGET_VALUE" >"$STATE/.pending-hoopdb-activation"
 : >"$LOG"
 MOCK_LAYOUT=pristine-admin MOCK_PRE_LAYOUT=fresh-dedicated "$TEST_BASH" "$SCRIPT" pre >/dev/null \
   || fail "a marked pristine Cloud SQL activation could not resume"
@@ -375,8 +389,17 @@ grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/nu
 [[ ! -e "$STATE/.pending-hoopdb-activation" ]] || fail "marked pristine Cloud SQL retry retained its pending marker"
 pass "Cloud SQL resumes a marked pristine activation without a second approval flag"
 
+printf 'cloudsql:example:other-instance:other.example:hoopdb\n' >"$STATE/.pending-hoopdb-activation"
+if MOCK_LAYOUT=pristine-admin "$TEST_BASH" "$SCRIPT" pre >"$ROOT/pre-wrong-target.log" 2>&1; then
+  fail "a pending marker for another Cloud SQL target resumed activation"
+fi
+grep -Fq 'belongs to a different Cloud SQL target' "$ROOT/pre-wrong-target.log" \
+  || fail "wrong-target activation marker refusal was unclear"
+rm -f "$STATE/.pending-hoopdb-activation"
+pass "Cloud SQL activation markers are bound to the database target"
+
 printf 'hoopdb_owner\n' >"$STATE/.pending-hoopdb-passwords"
-printf 'fresh activation in progress\n' >"$STATE/.pending-hoopdb-activation"
+printf '%s\n' "$ACTIVATION_TARGET_VALUE" >"$STATE/.pending-hoopdb-activation"
 rm -f "$STATE/passwords/hoopdb_owner" "$CAPTURE/job-agent-relay-cloud-sql-pre.json"
 : >"$LOG"
 if MOCK_LAYOUT=dedicated-owner "$TEST_BASH" "$SCRIPT" pre >"$ROOT/pre-marked-missing.log" 2>&1; then
@@ -406,7 +429,7 @@ pass "rejected pending candidates cannot become trusted on a later rerun"
 # A stale marker from a losing concurrent activation must prove its three owner
 # credentials before any ALTER/CREATE/GRANT can run.
 printf 'hoopdb_owner sessions_pipeline_runtime search_consumer_runtime\n' >"$STATE/.pending-hoopdb-passwords"
-printf 'fresh activation in progress\n' >"$STATE/.pending-hoopdb-activation"
+printf '%s\n' "$ACTIVATION_TARGET_VALUE" >"$STATE/.pending-hoopdb-activation"
 : >"$SQL_LOG"
 MOCK_LAYOUT=dedicated-owner "$TEST_BASH" "$SCRIPT" pre >/dev/null
 if ACTIVATION_RETRY=1 MOCK_DB_OWNER=hoopdb_owner MOCK_LOGIN_MISMATCH_ROLE=hoopdb_owner \
@@ -422,6 +445,12 @@ grep -Fq 'HOOPDB_STATE=activation-marker-unverified' "$ROOT/activation-mismatch.
 grep -Fq 'stdin ' "$SQL_LOG" && fail "stale activation marker reached mutating SQL"
 rm -f "$STATE/.pending-hoopdb-passwords" "$STATE/.pending-hoopdb-activation"
 pass "activation retry proves its committed owner credentials before writes"
+
+pending_line="$(grep -n -F 'printf '\''%s\n'\'' "${untrusted_passwords# }" >"$PENDING_PASSWORDS_FILE"' "$SCRIPT" | head -1 | cut -d: -f1)"
+password_line="$(grep -n -F 'password_for "$p"' "$SCRIPT" | tail -1 | cut -d: -f1)"
+[[ -n "$pending_line" && -n "$password_line" && "$pending_line" -lt "$password_line" ]] \
+  || fail "fresh Cloud SQL setup can write a generated password before recording it as pending"
+pass "Cloud SQL records pending password names before generating their files"
 
 : >"$LOG"
 MOCK_LAYOUT=legacy-admin "$TEST_BASH" "$SCRIPT" pre >/dev/null
@@ -484,6 +513,14 @@ for managed in owner label; do
     || fail "$managed-managed cleanup did not finish after the mapped key disappeared"
   grep -Fq 'patch secret' "$LOG" && fail "$managed-managed absent key reached a patch"
 done
+: >"$LOG"
+if MOCK_ES_MAPPING_ACTIVE=1 MOCK_EXTERNAL_SECRET_MODE=none \
+    "$TEST_BASH" "$SCRIPT" remove-legacy-secret-keys >"$ROOT/remove-merge-mapping.log" 2>&1; then
+  fail "an unlabelled Merge ExternalSecret mapping was patched"
+fi
+grep -Fq 'External Secrets still maps agent-relay-secrets/HOOPDB_MIGRATION_URL' "$ROOT/remove-merge-mapping.log" \
+  || fail "unlabelled Merge ExternalSecret mapping refusal did not name the key"
+grep -Fq 'patch secret' "$LOG" && fail "unlabelled Merge ExternalSecret mapping reached a patch"
 pass "legacy cleanup distinguishes NotFound, API errors and External Secrets key ownership"
 
 # Terraform's chart_values pin sha256(server_ca_cert): the PEM with exactly one
