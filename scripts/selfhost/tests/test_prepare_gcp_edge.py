@@ -1,14 +1,17 @@
 """Offline configuration and CLI guards; no cloud or release actions."""
 
 import base64
+from contextlib import redirect_stderr, redirect_stdout
 import copy
 import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "prepare-gcp-edge.py"
@@ -85,6 +88,35 @@ class PrepareGcpEdgeTest(unittest.TestCase):
                 config["edge"] = options
                 with self.assertRaises(ValueError):
                     PREPARE.prepare(config)
+
+    def test_signing_secret_name_validates_dot_separated_labels(self):
+        for name in ["desktop-feed-keys", "desktop.feed-keys", "a.b", ".".join(["a" * 63] * 3 + ["b" * 61])]:
+            with self.subTest(valid=name):
+                self.config["feed"]["existing_secret"] = name
+                PREPARE.prepare(self.config)
+        for name in ["a..b", "a.-b", "a-.b", ".keys", "keys.", "Keys", "a" * 254]:
+            with self.subTest(invalid=name):
+                self.config["feed"]["existing_secret"] = name
+                with self.assertRaisesRegex(ValueError, "signing Secret name"):
+                    PREPARE.prepare(self.config)
+
+    def test_cli_refuses_a_file_created_after_the_existence_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "site.json"
+            config.write_text(json.dumps(self.config))
+            output = root / "prepared"
+            output.mkdir()
+            winner = output / "edge.values.json"
+            winner.write_text("another invocation's configuration")
+            command = [str(SCRIPT), "--config", str(config), "--output-dir", str(output)]
+            # Simulate a stale precheck while another writer owns the first file.
+            with mock.patch.object(sys, "argv", command), mock.patch.object(Path, "exists", return_value=False):
+                with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                    result = PREPARE.main()
+            self.assertEqual(result, 1)
+            self.assertEqual(winner.read_text(), "another invocation's configuration")
+            self.assertEqual(list(output.iterdir()), [winner])
 
     def test_cli_refuses_overwrite_and_does_not_emit_partial_invalid_config(self):
         with tempfile.TemporaryDirectory() as directory:

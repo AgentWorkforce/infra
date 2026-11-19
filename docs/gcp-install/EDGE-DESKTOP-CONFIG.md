@@ -66,11 +66,22 @@ values order for lint, render, diff and subsequent upgrades:
 helm template agent-relay "$CHART" --namespace agent-relay --no-hooks \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f managed-values.json -f values.yaml -f branding.values.yaml \
-  -f prepared/edge.values.json -f release-images.values.yaml > rendered.yaml
+  -f prepared/edge.values.json -f control-env.values.yaml \
+  -f release-images.values.yaml > rendered.yaml
 ```
 
-Omit the branding file when unused. Run `helm lint --strict` with the same
-files. Inspect without Secret payloads:
+`edge.values.json` deliberately sets `relay-control.extraEnv: []` to hold
+back feed storage until the signer is ready. Helm replaces that whole list,
+including unrelated entries from `values.yaml`. If the base has approved
+non-feed settings, copy those entries into `relay-control.extraEnv` in an
+operator-owned `control-env.values.yaml` applied **after** `edge.values.json`,
+as shown above. Preserve Secret references rather than copying secret values.
+Keep `SELFHOST_DESKTOP_FEED_*` entries out of this initial list. Repeating
+entries only in a base file before `edge.values.json` does not preserve them.
+
+Omit the branding and Control environment files when unused. Run
+`helm lint --strict` with the same files and preserve this order for upgrades.
+Inspect without Secret payloads:
 
 - All four Ingress hosts and every service URL match the input.
 - Google-managed mode has its ManagedCertificate. Cloudflare mode instead
@@ -100,8 +111,10 @@ Terraform-managed access to the private feed bucket.
 
 Append `-f prepared/desktop-feed.values.json` to the same render, diff and
 reviewed upgrade to enable storage and signer together. Helm replaces
-`extraEnv` lists: carry forward unrelated approved entries when adding these
-feed entries. Do not enable feed storage alone.
+`extraEnv` lists: combine unrelated approved entries from the initial Control
+environment overlay with the four generated feed entries in the final feed
+overlay. Applying the generated feed file alone after `control-env.values.yaml`
+would replace that earlier list again. Do not enable feed storage alone.
 
 For a VPN-restricted site, provide an approved operator or runner network
 path for feed listing and publication. Preserve the access policy when

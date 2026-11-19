@@ -60,7 +60,7 @@ def prepare(config):
     bucket = checked(feed["bucket"], r"(?=.{3,63}$)[a-z0-9][a-z0-9._-]*[a-z0-9]", "feed bucket")
     prefix = checked(feed["prefix"], r"[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)*", "feed prefix")
     label = checked(feed["key_label"], r"[a-z0-9]{1,16}", "feed key label")
-    secret = checked(feed["existing_secret"], r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", "signing Secret name")
+    secret = checked(feed["existing_secret"], r"(?=.{1,253}$)[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*", "signing Secret name")
 
     edge = {
         "gkeIngress": {
@@ -144,7 +144,8 @@ def main():
         if any((args.output_dir / name).exists() for name in outputs):
             raise ValueError("output files already exist; use a new output directory")
         for name, value in outputs.items():
-            (args.output_dir / name).write_text(json.dumps(value, indent=2) + "\n")
+            with (args.output_dir / name).open("x", encoding="utf-8") as handle:
+                handle.write(json.dumps(value, indent=2) + "\n")
     except (ValueError, KeyError, OSError) as exc:
         print(f"Cannot prepare configuration: {exc}", file=sys.stderr)
         return 1
