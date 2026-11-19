@@ -213,8 +213,10 @@ Also remove any `SELFHOST_DESKTOP_FEED_*` entries you copied into
 place, write `managed-values.json` again (the `terraform output` line above)
 and run step 11's command. The Terraform on `main` (after the pinned release)
 does the same with `desktop_feed_has_signing_keys = false` in
-`terraform.tfvars`: the output then leaves the storage settings out until you
-remove that line.
+`terraform.tfvars`: the output then leaves the storage settings out. Outputs
+change only on apply, so after adding or removing that line run
+`terraform plan` and `terraform apply` before writing `managed-values.json`
+again.
 
 **Terraform state.** The example has no `backend` block, so the state stays in
 a local file. To keep it in Cloud Storage, create a private, versioned bucket

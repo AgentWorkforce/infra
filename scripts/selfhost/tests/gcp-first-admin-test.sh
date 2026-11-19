@@ -44,7 +44,15 @@ done
 printf '%s' '{"error":"mock_error","message":"mock message"}' >"$out"
 printf '%s' "${MOCK_HTTP_CODE:-200}"
 MOCK
-chmod +x "$BIN/kubectl" "$BIN/gcloud" "$BIN/curl"
+# Its own openssl, so the test does not depend on the caller's PATH
+# (run-tests.sh puts an openssl mock there that prints nothing for "rand").
+# Each call prints a different value of the length "rand -base64 33" has.
+cat >"$BIN/openssl" <<'MOCK'
+#!/usr/bin/env bash
+[ "$1" = rand ] || exit 1
+printf 'MockPw%s+/%036d\n' "$$" "$RANDOM"
+MOCK
+chmod +x "$BIN/kubectl" "$BIN/gcloud" "$BIN/curl" "$BIN/openssl"
 
 # run <case name> [VAR=value ...] -- <script arguments>: runs the script in a
 # fresh case directory; sets DIR, STATUS, and leaves stdout+stderr in $DIR/out.
@@ -112,8 +120,8 @@ pass "PASSWORD_FILE keeps the password in a 0600 file without gcloud"
 # 5. PASSWORD_FILE without gcloud installed at all.
 NOGCLOUD="$ROOT/nogcloud-bin"
 mkdir -p "$NOGCLOUD"
-for tool in kubectl curl; do cp "$BIN/$tool" "$NOGCLOUD/$tool"; done
-for tool in bash env jq openssl base64 cat grep tr cut mktemp chmod rm; do
+for tool in kubectl curl openssl; do cp "$BIN/$tool" "$NOGCLOUD/$tool"; done
+for tool in bash env jq base64 cat grep tr cut mktemp chmod rm; do
   ln -s "$(command -v "$tool")" "$NOGCLOUD/$tool"
 done
 DIR="$ROOT/no-gcloud"; mkdir -p "$DIR"; : >"$DIR/log"
@@ -124,6 +132,8 @@ env PATH="$NOGCLOUD" MOCK_LOG="$DIR/log" MOCK_DIR="$DIR" \
   "$NOGCLOUD/bash" "$SCRIPT" relay.example.com example-project >"$DIR/out" 2>&1 || STATUS=$?
 [ "$STATUS" = 2 ] && grep -q 'gcloud is required' "$DIR/out" || fail "the default mode did not ask for gcloud"
 pass "gcloud is required only for Secret Manager"
+
+[ "$(cat "$ROOT/no-gcloud/pw")" != "$(cat "$ROOT/password-file/pw")" ] || fail "two runs produced the same password"
 
 # 6. An existing password is never replaced, in either store.
 printf 'earlier\n' >"$ROOT/existing-pw"
