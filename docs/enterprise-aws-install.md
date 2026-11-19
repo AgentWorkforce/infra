@@ -13,6 +13,11 @@ are useful development evidence, not this release.
 
 ## Before you start
 
+For a customer-managed corporate VPN connector, the optional
+[VPN network profile](vpn-networking.md) creates a separate connector subnet
+and fixed egress path in an existing VPC. It does not establish the tunnel or
+private API reachability; complete the profile's routing and live checks.
+
 The release owner supplies one tested release packet:
 
 | Required item | What must be ready |

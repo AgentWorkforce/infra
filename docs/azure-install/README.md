@@ -31,6 +31,11 @@ indexer's MinIO keys, so its uploads are never indexed.
 
 ## How Azure differs
 
+For an existing corporate VPN, an optional
+[connector network profile](../vpn-networking.md) supplies a dedicated subnet,
+static outbound NAT and firewall rules in an existing VNet. It creates no VPN
+software or AKS resources and does not extend this guide's qualification.
+
 | AWS (EKS guide) | Azure (this guide) | Why |
 |---|---|---|
 | RDS + `rds-setup.sh` (`databaseMode: rds`) | In-cluster CloudNativePG, the pinned `deps/cnpg-cluster-values.yaml`, + `postgres-setup.sh` (`databaseMode: selfhosted`) | The services image has `rds`, `cloudsql` and `selfhosted` database modes. Azure Database for PostgreSQL fits none: its admin role is neither `rds_superuser` nor `cloudsqlsuperuser`, and it is not a superuser. |

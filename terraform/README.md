@@ -17,6 +17,8 @@ terraform/
   modules/gcp/{foundation,postgres,object-storage,search,functions}
   modules/gcp/edge-security           # GKE Ingress TLS policy and Cloud Armor
   modules/gcp/internal-edge           # prerequisites for the internal-only GKE Ingress
+  modules/{aws,gcp,azure}/vpn-network  # optional corporate VPN connector networks
+  examples/{aws,gcp,azure}-vpn-network # separate roots, disabled by default
   examples/{aws,gcp}                 # thin roots: four capabilities together
   examples/{aws,gcp}-foundation      # network and Kubernetes foundation roots
   examples/aws-environments          # environment-scoped AWS data composition
@@ -24,8 +26,16 @@ terraform/
   scripts/check.sh                   # fmt, validate, tflint, test, docs, checkov
 ```
 
-Azure is on hold. A `modules/azure/<capability>` set with the same four
-interfaces would slot in beside these.
+Azure's four managed-service capability modules remain on hold. Its optional
+`azure/vpn-network` module provides connector networking only, against an
+existing VNet; it does not qualify a full Azure installation.
+
+For a customer-managed corporate VPN connector on AWS, GCP or Azure, see
+[VPN networking](../docs/vpn-networking.md). The separate modules/examples are
+off by default, create no VPN software or credentials, and expose a fixed
+egress address for an approved edge allowlist. Private ingress also requires
+tunnel routes and DNS; NAT alone does not establish a VPN. Existing install
+roots and defaults are unchanged.
 
 ## Current main-store direction
 

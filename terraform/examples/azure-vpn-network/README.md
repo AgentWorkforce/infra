@@ -1,0 +1,62 @@
+# Optional AZURE corporate VPN connector network
+
+Standalone root for [`azure/vpn-network`](../../modules/azure/vpn-network).
+It is not called by the existing installation roots, and `enabled` defaults
+to false. The example tfvars also starts disabled. Supply the approved cloud
+identity and existing network inputs, replace the documentation-only CIDRs,
+and review the plan before enabling it. This root creates no connector VM,
+VPN software, credentials or managed VPN service.
+
+Read [VPN networking](../../../docs/vpn-networking.md) before planning: it covers
+forwarding/SNAT, existing NAT and address ownership, private versus proxied
+access, and the checks that still need a live tunnel. Use a dedicated approved
+backend/state for this root; no backend is selected for you.
+
+```sh
+cp terraform.tfvars.example terraform.tfvars
+# Fill in approved inputs; keep enabled = false for the first review.
+terraform init
+terraform plan
+# Set enabled = true only as part of the reviewed provisioning plan.
+terraform plan -out=connector.tfplan
+# Apply only the approved saved plan using your infrastructure workflow.
+```
+
+The VM goes in the output subnet without a public IP. Cloudflare/DNS and edge
+allowlists stay separately owned; `egress_cidr` supplies the staff-source value.
+All three clouds have static/mock validation only, not live tunnel qualification.
+
+<!-- BEGIN_TF_DOCS -->
+### Requirements
+
+| Name | Version |
+| ---- | ------- |
+| terraform | >= 1.7 |
+| azurerm | >= 4.0, < 5.0 |
+
+### Modules
+
+| Name | Source | Version |
+| ---- | ------ | ------- |
+| vpn\_network | ../../modules/azure/vpn-network | n/a |
+
+### Inputs
+
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| connector\_cidr | Unused RFC1918 IPv4 /28 for a customer-managed, outbound-initiated VPN connector. | `string` | n/a | yes |
+| resource\_group\_name | Existing VNet's resource group; this module does not create one. | `string` | n/a | yes |
+| subscription\_id | Independently approved subscription; must match the authenticated provider. | `string` | n/a | yes |
+| virtual\_network\_name | Existing VNet name; no AKS foundation or application is created. | `string` | n/a | yes |
+| enabled | Explicit opt-in. False creates no resources or cloud data reads. | `bool` | `false` | no |
+| existing\_network\_cidrs | Existing node, pod, service, connector, peered and corporate ranges to check for overlap. Include every routed range, not the enclosing VPC/VNet address space. | `list(string)` | `[]` | no |
+| name | Unique resource prefix in the existing network. | `string` | `"agent-relay"` | no |
+| outbound\_rules | Explicit IPv4 destinations and single TCP/UDP ports with stable caller-assigned priorities (100-4095, unique per outbound direction). The module creates no outbound allow without a rule; provider-reserved metadata and DNS may bypass network filters. | `map(object({ cidr = string, protocol = string, port = number, priority = number }))` | `{}` | no |
+| tags | Tags applied to supported resources. | `map(string)` | `{}` | no |
+
+### Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| vpn\_network | Non-secret connector placement and fixed egress references. Nulls when disabled. |
+<!-- END_TF_DOCS -->
