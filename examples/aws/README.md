@@ -1,7 +1,7 @@
 # AWS (EKS) install example
 
 A filled-in example of what [Install on EKS](https://agentrelay.com/docs/self-hosting/install-eks)
-produces for release `agent-relay-2026.11.16` (chart 0.7.54), with the database on
+produces for release `agent-relay-2026.11.18` (chart 0.7.63), with the database on
 RDS (Terraform-created or [existing/shared](https://agentrelay.com/docs/self-hosting/existing-rds)).
 Use it to check the shape of your own files. **Every value here is an example.**
 
@@ -27,7 +27,7 @@ represented by a committed example. To keep inputs in SOPS or SSM instead, see
 Check the example renders against the release:
 
 ```sh
-git checkout agent-relay-2026.11.16
+git checkout agent-relay-2026.11.18
 helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay
 helm template agent-relay charts/agent-relay -n agent-relay \
   -f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-native.yaml \

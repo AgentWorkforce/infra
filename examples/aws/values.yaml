@@ -1,4 +1,4 @@
-# EXAMPLE values.yaml for agent-relay-2026.11.16 (chart 0.7.54), filled in.
+# EXAMPLE values.yaml for agent-relay-2026.11.18 (chart 0.7.63), filled in.
 # Every site value is an example: domain ar.selfhost-example.agentrelay.com, orgId, org name, admin
 # email, region, bucket, OpenSearch URL, RDS CA sha256 (keep it quoted; from
 # ~/.agent-relay-install/rds-ca.sha256), ALB
@@ -27,7 +27,7 @@
 # workload using it takes both from here. To move to a newer build or a new image
 # name, change only that line. See the Images table at agentrelay.com/docs/self-hosting/install-eks.
 x-pins:
-  services-image: &services_image { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: "sha256:fd2efd61dca4761dfb55256aa4797cb7f61c3434cc8af4833287e0e7bb7b59a9" }
+  services-image: &services_image { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: "sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5" }
   webapp-image: &webapp_image { repository: ghcr.io/agentworkforce/relay-webapp, digest: "sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e" }
 
 components:
@@ -287,7 +287,7 @@ sessions-pipeline:
 relay-control:
   image:
     repository: ghcr.io/agentworkforce/relay-control
-    digest: sha256:377bc2b9477d0bbd966cccd61380dd9d7f6e022a76ff0f7ad80e391d56ec0a83
+    digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9
   # The chart allows one replica: login and device rate limits are per process.
   replicaCount: 1
   existingSecret: agent-relay-secrets
