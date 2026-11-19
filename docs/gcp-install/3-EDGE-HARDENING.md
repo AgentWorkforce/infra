@@ -308,8 +308,10 @@ Cloudflare can reach it.
        --items <range>,<range>,...
      ```
 
-     and in the rule, `address_groups = ["agent-relay-vendor-a"]` in place of
-     that vendor's `cidrs`. When the vendor changes its list, update the
+     and in the rule, add `address_groups = ["agent-relay-vendor-a"]` and
+     remove only that vendor's ranges from `cidrs`. Keep your own ranges
+     there (`cidrs = ["<your range>"]`): the rule denies everyone it does not
+     list, so without them your users' uploads would get 403. When the vendor changes its list, update the
      group with `add-items` and `remove-items`; Terraform is not involved.
    - **A Cloudflare WAF custom rule** for that vendor's list, keeping only
      your own ranges here. No extra Google cost.
