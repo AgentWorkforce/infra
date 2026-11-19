@@ -56,6 +56,12 @@ output files. It produces three files, plus a fourth in Cloudflare mode:
 | `desktop-build.json` | Matching Desktop identity, site, public key and prepare-only workflow metadata |
 | `origin-locked.values.json` | Cloudflare only: trust three proxy entries after direct-origin denial has been proven |
 
+The preparer uses the fixed `agent-relay` resource names. Keep
+`name = "agent-relay"` in the VPN and platform Terraform roots for this profile,
+and confirm `gkeIngress.staticIpName` equals `vpn_network.ingress.name` or the
+manually reserved name. Custom resource names require separately reviewed Helm
+overrides after the generated files, including the Ingress IP and edge policies.
+
 Generate the ordinary `values.yaml` with organization, resource, network and
 Secret references from the install guide. Retain approved branding before
 the generated overlay: Helm deep-merges logo and colour maps while this

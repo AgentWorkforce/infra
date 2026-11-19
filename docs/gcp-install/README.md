@@ -34,6 +34,9 @@ only in reviewed inputs; it creates no VM or VPN software.
 Reserve the Ingress IP with `create_ingress_ip = true` in the VPN root (output
 `vpn_network.ingress.address`), or use the [manual reservation](0-START-HERE.md#6-reserve-the-ip-address-and-point-dns-at-it-dns-owner)
 without that root. The platform root does not reserve it.
+Keep `name = "agent-relay"` in both Terraform roots for this prepared profile:
+the preparer uses `agent-relay-ingress`. The final `gkeIngress.staticIpName`
+must match `vpn_network.ingress.name` (or the manually reserved name).
 
 In each selected root:
 
@@ -48,6 +51,10 @@ From the platform root, pass the non-secret output to the application operator:
 `terraform output -json chart_values > managed-values.json`.
 
 ## 3. Configure DNS and hand over to the application operator
+
+Cloudflare requires **chart 0.7.59 or newer**, with Terraform and scripts from
+the same reviewed infra commit. Do not use the operator reference's older
+0.7.54 chart for this profile; it ignores the required TLS and policy keys.
 
 Point the four names at the reserved Ingress IP. For Cloudflare, configure
 proxied DNS, Full (strict), Origin CA TLS and the origin header using the
