@@ -38,6 +38,9 @@ RECEIPT = ROOT / ".kind/local/cluster.json"
 NODE_RECORD = STATE / "node.json"
 # A backend watcher still restoring deployments after this launcher exited.
 RESTORING = STATE / "restoring.json"
+# Watcher events that come before or with any Deployment change (the initial
+# builds patch before "watching"); without one there is nothing to restore.
+EFFECT_STAGES = {"build", "ready", "watching"}
 # local_tools.py --prepare installs these under .kind/tools; preflight must not require them first.
 BOOTSTRAPPED = ("kind", "helm")
 PORTS = dict(port=3100, nextPort=3102, dashboardPort=3103, controlPort=33100)
@@ -51,9 +54,11 @@ def say(message):
     print(f"[dev] {message}", flush=True)
 
 
-def missing_repos(parent):
+def missing_repos(parent, desktop=True):
     errors = []
     for repo, files in REQUIRED.items():
+        if repo == "relay-desktop" and not desktop:
+            continue
         if not (parent / repo).is_dir():
             errors.append(f"Missing sibling repository: {parent / repo} (AgentWorkforce/{repo})")
         else:
@@ -138,7 +143,7 @@ def environment():
 
 def check_prerequisites(parent, env, desktop=True, bootstrap=True):
     """Tools the launcher cannot prepare itself. With bootstrap, kind and Helm come from local_tools.py."""
-    errors = missing_repos(parent)
+    errors = missing_repos(parent, desktop)
     names = ["docker", "kubectl", "openssl", "git", "node", "npm"]
     if not bootstrap:
         names += list(BOOTSTRAPPED)
@@ -154,6 +159,32 @@ def check_prerequisites(parent, env, desktop=True, bootstrap=True):
         if tuple(int(v) for v in version.split(".")[:2]) < (22, 12):
             errors.append("Node >=22.12 is required by relay-webapp.")
     return errors
+
+
+def restore_result(log, offset):
+    """complete, incomplete or none (the watcher changed nothing) from one run's slice of backends.log.
+
+    ci/agent-relay/dev/dev.py restores in a finally block and then re-raises
+    whatever stopped it, so its exit status does not decide; its last restore
+    event does. A run that logged no restore event after it may have patched
+    Deployments (killed, for example) counts as incomplete.
+    """
+    effects, result = False, None
+    try:
+        with Path(log).open() as stream:
+            stream.seek(offset or 0)
+            for line in stream:
+                with suppress(ValueError, AttributeError):
+                    stage = json.loads(line).get("stage")
+                    if stage in EFFECT_STAGES:
+                        effects = True
+                    elif stage in {"restore_complete", "restore_incomplete"}:
+                        result = stage
+    except OSError:
+        return "incomplete"
+    if result:
+        return result.removeprefix("restore_")
+    return "incomplete" if effects else "none"
 
 
 def missing_bootstrapped(env):
@@ -389,25 +420,16 @@ class Supervisor:
         self.children.append((name, process))
         return process
 
-    def backends_restored(self, process):
-        """The watcher's own restore result for this run, not its exit status.
+    def backends_restored(self):
+        return restore_result(STATE / "backends.log", self.backend_log_offset) != "incomplete"
 
-        ci/agent-relay/dev/dev.py restores in a finally block and then re-raises
-        whatever stopped it (for example protected_source_changed), so exit 1 can
-        follow a complete restore. Its last restore event in this run decides.
-        """
-        result = None
-        try:
-            with (STATE / "backends.log").open() as stream:
-                stream.seek(self.backend_log_offset or 0)
-                for line in stream:
-                    with suppress(ValueError, AttributeError):
-                        stage = json.loads(line).get("stage")
-                        if stage in {"restore_complete", "restore_incomplete"}:
-                            result = stage
-        except OSError:
-            pass
-        return result == "restore_complete"
+    def restoring_marker(self, process, failed=False):
+        # The log slice lets a later run read the outcome once this pid is gone.
+        record = {"pid": process.pid, "log": str(STATE / "backends.log"), "offset": self.backend_log_offset or 0}
+        if failed:
+            record["failed"] = True
+        RESTORING.write_text(json.dumps(record))
+        RESTORING.chmod(0o600)
 
     def check(self):
         for name, process in self.children:
@@ -434,18 +456,16 @@ class Supervisor:
                 if name == "backends" and process.poll() is None:
                     say("Waiting for the backend development loop to restore its deployments.")
                     # Recorded first, so a second interrupt during the wait still leaves the marker.
-                    RESTORING.write_text(json.dumps({"pid": process.pid}))
-                    RESTORING.chmod(0o600)
+                    self.restoring_marker(process)
                 process.wait(timeout=1800 if name == "backends" else 8)
                 if name == "backends":
-                    if self.backends_restored(process):
+                    if self.backends_restored():
                         with suppress(FileNotFoundError):
                             RESTORING.unlink()
                     else:
                         # Kept until the developer recovers: a later run must not adopt
                         # leftover development images as its starting state.
-                        RESTORING.write_text(json.dumps({"pid": process.pid, "failed": True}))
-                        RESTORING.chmod(0o600)
+                        self.restoring_marker(process, failed=True)
                         say("Backend restoration did not complete; see backends.log and the source-loop recovery guide.")
                         restored = False
             except subprocess.TimeoutExpired:
@@ -476,7 +496,11 @@ def restore_block():
     listing = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True)
     if listing.returncode == 0 and "ci/agent-relay/dev/dev.py" in listing.stdout:
         return f"An earlier backend watcher (pid {pid}) is still restoring deployments. Wait for it to exit; see .kind/dev/backends.log."
-    if record.get("failed"):
+    # The watcher has exited. A marker left by a timed-out wait carries its log
+    # slice: only a recorded restore_complete (or a run that changed nothing) clears it.
+    failed = record.get("failed") or "log" not in record or \
+        restore_result(record["log"], record.get("offset", 0)) == "incomplete"
+    if failed:
         return ("The last backend restoration did not complete, so deployments may still run development images. "
                 "Follow source-loop recovery in docs/kind-development.md, then delete .kind/dev/restoring.json.")
     with suppress(OSError):
@@ -653,11 +677,7 @@ def main():
             blocked = restore_block()
             if blocked and "still restoring" in blocked:
                 raise DevError(blocked + " Pause after it exits.")
-            if not docker_running(env):
-                say("Docker is not running, so the local cluster is not either; nothing to pause.")
-                return 0
-            if not pause_cluster(env):
-                say("This checkout's local cluster is not running; nothing to pause.")
+            stop_cluster(env)
         return 0
     errors = check_prerequisites(parent, env, not args.no_desktop and not args.proof, bootstrap=not args.reuse_containers)
     if args.check and not args.reuse_containers:
@@ -771,6 +791,22 @@ def main():
             finish_cluster(env, args.keep_running, restored)
         finally:
             lock.close()
+
+
+def stop_cluster(env):
+    """./dev.sh --stop: pause this checkout's node, and say why when it does nothing."""
+    if not docker_running(env):
+        say("Docker is not running, so the local cluster is not either; nothing to pause.")
+    elif pause_cluster(env):
+        say("Cluster paused. ./dev.sh resumes it.")
+    else:
+        found = inspect_node(env)
+        if found and node_state(env) is None:
+            say(f"{NODE} exists ({found[1]}) but this launcher cannot prove it is this checkout's "
+                "(for example a cluster created before .kind/dev/node.json existed, or another checkout's); "
+                f"not touched. If it is yours, stop it with: docker stop {NODE}")
+        else:
+            say("This checkout's local cluster is not running; nothing to pause.")
 
 
 def finish_cluster(env, keep_running, restored):

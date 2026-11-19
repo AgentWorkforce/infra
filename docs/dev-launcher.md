@@ -142,7 +142,11 @@ idle cluster uses no CPU and Docker does not bring it back on its own; data, loc
 settings and the launchd-managed Dev core are retained, and the next `./dev.sh`
 starts the node again and waits for its API server. Pass `--keep-running` to
 leave the cluster up on exit, and run `./dev.sh --stop` to pause one that was
-left running. Deliberate native-cluster removal uses `make local-down`.
+left running. Any exit after a launcher takes this checkout's lock pauses the
+cluster unless that invocation passed `--keep-running` or its backend
+restoration is unfinished. That includes an early failure of a later
+`./dev.sh` while a cluster left up with `--keep-running` is running.
+Deliberate native-cluster removal uses `make local-down`.
 
 Pause and resume act only on the node this launcher recorded after the stack
 verified the checkout's ownership receipt, on the same Docker endpoint. A
@@ -150,7 +154,8 @@ same-named node from another checkout is never stopped or started; a stopped
 node the launcher did not record fails startup with a `docker start` hint.
 Restoration counts as done only when the watcher logs `restore_complete` in this
 run; its exit status alone does not decide, because it restores and then reports
-whatever stopped it. If it is still running when the launcher gives up waiting,
+whatever stopped it. A watcher refused before its first build (an expired or
+changed plan, for example) changed nothing and does not block. If it is still running when the launcher gives up waiting,
 the cluster is left running and a new `./dev.sh` or `./dev.sh --stop` refuses to
 proceed until that watcher exits. If it failed, the cluster is left running and
 `./dev.sh` refuses to start until you follow

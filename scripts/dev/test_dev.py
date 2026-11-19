@@ -244,46 +244,89 @@ class LauncherTests(unittest.TestCase):
             state = Path(directory)
             marker = state / "restoring.json"
             log = state / "backends.log"
-            with patch.object(dev, "STATE", state), patch.object(dev, "RESTORING", marker), patch.object(dev, "say"):
+            alive = SimpleNamespace(returncode=0, stdout="python ci/agent-relay/dev/dev.py run\n")
+            gone = SimpleNamespace(returncode=1, stdout="")
+
+            def run_slice(events):
+                log.write_text("old\n" + json.dumps({"stage": "restore_complete"}) + "\n")  # An earlier run's event.
+                offset = log.stat().st_size
+                with log.open("a") as stream:
+                    stream.writelines(json.dumps({"stage": e}) + "\n" for e in events)
+                return offset
+
+            def finished(returncode, events):
                 supervisor = dev.Supervisor({})
+                supervisor.backend_log_offset = run_slice(events)
+                process = Mock(pid=4243, returncode=returncode)
+                process.poll.return_value = None
+                supervisor.children = [("backends", process)]
+                return supervisor.close()
+
+            with patch.object(dev, "STATE", state), patch.object(dev, "RESTORING", marker), patch.object(dev, "say"):
+                # Timed out while restoring: the marker names this run's log slice.
+                supervisor = dev.Supervisor({})
+                supervisor.backend_log_offset = run_slice(["build", "watching"])
                 backend = Mock(pid=4242)
                 backend.poll.return_value = None
                 backend.wait.side_effect = dev.subprocess.TimeoutExpired("dev.py", 1800)
                 supervisor.children = [("backends", backend)]
                 self.assertFalse(supervisor.close())
                 backend.terminate.assert_called_once()
-                self.assertEqual(json.loads(marker.read_text()), {"pid": 4242})
-                alive = SimpleNamespace(returncode=0, stdout="python ci/agent-relay/dev/dev.py run\n")
+                record = json.loads(marker.read_text())
+                self.assertEqual((record["pid"], record["log"], record["offset"]), (4242, str(log), supervisor.backend_log_offset))
                 with patch.object(dev.subprocess, "run", return_value=alive):
                     self.assertIn("pid 4242", dev.restore_block())
-                gone = SimpleNamespace(returncode=1, stdout="")
+                # It later exits without restoring: the block stays (it used to be cleared once the pid was gone).
                 with patch.object(dev.subprocess, "run", return_value=gone):
-                    self.assertIsNone(dev.restore_block())
-                self.assertFalse(marker.exists())
-
-                def finished(returncode, events):
-                    log.write_text("old\n" + json.dumps({"stage": "restore_complete"}) + "\n")  # An earlier run's event.
-                    supervisor = dev.Supervisor({})
-                    supervisor.backend_log_offset = log.stat().st_size
+                    self.assertIn("did not complete", dev.restore_block())
                     with log.open("a") as stream:
-                        stream.writelines(json.dumps({"stage": e}) + "\n" for e in events)
-                    process = Mock(pid=4243, returncode=returncode)
-                    process.poll.return_value = None
-                    supervisor.children = [("backends", process)]
-                    return supervisor.close()
+                        stream.write(json.dumps({"stage": "restore_incomplete"}) + "\n")
+                    self.assertIn("did not complete", dev.restore_block())
+                    with log.open("a") as stream:
+                        stream.write(json.dumps({"stage": "restore_complete"}) + "\n")
+                    self.assertIsNone(dev.restore_block())  # Its late restore_complete clears it.
+                self.assertFalse(marker.exists())
 
                 self.assertTrue(finished(0, ["watching", "restore_complete"]))
                 self.assertFalse(marker.exists())
                 # The watcher restores in finally and re-raises what stopped it: exit 1 after a full restore.
                 self.assertTrue(finished(1, ["watching", "refused", "restore_complete"]))
                 self.assertFalse(marker.exists())
-                for returncode, events in ((1, ["restore_incomplete"]), (0, ["watching"]), (None, [])):
+                # Refused before any build (plan_expired, plan_changed, admission): nothing to restore.
+                self.assertTrue(finished(1, ["refused"]))
+                self.assertTrue(finished(1, []))
+                self.assertFalse(marker.exists())
+                for returncode, events in ((1, ["restore_incomplete"]), (None, ["watching"]), (None, ["build"])):
                     with self.subTest(returncode=returncode, events=events):
                         self.assertFalse(finished(returncode, events))
                         self.assertTrue(json.loads(marker.read_text())["failed"])
                         with patch.object(dev.subprocess, "run", return_value=gone):
                             self.assertIn("did not complete", dev.restore_block())  # Persists after the watcher exits.
                         marker.unlink()
+
+    def test_no_desktop_does_not_require_the_desktop_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            errors = dev.missing_repos(Path(directory), desktop=False)
+            self.assertFalse(any("relay-desktop" in e for e in errors))
+            self.assertEqual(len(errors), len(dev.REQUIRED) - 1)
+            self.assertTrue(any("relay-desktop" in e for e in dev.missing_repos(Path(directory))))
+
+    def test_stop_says_when_a_node_is_not_provably_this_checkouts(self):
+        env = {"PATH": "/usr/bin"}
+        with patch.object(dev, "docker_running", return_value=True), patch.object(dev, "pause_cluster", return_value=False), \
+                patch.object(dev, "inspect_node", return_value=("abc", "running")), patch.object(dev, "node_state", return_value=None), \
+                patch.object(dev, "say") as say:
+            dev.stop_cluster(env)
+            self.assertIn("cannot prove", say.call_args.args[0])
+            self.assertNotIn("nothing to pause", say.call_args.args[0])
+        with patch.object(dev, "docker_running", return_value=True), patch.object(dev, "pause_cluster", return_value=False), \
+                patch.object(dev, "inspect_node", return_value=None), patch.object(dev, "say") as say:
+            dev.stop_cluster(env)
+            self.assertIn("nothing to pause", say.call_args.args[0])
+        with patch.object(dev, "docker_running", return_value=True), patch.object(dev, "pause_cluster", return_value=True), \
+                patch.object(dev, "say") as say:
+            dev.stop_cluster(env)
+            self.assertIn("paused", say.call_args.args[0])
 
     def test_bootstrap_tools_are_not_required_before_their_preparation(self):
         with tempfile.TemporaryDirectory() as directory:
