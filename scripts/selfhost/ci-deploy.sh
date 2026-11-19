@@ -220,23 +220,39 @@ health(){
   done
 }
 
+# job_log_filter: stdin -> stdout, replacing any line that looks like it carries a credential: a URL with userinfo,
+# or a password/secret/token key (any suffix, optionally quoted) followed by optional spaces and = or :.
+# "0074_exchange_tokens.sql" passes; "DB_PASSWORD = x", "token : x" and "\"secret\": \"x\"" are withheld.
+job_log_filter(){
+  sed -E '/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/[:space:]]*@|([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])[A-Za-z0-9_-]*["'"'"']?[[:space:]]*[=:]/c\[line withheld: may contain a credential]'
+}
+
 # record_jobs <release> <ns>: every Job of the release now in the cluster, whatever its age (a chart Job keeps its
 # name while its inputs are unchanged, so a re-run sees the one an earlier upgrade created): name, Complete/Failed,
-# completionTime on stderr and in state.jsonl, and the last JOB_LOG_LINES (40) lines of its log in jobs.txt.
-# Lines that look like they carry a credential (a URL with userinfo, or password/secret/token followed by = or :)
-# are replaced, never copied.
+# completionTime on stdout (state.jsonl), and the last JOB_LOG_LINES (40) lines of its log in jobs.txt, filtered by
+# job_log_filter. Evidence only: a failed read is logged and recorded, never fails the run. Each release is
+# recorded once per run (right after its Jobs finish, so a later release's failure cannot lose it).
+RECORDED_JOBS=" "
 record_jobs(){
-  local r=$1 ns=$2 name
-  kubectl -n "$ns" get jobs -o json | jq -c --arg r "$r" '.items[]
+  local r=$1 ns=$2 name jobs
+  case "$RECORDED_JOBS" in *" $r "*) return 0 ;; esac
+  RECORDED_JOBS="$RECORDED_JOBS$r "
+  if ! jobs=$(kubectl -n "$ns" get jobs -o json 2>/dev/null); then
+    log "evidence: could not list Jobs of $r (not fatal)"; echo "### jobs of $r: list failed" >> "$REPORT_DIR/jobs.txt"; return 0
+  fi
+  jq -c --arg r "$r" '.items[]
     | select(.metadata.annotations["meta.helm.sh/release-name"] == $r or .metadata.labels["app.kubernetes.io/instance"] == $r)
     | {job: .metadata.name, created: .metadata.creationTimestamp, completed: .status.completionTime,
        state: (if ((.status.conditions // []) | any(.type == "Failed" and .status == "True")) then "Failed"
-               elif ((.status.conditions // []) | any(.type == "Complete" and .status == "True")) then "Complete" else "Active" end)}' |
+               elif ((.status.conditions // []) | any(.type == "Complete" and .status == "True")) then "Complete" else "Active" end)}' <<<"$jobs" |
     while read -r j; do
       echo "$j"; name=$(jq -r .job <<<"$j")
       { echo "### job $name $(jq -r .state <<<"$j")"
-        kubectl -n "$ns" logs "job/$name" --all-containers --tail="${JOB_LOG_LINES:-40}" 2>&1 |
-          sed -E '/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/[:space:]]*@|([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])[^[:space:]]*[=:]/c\[line withheld: may contain a credential]' || true
+        if out=$(kubectl -n "$ns" logs "job/$name" --all-containers --tail="${JOB_LOG_LINES:-40}" 2>&1); then
+          printf '%s\n' "$out" | job_log_filter
+        else
+          log "evidence: logs of job $name unavailable (not fatal)"; echo "[log unavailable: kubectl logs failed]"
+        fi
         echo; } >> "$REPORT_DIR/jobs.txt"
     done
 }
@@ -248,11 +264,13 @@ record_state(){ # versions now running, for the run record
     helm status "$r" -n "$ns" -o json | jq -c '{release: .name, revision: .version, status: .info.status, chart: (.chart.metadata.name + "-" + .chart.metadata.version), app: .chart.metadata.appVersion}'
     kubectl -n "$ns" get deploy,statefulset -l "app.kubernetes.io/instance=$r" -o json |
       jq -c '.items[] | {kind, name: .metadata.name, images: [.spec.template.spec.containers[].image]}'
-    kubectl -n "$ns" get pods -l "app.kubernetes.io/instance=$r" -o json |
+    # Evidence added after the upgrade: a failed read is logged, never ends the run before health.
+    kubectl -n "$ns" get pods -l "app.kubernetes.io/instance=$r" -o json 2>/dev/null |
       jq -c '.items[] | select(.status.phase == "Running") | {pod: .metadata.name, ready: ((.status.conditions // []) | any(.type == "Ready" and .status == "True")),
-        restarts: ([.status.containerStatuses[]?.restartCount] | add), imageIDs: [.status.containerStatuses[]?.imageID]}'
+        restarts: ([.status.containerStatuses[]?.restartCount] | add), imageIDs: [.status.containerStatuses[]?.imageID]}' ||
+      log "evidence: could not list pods of $r (not fatal)"
     record_jobs "$r" "$ns"
-  done | tee "$REPORT_DIR/state.jsonl" >&2
+  done | tee -a "$REPORT_DIR/state.jsonl" >&2
 }
 
 # wait_release_jobs <release> <ns> <RFC3339 start> <timeout seconds>: helm --wait does not wait for plain Jobs
@@ -360,6 +378,7 @@ case "$MODE" in
       fi
       wait_release_jobs "$r" "$ns" "$start" "${JOB_TIMEOUT_SECONDS:-1800}" ||
         die "jobs of $r did not complete. Roll back: dispatch mode=rollback release=$r revision=<previous>"
+      record_jobs "$r" "$ns" >> "$REPORT_DIR/state.jsonl"
       log "apply $r: now revision $(live_revision "$r" "$ns")"
     done
     record_state; health ;;
