@@ -99,6 +99,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | admin\_secret\_kms\_key\_name | CMEK key for the Secret Manager secret that holds the Cloud SQL admin password (null: Google-managed, automatic replication). The key must be in var.region; the secret is then replicated to that region only. Grant the Secret Manager service agent (service-<project number>@gcp-sa-secretmanager.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: a secret's replication cannot be changed afterwards. | `string` | `null` | no |
 | deletion\_protection | Prevent deletion of Cloud SQL, Memorystore and Pub/Sub data resources. Disable only for a disposable proof environment. | `bool` | `true` | no |
 | desktop\_feed\_bucket\_name | Globally unique bucket for relay-control's signed Desktop feed (SELFHOST\_DESKTOP\_FEED\_GCS\_BUCKET). Empty disables it. | `string` | `""` | no |
+| desktop\_feed\_has\_signing\_keys | Whether relay-control has the feed's file signer (relay-control.desktopFeed.signingKeys in your values). true: chart\_values and desktop\_feed carry the SELFHOST\_DESKTOP\_FEED\_STORAGE env. Set false to create the bucket and service account before the signing keys exist: the env is left out, because relay-control exits when storage is set without a signer. Set it back to true, and save chart\_values again, once the keys are in place. | `bool` | `true` | no |
 | desktop\_feed\_service\_account\_id | account\_id of the Google service account relay-control uses for the Desktop feed bucket (6-30 characters). | `string` | `"agent-relay-control"` | no |
 | edge\_origin\_secret\_header | Shared-secret request header a fronting proxy adds; requests without one of the accepted values (1-3, for rotation) are denied (modules/gcp/edge-security origin\_secret\_header). Stored in state. | ```object({ name = string values = list(string) })``` | `null` | no |
 | edge\_security\_policy | Cloud Armor policy for every GKE Ingress backend (modules/gcp/edge-security security\_policy: create, waf, rate\_limits, source\_ip\_allowlist, cloudflare, client\_ip\_header, client\_ip\_rules). Off unless create = true. It is exported as gkeIngress.securityPolicy in output.edge, not in chart\_values, because the chart then also needs the dashboard Service's backend-config annotation. | `any` | `{}` | no |
@@ -135,7 +136,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | Name | Description |
 | ---- | ----------- |
 | chart\_values | Complete non-secret managed-service overlay for values-gcp.yaml plus values-gcp-native.yaml. Save with: terraform output -json chart\_values > managed-values.json. |
-| desktop\_feed | Values for relay-control's signed Desktop feed on GCS (null unless desktop\_feed\_bucket\_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys. |
+| desktop\_feed | Values for relay-control's signed Desktop feed on GCS (null unless desktop\_feed\_bucket\_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys. env is empty with desktop\_feed\_has\_signing\_keys = false: relay-control exits when the storage env is set without a signer. |
 | edge | Edge policy names (edge.tf). security\_policy is null unless edge\_security\_policy.create is set; put it in gkeIngress.securityPolicy together with the backend-config annotation the chart asks for. client\_ip\_header set means a proxy fronts the load balancer: relay-control.auth.trustedProxies is 3 instead of 2. |
 | functions | Pipeline function, topics and secret (null unless enable\_functions). |
 | image\_mirror\_root | MIRROR\_ROOT for install guide step 5 (null unless image\_mirror\_repository is set). |
@@ -155,5 +156,11 @@ for `relay-control.extraEnv` and the two annotations for
 `relay-control.serviceAccount.annotations`
 (`iam.gke.io/gcp-service-account` and `iam.gke.io/return-principal-id-as-email`).
 The feed's signing keys go through `relay-control.desktopFeed.signingKeys`.
+relay-control exits when the storage env is set without a signer
+(`SELFHOST_DESKTOP_FEED_SIGNER and SELFHOST_DESKTOP_FEED_STORAGE must be set together`),
+so to create the bucket before the signing keys exist, also set
+`desktop_feed_has_signing_keys = false`: `chart_values` and
+`output.desktop_feed` then leave the three `extraEnv` entries out. Remove it,
+and save `chart_values` again, once the keys are in place.
 Off by default: an install without it plans no change.
 

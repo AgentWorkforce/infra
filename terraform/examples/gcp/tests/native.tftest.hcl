@@ -152,12 +152,32 @@ run "desktop_feed_bucket_and_identity" {
     error_message = "The output must carry both Workload Identity annotations and the gcs storage setting."
   }
   assert {
-    condition     = output.chart_values["relay-control"].serviceAccount.annotations["iam.gke.io/gcp-service-account"] == output.desktop_feed.service_account && length(output.chart_values["relay-control"].extraEnv) == 3
+    condition     = output.chart_values["relay-control"].serviceAccount.annotations["iam.gke.io/gcp-service-account"] == output.desktop_feed.service_account && length(output.chart_values["relay-control"].extraEnv) == 3 && output.chart_values["relay-control"].extraEnv == output.desktop_feed.env && output.desktop_feed.env[1] == { name = "SELFHOST_DESKTOP_FEED_GCS_BUCKET", value = "example-agent-relay-desktop-feed" } && output.desktop_feed.env[2] == { name = "SELFHOST_DESKTOP_FEED_GCS_PREFIX", value = "desktop-feed" }
     error_message = "managed-values.json must carry the feed env and KSA annotations for relay-control."
   }
   assert {
     condition     = module.desktop_feed_bucket[0].google_service_account_email != null && contains(keys(output.chart_values["relay-control"]), "postgresCa")
     error_message = "Enabling the feed must keep relay-control's Cloud SQL CA values."
+  }
+}
+
+# relay-control exits when the storage env is set without a signer, so the
+# bucket and identity can be created before the signing keys exist.
+run "desktop_feed_without_signing_keys_has_no_storage_env" {
+  command = apply
+
+  variables {
+    desktop_feed_bucket_name      = "example-agent-relay-desktop-feed"
+    desktop_feed_has_signing_keys = false
+  }
+
+  assert {
+    condition     = !contains(keys(output.chart_values["relay-control"]), "extraEnv") && length(output.desktop_feed.env) == 0
+    error_message = "Without signing keys neither output may carry the feed storage env."
+  }
+  assert {
+    condition     = module.desktop_feed_bucket[0].bucket_name == "example-agent-relay-desktop-feed" && output.chart_values["relay-control"].serviceAccount.annotations["iam.gke.io/gcp-service-account"] == output.desktop_feed.service_account && contains(keys(output.chart_values["relay-control"]), "postgresCa")
+    error_message = "The bucket, the service account annotations and the Cloud SQL CA values must not depend on the signing keys."
   }
 }
 
