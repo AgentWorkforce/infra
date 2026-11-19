@@ -203,14 +203,17 @@ class Report:
                 'readOnly':True, 'summary':counts, 'checks':self.checks}
 
 
-def kube(options, resource, name=None, selector=False):
+def kube(options, resource, name=None, selector=False, probe=False):
+    if not options.context:
+        raise DiagnosticError('no-kube-context')
+    timeout = min(options.timeout, 8) if probe else options.timeout
     argv = ['kubectl','--context',options.context,'--namespace',options.namespace,
-            '--request-timeout='+str(options.timeout)+'s','get',resource]
+            '--request-timeout='+str(timeout)+'s','get',resource]
     if name:
         argv.append(name)
     if selector:
         argv += ['-l','app.kubernetes.io/instance='+options.release]
-    return run(argv+['-o','json'],options.timeout)
+    return run(argv+['-o','json'],timeout+2)
 
 
 def cluster_checks(options, report):
@@ -501,9 +504,139 @@ def database_checks(options, credentials, report):
         report.unknown('database.'+slot,'credential-not-available')
 
 
+EXAMPLE_CA_SHA = '9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a'
+EXAMPLE_MARKERS = ('selfhost-example', 'ar.example.com', 'org_example', 'example-agent-relay-sessions',
+                   'vpc-agent-relay-example', 'admin@example.com', 'Example Corp', 'abc123example')
+CA_NAMES = ('rds-ca.pem', 'database-ca.pem', 'global-bundle.pem')
+SECRET_NAMES = {s[0] for s in SLOTS.values()}
+
+
+def _is_ca(path):
+    try:
+        return path.is_file() and 'BEGIN CERTIFICATE' in path.read_text(errors='ignore')
+    except OSError:
+        return False
+
+
+def _yaml_files(folder):
+    try:
+        return sorted(f for f in folder.iterdir() if f.is_file() and f.suffix in ('.yaml', '.yml'))
+    except OSError:
+        return []
+
+
+def _secret_manifest_files(folders):
+    found = []
+    for folder in folders:
+        for f in _yaml_files(folder):
+            try:
+                text = f.read_text(errors='ignore')
+            except OSError:
+                continue
+            if re.search(r'^kind:\s*Secret\s*$', text, re.M) and any(n in text for n in SECRET_NAMES):
+                found.append(f)
+    return found
+
+
+def discover(options, notes):
+    """Fill in anything not passed explicitly; record what was used."""
+    cwd = Path.cwd()
+    home = Path.home()/'.agent-relay-install'
+    if not options.context and options.scope != 'database':
+        try:
+            out = subprocess.run(['kubectl', 'config', 'current-context'], text=True,
+                                 capture_output=True, timeout=10)
+            if out.returncode == 0 and out.stdout.strip():
+                options.context = out.stdout.strip()
+                notes.append('kube context: '+options.context+' (current context; pass --context to change)')
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if not options.context:
+            notes.append('kube context: none found; cluster checks will be UNKNOWN')
+    cluster_ok = False
+    if options.context and options.scope != 'database':
+        try:
+            kube(options, 'secret', 'agent-relay-secrets', probe=True)
+            cluster_ok = True
+        except DiagnosticError as exc:
+            notes.append('cluster: not reachable ('+str(exc)+'); on a split VPN, rerun on the cluster VPN for workload checks')
+    options.cluster_reachable = cluster_ok
+    if not options.secret_dir and not options.secret_manifests:
+        manifests = _secret_manifest_files([cwd, cwd/'secrets'])
+        if cluster_ok:
+            notes.append('credentials: deployed Kubernetes Secrets')
+        elif (home/'secret-files').is_dir():
+            options.secret_dir = home/'secret-files'
+            notes.append('credentials: '+str(options.secret_dir))
+        elif manifests:
+            options.secret_manifests = manifests
+            notes.append('credentials: '+str(len(manifests))+' Secret YAML file(s): '+', '.join(f.name for f in manifests))
+        else:
+            notes.append('credentials: none found (no cluster, no ~/.agent-relay-install/secret-files, no Secret YAMLs here or in ./secrets)')
+    if not options.ca_file:
+        for candidate in [cwd/n for n in CA_NAMES] + sorted(cwd.glob('*-bundle.pem')) + [home/'rds-ca.pem']:
+            if _is_ca(candidate):
+                options.ca_file = candidate
+                notes.append('database CA: '+str(candidate))
+                break
+        else:
+            notes.append('database CA: none found (looked for rds-ca.pem here); TLS checks may fail')
+    if options.values is None:
+        options.values = [f for f in _yaml_files(cwd) if 'values' in f.name.lower()
+                          and f not in _secret_manifest_files([cwd])]
+        if options.values:
+            notes.append('values file(s): '+', '.join(f.name for f in options.values))
+    if not options.output:
+        stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+        options.output = cwd/('install-diagnostic-'+stamp+'.json')
+
+
+def values_checks(options, report):
+    """Line-based lint of filled-in Helm values for mistakes seen in real installs."""
+    import hashlib
+    ca_sha = None
+    if options.ca_file and _is_ca(Path(options.ca_file)):
+        ca_sha = hashlib.sha256(Path(options.ca_file).read_bytes()).hexdigest()
+    for f in options.values or []:
+        tag = 'values.'+re.sub(r'[^a-z0-9]+', '-', f.name.lower()).strip('-')
+        try:
+            lines = f.read_text().splitlines()
+        except OSError:
+            report.unknown(tag, 'values-file-unreadable')
+            continue
+        placeholders, scheme, bad_sha, example_sha = [], [], [], []
+        for n, line in enumerate(lines, 1):
+            body = line.split(' #', 1)[0]
+            if body.lstrip().startswith('#') or not body.strip():
+                continue
+            if any(m in body for m in EXAMPLE_MARKERS) or re.search(r'__[A-Z0-9_]+__|<[a-z][a-z0-9 _-]*>', body):
+                placeholders.append(n)
+            for host in re.findall(r'(?:^|[\s"\'=:,\[])((?:[a-z]+://)?[a-z0-9.-]+\.(?:es|aoss)\.amazonaws\.com)', body):
+                if not host.startswith('https://'):
+                    scheme.append(n)
+            m = re.search(r'\b(?:caSha256|sha256)\s*:\s*["\']?([0-9a-f]{64})', body)
+            if m and 'digest' not in body:
+                if m.group(1) == EXAMPLE_CA_SHA:
+                    example_sha.append(n)
+                elif ca_sha and m.group(1) != ca_sha:
+                    bad_sha.append(n)
+        lines_of = lambda xs: ', '.join(map(str, xs))
+        report.test(tag+'.placeholders', not placeholders,
+                    'Example/placeholder values remain on line(s) '+lines_of(placeholders)+'.' if placeholders else 'No example placeholders left.',
+                    'Replace them with your domain, org, bucket, OpenSearch endpoint and admin email, then helm upgrade.')
+        report.test(tag+'.opensearch-scheme', not scheme,
+                    'OpenSearch URL without https:// on line(s) '+lines_of(scheme)+'.' if scheme else 'OpenSearch URLs use https://.',
+                    'Prefix the OpenSearch endpoint with https:// (the search indexer fails without it).')
+        report.test(tag+'.ca-sha256', not (example_sha or bad_sha),
+                    (('Example CA hash on line(s) '+lines_of(example_sha)+'. ' if example_sha else '')
+                    + ('CA hash differs from the local CA file on line(s) '+lines_of(bad_sha)+'.' if bad_sha else '')).strip()
+                    or ('CA hashes match the local CA file.' if ca_sha else 'No example CA hash (no local CA file to compare).'),
+                    'Set every caSha256/sha256 under rds-ca to: shasum -a 256 rds-ca.pem')
+
+
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--context',help='Explicit kube context; required when reading the cluster.')
+    parser = argparse.ArgumentParser(description=__doc__+' With no flags, run it in the folder holding rds-ca.pem, your values file and Secret YAMLs; everything else is detected.')
+    parser.add_argument('--context',help='Kube context (default: the current context).')
     parser.add_argument('--namespace',default='agent-relay')
     parser.add_argument('--release',default='agent-relay')
     parser.add_argument('--scope',choices=('cluster','database','all'),default='all',
@@ -514,13 +647,12 @@ def parse_args(argv=None):
     parser.add_argument('--ca-file',type=Path,help='Local DB CA bundle; replaces in-container CA paths for this process.')
     for group in ('control','cast','hoop'):
         parser.add_argument('--'+group+'-database',help='Expected database name, including custom names.')
+    parser.add_argument('--values',type=Path,nargs='*',help='Filled-in Helm values file(s) to lint (default: values*.yaml here).')
     parser.add_argument('--timeout',type=int,default=20)
-    parser.add_argument('--output',type=Path,help='New JSON report file, created mode 0600; never overwrites.')
+    parser.add_argument('--output',type=Path,help='New JSON report file, mode 0600; never overwrites (default: ./install-diagnostic-<time>.json).')
     options = parser.parse_args(argv)
     if options.secret_dir and options.secret_manifests:
         parser.error('use either --secret-dir or --secret-manifests, not both')
-    if not options.context and (options.scope!='database' or not (options.secret_dir or options.secret_manifests)):
-        parser.error('--context is required for cluster access; database-only offline input requires --secret-dir or --secret-manifests')
     if not 1<=options.timeout<=120:
         parser.error('--timeout must be 1..120 seconds')
     return options
@@ -529,8 +661,18 @@ def parse_args(argv=None):
 def main(argv=None):
     options = parse_args(argv)
     report = Report()
+    notes = []
+    discover(options, notes)
+    print('Detected:')
+    for note in notes:
+        print('  '+note)
+    print()
+    values_checks(options,report)
     if options.scope in ('cluster','all'):
-        cluster_checks(options,report)
+        if getattr(options,'cluster_reachable',True):
+            cluster_checks(options,report)
+        else:
+            report.unknown('cluster','not-reachable')
     credentials = load_credentials(options,report)
     if options.scope in ('database','all'):
         database_checks(options,credentials,report)
@@ -552,7 +694,16 @@ def main(argv=None):
         print(check['status']+' '+check['check']+resource+': '+check['detail'])
         if check['action']:
             print('  Next: '+check['action'])
+    failures = [c for c in result['checks'] if c['status']=='FAIL']
+    if failures:
+        print()
+        print('Likely problems (fix top to bottom):')
+        for c in failures:
+            where = ' ['+c['resource']+']' if 'resource' in c else ''
+            print('  - '+c['check']+where+': '+c['detail']+(' -> '+c['action'] if c['action'] else ''))
+    print()
     print('Summary: '+json.dumps(result['summary'],sort_keys=True))
+    print('Report written to '+str(options.output)+' (share this file, never the Secret YAMLs).')
     return 1 if result['summary']['FAIL'] else 2 if result['summary']['UNKNOWN'] else 0
 
 

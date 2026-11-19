@@ -116,6 +116,55 @@ class CredentialTests(unittest.TestCase):
         o = diag.parse_args(['--scope','database','--secret-manifests','b'])
         self.assertEqual(o.secret_manifests, [Path('b')])
 
+    def test_values_lint_finds_call_mistakes(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ca = root/'rds-ca.pem'
+            ca.write_text('-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n')
+            good = hashlib.sha256(ca.read_bytes()).hexdigest()
+            values = root/'values-poc.yaml'
+            values.write_text('# ar.example.com in a comment is fine\n'
+                              'host: https://ar.example.com\n'
+                              '      url: vpc-x.us-west-2.es.amazonaws.com\n'
+                              '      caSha256: "'+diag.EXAMPLE_CA_SHA+'"\n'
+                              '      sha256: "'+'0'*64+'"\n'
+                              '      caSha256: "'+good+'"\n'
+                              '  digest: sha256:'+'1'*64+'\n')
+            report = diag.Report()
+            diag.values_checks(SimpleNamespace(values=[values], ca_file=ca), report)
+            by = {c['check'].rsplit('.',1)[1]: c for c in report.checks}
+            self.assertEqual(by['placeholders']['status'], 'FAIL')
+            self.assertIn('line(s) 2.', by['placeholders']['detail'])
+            self.assertIn('line(s) 3.', by['opensearch-scheme']['detail'])
+            self.assertIn('Example CA hash on line(s) 4.', by['ca-sha256']['detail'])
+            self.assertIn('local CA file on line(s) 5.', by['ca-sha256']['detail'])
+            values.write_text('url: https://vpc-x.us-west-2.es.amazonaws.com\ncaSha256: "'+good+'"\n')
+            report = diag.Report()
+            diag.values_checks(SimpleNamespace(values=[values], ca_file=ca), report)
+            self.assertTrue(all(c['status']=='PASS' for c in report.checks))
+
+    def test_discover_uses_local_files_without_cluster(self):
+        examples = Path(__file__).resolve().parents[3]/'examples'/'aws'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(examples/'secrets', root/'secrets')
+            shutil.copy(examples/'values.yaml', root/'values.yaml')
+            (root/'rds-ca.pem').write_text('-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n')
+            o = diag.parse_args(['--scope','database'])
+            cwd = os.getcwd()
+            try:
+                os.chdir(root)
+                with mock.patch.object(Path, 'home', return_value=root/'nohome'):
+                    notes = []
+                    diag.discover(o, notes)
+            finally:
+                os.chdir(cwd)
+            self.assertEqual(o.ca_file.name, 'rds-ca.pem')
+            self.assertEqual(len(o.secret_manifests), 5)
+            self.assertEqual([v.name for v in o.values], ['values.yaml'])
+            self.assertTrue(o.output.name.startswith('install-diagnostic-'))
+
     def test_local_files_private_and_wrong_expected_database(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
