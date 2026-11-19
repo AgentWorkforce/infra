@@ -11,10 +11,12 @@ NAMES = ("SELFHOST_DEFAULT_SHARING_MODE", "SELFHOST_SHARING_MODE_OVERRIDE_ROLES"
 
 
 class ControlSharing(unittest.TestCase):
-    def render(self, sharing=None, umbrella=False, fail=None):
+    def render(self, sharing=None, umbrella=False, fail=None, extra_env=None):
         v = yaml.safe_load((ROOT / "charts/relay-control/ci/default-values.yaml").read_text())
         if sharing is not None:
             v["sharing"] = sharing
+        if extra_env is not None:
+            v["extraEnv"] = extra_env
         chart = "relay-control"
         if umbrella:
             chart = "agent-relay"
@@ -61,9 +63,20 @@ class ControlSharing(unittest.TestCase):
             ({"overrideRoles": "owner"}, "sharing.overrideRoles must be a list"),
             ({"overrideRoles": ["member"]}, "is not owner or admin"),
             ({"overrideRoles": ["owner", "owner"]}, "must not contain duplicates"),
+            ({"defaultMode": False}, "sharing.defaultMode must be a string"),
+            ({"defaultMode": 0}, "sharing.defaultMode must be a string"),
+            ({"overrideRoles": False}, "sharing.overrideRoles must be a list"),
+            ({"overrideRoles": {}}, "sharing.overrideRoles must be a list"),
+            ("selected", "sharing must be a map"),
         ]:
             with self.subTest(sharing=sharing):
                 self.render(sharing, fail=msg)
+
+    def test_extra_env_cannot_set_sharing_names(self):
+        for name in NAMES:
+            for sharing in (None, {"defaultMode": "selected", "overrideRoles": ["owner"]}):
+                with self.subTest(name=name, sharing=sharing):
+                    self.render(sharing, extra_env=[{"name": name, "value": "all"}], fail=name)
 
 
 if __name__ == "__main__":
