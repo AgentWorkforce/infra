@@ -189,9 +189,19 @@ A run tag is claimed by the first agent that receives credentials for it
   The risk: a delegate that has been prompt-injected will approve whatever
   it is shown within its capability. That's why the scope is narrow, the
   expiry short, every approval audited, and IAM and deletes never delegable.
-- Approval-tier sessions use the account's `roles.elevated`. None exists yet,
-  so approval-tier requests are refused up front rather than parked, and
-  Khaliq isn't asked about something the broker can't issue.
+- Approval-tier sessions use the account's `roles.elevated`. An account
+  without one refuses approval-tier requests up front rather than parking
+  them, and Khaliq isn't asked about something the broker can't issue.
+- The dev account (`agentrelay-dev`, tier `prod`) has an `elevated` role that
+  is read-only on purpose: `agent-broker-dev-read`, which allows only
+  `eks:DescribeCluster` on one cluster, and is an EKS access entry with
+  `AmazonEKSViewPolicy` at cluster scope (`terraform/dev`, applied by that
+  account's owner). Its `workspaceAuto` capability `dev-cluster-read` uses
+  the `eksClusters` grant kind: read actions (Describe/List/Get) on exactly
+  the named clusters, by literal name, in the capability's regions. This
+  makes `kubectl` read-only access automatic for workspace agents; the cost
+  is that an approved request for anything else in this account is issued
+  and then denied by IAM, since the role has no more than that.
 
 ## Delivery: never in plaintext over Relay
 

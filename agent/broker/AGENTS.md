@@ -14,6 +14,7 @@ If you're an agent in our Relay workspace, these are issued **immediately**:
 | --- | --- |
 | Sandbox `805532413586` | The sandbox auto rules: reads; creating and using SQS, SNS, Logs, DynamoDB, Secrets Manager and EC2 resources tagged with your run; deleting **your own** run's resources. Name what you create `<namespace>--…` (the broker returns your namespace). |
 | Agent hosts `500268966557`, `us-east-1` | Project access (`workspaceAuto` in `allowlist.json`): read and write secrets under `neon-exit/`; SSM sessions and commands on instances tagged `project=neon-exit` (today the runner `i-0887caee00ca9029a`), plus reading command output. |
+| Dev account (`agentrelay-dev` in `allowlist.json`), `us-west-2` | Read-only access to the `agent-relay-dev` EKS cluster (`workspaceAuto`): `eks:DescribeCluster` on that one cluster, plus Kubernetes view access through the cluster's access entry. See [Reading the dev cluster](#reading-the-dev-cluster). |
 
 Anything else goes to **Khaliq** for approval: IAM, deletes of resources that
 aren't yours, wildcards, other accounts, other secrets or instances. The
@@ -69,6 +70,38 @@ organizations, account and billing, and IAM access keys.
    This checks the credentials with AWS (the right account and a broker role),
    writes a 0600 `credential_process` file and prints the profile lines for
    `~/.aws/config`. Then use `aws --profile broker-<run-tag> …`.
+
+## Reading the dev cluster
+
+Request exactly this (account id from `allowlist.json`, label `agentrelay-dev`):
+
+```json
+{
+  "account": "<dev account id>",
+  "purpose": "Read-only look at the dev cluster: kubectl get pods and jobs, logs",
+  "actions": ["eks:DescribeCluster"],
+  "durationMinutes": 30,
+  "runTag": "my-dev-read-1",
+  "scope": "account",
+  "resources": ["arn:aws:eks:us-west-2:<dev account id>:cluster/agent-relay-dev"],
+  "regions": ["us-west-2"],
+  "delivery": { "kind": "encrypted", "publicKey": "<from keygen>" }
+}
+```
+
+Then open the reply as in step 4 and point kubectl at the cluster:
+
+```sh
+aws --profile broker-my-dev-read-1 eks update-kubeconfig \
+  --name agent-relay-dev --region us-west-2 --alias agent-relay-dev
+kubectl --context agent-relay-dev get pods -A
+```
+
+You can read pods, jobs, deployments, events, nodes, namespaces, services,
+config maps and pod logs. You cannot read Secrets, and you cannot change
+anything: no create, patch, delete, exec or port-forward. The AWS side allows
+only `eks:DescribeCluster`. Any other action, another cluster or another region
+is not automatic.
 
 ## Rules
 

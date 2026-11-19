@@ -114,6 +114,8 @@ export interface DelegatedGrant {
   instanceTag?: { key: string; value: string };
   /** SSM documents the session may use (AWS-owned or the account's own). */
   ssmDocuments?: string[];
+  /** EKS: read-only actions (Describe/List/Get verbs) on exactly these clusters, by name (the ARN is built from the request's account and region). */
+  eksClusters?: string[];
 }
 
 /** Who asked, from the Relay envelope the message arrived in: never from the request body. */
@@ -588,6 +590,7 @@ const READ_VERB_RE = /^(Describe|List|Get)[A-Z]/;
 const SECRET_SUFFIX_RE = /^-[A-Za-z0-9]{6}$/;
 const INSTANCE_ID_RE = /^i-[0-9a-f]{8,17}$/;
 const NAME_RE = /^[A-Za-z0-9/_+=.@-]+$/;
+const EKS_CLUSTER_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
 
 /** Problems with the delegation config itself. Any problem refuses every delegated approval (Khaliq's are unaffected). */
 export function delegationConfigProblems(list: Allowlist): string[] {
@@ -624,7 +627,7 @@ export function capabilityProblems(capabilities: DelegatedCapability[], list: Al
     }
     if ([c.accounts, c.regions, c.readOnlyRules].some((x) => x !== undefined && !Array.isArray(x))) { problems.push(`${where}: accounts, regions and readOnlyRules must be lists`); continue; }
     const listy = (x: unknown) => x === undefined || (Array.isArray(x) && x.every((v) => typeof v === "string"));
-    if (c.grants.some((g) => ![g.secretPrefixes, g.secretNames, g.ssmDocuments, g.instanceIds].every(listy))) { problems.push(`${where}: grant fields must be lists of names`); continue; }
+    if (c.grants.some((g) => ![g.secretPrefixes, g.secretNames, g.ssmDocuments, g.instanceIds, g.eksClusters].every(listy))) { problems.push(`${where}: grant fields must be lists of names`); continue; }
     for (const a of c.accounts ?? []) {
       const acct = list.accounts[a];
       if (!acct) problems.push(`${where}: account ${a} is not on the allowlist`);
@@ -642,8 +645,13 @@ export function capabilityProblems(capabilities: DelegatedCapability[], list: Al
         if (why) problems.push(`${where} grant ${g.id}: ${why}, never delegable`);
       }
       const svc = new Set(g.actions.map((a) => a.split(":")[0]));
-      const kinds = [g.secretPrefixes || g.secretNames ? "secretsmanager" : undefined, g.instanceTag || g.ssmDocuments || g.instanceIds ? "ssm" : undefined].filter(Boolean);
-      if (kinds.length !== 1 || svc.size !== 1 || !svc.has(kinds[0]!)) problems.push(`${where} grant ${g.id}: a grant is secretsmanager actions on secrets, or ssm actions on tagged instances`);
+      const kinds = [g.secretPrefixes || g.secretNames ? "secretsmanager" : undefined, g.instanceTag || g.ssmDocuments || g.instanceIds ? "ssm" : undefined, g.eksClusters ? "eks" : undefined].filter(Boolean);
+      if (kinds.length !== 1 || svc.size !== 1 || !svc.has(kinds[0]!)) problems.push(`${where} grant ${g.id}: a grant is secretsmanager actions on secrets, ssm actions on tagged instances, or eks read actions on named clusters`);
+      if (kinds[0] === "eks") {
+        if (!g.eksClusters?.length) problems.push(`${where} grant ${g.id}: eks needs literal eksClusters`);
+        for (const a of g.actions) if (!READ_VERB_RE.test(a.split(":")[1] ?? "")) problems.push(`${where} grant ${g.id}: ${a} is not a read action, and an eks grant is read-only`);
+        for (const n of g.eksClusters ?? []) if (typeof n !== "string" || !EKS_CLUSTER_RE.test(n)) problems.push(`${where} grant ${g.id}: ${JSON.stringify(n)} must be a literal cluster name (no wildcards)`);
+      }
       if (kinds[0] === "ssm" && !g.instanceTag) problems.push(`${where} grant ${g.id}: ssm needs instanceTag`);
       if (kinds[0] === "ssm" && !g.instanceIds?.length) problems.push(`${where} grant ${g.id}: ssm needs literal instanceIds`);
       for (const i of g.instanceIds ?? []) if (typeof i !== "string" || !INSTANCE_ID_RE.test(i)) problems.push(`${where} grant ${g.id}: ${JSON.stringify(i)} is not an instance id`);
@@ -691,6 +699,10 @@ export function grantCovers(g: DelegatedGrant, resource: string, account: string
     const name = resource.slice(head.length);
     if ((g.secretPrefixes ?? []).some((p) => name.startsWith(p) && name.length > p.length && NAME_RE.test(name))) return true;
     return (g.secretNames ?? []).some((n) => name.startsWith(n) && SECRET_SUFFIX_RE.test(name.slice(n.length)));
+  }
+  if (g.eksClusters) {
+    const head = `arn:aws:eks:${region}:${account}:cluster/`;
+    return resource.startsWith(head) && g.eksClusters.includes(resource.slice(head.length));
   }
   if (g.instanceTag) {
     const inst = `arn:aws:ec2:${region}:${account}:instance/`;
