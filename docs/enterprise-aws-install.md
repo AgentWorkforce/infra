@@ -192,7 +192,7 @@ The AWS target is **one RDS instance with separate logical databases**:
 | Service | Database | Schema | Migration owner | Runtime role |
 | --- | --- | --- | --- | --- |
 | Control | `relaycontrol` | `public` | `control_owner` | `control_api_runtime` |
-| Pipeline / HoopDb | `hoopdb` | `sessions` | `hoop` | `sessions_pipeline_runtime` |
+| Pipeline / HoopDb | `hoopdb` | `sessions` | `hoopdb_owner` (fresh installs) | `sessions_pipeline_runtime` |
 | Relaycast | `relaycast` | `public` | `relaycast_owner` | `relaycast_runtime` |
 | Relayfile, if selected | `relayfile` | `public` | `relayfile_owner` | `relayfile_runtime` |
 
@@ -325,6 +325,13 @@ verified pack copy by replacing only its documented mirror-root placeholder.
 `NAMESPACE`
 must be the Terraform environment's `namespace` recorded in step 2; a different
 namespace leaves every workload without its Pod Identity role.
+`rds-setup.sh pre` writes the database's authoritative, non-secret layout to
+`$STATE_DIR/hoopdb-layout-values.yaml`: `separate-database` for a fresh
+dedicated owner and `master-owner` for an existing administrator-owned
+database. The chart's `values-eks-rds-native.yaml` carries the fresh layout,
+while the `eks` and compatibility `eks-native` profile files do not. Always
+pass the generated overlay after the pack/site values as shown below so an
+older pack or site-values copy cannot omit or reverse the database's layout.
 Run `helm list --all` in that exact context/namespace. Only confirmed absence
 permits this **first-install** command:
 
@@ -335,6 +342,7 @@ helm install "$RELEASE" "$CHART_PACKAGE" \
   --values "$INSTALL_PACK_DIR/values.yaml" \
   --values "$INSTALL_PACK_DIR/overlay.yaml" \
   --values /approved/private/customer.values.yaml \
+  --values "$STATE_DIR/hoopdb-layout-values.yaml" \
   --values /approved/private/release-images.values.yaml \
   --no-hooks --timeout 20m
 ```
@@ -377,6 +385,12 @@ services and PostgreSQL client images, so export `AWS_REGION`, `RDS_HOST`,
 Inspect every Job before running `post`; a failed or missing current migration
 blocks activation. Run the packet's ordered pre-install SQL/Jobs before the
 Helm command where required.
+If the migrate Job reports `"error_code":"rds_profile_unproven"`, inspect the
+rendered `HOOPDB_RDS_LAYOUT`: a fresh `hoopdb_owner` database needs
+`separate-database`, while an administrator-owned database needs the
+`master-owner` overlay produced by `rds-setup.sh pre`. The refusal is
+pre-migration; fix the values/profile pairing rather than changing role
+attributes.
 For an existing release, follow the [pre-upgrade gate](../scripts/selfhost/README.md#pre-upgrade-gate)
 and use `helm upgrade` with its reviewed package and values. Do not add `--install`
 to an upgrade, or `--atomic` to a database-changing installation. If the

@@ -263,7 +263,45 @@ install guide's Secrets step. To load all of them from AWS SSM instead of
 creating Secrets by hand, see "Secrets from AWS SSM Parameter Store" in
 [the agent-relay chart README](https://github.com/AgentWorkforce/infra/blob/main/charts/agent-relay/README.md).
 
-Then install with Helm as the install guide says.
+### 1.11 Select the fresh dedicated-owner migration layout
+
+Save this non-secret values overlay and pass it after the site values, before
+the release image overlay. It is the by-hand equivalent of the
+`hoopdb-layout-values.yaml` that `rds-setup.sh pre` writes for a fresh install:
+
+```yaml
+sessions-pipeline:
+  worker:
+    migrations:
+      hoopdb:
+        existingSecret: agent-relay-secrets
+        key: HOOPDB_MIGRATION_URL
+      rdsLayout: separate-database
+  searchIndexer:
+    bootstrap:
+      existingSecret: search-indexer-owner
+      key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+```
+
+Then install with Helm as the install guide says. Do not rely on a chart default
+or an older site-values copy to select the layout: the migration Job must render
+exactly one `HOOPDB_RDS_LAYOUT=separate-database` entry for this fresh
+`hoopdb_owner` database.
+
+### 1.12 Troubleshoot a refused migration profile
+
+If the migrate Job logs `"error_code":"rds_profile_unproven"`, compare the
+database owner with the rendered `HOOPDB_RDS_LAYOUT` before retrying:
+
+- A database owned by `hoopdb_owner` needs `separate-database`; apply the fresh
+  overlay above. Omitting the value selects the legacy preflight and refuses the
+  plain owner.
+- An administrator-owned database must not use `separate-database`; classify it
+  with `rds-setup.sh pre` and apply the `master-owner` overlay in Phase 3.
+
+The refusal occurs before migrations change the database. Do not grant
+`CREATEROLE` or a provider-admin membership to make either mismatched render
+pass.
 
 ## Phase 2: after the HoopDb migration Job succeeds
 
