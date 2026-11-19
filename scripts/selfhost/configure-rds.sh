@@ -271,6 +271,15 @@ if [[ -n "${HELM_CHART:-}" ]]; then
   command -v helm >/dev/null || die "helm is not installed"
   if [[ -d "$HELM_CHART" ]]; then
     info "refreshing chart dependencies, nested charts first (stale or missing subcharts drop workloads)"
+    # Public chart repositories the nested charts depend on; added only if missing.
+    known="$(helm repo list -o json 2>/dev/null | jq -r '.[].url' 2>/dev/null || true)"
+    while read -r url; do
+      [[ -z "$url" ]] && continue
+      grep -qxF "${url%/}" <<<"$(sed 's#/$##' <<<"$known")" && continue
+      name="$(sed -E 's#https?://##; s#[^A-Za-z0-9]+#-#g; s#-+$##' <<<"$url")"
+      helm repo add "$name" "$url" >/dev/null && info "added chart repository $url"
+    done < <(cat "$HELM_CHART"/Chart.yaml "$HELM_CHART"/../*/Chart.yaml 2>/dev/null \
+             | sed -nE 's/^[[:space:]]*repository:[[:space:]]*"?(https:\/\/[^"[:space:]]+)"?.*/\1/p' | sort -u)
     while read -r dep; do
       d="$HELM_CHART/${dep#file://}"
       if [[ -f "$d/Chart.yaml" ]] && grep -q 'repository: file://' "$d/Chart.yaml"; then
@@ -288,6 +297,8 @@ if [[ -n "${HELM_CHART:-}" ]]; then
 else
   info "HELM_CHART is not set. In another terminal, from your infra clone, refresh the chart dependencies"
   info "and run the same helm upgrade you used for the install with the overlay added at the end, e.g.:"
+  info "  helm repo add cnpg https://cloudnative-pg.github.io/charts; helm repo add minio https://charts.min.io/"
+  info "  helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts"
   info "  helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay"
   info "  helm upgrade $RELEASE <chart> -n $NAMESPACE <your -f files> -f $VALUES -f $LAYOUT_VALUES \\"
   info "    --set-string relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"

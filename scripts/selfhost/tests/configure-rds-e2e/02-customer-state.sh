@@ -36,6 +36,9 @@ CA_SHA="$(shasum -a 256 "$TEST_CA" | cut -d' ' -f1)"
 sed "s/9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a/$CA_SHA/g" "$INFRA/examples/aws/values.yaml" > values-poc.yaml
 
 cd "$INFRA"
+helm repo add cnpg https://cloudnative-pg.github.io/charts >/dev/null 2>&1 || true
+helm repo add minio https://charts.min.io/ >/dev/null 2>&1 || true
+helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts >/dev/null 2>&1 || true
 rm -rf charts/agent-relay/charts charts/sessions-pipeline/charts   # as a fresh clone, then examples/aws/README.md
 helm dependency build charts/sessions-pipeline >/dev/null && helm dependency build charts/agent-relay >/dev/null
 helm --kube-context "$KCTX" upgrade --install agent-relay charts/agent-relay -n agent-relay \
