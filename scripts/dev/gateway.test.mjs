@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import net from 'node:net';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import { createGateway, route } from './gateway.mjs';
@@ -89,4 +90,72 @@ test('websocket upgrade and buffered bytes reach the HMR backend', async t => {
   socket.write('hmr-payload');
   const [data] = await once(socket, 'data');
   assert.equal(data.toString(), 'hmr-payload');
+});
+
+async function startGateway(t, p) {
+  const gateway = createGateway({ port: 3100, nextPort: p, dashboardPort: p, controlPort: p });
+  gateway.listen(0, '127.0.0.1'); await once(gateway, 'listening');
+  t.after(() => { gateway.closeDevConnections(); gateway.close(); });
+  return gateway;
+}
+
+function rawRequest(port, text) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, '127.0.0.1', () => socket.write(text));
+    let data = '';
+    socket.on('data', chunk => { data += chunk; });
+    socket.on('close', () => resolve(data));
+    socket.on('error', reject);
+  });
+}
+
+test('a target WHATWG URL cannot parse gets 400 and the gateway keeps serving', async t => {
+  const upstream = http.createServer((req, res) => res.end('ok'));
+  upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
+  t.after(() => { upstream.closeAllConnections(); upstream.close(); });
+  const gateway = await startGateway(t, upstream.address().port);
+  const port = gateway.address().port;
+  const bad = await rawRequest(port, 'GET /\\ HTTP/1.1\r\nHost: localhost:3100\r\nConnection: close\r\n\r\n');
+  assert.match(bad, /^HTTP\/1\.1 400/);
+  const upgrade = await rawRequest(port, 'GET /\\ HTTP/1.1\r\nHost: localhost:3100\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');
+  assert.equal(upgrade, '');
+  const good = await rawRequest(port, 'GET /x HTTP/1.1\r\nHost: localhost:3100\r\nConnection: close\r\n\r\n');
+  assert.match(good, /^HTTP\/1\.1 200/);
+});
+
+test('an upstream body cut short ends the browser response instead of leaving it loading', async t => {
+  const upstream = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-length': '100' });
+    res.write('partial');
+    setTimeout(() => res.socket.destroy(), 20);
+  });
+  upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
+  t.after(() => { upstream.closeAllConnections(); upstream.close(); });
+  const gateway = await startGateway(t, upstream.address().port);
+  const outcome = await new Promise(resolve => {
+    const req = http.get({ host: '127.0.0.1', port: gateway.address().port, path: '/x', headers: { host: 'localhost:3100' } }, res => {
+      res.on('data', () => {});
+      res.on('end', () => resolve('end'));
+      res.on('error', () => resolve('error'));
+      res.on('aborted', () => resolve('aborted'));
+    });
+    req.on('error', () => resolve('error'));
+  });
+  assert.notEqual(outcome, 'end');
+});
+
+test('a client leaving during the HMR handshake releases the pending upstream request', async t => {
+  let upstreamClosed;
+  const closed = new Promise(resolve => { upstreamClosed = resolve; });
+  const upstream = http.createServer();
+  // Never answers the handshake; the gateway's request arrives as FIN (half-open) or close.
+  upstream.on('upgrade', (req, peer) => { peer.on('end', upstreamClosed); peer.on('close', upstreamClosed); });
+  upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
+  t.after(() => { upstream.closeAllConnections(); upstream.close(); });
+  const gateway = await startGateway(t, upstream.address().port);
+  const socket = net.connect(gateway.address().port, '127.0.0.1', () =>
+    socket.write('GET /_next/webpack-hmr HTTP/1.1\r\nHost: localhost:3100\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'));
+  await once(upstream, 'upgrade');
+  socket.destroy();
+  await closed;
 });

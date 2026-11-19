@@ -1,5 +1,6 @@
 // Local-only front door. No auth implementation, token rewriting or cloud fallback.
 import http from 'node:http';
+import { pipeline } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 
 export function route(raw) {
@@ -36,6 +37,16 @@ export function route(raw) {
   return { target: 'next' };
 }
 
+// Malformed targets (for example a backslash right after the leading slash) make
+// WHATWG URL parsing throw; refuse them per request instead of stopping the gateway.
+function safeRoute(raw) {
+  try {
+    return route(raw);
+  } catch {
+    return null;
+  }
+}
+
 export function createGateway({ port, nextPort, dashboardPort, controlPort }) {
   const targets = { next: nextPort, dashboard: dashboardPort, control: controlPort };
   const authority = `localhost:${port}`;
@@ -48,8 +59,8 @@ export function createGateway({ port, nextPort, dashboardPort, controlPort }) {
       'x-forwarded-proto': 'http', 'x-forwarded-for': '127.0.0.1' };
   }
   const server = http.createServer((req, res) => {
-    if (!permitted(req)) { res.writeHead(400).end('Use the printed localhost URL.'); return; }
-    const selected = route(req.url);
+    const selected = permitted(req) && safeRoute(req.url);
+    if (!selected) { res.writeHead(400).end('Use the printed localhost URL.'); return; }
     if (selected.redirect) { res.writeHead(302, { location: selected.redirect, 'cache-control': 'no-store' }).end(); return; }
     if (selected.unsupported) { res.writeHead(501).end('This local environment configures Google OIDC only.'); return; }
     if (selected.runtime) {
@@ -64,7 +75,9 @@ export function createGateway({ port, nextPort, dashboardPort, controlPort }) {
       path: selected.path || req.url, method: req.method, headers: headers(req) }, incoming => {
       // Keep Set-Cookie separate and retain HttpOnly/Secure/SameSite/Path exactly.
       res.writeHead(incoming.statusCode, incoming.headers);
-      incoming.pipe(res);
+      // pipeline, unlike pipe, destroys the browser response when the upstream
+      // body is cut short (a backend restart), so the page does not hang.
+      pipeline(incoming, res, () => {});
     });
     upstream.on('error', () => {
       if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
@@ -74,12 +87,18 @@ export function createGateway({ port, nextPort, dashboardPort, controlPort }) {
     req.pipe(upstream);
   });
   server.on('upgrade', (req, socket, head) => {
-    if (!permitted(req)) { socket.destroy(); return; }
-    const selected = route(req.url);
-    if (!selected.target) { socket.destroy(); return; }
+    const selected = permitted(req) && safeRoute(req.url);
+    if (!selected || !selected.target) { socket.destroy(); return; }
     const upstream = http.request({ hostname: '127.0.0.1', port: targets[selected.target],
       path: req.url, headers: headers(req) });
+    // A client that leaves during the handshake must release the pending upstream.
+    const abandon = () => upstream.destroy();
+    // The server allows half-open sockets, so a client FIN arrives as 'end'.
+    socket.on('end', abandon);
+    socket.on('close', abandon);
+    socket.on('error', abandon);
     upstream.on('upgrade', (response, peer, peerHead) => {
+      if (socket.destroyed) { peer.destroy(); return; }
       socket.write(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n`);
       for (let i = 0; i < response.rawHeaders.length; i += 2) socket.write(`${response.rawHeaders[i]}: ${response.rawHeaders[i + 1]}\r\n`);
       socket.write('\r\n');
