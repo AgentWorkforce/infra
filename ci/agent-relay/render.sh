@@ -971,6 +971,69 @@ if edge_err=$(helm template agent-relay charts/agent-relay -n agent-relay --no-h
   --set gkeIngress.securityPolicy=relay-edge --set-json "$edge_dashboard" 2>&1); then edge_fail "securityPolicy rendered without the relayfile backend-config annotation"; fi
 grep -Fq "gkeIngress.securityPolicy requires relayfile.service.annotations[cloud.google.com/backend-config]" <<<"$edge_err" || edge_fail "unexpected error without the relayfile annotation: $edge_err"
 
+# Internal-only GKE edge (gkeIngress.mode=internal, values-gcp-internal.yaml):
+# a regional internal load balancer, HTTPS only, no ManagedCertificate or
+# FrontendConfig, and every backend policy admits the proxy-only subnet.
+int_fail() { echo "gke internal edge: $*" >&2; exit 1; }
+int_args=(-n agent-relay --no-hooks -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml -f charts/agent-relay/values-gcp-internal.yaml)
+int_out=$(helm template proof charts/agent-relay "${int_args[@]}")
+test "$(yq 'select(.kind == "Ingress") | .metadata.annotations | [.["kubernetes.io/ingress.class"], .["kubernetes.io/ingress.regional-static-ip-name"], .["kubernetes.io/ingress.allow-http"]] | join(" ")' <<<"$int_out" | sed '/^---$/d;/^$/d')" = "gce-internal example-agent-relay-internal false" \
+  || int_fail "Ingress must be class gce-internal with the regional address and HTTP closed"
+test "$(yq 'select(.kind == "Ingress") | .metadata.annotations | [has("kubernetes.io/ingress.global-static-ip-name"), has("networking.gke.io/managed-certificates"), has("networking.gke.io/v1beta1.FrontendConfig"), has("ingress.gcp.kubernetes.io/pre-shared-cert")] | join(" ")' <<<"$int_out" | sed '/^---$/d;/^$/d')" = "false false false false" \
+  || int_fail "Ingress must carry no external-only annotation"
+test "$(yq 'select(.kind == "Ingress") | .spec.tls[0].secretName' <<<"$int_out")" = example-agent-relay-tls || int_fail "Ingress must serve the TLS Secret"
+test -z "$(yq 'select(.kind == "ManagedCertificate" or .kind == "FrontendConfig") | .kind' <<<"$int_out")" || int_fail "ManagedCertificate and FrontendConfig must not render"
+# The routes are the same as on the external edge.
+int_rules=$(yq -o=json -I=0 'select(.kind == "Ingress") | .spec.rules' <<<"$int_out" | sed '/^---$/d;/^$/d;/^null$/d')
+test "$(grep -c '"host"' <<<"$int_rules")" = 1 || int_fail "expected one Ingress with rules"
+# Every host, path, pathType, backend Service and port is identical to the external edge.
+test "$int_rules" = "$(yq -o=json -I=0 'select(.kind == "Ingress") | .spec.rules' <<<"$edge_default" | sed '/^---$/d;/^$/d;/^null$/d')" \
+  || int_fail "internal mode changed the Ingress rules"
+# Every NetworkPolicy that admits the Google health-check range also admits the proxy-only subnet.
+int_gaps=$(yq 'select(.kind == "NetworkPolicy") | select([.spec.ingress[]?.from[]?.ipBlock.cidr] | contains(["35.191.0.0/16"])) | select([.spec.ingress[]?.from[]?.ipBlock.cidr] | contains(["10.129.0.0/23"]) | not) | .metadata.name' <<<"$int_out" | sed '/^---$/d;/^$/d')
+test -z "$int_gaps" || int_fail "NetworkPolicy without the proxy-only subnet: $int_gaps"
+test "$(yq 'select(.kind == "NetworkPolicy") | select([.spec.ingress[]?.from[]?.ipBlock.cidr] | contains(["10.129.0.0/23"])) | .metadata.name' <<<"$int_out" | grep -c '[a-z]')" -ge 5 || int_fail "expected at least five backend policies to admit the proxy-only subnet"
+# Pre-shared regional certificates instead of a Secret.
+int_psc=$(helm template proof charts/agent-relay "${int_args[@]}" --set gkeIngress.tlsSecretName= --set 'gkeIngress.internal.preSharedCerts={relay-cert-a,relay-cert-b}')
+test "$(yq 'select(.kind == "Ingress") | .metadata.annotations["ingress.gcp.kubernetes.io/pre-shared-cert"] + " " + ((.spec | has("tls")) | tostring)' <<<"$int_psc")" = "relay-cert-a,relay-cert-b false" \
+  || int_fail "preSharedCerts must render the pre-shared-cert annotation and no spec.tls"
+expect_internal_failure() { # expected-error helm-args...
+  local expected=$1 output; shift
+  if output=$(helm template proof charts/agent-relay "${int_args[@]}" "$@" 2>&1); then int_fail "rendered despite expected failure: $expected"; fi
+  grep -Fq "$expected" <<<"$output" || { echo "$output" >&2; int_fail "failed without expected error: $expected"; }
+}
+expect_internal_failure "gkeIngress.mode must be external or internal" --set gkeIngress.mode=private
+expect_internal_failure "requires gkeIngress.internal.proxyOnlySubnetCidr" --set gkeIngress.internal.proxyOnlySubnetCidr=
+expect_internal_failure "requires gkeIngress.internal.proxyOnlySubnetCidr" --set gkeIngress.internal.proxyOnlySubnetCidr=203.0.113.0/24
+for bad in 10.129.999.0/23 172.16.0.0.1/24 10.129.0/23 10.129.0.0/27 10.129.0.0 172.32.0.0/16; do
+  expect_internal_failure "requires gkeIngress.internal.proxyOnlySubnetCidr" --set "gkeIngress.internal.proxyOnlySubnetCidr=$bad"
+done
+expect_internal_failure "gkeIngress.mode=internal requires a certificate" --set gkeIngress.tlsSecretName=
+expect_internal_failure "set only one of gkeIngress.tlsSecretName and gkeIngress.internal.preSharedCerts" --set 'gkeIngress.internal.preSharedCerts={relay-cert}'
+expect_internal_failure "is not a Compute Engine SSL certificate name" --set gkeIngress.tlsSecretName= --set 'gkeIngress.internal.preSharedCerts={Bad_Cert}'
+expect_internal_failure "gkeIngress.securityPolicy cannot be used with gkeIngress.mode=internal" --set gkeIngress.securityPolicy=relay-edge --set-json "$edge_dashboard"
+expect_internal_failure "gkeIngress.sslPolicy cannot be used with gkeIngress.mode=internal" --set gkeIngress.sslPolicy=relay-tls
+# The overlay is applied last and clears an sslPolicy that an earlier file set
+# (the GKE guide's managed-values.json names one).
+int_managed=$(mktemp)
+printf 'gkeIngress:\n  sslPolicy: relay-tls\n' >"$int_managed"
+helm template proof charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml \
+  -f "$int_managed" -f charts/agent-relay/values-gcp-internal.yaml >/dev/null || int_fail "the overlay must clear an sslPolicy set by an earlier values file"
+rm -f "$int_managed"
+# A backend whose policy does not admit the proxy-only subnet is refused, by name.
+expect_internal_failure "gkeIngress.mode=internal requires relay-webapp.networkPolicy.ingressFrom to allow the proxy-only subnet 10.129.0.0/23" \
+  --set-json 'relay-webapp.networkPolicy.ingressFrom=[{"podSelector":{}},{"ipBlock":{"cidr":"35.191.0.0/16"}},{"ipBlock":{"cidr":"130.211.0.0/22"}}]'
+expect_internal_failure "gkeIngress.mode=internal requires sessions-pipeline.ingestEdge.networkPolicy.ingressFrom to allow the proxy-only subnet 10.129.0.0/23" \
+  --set-json 'sessions-pipeline.ingestEdge.networkPolicy.ingressFrom=[{"ipBlock":{"cidr":"35.191.0.0/16"}},{"ipBlock":{"cidr":"130.211.0.0/22"}}]'
+expect_internal_failure "to allow the proxy-only subnet 10.129.0.0/23 (gkeIngress.internal.proxyOnlySubnetCidr) without exclusions" \
+  --set-json 'relaycast.networkPolicy.ingressFrom=[{"podSelector":{}},{"ipBlock":{"cidr":"35.191.0.0/16"}},{"ipBlock":{"cidr":"130.211.0.0/22"}},{"ipBlock":{"cidr":"10.129.0.0/23","except":["10.129.0.0/24"]}}]'
+# internal.* without the mode is refused, so a half-applied overlay cannot pass silently.
+expect_umbrella_failure "gkeIngress.internal.* is set but gkeIngress.mode is external" --set gkeIngress.internal.proxyOnlySubnetCidr=10.129.0.0/23
+# The values-gcp.yaml profile renders with the overlay too.
+helm template proof charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-gcp.yaml -f charts/agent-relay/values-gcp-native.yaml \
+  -f charts/agent-relay/ci/gcp-native-values.yaml -f charts/agent-relay/values-gcp-internal.yaml >/dev/null 2>/tmp/int-gcp.err \
+  || { cat /tmp/int-gcp.err >&2; int_fail "values-gcp.yaml with values-gcp-internal.yaml did not render"; }
+
 # With single-host mode off, every default (subdomain) render is unchanged.
 ci/agent-relay/subdomain-golden.sh check
 

@@ -319,7 +319,7 @@ EOS
   run_job agent-relay-cloud-sql-probe "$WORK/probe.sh" ""
   local probed_layout
   probed_layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-cloud-sql-probe.log" | tail -n 1)"
-  if [[ "$probed_layout" == legacy-admin && -s "$PENDING_ACTIVATION_FILE" ]]; then
+  if [[ ( "$probed_layout" == legacy-admin || "$probed_layout" == pristine-admin ) && -s "$PENDING_ACTIVATION_FILE" ]]; then
     probed_layout=fresh-dedicated
     log "resuming an interrupted fresh activation"
   fi

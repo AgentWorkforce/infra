@@ -241,6 +241,15 @@ grep -F 'not exists (select 1 from pg_default_acl)' "$SCRIPT" >/dev/null \
   || fail "Cloud SQL pristine probe does not reject existing default privileges"
 pass "Cloud SQL activates a provider-created pristine HoopDb only with explicit first-install approval"
 
+printf 'fresh activation in progress\n' >"$STATE/.pending-hoopdb-activation"
+: >"$LOG"
+MOCK_LAYOUT=pristine-admin MOCK_PRE_LAYOUT=fresh-dedicated "$TEST_BASH" "$SCRIPT" pre >/dev/null \
+  || fail "a marked pristine Cloud SQL activation could not resume"
+grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/null \
+  || fail "marked pristine Cloud SQL activation did not resume the setup Job"
+[[ ! -e "$STATE/.pending-hoopdb-activation" ]] || fail "marked pristine Cloud SQL retry retained its pending marker"
+pass "Cloud SQL resumes a marked pristine activation without a second approval flag"
+
 : >"$LOG"
 MOCK_LAYOUT=legacy-admin "$TEST_BASH" "$SCRIPT" pre >/dev/null
 "$TEST_BASH" "$SCRIPT" prepare-admin-jobs >/dev/null

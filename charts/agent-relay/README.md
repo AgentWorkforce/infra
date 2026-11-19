@@ -308,6 +308,49 @@ Behind a proxy that fronts the load balancer (Cloudflare), also raise
 `relay-control.auth.trustedProxies` by one (the Google load balancer alone
 needs 2; the guide shows how to check).
 
+## Internal-only GKE edge
+
+For an install that must not be reachable from the internet, set
+`gkeIngress.mode: internal` (start from `values-gcp-internal.yaml`). GKE then
+creates a regional **internal** Application Load Balancer: a private address,
+HTTPS only, reachable from the VPC and from the networks routed to it (VPN,
+Interconnect). It is the GKE counterpart of an internal-scheme ALB on EKS.
+Hosts, routes, backends and timeouts are the same as on the external edge.
+
+| | External (default) | Internal |
+| --- | --- | --- |
+| Ingress class | `gce` | `gce-internal` |
+| `gkeIngress.staticIpName` | a global external address | a **regional internal** address |
+| Certificate | ManagedCertificate, or `tlsSecretName` | `tlsSecretName`, or `internal.preSharedCerts` (regional self-managed certificates). A Google-managed certificate is not possible |
+| HTTP | redirected to HTTPS | closed (`allow-http: "false"`) |
+| `sslPolicy`, `securityPolicy` | optional | refused: GKE Ingress supports neither FrontendConfig nor Cloud Armor on an internal load balancer |
+| Sources the pods see | Google front ends | the VPC's **proxy-only subnet** |
+
+Before the install, the VPC needs a proxy-only subnet in the cluster's region,
+a reserved regional internal address, and a firewall rule from that subnet to
+the nodes;
+[`terraform/modules/gcp/internal-edge`](https://github.com/AgentWorkforce/infra/blob/main/terraform/modules/gcp/internal-edge)
+creates the three. Then:
+
+- `gkeIngress.internal.proxyOnlySubnetCidr` is the subnet's range, and every
+  backend's `networkPolicy` must allow it next to the two health-check ranges.
+  The render fails, naming the backend, when one does not.
+  `values-gcp-internal.yaml` restates all five lists.
+- DNS: A records for every host, pointing at the private address, in a zone
+  your VPN clients resolve (a private zone, or your corporate DNS). The public
+  URLs in the values stay `https://<host>`.
+- Certificate: with `tlsSecretName`, cert-manager with a DNS-01 challenge
+  issues and renews a publicly trusted certificate without the hosts being
+  reachable from the internet. If the DNS zone is in another Google Cloud
+  project, grant cert-manager's Workload Identity `roles/dns.admin` on that
+  zone's project. A private CA works if every desktop, CLI and agent trusts it.
+- Agents and desktops outside the VPN cannot upload sessions or connect. Plan
+  for that before choosing this mode.
+- Pass the overlay on every `helm upgrade`, or merge it into your site values.
+  An upgrade without it renders the external edge again.
+
+Rendered and tested in CI; not yet proven on a live cluster.
+
 ## Customer-neutral EKS with RDS native History
 
 `values-eks-rds-native.yaml` is the reusable EKS overlay for the supported

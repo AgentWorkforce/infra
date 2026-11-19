@@ -16,6 +16,7 @@ terraform/
   modules/aws/relay-chief-slots       # EC2 hosts for Relay Chief
   modules/gcp/{foundation,postgres,object-storage,search,functions}
   modules/gcp/edge-security           # GKE Ingress TLS policy and Cloud Armor
+  modules/gcp/internal-edge           # prerequisites for the internal-only GKE Ingress
   examples/{aws,gcp}                 # thin roots: four capabilities together
   examples/{aws,gcp}-foundation      # network and Kubernetes foundation roots
   examples/aws-environments          # environment-scoped AWS data composition

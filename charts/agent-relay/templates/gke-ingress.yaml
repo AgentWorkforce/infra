@@ -20,6 +20,9 @@ creates them):
 {{- if and $securityPolicy (not (regexMatch $computeName $securityPolicy)) }}{{ fail "gkeIngress.securityPolicy must be the name of a Cloud Armor security policy in the cluster's project (lowercase letters, digits and hyphens, at most 63 characters), not a URL" }}{{ end -}}
 {{- $tlsSecretName := dig "tlsSecretName" "" $gke | toString -}}
 {{- if and $tlsSecretName (not (regexMatch "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" $tlsSecretName)) }}{{ fail "gkeIngress.tlsSecretName must be the name of a kubernetes.io/tls Secret in the release namespace" }}{{ end -}}
+{{- $gkeInternal := eq (dig "mode" "external" $gke | toString) "internal" -}}
+{{- $gkeProxyCidr := dig "internal" "proxyOnlySubnetCidr" "" $gke | toString -}}
+{{- if $gkeInternal }}{{- if not (regexMatch "^(10(\\.(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){3}|172\\.(1[6-9]|2[0-9]|3[01])(\\.(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){2}|192\\.168(\\.(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){2})/(8|9|1[0-9]|2[0-6])$" $gkeProxyCidr) }}{{ fail "gkeIngress.mode=internal requires gkeIngress.internal.proxyOnlySubnetCidr: the RFC 1918 range (/26 or larger) of the VPC's proxy-only subnet (purpose REGIONAL_MANAGED_PROXY) in the cluster's region; the load balancer's proxies connect to the pods from it" }}{{ end -}}{{ end -}}
 {{- $components := .Values.components | default dict -}}
 {{- $relaycast := .Values.relaycast | default dict -}}
 {{- $cloudApi := index .Values "relay-control" | default dict -}}
@@ -53,10 +56,13 @@ shape (hosts.files without components.relayfile fails further down). */ -}}
 {{- range $name, $peers := ternary (dict) (dict "sessionReadApi.networkPolicy.publicFrom" (dig "publicFrom" (list) $readerPolicy) "ingestEdge.networkPolicy.ingressFrom" (dig "ingressFrom" (list) $ingestPolicy)) (not (empty $gateOnly)) }}
 {{- $hasGfePrimary := false -}}
 {{- $hasGfeSecondary := false -}}
+{{- $hasProxyOnly := false -}}
 {{- range $peer := $peers }}
 {{- if and (eq (len $peer) 1) (eq (dig "ipBlock" "cidr" "" $peer) "35.191.0.0/16") (empty (dig "ipBlock" "except" (list) $peer)) }}{{ $hasGfePrimary = true }}{{ end -}}
 {{- if and (eq (len $peer) 1) (eq (dig "ipBlock" "cidr" "" $peer) "130.211.0.0/22") (empty (dig "ipBlock" "except" (list) $peer)) }}{{ $hasGfeSecondary = true }}{{ end -}}
+{{- if and $gkeInternal (eq (len $peer) 1) (eq (dig "ipBlock" "cidr" "" $peer) $gkeProxyCidr) (empty (dig "ipBlock" "except" (list) $peer)) }}{{ $hasProxyOnly = true }}{{ end -}}
 {{- end }}
+{{- if and $gkeInternal (not $hasProxyOnly) }}{{ fail (printf "gkeIngress.mode=internal requires sessions-pipeline.%s to allow the proxy-only subnet %s (gkeIngress.internal.proxyOnlySubnetCidr) without exclusions" $name $gkeProxyCidr) }}{{ end -}}
 {{- if not $hasGfePrimary }}{{ fail (printf "native gkeIngress requires sessions-pipeline.%s to allow GKE range 35.191.0.0/16 without exclusions" $name) }}{{ end -}}
 {{- if not $hasGfeSecondary }}{{ fail (printf "native gkeIngress requires sessions-pipeline.%s to allow GKE range 130.211.0.0/22 without exclusions" $name) }}{{ end -}}
 {{- end }}
@@ -65,12 +71,15 @@ shape (hosts.files without components.relayfile fails further down). */ -}}
 {{- $hasSameNamespace := false -}}
 {{- $hasGfePrimary := false -}}
 {{- $hasGfeSecondary := false -}}
+{{- $hasProxyOnly := false -}}
 {{- range $peer := dig "networkPolicy" "ingressFrom" (list) $backendValues }}
+{{- if and $gkeInternal (eq (len $peer) 1) (eq (dig "ipBlock" "cidr" "" $peer) $gkeProxyCidr) (empty (dig "ipBlock" "except" (list) $peer)) }}{{ $hasProxyOnly = true }}{{ end -}}
 {{- if and (eq (len $peer) 1) (hasKey $peer "podSelector") (empty (get $peer "podSelector")) }}{{ $hasSameNamespace = true }}{{ end -}}
 {{- if and (eq (len $peer) 1) (eq (dig "ipBlock" "cidr" "" $peer) "35.191.0.0/16") (empty (dig "ipBlock" "except" (list) $peer)) }}{{ $hasGfePrimary = true }}{{ end -}}
 {{- if and (eq (len $peer) 1) (eq (dig "ipBlock" "cidr" "" $peer) "130.211.0.0/22") (empty (dig "ipBlock" "except" (list) $peer)) }}{{ $hasGfeSecondary = true }}{{ end -}}
 {{- end }}
 {{- if not $hasSameNamespace }}{{ fail (printf "gkeIngress requires %s.networkPolicy.ingressFrom to retain same-namespace pod access" $name) }}{{ end -}}
+{{- if and $gkeInternal (not $hasProxyOnly) }}{{ fail (printf "gkeIngress.mode=internal requires %s.networkPolicy.ingressFrom to allow the proxy-only subnet %s (gkeIngress.internal.proxyOnlySubnetCidr) without exclusions" $name $gkeProxyCidr) }}{{ end -}}
 {{- if not $hasGfePrimary }}{{ fail (printf "gkeIngress requires %s.networkPolicy.ingressFrom to allow GKE health checker/proxy range 35.191.0.0/16 without exclusions" $name) }}{{ end -}}
 {{- if not $hasGfeSecondary }}{{ fail (printf "gkeIngress requires %s.networkPolicy.ingressFrom to allow GKE health checker/proxy range 130.211.0.0/22 without exclusions" $name) }}{{ end -}}
 {{- end }}
@@ -79,8 +88,36 @@ shape (hosts.files without components.relayfile fails further down). */ -}}
 {{- $nativeIngestEdge := printf "%s-history-ingest" ($gkeName | trunc 48 | trimSuffix "-") -}}
 {{- $staticIpName := required "gkeIngress.staticIpName is required when gkeIngress.enabled=true" (dig "staticIpName" "" $gke) -}}
 {{- $managedCertificateName := dig "managedCertificateName" "" $gke -}}
-{{- if not (or $tlsSecretName $managedCertificateName) }}{{ fail "gkeIngress.managedCertificateName is required when gkeIngress.enabled=true (or set gkeIngress.tlsSecretName to serve a certificate from a Secret)" }}{{ end -}}
-{{- $frontendConfigName := required "gkeIngress.frontendConfigName is required when gkeIngress.enabled=true" (dig "frontendConfigName" "" $gke) -}}
+{{- /* mode external (default): a global external Application Load Balancer
+(Ingress class gce), a global static address, a ManagedCertificate or TLS
+Secret, and a FrontendConfig. mode internal: a regional internal Application
+Load Balancer (class gce-internal) that answers only inside the VPC and the
+networks routed to it (VPN, Interconnect). GKE Ingress supports neither
+ManagedCertificate nor FrontendConfig nor Cloud Armor on an internal load
+balancer, so the certificate is a TLS Secret or pre-shared regional
+certificates, port 80 is closed instead of redirected, and sslPolicy and
+securityPolicy are refused. Its proxies connect to the pods from the VPC's
+proxy-only subnet, which every backend NetworkPolicy must admit. */ -}}
+{{- $mode := dig "mode" "external" $gke | toString -}}
+{{- if not (has $mode (list "external" "internal")) }}{{ fail (printf "gkeIngress.mode must be external or internal, got %q" $mode) }}{{ end -}}
+{{- $isInternal := eq $mode "internal" -}}
+{{- $internal := dig "internal" (dict) $gke -}}
+{{- if not (kindIs "map" $internal) }}{{ fail "gkeIngress.internal must be a map" }}{{ end -}}
+{{- $preSharedCerts := dig "preSharedCerts" (list) $internal -}}
+{{- if not (kindIs "slice" $preSharedCerts) }}{{ fail "gkeIngress.internal.preSharedCerts must be a list of regional SSL certificate names" }}{{ end -}}
+{{- $proxyCidr := dig "proxyOnlySubnetCidr" "" $internal | toString -}}
+{{- if $isInternal }}
+{{- if and (empty $preSharedCerts) (not $tlsSecretName) }}{{ fail "gkeIngress.mode=internal requires a certificate: gkeIngress.tlsSecretName (a kubernetes.io/tls Secret) or gkeIngress.internal.preSharedCerts (regional SSL certificate names); ManagedCertificate is not supported on an internal load balancer" }}{{ end -}}
+{{- if and $preSharedCerts $tlsSecretName }}{{ fail "set only one of gkeIngress.tlsSecretName and gkeIngress.internal.preSharedCerts" }}{{ end -}}
+{{- range $cert := $preSharedCerts }}
+{{- if not (and (kindIs "string" $cert) (regexMatch $computeName $cert)) }}{{ fail (printf "gkeIngress.internal.preSharedCerts: %v is not a Compute Engine SSL certificate name" $cert) }}{{ end -}}
+{{- end }}
+{{- if $securityPolicy }}{{ fail "gkeIngress.securityPolicy cannot be used with gkeIngress.mode=internal: GKE Ingress does not attach Cloud Armor to an internal load balancer. Restrict who can reach it with VPC firewall rules and the routes of your VPN or Interconnect" }}{{ end -}}
+{{- if $sslPolicy }}{{ fail "gkeIngress.sslPolicy cannot be used with gkeIngress.mode=internal: it is applied through a FrontendConfig, which GKE supports on external Ingresses only" }}{{ end -}}
+{{- else if or $preSharedCerts $proxyCidr }}{{ fail "gkeIngress.internal.* is set but gkeIngress.mode is external; set gkeIngress.mode=internal or clear gkeIngress.internal" }}{{ end -}}
+{{- if not (or $isInternal $tlsSecretName $managedCertificateName) }}{{ fail "gkeIngress.managedCertificateName is required when gkeIngress.enabled=true (or set gkeIngress.tlsSecretName to serve a certificate from a Secret)" }}{{ end -}}
+{{- $frontendConfigName := dig "frontendConfigName" "" $gke -}}
+{{- if not (or $isInternal $frontendConfigName) }}{{ fail "gkeIngress.frontendConfigName is required when gkeIngress.enabled=true" }}{{ end -}}
 {{- $hostRoot := dig "hosts" "root" "" $gke -}}
 {{- $hostApi := dig "hosts" "api" "" $gke -}}
 {{- $hostCast := dig "hosts" "cast" "" $gke -}}
@@ -317,7 +354,7 @@ spec:
     - { name: http, port: 8080, targetPort: http, protocol: TCP }
 ---
 {{- end }}
-{{- if not $tlsSecretName }}
+{{- if not (or $tlsSecretName $isInternal) }}
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
@@ -339,6 +376,7 @@ spec:
     {{- end }}
 ---
 {{- end }}
+{{- if not $isInternal }}
 apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
 metadata:
@@ -355,6 +393,7 @@ spec:
     enabled: true
     responseCodeName: MOVED_PERMANENTLY_DEFAULT
 ---
+{{- end }}
 # Deliberately has no selector. Sensitive Relaycast paths, and /internal on
 # the api host, are routed here so the edge returns an error instead of
 # forwarding them to the public backend.
@@ -517,12 +556,23 @@ metadata:
     app.kubernetes.io/name: agent-relay
     app.kubernetes.io/instance: {{ .Release.Name }}
   annotations:
+    {{- if $isInternal }}
+    # Regional internal Application Load Balancer: reachable only from the
+    # VPC and the networks routed to it. HTTPS only; port 80 is not opened.
+    kubernetes.io/ingress.class: gce-internal
+    kubernetes.io/ingress.regional-static-ip-name: {{ $staticIpName | quote }}
+    kubernetes.io/ingress.allow-http: "false"
+    {{- if $preSharedCerts }}
+    ingress.gcp.kubernetes.io/pre-shared-cert: {{ join "," $preSharedCerts | quote }}
+    {{- end }}
+    {{- else }}
     kubernetes.io/ingress.class: gce
     kubernetes.io/ingress.global-static-ip-name: {{ $staticIpName | quote }}
     {{- if not $tlsSecretName }}
     networking.gke.io/managed-certificates: {{ $managedCertificateName | quote }}
     {{- end }}
     networking.gke.io/v1beta1.FrontendConfig: {{ $frontendConfigName | quote }}
+    {{- end }}
 spec:
   {{- if $tlsSecretName }}
   tls:

@@ -562,9 +562,27 @@ aws rds wait db-snapshot-available --db-snapshot-identifier "$snapshot"
 say "   snapshot $snapshot is available"
 
 rollback_hint() {
+  local rollback_prepare rollback_delete rollback_helm
   say ""; say "$($first_install && echo INSTALL || echo UPGRADE) FAILED. Nothing further was changed."
   if [ -n "$current_rev" ]; then
-    say "   roll back the release:  helm -n $namespace ${context:+--kube-context $context }rollback $release $current_rev"
+    if $rds_setup && [ "$hoopdb_layout" = legacy-admin ]; then
+      printf -v rollback_prepare \
+        'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q prepare-admin-jobs' \
+        "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+      printf -v rollback_delete \
+        'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q delete-admin-jobs' \
+        "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+      rollback_helm="helm -n $(printf '%q' "$namespace")"
+      [ -z "$context" ] || rollback_helm+=" --kube-context $(printf '%q' "$context")"
+      rollback_helm+=" rollback $(printf '%q' "$release") $(printf '%q' "$current_rev") --wait --wait-for-jobs --timeout 15m"
+      say "   the failed run deleted its temporary administrator Job Secret. Roll back in this order:"
+      say "     $rollback_prepare"
+      say "     $rollback_helm"
+      say "     $rollback_delete"
+      say "   delete hoopdb-admin-jobs only after the rollback Jobs and workloads finish"
+    else
+      say "   roll back the release:  helm -n $namespace ${context:+--kube-context $context }rollback $release $current_rev"
+    fi
   elif $first_install; then
     say "   the new release has no earlier revision; inspect its Jobs and Pods before retrying"
   fi

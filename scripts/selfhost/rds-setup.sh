@@ -329,7 +329,7 @@ EOS
   run_job agent-relay-rds-layout-probe "$WORK/probe.sh"
   local layout
   layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-rds-layout-probe.log" | tail -n 1)"
-  if [[ "$layout" == legacy-admin && -s "$PENDING_ACTIVATION_FILE" ]]; then
+  if [[ ( "$layout" == legacy-admin || "$layout" == pristine-admin ) && -s "$PENDING_ACTIVATION_FILE" ]]; then
     layout=fresh-dedicated
     log "resuming an interrupted fresh activation"
   fi

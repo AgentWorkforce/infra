@@ -403,6 +403,26 @@ grep -q 'kubectl .*patch secret' "$root/log" && fail "failed upgrade removed a l
 grep -q '^rds-setup delete-admin-jobs' "$root/log" || fail "failed upgrade did not clean up the temporary Secret"
 pass "failed legacy upgrade preserves old keys for rollback and cleans up only the temporary Secret"
 
+# A later upgrade has no administrator URL in the long-lived Secrets. Its
+# failed Helm revision still cleans up the temporary credential, so the
+# rollback instructions must recreate it, wait for rollback Jobs, and only
+# then delete it again.
+make_state; setup_mocks "$root/rel-ok" ok; write_helm "exit 1"
+mkdir -p "$root/secrets/agent-relay"
+printf '{"data":{}}\n' >"$root/secrets/agent-relay/agent-relay-secrets.json"
+printf '{"data":{}}\n' >"$root/secrets/agent-relay/search-indexer-owner.json"
+out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
+  --apply --db-instance prod-db --yes 2>&1) && fail "later failed legacy Helm upgrade reported success"
+prepare_line=$(grep -n 'prepare-admin-jobs' <<<"$out" | tail -1 | cut -d: -f1)
+rollback_line=$(grep -n 'rollback agent-relay 7 --wait --wait-for-jobs' <<<"$out" | cut -d: -f1)
+delete_line=$(grep -n 'delete-admin-jobs' <<<"$out" | tail -1 | cut -d: -f1)
+[[ -n "$prepare_line" && -n "$rollback_line" && -n "$delete_line" \
+   && "$prepare_line" -lt "$rollback_line" && "$rollback_line" -lt "$delete_line" ]] \
+  || fail "later legacy rollback guidance did not recreate, wait, then delete the temporary Secret: $out"
+grep -q '^rds-setup delete-admin-jobs' "$root/log" \
+  || fail "later failed upgrade did not clean up its temporary Secret"
+pass "later legacy rollback guidance recreates the temporary Secret through rollback Jobs"
+
 # 20b. a post-deploy partial key-cleanup failure is not reported as a
 # deployment failure: retain the temporary credential and do not suggest an
 # unsafe rollback after one old key may already have been removed.
