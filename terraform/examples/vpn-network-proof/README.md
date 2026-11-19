@@ -4,9 +4,9 @@ Execution packet for the default-off connector-network modules. **Unexecuted:
 this packet is not a live qualification receipt.** The infra operator admits
 the target and creates new fixture networks through the approved workflow;
 never reuse a customer or active proof stack. A company-owned GCP project
-with billing already linked can host isolated fixtures. Pin the module source
-at commit 399c2435, or a later reviewed
-commit, and record the exact source and provider-lock hashes.
+with billing already linked can host isolated fixtures. Use merged module
+source `f92de10c4c2e6592539fc5ed17cb8e5c32b1b934`, or a later reviewed commit,
+and record the exact source and provider-lock hashes.
 
 ## Admission and resource plan
 
