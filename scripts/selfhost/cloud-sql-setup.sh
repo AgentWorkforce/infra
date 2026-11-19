@@ -33,6 +33,9 @@
 #   NAMESPACE                   default agent-relay
 #   HELM_RELEASE                default agent-relay
 #   STATE_DIR                   default $HOME/.agent-relay-install (mode 0700)
+#   ALLOW_PRISTINE_HOOPDB_ACTIVATION
+#                               default false; set true only on a reviewed first
+#                               install whose provider already created empty hoopdb
 #
 # The Terraform example uses GOOGLE_MANAGED_CAS_CA and private Cloud DNS. This
 # script requires the certificate DNS name and verifies it with verify-full.
@@ -66,6 +69,9 @@ ADMIN_JOBS_SECRET=hoopdb-admin-jobs
 OWNER=hoopdb_owner
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
 SQL_DIR=/app/supabase/bootstrap
+ALLOW_PRISTINE_HOOPDB_ACTIVATION="${ALLOW_PRISTINE_HOOPDB_ACTIVATION:-false}"
+[[ "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == false || "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == true ]] \
+  || { echo "ALLOW_PRISTINE_HOOPDB_ACTIVATION must be true or false" >&2; exit 2; }
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 die() { log "ERROR: $*" >&2; exit 1; }
@@ -297,7 +303,15 @@ owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database wher
 if [ "$owner" = hoopdb_owner ]; then
   echo 'HOOPDB_LAYOUT=dedicated-owner'
 elif [ "$owner" = "$PGUSER" ]; then
-  echo 'HOOPDB_LAYOUT=legacy-admin'
+  pristine="$($Q -d hoopdb -c "
+select 1 where
+ not exists (select 1 from pg_namespace where nspname not in ('pg_catalog','information_schema','public') and nspname !~ '^pg_toast')
+ and not exists (select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public')
+ and not exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public')
+ and not exists (select 1 from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname='public')
+ and not exists (select 1 from pg_default_acl)
+ and not exists (select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker'))")"
+  if [ -n "$pristine" ]; then echo 'HOOPDB_LAYOUT=pristine-admin'; else echo 'HOOPDB_LAYOUT=legacy-admin'; fi
 else
   echo 'HOOPDB_LAYOUT=unknown-owner'
 fi
@@ -308,6 +322,15 @@ EOS
   if [[ "$probed_layout" == legacy-admin && -s "$PENDING_ACTIVATION_FILE" ]]; then
     probed_layout=fresh-dedicated
     log "resuming an interrupted fresh activation"
+  fi
+  if [[ "$probed_layout" == pristine-admin ]]; then
+    if [[ "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == true ]]; then
+      probed_layout=fresh-dedicated
+      log "activating the explicitly approved pristine administrator-owned HoopDb"
+    else
+      probed_layout=legacy-admin
+      log "pristine administrator-owned HoopDb detected; set ALLOW_PRISTINE_HOOPDB_ACTIVATION=true only for a reviewed first install"
+    fi
   fi
   case "$probed_layout" in
     legacy-admin)

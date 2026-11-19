@@ -217,6 +217,13 @@ export STATE_DIR=/approved/private/agent-relay-install
 scripts/selfhost/rds-setup.sh pre
 ```
 
+The standard environment creates `relaycontrol` as the initial RDS database,
+so `pre` creates `hoopdb` itself. If a reviewed new environment instead chose
+literal `hoopdb` as the provider-created initial database, run the first `pre`
+with `ALLOW_PRISTINE_HOOPDB_ACTIVATION=true`. The script first proves that it
+has no user schemas, objects, default privileges or HoopDb roles. Never set the
+flag to convert an existing installation; later runs omit it.
+
 The command creates the `rds-ca` ConfigMap and mode-restricted Secret input
 files under `$STATE_DIR/secret-files`. It prints neither database passwords nor
 connection strings. Merge those files with the non-database secrets in the

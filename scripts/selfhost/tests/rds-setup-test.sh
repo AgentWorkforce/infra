@@ -167,6 +167,21 @@ MOCK_LAYOUT=dedicated-owner bash "${RDS_SETUP}" pre >/dev/null
 grep -q 'agent-relay-rds-layout-probe' "${COMMAND_LOG}" || fail "dedicated-owner rerun skipped classification"
 pass "dedicated-owner pre rerun leaves the database and role graph unchanged"
 
+# A provider-created empty database needs an explicit first-install assertion.
+# The in-cluster probe proves it has no user objects or HoopDb roles before the
+# wrapper accepts that assertion; without it, the conservative legacy path wins.
+: >"${COMMAND_LOG}"
+MOCK_LAYOUT=pristine-admin bash "${RDS_SETUP}" pre >/dev/null
+! grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "unapproved pristine database was activated"
+[[ "$(<"${STATE_DIR}/hoopdb-layout")" == legacy-admin ]] || fail "unapproved pristine database did not fail safe"
+: >"${COMMAND_LOG}"
+ALLOW_PRISTINE_HOOPDB_ACTIVATION=true MOCK_LAYOUT=pristine-admin bash "${RDS_SETUP}" pre >/dev/null
+grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "approved pristine database was not activated"
+[[ "$(<"${STATE_DIR}/hoopdb-layout")" == dedicated-owner ]] || fail "approved pristine database did not become dedicated-owner"
+grep -q "not exists (select 1 from pg_default_acl)" "${RDS_SETUP}" \
+  || fail "pristine probe does not reject existing default privileges"
+pass "RDS activates a provider-created pristine HoopDb only with explicit first-install approval"
+
 # An administrator-owned database is legacy unless this exact STATE_DIR says
 # a fresh activation was already in progress. That durable marker makes a
 # crash after CREATE DATABASE retryable without converting an unrelated

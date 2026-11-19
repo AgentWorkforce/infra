@@ -160,3 +160,80 @@ run "desktop_feed_bucket_and_identity" {
     error_message = "Enabling the feed must keep relay-control's Cloud SQL CA values."
   }
 }
+
+run "cmek_is_off_by_default" {
+  command = apply
+
+  assert {
+    condition     = google_redis_instance.pipeline.customer_managed_key == null && google_pubsub_topic.pipeline.kms_key_name == null
+    error_message = "Without key inputs every service uses Google-managed encryption."
+  }
+}
+
+# The regulated profile (regulated.tfvars.example): every key input reaches its resource.
+run "regulated_profile_wires_every_key" {
+  command = apply
+  variables {
+    kms_key_name                 = "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    pipeline_pubsub_kms_key_name = "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    pipeline_redis_kms_key_name  = "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    admin_secret_kms_key_name    = "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    image_mirror_kms_key_name    = "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    image_mirror_repository      = "agent-relay-mirror"
+    desktop_feed_bucket_name     = "example-agent-relay-desktop-feed"
+  }
+
+  # Cloud SQL, its admin-password secret and the buckets take the key inside
+  # their modules (main.tf passes kms_key_name and admin_user); the modules'
+  # own tests assert the resources. Module internals are not addressable here.
+  assert {
+    condition     = google_pubsub_topic.pipeline.kms_key_name == "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data" && google_pubsub_topic.pipeline_dead_letter.kms_key_name == "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    error_message = "Both Pub/Sub topics must use the key."
+  }
+  assert {
+    condition     = google_redis_instance.pipeline.customer_managed_key == "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    error_message = "Redis must use the key."
+  }
+  assert {
+    condition     = google_artifact_registry_repository.mirror[0].kms_key_name == "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    error_message = "The image mirror must use the key."
+  }
+}
+
+run "edge_tls_policy_is_on_by_default" {
+  command = apply
+
+  assert {
+    condition     = output.chart_values.gkeIngress.sslPolicy == "agent-relay-tls" && output.edge.ssl_policy == "agent-relay-tls"
+    error_message = "managed-values.json must name the TLS 1.2 SSL policy for the GKE Ingress."
+  }
+  assert {
+    condition     = output.edge.security_policy == null && output.edge.client_ip_header == null
+    error_message = "Cloud Armor is off by default."
+  }
+}
+
+run "edge_tls_policy_opt_out" {
+  command = apply
+  variables {
+    edge_ssl_policy = { create = false }
+  }
+
+  assert {
+    condition     = output.chart_values.gkeIngress.sslPolicy == "" && output.edge.ssl_policy == null
+    error_message = "Opting out must leave the chart default (no sslPolicy)."
+  }
+}
+
+run "edge_cloud_armor_behind_cloudflare" {
+  command = apply
+  variables {
+    edge_security_policy      = { create = true, cloudflare = { enabled = true } }
+    edge_origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+
+  assert {
+    condition     = output.edge.security_policy == "agent-relay-edge" && output.edge.client_ip_header == "CF-Connecting-IP"
+    error_message = "The Cloud Armor policy and the client-address header must be reported."
+  }
+}

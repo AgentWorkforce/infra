@@ -1097,6 +1097,27 @@ for chart in "${charts[@]}"; do
         es_only=$(yq 'select(.kind == "ExternalSecret" or .kind == "SecretStore")' <<<"$out")
         [ "$(yq '.kind' <<<"$es_only" | grep -cE '^(ExternalSecret|SecretStore)$')" = 3 ] || err "$chart: externalSecrets must render two ExternalSecrets and one SecretStore"
         kubeconform -strict -summary -schema-location "$eso_schemas" -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$es_only" >/dev/null || { kubeconform -strict -summary -schema-location "$eso_schemas" <<<"$es_only"; err "$chart: externalSecrets failed kubeconform against the ESO schemas"; }
+        # Google Secret Manager through GKE Workload Identity: the overlay the GKE
+        # guide ships (docs/gcp-install/external-secrets-values.yaml) renders a
+        # gcpsm SecretStore and one ExternalSecret per install Secret, all valid
+        # against the ESO schemas, and maps every key step 10 creates.
+        gsm=docs/gcp-install/external-secrets-values.yaml
+        out=$(sed -e 's/__GCP_PROJECT_ID__/ci-project/g' -e 's/__REGION__/us-central1/g' -e 's/__GKE_CLUSTER__/ci-cluster/g' "$gsm" | render "$chart" "$v" -f -) || err "$chart: $gsm did not render"
+        [ "$(yq 'select(.kind == "SecretStore") | .spec.provider.gcpsm | .projectID + " " + .auth.workloadIdentity.clusterLocation + " " + .auth.workloadIdentity.clusterName + " " + .auth.workloadIdentity.clusterProjectID + " " + .auth.workloadIdentity.serviceAccountRef.name' <<<"$out" | sed '/^---$/d')" = "ci-project us-central1 ci-cluster ci-project agent-relay-external-secrets" ] \
+          || err "$chart: $gsm must render a gcpsm SecretStore that authenticates with Workload Identity as a ServiceAccount"
+        ! yq 'select(.kind == "SecretStore") | .spec.provider.gcpsm.auth | keys | .[]' <<<"$out" | grep -qx secretRef || err "$chart: $gsm must not use a service account key (auth.secretRef)"
+        [ "$(yq 'select(.kind == "ExternalSecret") | .metadata.name + "=" + (.spec.data | length | tostring) + ":" + .spec.secretStoreRef.kind' <<<"$out" | sed '/^---$/d' | sort | tr '\n' ' ')" = "agent-relay-ingest-edge-runtime=2:SecretStore agent-relay-read-api=1:SecretStore agent-relay-secrets=14:SecretStore search-indexer-owner=1:SecretStore search-indexer-runtime=1:SecretStore " ] \
+          || err "$chart: $gsm must map the five install Secrets (19 keys) through the chart SecretStore"
+        [ -z "$(yq 'select(.kind == "ExternalSecret") | .metadata.name as $n | .spec.data[] | select(.remoteRef.key != "agent-relay--" + $n + "--" + .secretKey) | .secretKey' <<<"$out" | sed '/^---$/d;/^$/d')" ] \
+          || err "$chart: $gsm must read each key from the Secret Manager secret agent-relay--<Secret>--<key> (helm-secrets-prepare.sh names)"
+        gsm_only=$(yq 'select(.kind == "ExternalSecret" or .kind == "SecretStore")' <<<"$out")
+        kubeconform -strict -summary -schema-location "$eso_schemas" -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$gsm_only" >/dev/null || { kubeconform -strict -summary -schema-location "$eso_schemas" <<<"$gsm_only"; err "$chart: $gsm failed kubeconform against the ESO schemas"; }
+        # The chart README's gcpsm example (a remoteRef map with version) validates too.
+        out=$(render "$chart" "$v" --set externalSecrets.enabled=true --set externalSecrets.store.create=true --set externalSecrets.store.provider.gcpsm.projectID=ci-project \
+          --set externalSecrets.store.provider.gcpsm.auth.workloadIdentity.serviceAccountRef.name=agent-relay-external-secrets \
+          --set externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_URL.key=agent-relay--agent-relay-secrets--HOOPDB_URL --set externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_URL.version=latest) || err "$chart: gcpsm remoteRef map did not render"
+        kubeconform -strict -summary -schema-location "$eso_schemas" -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$(yq 'select(.kind == "ExternalSecret" or .kind == "SecretStore")' <<<"$out")" >/dev/null || err "$chart: gcpsm remoteRef map failed kubeconform against the ESO schemas"
+        [ "$(yq 'select(.kind == "ExternalSecret") | .spec.data[0].remoteRef.version' <<<"$out")" = latest ] || err "$chart: gcpsm remoteRef version must pass through"
         [ "$(render "$chart" "$v" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=aws-ssm --set externalSecrets.secrets.x.data.k=/p | yq 'select(.kind == "ExternalSecret") | .spec.secretStoreRef.kind + "/" + .spec.secretStoreRef.name')" = ClusterSecretStore/aws-ssm ] \
           || err "$chart: an existing secretStoreRef must be used as given"
         expect_render_failure "$chart" "$v" "externalSecrets without a store" "requires externalSecrets.secretStoreRef.name" --set externalSecrets.enabled=true --set externalSecrets.secrets.x.data.k=/p

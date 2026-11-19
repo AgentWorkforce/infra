@@ -162,3 +162,21 @@ run "enterprise_pitr_window_capped" {
 
   expect_failures = [google_sql_database_instance.this]
 }
+
+run "customer_managed_keys_reach_the_instance_and_the_admin_secret" {
+  command = apply
+
+  variables {
+    kms_key_name = "projects/proj/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    admin_user   = { secret_kms_key = "projects/proj/locations/us-central1/keyRings/relay/cryptoKeys/data", secret_locations = ["us-central1"] }
+  }
+
+  assert {
+    condition     = google_sql_database_instance.this.encryption_key_name == "projects/proj/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    error_message = "kms_key_name must be the instance's encryption key."
+  }
+  assert {
+    condition     = google_secret_manager_secret.admin[0].replication[0].user_managed[0].replicas[0].location == "us-central1" && google_secret_manager_secret.admin[0].replication[0].user_managed[0].replicas[0].customer_managed_encryption[0].kms_key_name == "projects/proj/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    error_message = "The admin password secret must be a regional replica encrypted with secret_kms_key."
+  }
+}

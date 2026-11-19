@@ -107,7 +107,7 @@ case " $* " in
     if [[ "${MOCK_DEDICATED_MISSING:-false}" == true ]]; then
       printf 'setup output without credentials\nHOOPDB_STATE=dedicated-owner-missing\n'
     else
-      printf 'setup output without credentials\nHOOPDB_LAYOUT=%s\n' "${MOCK_LAYOUT:-fresh-dedicated}"
+      printf 'setup output without credentials\nHOOPDB_LAYOUT=%s\n' "${MOCK_PRE_LAYOUT:-${MOCK_LAYOUT:-fresh-dedicated}}"
     fi
     ;;
   *" logs job/agent-relay-cloud-sql-probe"*)
@@ -221,6 +221,25 @@ MOCK_LAYOUT=dedicated-owner "$TEST_BASH" "$SCRIPT" pre >/dev/null \
 grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/null \
   || fail "resumed activation did not finish the setup prerequisites"
 pass "post-commit interruption reuses the committed password files"
+
+# Terraform may pre-create an empty hoopdb. It is eligible for fresh activation
+# only when the operator explicitly identifies this as the reviewed first
+# install; otherwise the administrator-owned database fails safe as legacy.
+: >"$LOG"
+MOCK_LAYOUT=pristine-admin "$TEST_BASH" "$SCRIPT" pre >/dev/null
+if grep -Fq 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG"; then
+  fail "unapproved pristine Cloud SQL database started the mutating setup Job"
+fi
+[[ "$(cat "$STATE/hoopdb-layout")" == legacy-admin ]] || fail "unapproved pristine Cloud SQL database did not fail safe"
+: >"$LOG"
+ALLOW_PRISTINE_HOOPDB_ACTIVATION=true MOCK_LAYOUT=pristine-admin MOCK_PRE_LAYOUT=fresh-dedicated \
+  "$TEST_BASH" "$SCRIPT" pre >/dev/null
+grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/null \
+  || fail "approved pristine Cloud SQL database did not start activation"
+[[ "$(cat "$STATE/hoopdb-layout")" == dedicated-owner ]] || fail "approved pristine Cloud SQL database did not become dedicated-owner"
+grep -F 'not exists (select 1 from pg_default_acl)' "$SCRIPT" >/dev/null \
+  || fail "Cloud SQL pristine probe does not reject existing default privileges"
+pass "Cloud SQL activates a provider-created pristine HoopDb only with explicit first-install approval"
 
 : >"$LOG"
 MOCK_LAYOUT=legacy-admin "$TEST_BASH" "$SCRIPT" pre >/dev/null

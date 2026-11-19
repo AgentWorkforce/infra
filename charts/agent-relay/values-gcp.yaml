@@ -39,6 +39,18 @@ gkeIngress:
   staticIpName: example-agent-relay-ingress
   managedCertificateName: example-agent-relay
   frontendConfigName: example-agent-relay
+  # RECOMMENDED: the name of a Compute SSL policy with min TLS 1.2 (create it
+  # first: docs/gcp-install step 7 or terraform/modules/gcp/edge-security).
+  # Left empty, the load balancer uses Google's default policy, which still
+  # accepts TLS 1.0 and 1.1.
+  # sslPolicy: example-agent-relay-tls
+  # Optional: a Cloud Armor security policy for every backend (README: GKE
+  # edge hardening). Also set the dashboard Service's backend-config
+  # annotation, relay-webapp.service.annotations below.
+  # securityPolicy: example-agent-relay-edge
+  # Optional: serve a certificate from a kubernetes.io/tls Secret instead of
+  # the ManagedCertificate (an edge behind a proxy or CDN).
+  # tlsSecretName: example-agent-relay-tls
   hosts:
     # REQUIRED OVERRIDE: four public DNS names controlled by the customer.
     root: dashboard.placeholder.company
@@ -495,6 +507,8 @@ relay-webapp:
   service:
     annotations:
       cloud.google.com/neg: '{"ingress": true}'
+      # Required with gkeIngress.securityPolicy: <gkeIngress.name>-dashboard.
+      # cloud.google.com/backend-config: '{"default": "example-agent-relay-dashboard"}'
   ingress:
     enabled: false
   networkPolicy:

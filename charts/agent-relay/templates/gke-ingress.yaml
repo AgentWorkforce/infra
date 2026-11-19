@@ -1,6 +1,25 @@
 {{- include "agent-relay.validate" . -}}
 {{- if dig "enabled" false (.Values.gkeIngress | default dict) }}
 {{- $gke := .Values.gkeIngress | default dict -}}
+{{- /* Edge hardening, all optional and off by default (each names a Google
+Cloud resource this chart cannot create; terraform/modules/gcp/edge-security
+creates them):
+  sslPolicy       Compute SSL policy for the load balancer's HTTPS listener
+                  (FrontendConfig spec.sslPolicy). Without it Google's default
+                  policy applies, which still accepts TLS 1.0.
+  securityPolicy  Cloud Armor backend security policy, set on the
+                  BackendConfig of every backend Service behind the Ingress.
+  tlsSecretName   kubernetes.io/tls Secret served instead of the
+                  ManagedCertificate, for an edge whose public DNS points at a
+                  proxy in front of the load balancer (a Google-managed
+                  certificate cannot be issued there). */ -}}
+{{- $computeName := "^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$" -}}
+{{- $sslPolicy := dig "sslPolicy" "" $gke | toString -}}
+{{- if and $sslPolicy (not (regexMatch $computeName $sslPolicy)) }}{{ fail "gkeIngress.sslPolicy must be the name of a Compute Engine SSL policy in the cluster's project (lowercase letters, digits and hyphens, at most 63 characters), not a URL" }}{{ end -}}
+{{- $securityPolicy := dig "securityPolicy" "" $gke | toString -}}
+{{- if and $securityPolicy (not (regexMatch $computeName $securityPolicy)) }}{{ fail "gkeIngress.securityPolicy must be the name of a Cloud Armor security policy in the cluster's project (lowercase letters, digits and hyphens, at most 63 characters), not a URL" }}{{ end -}}
+{{- $tlsSecretName := dig "tlsSecretName" "" $gke | toString -}}
+{{- if and $tlsSecretName (not (regexMatch "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" $tlsSecretName)) }}{{ fail "gkeIngress.tlsSecretName must be the name of a kubernetes.io/tls Secret in the release namespace" }}{{ end -}}
 {{- $components := .Values.components | default dict -}}
 {{- $relaycast := .Values.relaycast | default dict -}}
 {{- $cloudApi := index .Values "relay-control" | default dict -}}
@@ -59,7 +78,8 @@ shape (hosts.files without components.relayfile fails further down). */ -}}
 {{- $nativeReadEdge := printf "%s-history-read" ($gkeName | trunc 50 | trimSuffix "-") -}}
 {{- $nativeIngestEdge := printf "%s-history-ingest" ($gkeName | trunc 48 | trimSuffix "-") -}}
 {{- $staticIpName := required "gkeIngress.staticIpName is required when gkeIngress.enabled=true" (dig "staticIpName" "" $gke) -}}
-{{- $managedCertificateName := required "gkeIngress.managedCertificateName is required when gkeIngress.enabled=true" (dig "managedCertificateName" "" $gke) -}}
+{{- $managedCertificateName := dig "managedCertificateName" "" $gke -}}
+{{- if not (or $tlsSecretName $managedCertificateName) }}{{ fail "gkeIngress.managedCertificateName is required when gkeIngress.enabled=true (or set gkeIngress.tlsSecretName to serve a certificate from a Secret)" }}{{ end -}}
 {{- $frontendConfigName := required "gkeIngress.frontendConfigName is required when gkeIngress.enabled=true" (dig "frontendConfigName" "" $gke) -}}
 {{- $hostRoot := dig "hosts" "root" "" $gke -}}
 {{- $hostApi := dig "hosts" "api" "" $gke -}}
@@ -172,6 +192,38 @@ derived from gkeIngress.name. The name is truncated to 59 characters before
 {{- $haveAnnotation := dig "service" "annotations" "cloud.google.com/backend-config" "" $cloudApi -}}
 {{- if ne (toString $haveAnnotation | nospace) (nospace $wantBackendConfig) }}{{ fail (printf "gkeIngress requires relay-control.service.backendConfig=%s (<gkeIngress.name>-api) so the api backend gets the BackendConfig timeout" $apiBackendConfig) }}{{ end -}}
 {{- end }}
+{{- /* Cloud Armor attaches per backend service, through the BackendConfig
+its Service names. The dashboard, Relayfile and edge-deny Services have no
+BackendConfig otherwise, so with gkeIngress.securityPolicy each gets one that
+carries only the policy. The edge-deny Service is rendered here and binds its
+own; the dashboard and Relayfile Services belong to child charts, whose
+values a parent cannot template, so their backend-config annotation is
+checked against the derived name (the render fails with the value to set). */ -}}
+{{- $dashboardBackendConfig := printf "%s-dashboard" ($gkeName | trunc 53 | trimSuffix "-") -}}
+{{- $filesBackendConfig := printf "%s-files" ($gkeName | trunc 57 | trimSuffix "-") -}}
+{{- $denyBackendConfig := printf "%s-edge-deny" ($gkeName | trunc 53 | trimSuffix "-") -}}
+{{- if $securityPolicy }}
+{{- $armorOnly := dict $dashboardBackendConfig (list "relay-webapp" $dashboard) -}}
+{{- if $hostFiles }}{{ $_ := set $armorOnly $filesBackendConfig (list "relayfile" $relayfile) }}{{ end -}}
+{{- range $bc, $child := $armorOnly }}
+{{- $have := dig "service" "annotations" "cloud.google.com/backend-config" "" (index $child 1) | toString | nospace -}}
+{{- if ne $have (printf "{\"default\":\"%s\"}" $bc) }}{{ fail (printf "gkeIngress.securityPolicy requires %s.service.annotations[cloud.google.com/backend-config]='{\"default\": \"%s\"}' so the Cloud Armor policy also covers that backend" (index $child 0) $bc) }}{{ end -}}
+{{- end }}
+{{- range $bc := concat (list $dashboardBackendConfig $denyBackendConfig) (ternary (list $filesBackendConfig) (list) (not (empty $hostFiles))) }}
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ $bc }}
+  namespace: {{ $.Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  securityPolicy:
+    name: {{ $securityPolicy | quote }}
+---
+{{- end }}
+{{- end }}
 apiVersion: cloud.google.com/v1
 kind: BackendConfig
 metadata:
@@ -181,6 +233,10 @@ metadata:
     app.kubernetes.io/name: agent-relay
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
+  {{- with $securityPolicy }}
+  securityPolicy:
+    name: {{ . | quote }}
+  {{- end }}
   timeoutSec: {{ $apiTimeout }}
 ---
 {{- /* Relaycast WebSockets (/v1/ws, /v1/node/ws) through the cast backend are
@@ -208,6 +264,10 @@ metadata:
     app.kubernetes.io/name: agent-relay
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
+  {{- with $securityPolicy }}
+  securityPolicy:
+    name: {{ . | quote }}
+  {{- end }}
   timeoutSec: {{ $castTimeout }}
 ---
 {{- $gateEdge := printf "%s-gate" ($gkeName | trunc 58 | trimSuffix "-") -}}
@@ -226,6 +286,10 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: gate-edge
 spec:
+  {{- with $securityPolicy }}
+  securityPolicy:
+    name: {{ . | quote }}
+  {{- end }}
   timeoutSec: {{ $castTimeout }}
   healthCheck:
     type: HTTP
@@ -253,6 +317,7 @@ spec:
     - { name: http, port: 8080, targetPort: http, protocol: TCP }
 ---
 {{- end }}
+{{- if not $tlsSecretName }}
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
@@ -273,6 +338,7 @@ spec:
     - {{ . | quote }}
     {{- end }}
 ---
+{{- end }}
 apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
 metadata:
@@ -282,6 +348,9 @@ metadata:
     app.kubernetes.io/name: agent-relay
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
+  {{- with $sslPolicy }}
+  sslPolicy: {{ . | quote }}
+  {{- end }}
   redirectToHttps:
     enabled: true
     responseCodeName: MOVED_PERMANENTLY_DEFAULT
@@ -300,6 +369,9 @@ metadata:
     app.kubernetes.io/component: edge-deny
   annotations:
     cloud.google.com/neg: '{"ingress": true}'
+    {{- if $securityPolicy }}
+    cloud.google.com/backend-config: {{ printf "{\"default\": \"%s\"}" $denyBackendConfig | squote }}
+    {{- end }}
 spec:
   type: ClusterIP
   ports:
@@ -323,6 +395,10 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: actors-edge
 spec:
+  {{- with $securityPolicy }}
+  securityPolicy:
+    name: {{ . | quote }}
+  {{- end }}
   timeoutSec: {{ $actorsTimeout | int }}
   healthCheck:
     type: HTTP
@@ -362,6 +438,10 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: native-history-read-edge
 spec:
+  {{- with $securityPolicy }}
+  securityPolicy:
+    name: {{ . | quote }}
+  {{- end }}
   healthCheck:
     type: HTTP
     requestPath: /healthz
@@ -377,6 +457,10 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: native-history-ingest-edge
 spec:
+  {{- with $securityPolicy }}
+  securityPolicy:
+    name: {{ . | quote }}
+  {{- end }}
   healthCheck:
     type: HTTP
     requestPath: /healthz
@@ -435,9 +519,15 @@ metadata:
   annotations:
     kubernetes.io/ingress.class: gce
     kubernetes.io/ingress.global-static-ip-name: {{ $staticIpName | quote }}
+    {{- if not $tlsSecretName }}
     networking.gke.io/managed-certificates: {{ $managedCertificateName | quote }}
+    {{- end }}
     networking.gke.io/v1beta1.FrontendConfig: {{ $frontendConfigName | quote }}
 spec:
+  {{- if $tlsSecretName }}
+  tls:
+    - secretName: {{ $tlsSecretName | quote }}
+  {{- end }}
   rules:
     - host: {{ $hostRoot | quote }}
       http:

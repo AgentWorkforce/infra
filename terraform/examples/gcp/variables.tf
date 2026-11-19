@@ -32,6 +32,12 @@ variable "kms_key_name" {
   default     = null
 }
 
+variable "admin_secret_kms_key_name" {
+  description = "CMEK key for the Secret Manager secret that holds the Cloud SQL admin password (null: Google-managed, automatic replication). The key must be in var.region; the secret is then replicated to that region only. Grant the Secret Manager service agent (service-<project number>@gcp-sa-secretmanager.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: a secret's replication cannot be changed afterwards."
+  type        = string
+  default     = null
+}
+
 # --- Bring your own network and cluster ----------------------------------------
 
 variable "network_self_link" {
@@ -111,6 +117,12 @@ variable "pipeline_pubsub_kms_key_name" {
   default     = null
 }
 
+variable "pipeline_redis_kms_key_name" {
+  description = "CMEK key for the pipeline Redis instance at rest (null: Google-managed). Same region as the instance; grant the Memorystore service agent (service-<project number>@cloud-redis.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: changing it replaces the instance."
+  type        = string
+  default     = null
+}
+
 variable "pipeline_message_retention" {
   description = "Pub/Sub topic and subscription retention for the native Sessions pipeline."
   type        = string
@@ -181,6 +193,12 @@ variable "image_mirror_repository" {
   }
 }
 
+variable "image_mirror_kms_key_name" {
+  description = "CMEK key for the image mirror repository (null: Google-managed). Grant the Artifact Registry service agent (service-<project number>@gcp-sa-artifactregistry.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: changing it replaces the repository."
+  type        = string
+  default     = null
+}
+
 variable "gke_node_service_account" {
   description = "Email of the GKE node pool's service account, granted roles/artifactregistry.reader on the mirror. Empty: the project's default Compute Engine service account (a node pool whose serviceAccount is \"default\")."
   type        = string
@@ -208,4 +226,30 @@ variable "relay_control_service_account" {
   description = "relay-control's Kubernetes service account. charts/agent-relay/values-gcp.yaml sets fullnameOverride: relay-control, so it is relay-control."
   type        = string
   default     = "relay-control"
+}
+
+variable "edge_ssl_policy" {
+  description = "Compute SSL policy for the GKE Ingress HTTPS listener, exported as gkeIngress.sslPolicy in chart_values. create = false leaves Google's default policy (TLS 1.0 and later)."
+  type = object({
+    create          = optional(bool, true)
+    profile         = optional(string, "MODERN")
+    min_tls_version = optional(string, "TLS_1_2")
+  })
+  default = {}
+}
+
+variable "edge_security_policy" {
+  description = "Cloud Armor policy for every GKE Ingress backend (modules/gcp/edge-security security_policy: create, waf, rate_limits, source_ip_allowlist, cloudflare, client_ip_header, client_ip_rules). Off unless create = true. It is exported as gkeIngress.securityPolicy in output.edge, not in chart_values, because the chart then also needs the dashboard Service's backend-config annotation."
+  type        = any
+  default     = {}
+}
+
+variable "edge_origin_secret_header" {
+  description = "Shared-secret request header a fronting proxy adds; requests without one of the accepted values (1-3, for rotation) are denied (modules/gcp/edge-security origin_secret_header). Stored in state."
+  type = object({
+    name   = string
+    values = list(string)
+  })
+  default   = null
+  sensitive = true
 }

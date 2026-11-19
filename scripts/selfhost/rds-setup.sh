@@ -29,6 +29,9 @@
 #   KUBE_CONTEXT           kubectl context; empty uses the current context
 #   RELEASE                required in post mode; exact Helm release name
 #   MIGRATION_JOB          required in post mode; current rendered migrate Job
+#   ALLOW_PRISTINE_HOOPDB_ACTIVATION
+#                         default false; set true only on a reviewed first
+#                         install whose provider already created empty hoopdb
 #   PROVISION_ERASE_SEARCH_LOGIN  default 0; 1 activates the optional Postgres
 #                         eraser login after search bootstrap (not an erase flag)
 #
@@ -61,7 +64,10 @@ JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
 SQL_DIR=/app/supabase/bootstrap
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 KUBE_CONTEXT="${KUBE_CONTEXT:-}"
+ALLOW_PRISTINE_HOOPDB_ACTIVATION="${ALLOW_PRISTINE_HOOPDB_ACTIVATION:-false}"
 PROVISION_ERASE_SEARCH_LOGIN="${PROVISION_ERASE_SEARCH_LOGIN:-0}"
+[[ "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == false || "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == true ]] \
+  || { echo "ALLOW_PRISTINE_HOOPDB_ACTIVATION must be true or false" >&2; exit 2; }
 [[ "$PROVISION_ERASE_SEARCH_LOGIN" == 0 || "$PROVISION_ERASE_SEARCH_LOGIN" == 1 ]] || { echo "PROVISION_ERASE_SEARCH_LOGIN must be 0 or 1" >&2; exit 2; }
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
@@ -307,6 +313,17 @@ owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database wher
 if [ "$owner" = hoopdb_owner ]; then
   echo 'HOOPDB_LAYOUT=dedicated-owner'; exit 0
 fi
+pristine="$($Q -d hoopdb -c "
+select 1 where
+ not exists (select 1 from pg_namespace where nspname not in ('pg_catalog','information_schema','public') and nspname !~ '^pg_toast')
+ and not exists (select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public')
+ and not exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public')
+ and not exists (select 1 from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname='public')
+ and not exists (select 1 from pg_default_acl)
+ and not exists (select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker'))")"
+if [ -n "$pristine" ]; then
+  echo 'HOOPDB_LAYOUT=pristine-admin'; exit 0
+fi
 echo 'HOOPDB_LAYOUT=legacy-admin'
 EOS
   run_job agent-relay-rds-layout-probe "$WORK/probe.sh"
@@ -315,6 +332,15 @@ EOS
   if [[ "$layout" == legacy-admin && -s "$PENDING_ACTIVATION_FILE" ]]; then
     layout=fresh-dedicated
     log "resuming an interrupted fresh activation"
+  fi
+  if [[ "$layout" == pristine-admin ]]; then
+    if [[ "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == true ]]; then
+      layout=fresh-dedicated
+      log "activating the explicitly approved pristine administrator-owned HoopDb"
+    else
+      layout=legacy-admin
+      log "pristine administrator-owned HoopDb detected; set ALLOW_PRISTINE_HOOPDB_ACTIVATION=true only for a reviewed first install"
+    fi
   fi
   case "$layout" in
     legacy-admin)

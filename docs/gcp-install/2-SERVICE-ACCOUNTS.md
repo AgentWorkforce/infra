@@ -77,6 +77,9 @@ to the **service agents** of Cloud Storage
 SQL (`service-<project number>@gcp-sa-cloud-sql.iam.gserviceaccount.com`) and
 Pub/Sub (`service-<project number>@gcp-sa-pubsub.iam.gserviceaccount.com`)
 before creating those resources. The pods themselves need no KMS role.
+[REGULATED-PROFILE.md](REGULATED-PROFILE.md) lists every key input, including
+Kubernetes Secrets, Redis, node disks, the admin password secret and the image
+mirror, with the service agent each one needs.
 
 ## Who runs the install
 
