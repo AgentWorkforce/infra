@@ -3,6 +3,9 @@ mock_provider "google" {}
 variables {
   project_id = "proj"
   name       = "relay"
+  # Most runs pin 5 subexpressions per rule so that small lists exercise the
+  # splitting into several rules; the module's default (10) has its own runs.
+  max_subexpressions = 5
 }
 
 run "defaults_create_only_the_tls_policy" {
@@ -70,7 +73,7 @@ run "waf_and_rate_limit_defaults" {
     error_message = "The default rules include cve-canary (Log4Shell)."
   }
   assert {
-    condition     = keys(google_compute_security_policy_rule.rate_limit) == ["sign-in-0"] && google_compute_security_policy_rule.rate_limit["sign-in-0"].action == "throttle" && google_compute_security_policy_rule.rate_limit["sign-in-0"].match[0].expr[0].expression == "request.path.matches('^/(login|(cloud/)?api/v1/auth/)')"
+    condition     = keys(google_compute_security_policy_rule.rate_limit) == ["sign-in-0"] && google_compute_security_policy_rule.rate_limit["sign-in-0"].action == "throttle" && google_compute_security_policy_rule.rate_limit["sign-in-0"].match[0].expr[0].expression == "request.path.matches('^/(?:login|(?:cloud/)?api/v1/auth/)')"
     error_message = "One throttle rule on the sign-in paths."
   }
   assert {
@@ -146,7 +149,7 @@ run "cloudflare_origin_lockdown" {
     error_message = "Rate limits stay inside the allowlist and count per client address."
   }
   assert {
-    condition     = google_compute_security_policy_rule.rate_limit["sign-in-0"].match[0].expr[0].expression == "request.path.matches('^/(login|(cloud/)?api/v1/auth/)') && (inIpRange(origin.ip, '173.245.48.0/20') || inIpRange(origin.ip, '103.21.244.0/22') || inIpRange(origin.ip, '103.22.200.0/22') || inIpRange(origin.ip, '103.31.4.0/22'))"
+    condition     = google_compute_security_policy_rule.rate_limit["sign-in-0"].match[0].expr[0].expression == "request.path.matches('^/(?:login|(?:cloud/)?api/v1/auth/)') && (inIpRange(origin.ip, '173.245.48.0/20') || inIpRange(origin.ip, '103.21.244.0/22') || inIpRange(origin.ip, '103.22.200.0/22') || inIpRange(origin.ip, '103.31.4.0/22'))"
     error_message = "Five subexpressions at most: the path and four ranges."
   }
   assert {
@@ -154,7 +157,7 @@ run "cloudflare_origin_lockdown" {
     error_message = "Five client ranges: two allow rules and the path deny."
   }
   assert {
-    condition     = google_compute_security_policy_rule.client_ip["uploads-allow-1"].match[0].expr[0].expression == "request.path.matches('^(/v1/delivery|/v1/turns)') && (inIpRange(origin.user_ip, '198.18.0.0/15'))" && google_compute_security_policy_rule.client_ip["uploads-deny"].action == "deny(403)" && google_compute_security_policy_rule.client_ip["uploads-deny"].match[0].expr[0].expression == "request.path.matches('^(/v1/delivery|/v1/turns)')"
+    condition     = google_compute_security_policy_rule.client_ip["uploads-allow-1"].match[0].expr[0].expression == "request.path.matches('^(?:/v1/delivery|/v1/turns)') && (inIpRange(origin.user_ip, '198.18.0.0/15'))" && google_compute_security_policy_rule.client_ip["uploads-deny"].action == "deny(403)" && google_compute_security_policy_rule.client_ip["uploads-deny"].match[0].expr[0].expression == "request.path.matches('^(?:/v1/delivery|/v1/turns)')"
     error_message = "Client rules match the path and origin.user_ip, then deny the path."
   }
   # Order: secret header, WAF, client rules, rate limits, allowlist, default.
@@ -264,7 +267,7 @@ run "vendor_paths_and_a_closed_remainder" {
     error_message = "Every rule admits its clients (four ranges per rule, three with hosts) and then denies its paths."
   }
   assert {
-    condition     = google_compute_security_policy_rule.client_ip["vendors-allow-0"].match[0].expr[0].expression == "request.headers['host'].lower().matches('^(history\\\\.relay\\\\.example\\\\.com)(:[0-9]+)?$') && request.path.matches('^(/v1/delivery|/v1/turns|/v1/auth/token/refresh)') && (inIpRange(origin.user_ip, '192.0.2.0/24') || inIpRange(origin.user_ip, '198.51.100.0/24'))"
+    condition     = google_compute_security_policy_rule.client_ip["vendors-allow-0"].match[0].expr[0].expression == "request.headers['host'].lower().matches('^(?:history\\\\.relay\\\\.example\\\\.com)(?::[0-9]+)?$') && request.path.matches('^(?:/v1/delivery|/v1/turns|/v1/auth/token/refresh)') && (inIpRange(origin.user_ip, '192.0.2.0/24') || inIpRange(origin.user_ip, '198.51.100.0/24'))"
     error_message = "Host, path and the client ranges, within five subexpressions."
   }
   # A short vendor list ahead of a staff-only "/" rule: the vendor is admitted
@@ -280,7 +283,7 @@ run "vendor_paths_and_a_closed_remainder" {
     error_message = "A one-range rule with a rate_limit throttles per client address."
   }
   assert {
-    condition     = google_compute_security_policy_rule.client_ip["staff-allow-0"].action == "allow" && length(google_compute_security_policy_rule.client_ip["staff-allow-0"].rate_limit_options) == 0 && google_compute_security_policy_rule.client_ip["staff-deny"].action == "deny(403)" && google_compute_security_policy_rule.client_ip["staff-deny"].match[0].expr[0].expression == "request.path.matches('^(/)')"
+    condition     = google_compute_security_policy_rule.client_ip["staff-allow-0"].action == "allow" && length(google_compute_security_policy_rule.client_ip["staff-allow-0"].rate_limit_options) == 0 && google_compute_security_policy_rule.client_ip["staff-deny"].action == "deny(403)" && google_compute_security_policy_rule.client_ip["staff-deny"].match[0].expr[0].expression == "request.path.matches('^(?:/)')"
     error_message = "An unthrottled rule admits with allow; the closing rule denies every remaining path."
   }
   assert {
@@ -396,5 +399,65 @@ run "policy_off_reports_zero_rules" {
   assert {
     condition     = output.rule_counts.advanced == 0 && output.rule_counts.total == 0
     error_message = "No policy, no rules."
+  }
+}
+
+# A capture group in a user regex is refused at plan: Cloud Armor rejects it at apply.
+run "capture_group_in_path_regex_refused" {
+  command = plan
+  variables {
+    security_policy = { create = true, rate_limits = [{ name = "auth", path_regex = "^/(login|setup)", count = 10, interval_sec = 60 }] }
+  }
+  expect_failures = [var.security_policy]
+}
+
+run "non_capturing_and_escaped_parentheses_accepted" {
+  command = apply
+  variables {
+    security_policy = { create = true, waf = { enabled = false }, rate_limits = [{ name = "auth", path_regex = "^/(?:login|setup)\\(x\\)", count = 10, interval_sec = 60 }] }
+  }
+  assert {
+    condition     = length(google_compute_security_policy_rule.rate_limit) == 1
+    error_message = "(?:...) groups and escaped parentheses are allowed."
+  }
+}
+
+# No expression the module builds contains a capture group.
+run "generated_expressions_have_no_capture_groups" {
+  command = apply
+  variables {
+    security_policy = {
+      create     = true
+      cloudflare = { enabled = true }
+      client_ip_rules = [
+        { name = "vendors", hosts = ["history.relay.example.com", "api.relay.example.com"], path_prefixes = ["/v1/delivery", "/.well-known"], cidrs = ["192.0.2.0/24"], unthrottled = true },
+      ]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+  assert {
+    condition = alltrue([for e in concat(
+      [for r in google_compute_security_policy_rule.client_ip : r.match[0].expr[0].expression],
+      [for r in google_compute_security_policy_rule.rate_limit : r.match[0].expr[0].expression],
+    ) : length(regexall("matches\\('[^']*\\((?:[^?]|$)", e)) == 0])
+    error_message = "Every group inside a matches() pattern must be non-capturing."
+  }
+  assert {
+    condition     = google_compute_security_policy_rule.client_ip["vendors-deny"].match[0].expr[0].expression == "request.headers['host'].lower().matches('^(?:history\\\\.relay\\\\.example\\\\.com|api\\\\.relay\\\\.example\\\\.com)(?::[0-9]+)?$') && request.path.matches('^(?:/v1/delivery|/\\\\.well-known)')"
+    error_message = "Host and path patterns in the form the API accepted."
+  }
+}
+
+# The default: 10 subexpressions. Cloudflare's 15 ranges need two throttle rules, not four.
+run "default_is_ten_subexpressions" {
+  command = apply
+  variables {
+    max_subexpressions   = 10
+    security_policy      = { create = true, cloudflare = { enabled = true } }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+  assert {
+    condition     = length(google_compute_security_policy_rule.rate_limit) == 2 && length(regexall("inIpRange", google_compute_security_policy_rule.rate_limit["sign-in-0"].match[0].expr[0].expression)) == 9 && output.rule_counts.advanced == 5
+    error_message = "Path plus nine ranges per throttle rule."
   }
 }

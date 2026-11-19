@@ -236,6 +236,12 @@ run "edge_cloud_armor_behind_cloudflare" {
     condition     = output.edge.security_policy == "agent-relay-edge" && output.edge.client_ip_header == "CF-Connecting-IP"
     error_message = "The Cloud Armor policy and the client-address header must be reported."
   }
+  # Default of 10 subexpressions: secret header, two WAF rules, and two sign-in
+  # throttles for Cloudflare's 15 ranges (nine per rule).
+  assert {
+    condition     = output.edge.rule_counts.advanced == 5 && output.edge.rule_counts.total == 8
+    error_message = "Behind Cloudflare the default policy needs 5 advanced rules and 8 in all."
+  }
 }
 
 run "edge_rule_counts_are_reported" {

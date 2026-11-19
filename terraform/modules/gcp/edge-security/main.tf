@@ -63,11 +63,13 @@ locals {
     advanced = (local.secret_header ? 1 : 0) + length(local.waf_groups) + length(local.client_rules) + length(local.rate_rules)
     basic    = length(local.allow_rules) + 1
   }
-  # The path (one subexpression) and, with hosts, the Host header (a second),
-  # which leaves three or four subexpressions for client ranges.
+  # The path (one subexpression) and, with hosts, the Host header (a second);
+  # the rest of max_subexpressions holds client ranges. Groups are
+  # non-capturing: Cloud Armor rejects a regular expression with a capture
+  # group ("Capture Groups are not allowed").
   path_match = { for r in local.sp.client_ip_rules : r.name => join(" && ", compact([
-    length(r.hosts) > 0 ? "request.headers['host'].lower().matches('^(${join("|", [for h in r.hosts : replace(h, ".", "\\\\.")])})(:[0-9]+)?$')" : "",
-    "request.path.matches('^(${join("|", [for p in r.path_prefixes : replace(p, ".", "\\\\.")])})')",
+    length(r.hosts) > 0 ? "request.headers['host'].lower().matches('^(?:${join("|", [for h in r.hosts : replace(h, ".", "\\\\.")])})(?::[0-9]+)?$')" : "",
+    "request.path.matches('^(?:${join("|", [for p in r.path_prefixes : replace(p, ".", "\\\\.")])})')",
   ])) }
 }
 

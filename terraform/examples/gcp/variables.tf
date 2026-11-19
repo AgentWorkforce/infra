@@ -255,7 +255,7 @@ variable "edge_origin_secret_header" {
 }
 
 variable "edge_max_subexpressions" {
-  description = "Subexpressions per Cloud Armor rule expression (modules/gcp/edge-security max_subexpressions). 5 is the documented limit; a higher value packs long client lists into fewer rules once an apply in your project has accepted it."
+  description = "Subexpressions per Cloud Armor rule expression (modules/gcp/edge-security max_subexpressions). 10 is what the API accepts; lower it only if your project refuses a rule."
   type        = number
-  default     = 5
+  default     = 10
 }

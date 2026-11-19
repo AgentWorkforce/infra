@@ -67,7 +67,7 @@ variable "security_policy" {
       ban_duration_sec = optional(number, 0)
       })), [{
       name         = "sign-in"
-      path_regex   = "^/(login|(cloud/)?api/v1/auth/)"
+      path_regex   = "^/(?:login|(?:cloud/)?api/v1/auth/)"
       count        = 60
       interval_sec = 60
     }])
@@ -113,10 +113,10 @@ variable "security_policy" {
   }
   validation {
     condition = alltrue([for r in var.security_policy.rate_limits :
-      can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && !strcontains(r.path_regex, "'") && length(r.path_regex) <= 512 &&
+      can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && !strcontains(r.path_regex, "'") && !strcontains(replace(replace(r.path_regex, "(?:", ""), "\\(", ""), "(") && length(r.path_regex) <= 512 &&
       r.count >= 1 && contains([10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1800, 2700, 3600], r.interval_sec) && r.ban_duration_sec >= 0
     ]) && length(var.security_policy.rate_limits) <= 9 && length(distinct(var.security_policy.rate_limits[*].name)) == length(var.security_policy.rate_limits)
-    error_message = "At most 9 rate_limits with unique lowercase names, a path_regex without single quotes, count >= 1 and an interval_sec Cloud Armor accepts (10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1800, 2700 or 3600)."
+    error_message = "At most 9 rate_limits with unique lowercase names, a path_regex without single quotes or capture groups (Cloud Armor rejects them: write (?:a|b), not (a|b)), count >= 1 and an interval_sec Cloud Armor accepts (10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1800, 2700 or 3600)."
   }
   validation {
     condition = alltrue([for r in var.security_policy.client_ip_rules :
@@ -149,9 +149,9 @@ variable "origin_secret_header" {
 }
 
 variable "max_subexpressions" {
-  description = "Subexpressions Cloud Armor accepts in one rule expression. The rules language reference says 5; Google's quota page lists 10. A rule that matches a path (and host) and a list of client ranges uses one (two) for the match and the rest for ranges, so a higher value needs fewer rules for the same list: with 10, about a third as many. Raise it only after an apply in your project has accepted a rule of that size."
+  description = "Subexpressions in one rule expression. Cloud Armor accepts 10 and refuses 11 (measured against the API; the rules language reference still says 5). A rule that matches a path (and host) and a list of client ranges uses one (two) for the match and the rest for ranges, so fewer means more rules for the same list. Lower it only if your project's API refuses a rule."
   type        = number
-  default     = 5
+  default     = 10
   validation {
     condition     = contains([5, 6, 7, 8, 9, 10], var.max_subexpressions)
     error_message = "max_subexpressions is 5 to 10."

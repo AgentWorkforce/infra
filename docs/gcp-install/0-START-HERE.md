@@ -1158,6 +1158,21 @@ gcloud container clusters create agent-relay --location $R --num-nodes 1 \
   --enable-shielded-nodes --enable-dataplane-v2
 ```
 
+**`Operation denied by org policy ... default Compute Engine service
+account`?** Your organization does not allow nodes to run as the default
+service account. Create one for the nodes and pass it:
+
+```sh
+gcloud iam service-accounts create agent-relay-nodes
+gcloud projects add-iam-policy-binding $P --role roles/container.defaultNodeServiceAccount \
+  --member "serviceAccount:agent-relay-nodes@$P.iam.gserviceaccount.com"
+```
+
+then add `--service-account agent-relay-nodes@$P.iam.gserviceaccount.com` to
+the `clusters create` command, and in step 4 set
+`gke_node_service_account = "agent-relay-nodes@<project id>.iam.gserviceaccount.com"`
+so the image mirror grants it read access.
+
 A regional cluster with `--num-nodes 1` gets one node in each of the region's
 three zones. Then continue at step 1 with `<cluster>` = `agent-relay` and
 `<cluster VPC>` = `agent-relay-vpc`, and grant the node service account in
