@@ -34,6 +34,10 @@ Detection order:
   `*-bundle.pem` here, then `~/.agent-relay-install/rds-ca.pem`.
 - **Database names:** taken from the URLs; pass `--*-database` only to assert them.
 
+If something is not found, the run ends with **Missing files - how to fix**:
+which file, where it looked, and the command to fix it (for a missing CA, the
+download URL with your region taken from the RDS hostname).
+
 The values file is linted for mistakes seen in real installs: example
 placeholders left in (with line numbers), an OpenSearch endpoint without
 `https://`, and an RDS CA `caSha256` that is the example value or does not

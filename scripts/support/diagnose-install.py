@@ -556,6 +556,8 @@ def discover(options, notes):
     """Fill in anything not passed explicitly; record what was used."""
     cwd = Path.cwd()
     home = Path.home()/'.agent-relay-install'
+    options.missing = {}
+    options.no_credentials = False
     if not options.context and options.scope != 'database':
         try:
             out = subprocess.run(['kubectl', 'config', 'current-context'], text=True,
@@ -567,6 +569,9 @@ def discover(options, notes):
             pass
         if not options.context:
             notes.append('kube context: none found; cluster checks will be UNKNOWN')
+            options.missing['context'] = ('No kube context. On the cluster VPN, run: aws eks update-kubeconfig '
+                                          '--name <cluster> --region <region>, or pass --context <name>. '
+                                          'On the database VPN this is expected; use --scope database.')
     cluster_ok = False
     if options.context and options.scope != 'database':
         try:
@@ -586,7 +591,13 @@ def discover(options, notes):
             options.secret_manifests = manifests
             notes.append('credentials: '+str(len(manifests))+' Secret YAML file(s): '+', '.join(f.name for f in manifests))
         else:
-            notes.append('credentials: none found (no cluster, no ~/.agent-relay-install/secret-files, no Secret YAMLs here or in ./secrets)')
+            options.no_credentials = True
+            notes.append('credentials: none found')
+            options.missing['credentials'] = (
+                'No database credentials found. Looked for: the deployed Secrets (cluster not reachable), '
+                '~/.agent-relay-install/secret-files, and Secret YAMLs in '+str(cwd)+' or '+str(cwd/'secrets')+'. '
+                'Fix: copy the filled-in Secret YAMLs you applied (01-agent-relay-secrets.yaml ... '
+                '05-search-indexer-owner.yaml) into ./secrets, or pass --secret-manifests <folder>.')
     if not options.ca_file:
         for candidate in [cwd/n for n in CA_NAMES] + sorted(cwd.glob('*-bundle.pem')) + [home/'rds-ca.pem']:
             if _is_ca(candidate):
@@ -594,12 +605,18 @@ def discover(options, notes):
                 notes.append('database CA: '+str(candidate))
                 break
         else:
-            notes.append('database CA: none found (looked for rds-ca.pem here); TLS checks may fail')
+            notes.append('database CA: none found')
+            options.missing['ca'] = None  # filled in after credentials load (region from the RDS host)
     if options.values is None:
         options.values = [f for f in _yaml_files(cwd) if 'values' in f.name.lower()
                           and f not in _secret_manifest_files([cwd])]
         if options.values:
             notes.append('values file(s): '+', '.join(f.name for f in options.values))
+        else:
+            notes.append('values file: none found')
+            options.missing['values'] = ('No *values*.yaml in '+str(cwd)+', so the values checks were skipped. '
+                                         'Fix: copy the values file you installed with (e.g. values-eks-poc.yaml) here, '
+                                         'or pass --values <path>.')
     if not options.output:
         stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
         options.output = cwd/('install-diagnostic-'+stamp+'.json')
@@ -687,13 +704,35 @@ def main(argv=None):
             cluster_checks(options,report)
         else:
             report.unknown('cluster','not-reachable')
-    credentials = load_credentials(options,report)
-    if options.scope in ('database','all'):
+    missing = getattr(options,'missing',{})
+    if getattr(options,'no_credentials',False):
+        credentials = {}
+        report.unknown('credentials','none-found')
+    else:
+        credentials = load_credentials(options,report)
+        absent = sorted({SLOTS[c['check'].split('.',1)[1]][0] for c in report.checks
+                         if c['check'].startswith('credential.') and c['detail']=='manifest-secret-missing'
+                         and c['check'].split('.',1)[1] in SLOTS})
+        if absent:
+            missing['secrets'] = ('These Secrets were not in the YAML files found: '+', '.join(absent)+
+                                  '. Add their filled-in YAMLs to ./secrets (see examples/aws/secrets/).')
+    if 'ca' in missing:
+        regions = sorted({m.group(1) for c in credentials.values()
+                          for m in [re.search(r'\.([a-z]{2}(?:-gov)?-[a-z]+-\d)\.rds\.amazonaws\.com$', c['host'])] if m})
+        region = regions[0] if len(regions)==1 else '<region>'
+        missing['ca'] = ('No database CA file (looked for rds-ca.pem, database-ca.pem, global-bundle.pem, *-bundle.pem here, '
+                         'then ~/.agent-relay-install/rds-ca.pem); TLS logins will fail. Fix: '
+                         'curl -fsS -o rds-ca.pem https://truststore.pki.rds.amazonaws.com/'+region+'/'+region+'-bundle.pem '
+                         '(or pass --ca-file <path>).')
+    if getattr(options,'no_credentials',False):
+        report.unknown('database','no-credentials')
+    elif options.scope in ('database','all'):
         database_checks(options,credentials,report)
     else:
         report.unknown('database','not-requested-cluster-only')
     result = report.result()
     result['scope'] = options.scope
+    result['missingInputs'] = sorted(missing)
     result['credentialSource'] = 'local-manifests' if options.secret_manifests else 'local-files' if options.secret_dir else 'named-kubernetes-secrets'
     if options.output:
         try:
@@ -715,6 +754,12 @@ def main(argv=None):
         for c in failures:
             where = ' ['+c['resource']+']' if 'resource' in c else ''
             print('  - '+c['check']+where+': '+c['detail']+(' -> '+c['action'] if c['action'] else ''))
+    if missing:
+        print()
+        print('Missing files - how to fix:')
+        for key in ('credentials','secrets','ca','values','context'):
+            if key in missing:
+                print('  - '+missing[key])
     print()
     print('Summary: '+json.dumps(result['summary'],sort_keys=True))
     print('Report written to '+str(options.output)+' (share this file, never the Secret YAMLs).')

@@ -137,6 +137,34 @@ class CredentialTests(unittest.TestCase):
             diag.load_credentials(options(secret_manifests=[root/'b.json']),report)
             self.assertIn('manifest-invalid-fields', json.dumps(report.result()))
 
+    def test_missing_files_help(self):
+        examples = Path(__file__).resolve().parents[3]/'examples'/'aws'
+        for with_secrets in (False, True):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                if with_secrets:
+                    shutil.copytree(examples/'secrets', root/'secrets')
+                    (root/'secrets'/'02-agent-relay-read-api.yaml').unlink()
+                cwd = os.getcwd()
+                out = io.StringIO()
+                try:
+                    os.chdir(root)
+                    with mock.patch.object(Path, 'home', return_value=root/'nohome'), \
+                         mock.patch.object(diag, 'database_checks'), contextlib.redirect_stdout(out), \
+                         contextlib.redirect_stderr(io.StringIO()):
+                        diag.main(['--scope', 'database'])
+                finally:
+                    os.chdir(cwd)
+                text = out.getvalue()
+                self.assertIn('Missing files - how to fix:', text)
+                self.assertIn('--values <path>', text)
+                if with_secrets:
+                    self.assertIn('truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem', text)
+                    self.assertIn('not in the YAML files found: agent-relay-read-api', text)
+                else:
+                    self.assertIn('No database credentials found', text)
+                    self.assertIn('/<region>/', text)
+
     def test_secret_manifest_args(self):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             diag.parse_args(['--scope','database','--secret-dir','a','--secret-manifests','b'])
