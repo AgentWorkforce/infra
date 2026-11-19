@@ -108,7 +108,7 @@ Legacy components in this inventory do not become new target dependencies.
 - **Postgres.** Every database is PostgreSQL 17:
   - relay-control (relaycontrol): Secret keys `database-url` (runtime role `control_api_runtime`) and `database-migrations-url` (owner).
   - relayhistory: `DATABASE_URL` (runtime role `relayhistory_runtime`) and `DATABASE_MIGRATIONS_URL`. It needs the `vector` and `pg_trgm` extensions.
-  - sessions-pipeline HoopDb: `HOOPDB_URL` (worker and alleyoop) and `HOOPDB_MIGRATION_URL` (migrate). It also needs `vector` and `pg_trgm`.
+  - sessions-pipeline HoopDb: `HOOPDB_URL` (worker and alleyoop) and the dedicated non-administrator `hoopdb_owner` URL as `HOOPDB_MIGRATION_URL` (migrate). It also needs `vector` and `pg_trgm`.
   - durable-actors (when enabled): `postgres-url` in the `actors-credentials` Secret.
 - **Object storage.**
   - The sessions pipeline Locker: `sessions-pipeline.worker.locker` and `alleyoop.locker`, with provider `s3` or `gcs` and `credentials.mode: podIdentity`.
@@ -212,7 +212,7 @@ master secret, or from per-role Secrets Manager / Secret Manager entries.
 | Module output | Chart value or Secret key |
 |---|---|
 | `aws/postgres.host` / `gcp/postgres.private_ip_address`, `port` | Host of `relay-control` `database-url` and `database-migrations-url`; `relayhistory` `DATABASE_URL` and `DATABASE_MIGRATIONS_URL`; `sessions-pipeline` `HOOPDB_URL` and `HOOPDB_MIGRATION_URL`; `durable-actors` `postgres-url` |
-| `aws/postgres.master_user_secret_arn` / `gcp/postgres.admin_password_secret_id` | Bootstrap only (the SQL below). Never an application credential |
+| `aws/postgres.master_user_secret_arn` / `gcp/postgres.admin_password_secret_id` | One-off bootstrap only. Fresh installs store `hoopdb_owner`, never this administrator URL. A legacy install may create it only in the short-lived `hoopdb-admin-jobs` Secret while migration/bootstrap Jobs run |
 | `gcp/postgres.connection_name` | `sessions-pipeline.worker.extraEnv` and `alleyoop.extraEnv` `CLOUD_SQL_CONNECTION_NAME` (`values-gcp.yaml`) |
 | `*/object-storage.bucket_name` | `sessions-pipeline.worker.locker.bucket` and `alleyoop.locker.bucket`; or `durable-actors.storage.bucket`, and relaycast/relayfile `artifactBucket`, `fileStore.bucket` and `blobStore.bucket` |
 | `aws/object-storage.bucket_region` / `gcp/object-storage.region` (null for dual- and multi-regions) | `worker.locker.region` and `alleyoop.locker.region` (or `durable-actors.storage.s3.region`) |
@@ -232,7 +232,7 @@ This PR provides no runnable bootstrap for the complete target. Database creatio
 
 The modules create the server, and on GCP optionally the databases. They do
 not connect to Postgres. Before you install or upgrade the chart, run this from
-a host or Job that can reach the database, as the administrator (the RDS master
+a host or one-off setup Job that can reach the database, as the administrator (the RDS master
 user, `rds_superuser`, read from `master_user_secret_arn`; or the Cloud SQL
 `admin_user`, `cloudsqlsuperuser`):
 
@@ -240,7 +240,7 @@ user, `rds_superuser`, read from `master_user_secret_arn`; or the Cloud SQL
    - Target databases are `relaycontrol`, `hoopdb`, `relaycast` and optionally `relayfile`. Retain a legacy `relayhistory` or durable-actors database until its separately reviewed cutover; do not create those as new target dependencies. On RDS, `database_name` creates only the first; on Cloud SQL, use `databases`.
    - The target migration owners are `control_owner`, `hoop`, `relaycast_owner`, and (when enabled) `relayfile_owner`. Their runtime logins are `control_api_runtime`, `sessions_pipeline_runtime`, `relaycast_runtime`, and `relayfile_runtime`, respectively. Keep legacy `relayhistory_runtime` only for an existing legacy deployment, outside the new target.
    - Store their passwords in Secrets Manager or Secret Manager. They become the URLs in the release Secret.
-2. **Extensions.** Install only the extension manifest required by each pinned service generation. HoopDb's accepted bootstrap must supply its required extensions (for example `vector`, `pg_trgm` and, when required by that generation, `btree_gin`). The older `relayhistory` extension instructions apply only to an existing legacy History database; fresh target installations do not create one. Confirm managed-provider support and administrator ownership before migration.
+2. **Extensions and owner.** Install only the extension manifest required by each pinned service generation. HoopDb's accepted bootstrap must supply its required extensions (for example `vector`, `pg_trgm` and, when required by that generation, `btree_gin`) and hand database/schema ownership to the non-privileged `hoopdb_owner` before migration. The older `relayhistory` extension instructions apply only to an existing legacy History database; fresh target installations do not create one. Confirm managed-provider support during the one-off administrator bootstrap.
 3. **HoopDb role bootstrap, before the sessions-pipeline migrate Job.** Run the
    SQL shipped in the services image you deploy (`/app/supabase/bootstrap/`).
    Otherwise migrate fails with `42501` or waits for roles:

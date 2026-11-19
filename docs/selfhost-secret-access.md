@@ -4,21 +4,50 @@ Applies to every Kubernetes install (GKE, EKS, AKS).
 
 ## Why this matters
 
-Two of the install's Secrets hold a **database administrator** URL for HoopDb,
-the sessions database. It is the Cloud SQL `cloudsqlsuperuser` login on Google
-Cloud and the RDS master login on AWS:
+On a fresh install, two long-lived Secrets hold the dedicated `hoopdb_owner`
+URL for HoopDb, the sessions database. On an existing administrator-owned
+install, the database remains administrator-owned: after the first successful
+upgrade through the temporary-Secret flow, both old keys are absent rather
+than replaced by `hoopdb_owner` URLs; until then they may still contain the
+provider administrator URL. The dedicated login is not a provider
+administrator, superuser, role creator or database creator, but it owns the
+HoopDb database and its objects:
 
 | Secret | Key | Read by |
 | --- | --- | --- |
 | `agent-relay-secrets` | `HOOPDB_MIGRATION_URL` | The HoopDb migration Job (`<release>-worker-migrate`) on install and upgrade, and the one-off operator Jobs in the install guide |
 | `search-indexer-owner` | `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` | The search indexer bootstrap Job and the output facts bootstrap Job |
+| `hoopdb-admin-jobs` (existing administrator-owned installs only, temporary) | Both keys above | Migration/bootstrap and guide Jobs while an operator has explicitly prepared the Secret |
+
+Check the two old administrator keys immediately after that first successful
+upgrade. Both commands must exit zero:
+
+```bash
+kubectl -n agent-relay get secret agent-relay-secrets -o json \
+  | jq -e '.data.HOOPDB_MIGRATION_URL == null'
+kubectl -n agent-relay get secret search-indexer-owner -o json \
+  | jq -e '.data.RELAYHISTORY_PIPELINE_CONSUMER_SECRET == null'
+```
+
+If either Secret is owned by an `ExternalSecret` (or carries the
+`reconcile.external-secrets.io/managed` label), do not patch it. Remove the
+named key from the Helm release values used by every later upgrade, the live
+ExternalSecret mapping, and its backing-store value; wait for reconciliation,
+and repeat the checks. The setup and upgrade helpers also check for a mapping
+when the generated Secret key is already absent, so a later reconciliation
+cannot restore the administrator URL. They
+refuse to patch an ESO-managed Secret and retain `hoopdb-admin-jobs` until the
+operator completes those store-side changes.
 
 No long-running pod reads either key: the services use their own least-privilege
 logins. But `agent-relay-secrets` also holds keys the running services do
 need, and Kubernetes RBAC grants access to a whole Secret, not to one key. So
 **anyone who can read Secrets in the namespace can read every session
-transcript and change the schema**, with a login that bypasses the database's
-own permissions.
+transcript and change the schema**. On a legacy administrator-owned install,
+the temporary `hoopdb-admin-jobs` URL is the Cloud SQL administrator, RDS
+master or Azure/CNPG superuser and has still broader authority. The setup and
+upgrade flows delete it after the dependent Jobs succeed; it must receive the
+same RBAC protection while it exists.
 
 The other Secrets hold runtime logins, signing keys and the encryption master
 key. They need the same care; the administrator URL is simply the worst one to
@@ -193,36 +222,26 @@ Turn on audit logging for Secret reads so an unexpected one is visible:
   encryption with a Cloud KMS key on GKE, envelope encryption with a KMS key
   on EKS. It protects etcd and its backups, not the
   Kubernetes API, so it does not replace the steps above.
-- Rotate the administrator password after the people who held it change.
-  Changing the password in the cloud does not change the two Secret keys
-  above, and the next upgrade's migration and bootstrap Jobs fail with an
-  authentication error until both hold the new URL. So rotation is three
-  steps:
-  1. Change the password. Google Cloud: raise `admin_user.password_version`
-     for the postgres module in Terraform and apply. AWS: RDS rotates a
-     managed master password by itself (every 7 days by default).
-  2. Write the new URL into **both** keys,
-     `agent-relay-secrets/HOOPDB_MIGRATION_URL` and
-     `search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET` (JSON:
-     `{"hoopdb_url": "<url>"}`), the same way you created the Secrets:
-     `kubectl`, helm-secrets, or your secret store with External Secrets
-     Operator. Only the password part of the URL changes. On AWS,
-     `rds-setup.sh refresh-admin` rewrites the two local credential files
-     with the current password, and `agent-relay-upgrade.sh --rds-setup`
-     also patches the two keys in the cluster before each upgrade; without
-     that flag, publish the files yourself.
-  3. Check before upgrading:
-
-     ```sh
-     kubectl -n agent-relay get secret agent-relay-secrets -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's#(://[^:]+):[^@]+@#\1:<password>@#'
-     ```
-
-     prints the URL with the password hidden; compare the user and host,
-     and confirm the Secret's `metadata.managedFields` time (or your secret
-     store's sync time) is after the rotation.
+- Rotate database credentials after the people who held them change. There is
+  no supported `hoopdb_owner` rotation helper today: the setup scripts' `pre`
+  mode is an install/recovery state machine and must not be used to regenerate
+  URLs after changing a completed install's password. Do not change that role's
+  password until a helper can atomically update its saved state, both owner
+  URLs (or both ESO backing-store values), and verify a migration connection.
+  The ownership-transfer and rotation helper remains follow-up work under
+  [#480](https://github.com/AgentWorkforce/infra/issues/480).
+  On an existing administrator-owned install, rotate
+  the provider administrator normally, then rerun the platform setup helper's
+  `pre`/`prepare-admin-jobs` flow immediately before the next upgrade; it
+  creates `hoopdb-admin-jobs` from the current credential and removes it after
+  success. Never copy that administrator URL back into either long-lived key.
 
 ## What this does not fix
 
-The administrator URL still sits in the cluster between upgrades, although
-only install-time Jobs use it. Removing it is tracked in
-[AgentWorkforce/infra#480](https://github.com/AgentWorkforce/infra/issues/480).
+The long-lived `hoopdb_owner` URL can still read and change HoopDb because it
+owns the database objects; RBAC and audit logging remain necessary. Existing
+administrator-owned databases also remain administrator-owned until the
+ownership-transfer follow-up under
+[AgentWorkforce/infra#480](https://github.com/AgentWorkforce/infra/issues/480),
+but their administrator URL is present in Kubernetes only while the temporary
+Job Secret exists.

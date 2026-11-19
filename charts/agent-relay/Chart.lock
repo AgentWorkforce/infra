@@ -7,7 +7,7 @@ dependencies:
   version: 0.1.5
 - name: sessions-pipeline
   repository: file://../sessions-pipeline
-  version: 0.8.50
+  version: 0.8.51
 - name: relay-control
   repository: file://../relay-control
   version: 0.4.22
@@ -35,5 +35,5 @@ dependencies:
 - name: relaygate
   repository: file://../relaygate
   version: 0.1.10
-digest: sha256:a4a325ec3ae15db069e46b7a81325f8398a97d2874ee7a2543c0ee803112595a
-generated: "2026-11-19T01:03:48.144280701-08:00"
+digest: sha256:83a72086d431f6e9782d91b3cf2fd079df7938e2ba89f7ff204c1f4023570319
+generated: "2026-11-19T01:44:21.234330876-08:00"

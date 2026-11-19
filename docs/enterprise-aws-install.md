@@ -197,7 +197,7 @@ The AWS target is **one RDS instance with separate logical databases**:
 | Service | Database | Schema | Migration owner | Runtime role |
 | --- | --- | --- | --- | --- |
 | Control | `relaycontrol` | `public` | `control_owner` | `control_api_runtime` |
-| Pipeline / HoopDb | `hoopdb` | `sessions` | `hoop` | `sessions_pipeline_runtime` |
+| Pipeline / HoopDb | `hoopdb` | `sessions` | `hoopdb_owner` (fresh installs) | `sessions_pipeline_runtime` |
 | Relaycast | `relaycast` | `public` | `relaycast_owner` | `relaycast_runtime` |
 | Relayfile, if selected | `relayfile` | `public` | `relayfile_owner` | `relayfile_runtime` |
 
@@ -222,6 +222,13 @@ export STATE_DIR=/approved/private/agent-relay-install
 scripts/selfhost/rds-setup.sh pre
 ```
 
+The standard environment creates `relaycontrol` as the initial RDS database,
+so `pre` creates `hoopdb` itself. If a new environment instead chose literal
+`hoopdb` as the provider-created initial database, the script first proves
+that it has no `sessions` schema or HoopDb roles and then treats it as fresh.
+An administrator-owned database with either kind of state is classified as an
+existing legacy installation and is not converted.
+
 The command creates the `rds-ca` ConfigMap and mode-restricted Secret input
 files under `$STATE_DIR/secret-files`. It prints neither database passwords nor
 connection strings. Merge those files with the non-database secrets in the
@@ -241,11 +248,13 @@ After the HoopDb migration Job succeeds, run `rds-setup.sh post` and restart the
 read API, ingest edge, and search indexer. The post phase refuses to activate
 those logins before migration evidence exists and verifies each login over TLS.
 
-Two of the install's Kubernetes Secrets, `agent-relay-secrets`
-(`HOOPDB_MIGRATION_URL`) and `search-indexer-owner`, hold the RDS master
-login's URL, which only the migration and bootstrap Jobs use. Anyone who can
-read Secrets in the namespace, or start a pod there, can use it. EKS access
-entries with `AmazonEKSClusterAdminPolicy`, `AmazonEKSAdminPolicy` or
+On a fresh install, `agent-relay-secrets` (`HOOPDB_MIGRATION_URL`) and
+`search-indexer-owner` hold the plain `hoopdb_owner` URL, never the RDS master
+URL. An existing administrator-owned install creates the RDS master URL only
+in temporary `hoopdb-admin-jobs` while migration and bootstrap Jobs run.
+Anyone who can read Secrets in the namespace, or start a pod there, can use
+whichever database credential is present. EKS access entries with
+`AmazonEKSClusterAdminPolicy`, `AmazonEKSAdminPolicy` or
 `AmazonEKSEditPolicy` grant that. Keep them to the people who install and
 upgrade, give everyone else `AmazonEKSViewPolicy` scoped to the namespace, and
 follow [selfhost-secret-access.md](selfhost-secret-access.md) for the example
@@ -340,6 +349,13 @@ verified pack copy by replacing only its documented mirror-root placeholder.
 `NAMESPACE`
 must be the Terraform environment's `namespace` recorded in step 2; a different
 namespace leaves every workload without its Pod Identity role.
+`rds-setup.sh pre` writes the database's authoritative, non-secret layout to
+`$STATE_DIR/hoopdb-layout-values.yaml`: `separate-database` for a fresh
+dedicated owner and `master-owner` for an existing administrator-owned
+database. The chart's `values-eks-rds-native.yaml` carries the fresh layout,
+while the `eks` and compatibility `eks-native` profile files do not. Always
+pass the generated overlay after the pack/site values as shown below so an
+older pack or site-values copy cannot omit or reverse the database's layout.
 Run `helm list --all` in that exact context/namespace. Only confirmed absence
 permits this **first-install** command:
 
@@ -350,6 +366,7 @@ helm install "$RELEASE" "$CHART_PACKAGE" \
   --values "$INSTALL_PACK_DIR/values.yaml" \
   --values "$INSTALL_PACK_DIR/overlay.yaml" \
   --values /approved/private/customer.values.yaml \
+  --values "$STATE_DIR/hoopdb-layout-values.yaml" \
   --values /approved/private/release-images.values.yaml \
   --no-hooks --timeout 20m
 ```
@@ -392,6 +409,12 @@ services and PostgreSQL client images, so export `AWS_REGION`, `RDS_HOST`,
 Inspect every Job before running `post`; a failed or missing current migration
 blocks activation. Run the packet's ordered pre-install SQL/Jobs before the
 Helm command where required.
+If the migrate Job reports `"error_code":"rds_profile_unproven"`, inspect the
+rendered `HOOPDB_RDS_LAYOUT`: a fresh `hoopdb_owner` database needs
+`separate-database`, while an administrator-owned database needs the
+`master-owner` overlay produced by `rds-setup.sh pre`. The refusal is
+pre-migration; fix the values/profile pairing rather than changing role
+attributes.
 For an existing release, follow the [pre-upgrade gate](../scripts/selfhost/README.md#pre-upgrade-gate)
 and use `helm upgrade` with its reviewed package and values. Do not add `--install`
 to an upgrade, or `--atomic` to a database-changing installation. If the
@@ -555,15 +578,17 @@ ship `values-eks-rds-native.yaml` (2026.11.0 does not).
 
 If `rds-setup.sh` bootstrapped the databases, add `--rds-setup` (implied by
 `eks-rds-native`) and export `AWS_REGION`, `RDS_HOST`, `RDS_ADMIN_SECRET_ARN`
-and `STATE_DIR` as for `pre`. Before every `helm upgrade` the upgrader then
-runs `rds-setup.sh refresh-admin` and writes the two rewritten keys
-(`agent-relay-secrets/HOOPDB_MIGRATION_URL` and
-`search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET`) into those
-Secrets with a merge patch read from a file, leaving their other keys alone.
-If an external secret controller owns those Secrets, update them through it
-instead and do not pass `--rds-setup`. When the values select
-`databaseMode: rds` without `--rds-setup`, the plan prints a note rather than
-guessing.
+and `STATE_DIR` as for `pre`. Fresh PostgreSQL 16+ installs store the dedicated
+`hoopdb_owner` URL in the two long-lived keys; no administrator URL enters the
+cluster. An existing administrator-owned install is detected and left in its
+legacy role graph. Immediately before its upgrade the upgrader creates
+`hoopdb-admin-jobs` and points only migrate/bootstrap Jobs at it. After Helm,
+all Jobs and all Deployments succeed, it removes the old administrator-derived
+keys from the long-lived Secrets and deletes the temporary Secret. If that
+Secret cannot be created, the upgrade stops before Helm changes anything.
+Ownership transfer for existing installs is a follow-up under #480. When values
+select `databaseMode: rds` without `--rds-setup`, the plan prints a note rather
+than guessing.
 
 For a new installation, add `--first-install`; see step 4.
 

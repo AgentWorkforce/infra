@@ -290,6 +290,14 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "missing database Secret" "hoopdb.existingSecret or existingSecret is required for HOOPDB_URL" --set hoopdb.existingSecret=
         expect_render_failure "$chart" "$v" "migration Secret without key" "migrations.hoopdb.existingSecret and key must be set together" --set migrations.hoopdb.existingSecret=hoopdb-migration
         expect_render_failure "$chart" "$v" "migration key without Secret" "migrations.hoopdb.existingSecret and key must be set together" --set migrations.hoopdb.key=HOOPDB_MIGRATION_URL
+        rds_out=$(render "$chart" "$v" --set migrations.databaseMode=rds --set migrations.supabaseShim=false --set migrations.runtimeRoleLogin=true --set migrations.rdsLayout=separate-database --set migrations.waitForRole.enabled=false)
+        [ "$(yq 'select(.kind == "Job" and (.metadata.name | contains("migrate"))) | [.spec.template.spec.containers[0].env[] | select(.name == "HOOPDB_RDS_LAYOUT" and .value == "separate-database")] | length | select(. == 1)' <<<"$rds_out")" = 1 ] \
+          || err "$chart: rdsLayout must render once into the migrate Job"
+        ! yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "HOOPDB_RDS_LAYOUT")' <<<"$rds_out" | grep -q . \
+          || err "$chart: HOOPDB_RDS_LAYOUT must not reach long-running workloads"
+        expect_render_failure "$chart" "$v" "rds layout outside rds" "migrations.rdsLayout is supported only in rds mode" --set migrations.rdsLayout=separate-database
+        expect_render_failure "$chart" "$v" "unknown rds layout" "migrations.rdsLayout must be master-owner or separate-database" --set migrations.databaseMode=rds --set migrations.supabaseShim=false --set migrations.runtimeRoleLogin=true --set migrations.rdsLayout=unknown --set migrations.waitForRole.enabled=false
+        expect_render_failure "$chart" "$v" "raw rds layout env" "extraEnv must not set HOOPDB_RDS_LAYOUT" --set-json 'extraEnv=[{"name":"HOOPDB_RDS_LAYOUT","value":"separate-database"}]'
         v=charts/sessions-pipeline-worker/ci/external-secrets-values.yaml
         expect_render_failure "$chart" "$v" "unmapped managed migration key" "externalSecrets.data must map HOOPDB_MIGRATION_URL" --set migrations.hoopdb.existingSecret=sessions-pipeline --set migrations.hoopdb.key=HOOPDB_MIGRATION_URL
         render "$chart" "$v" --set migrations.enabled=false --set migrations.hoopdb.existingSecret=sessions-pipeline --set migrations.hoopdb.key=HOOPDB_MIGRATION_URL >/dev/null \

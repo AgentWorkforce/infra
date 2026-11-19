@@ -143,6 +143,12 @@ roles, the `postgres-ca` ConfigMap and every credential file under
 CloudNativePG superuser by `kubectl exec` into the primary, as the chart's own
 privileged Jobs do.
 
+On a fresh install, `hoopdb_owner` owns HoopDb and both migration/bootstrap
+Secret keys contain only that non-superuser URL. The PostgreSQL superuser is
+used only by this setup command and is never written into the cluster. A
+rerun detects an older `hoop`-owned install and leaves its objects and role
+graph unchanged; see the temporary-Secret upgrade flow below.
+
 **Done when:** it ends with `pre done`.
 
 ### 5. Values and Secrets
@@ -189,7 +195,8 @@ done
 
 ```sh
 helm upgrade --install agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
 for j in $(kubectl -n agent-relay get jobs -o name | grep -E 'relay-control-migrate|agent-relay-worker-migrate'); do
   kubectl -n agent-relay wait --for=condition=complete "$j" --timeout=20m
 done
@@ -205,7 +212,8 @@ bash postgres-setup.sh post
 kubectl -n agent-relay rollout restart deploy/agent-relay-read-api deploy/agent-relay-ingest-edge deploy/agent-relay-search-indexer
 for j in $(kubectl -n agent-relay get jobs -o name | grep search-indexer-bootstrap); do kubectl -n agent-relay delete "$j"; done
 helm upgrade --install agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
 kubectl -n agent-relay wait --for=condition=complete "$(kubectl -n agent-relay get jobs -o name | grep search-indexer-bootstrap)" --timeout=10m
 kubectl -n agent-relay rollout status deploy --timeout=10m
 bash postgres-setup.sh finalize
@@ -214,8 +222,8 @@ bash postgres-setup.sh finalize
 **Done when:** three `login ok ... tls=true` lines, the bootstrap Job
 completes, every pod is `Running`, and `finalize` prints `owner createrole: false`.
 
-Before any later upgrade, see
-[Upgrades: give CREATEROLE back first](#upgrades-give-createrole-back-first-interim).
+Before any later upgrade, rerun `postgres-setup.sh pre` to identify the saved
+layout, then follow the upgrade flow below.
 
 ### 8. Edge and checks
 
@@ -261,7 +269,8 @@ sessions-pipeline:
 
 ```sh
 helm upgrade agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
 kubectl -n agent-relay wait --for=condition=complete --timeout=2h \
   job -l app.kubernetes.io/component=output-facts-bootstrap
 ```
@@ -293,7 +302,8 @@ Then apply it with this guide's files:
 
 ```sh
 helm upgrade agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
 kubectl -n agent-relay rollout status deploy/agent-relay-worker-session-brief deploy/agent-relay-worker-session-summary-worker --timeout=10m
 ```
 
@@ -301,23 +311,16 @@ kubectl -n agent-relay rollout status deploy/agent-relay-worker-session-brief de
 summary in the dashboard. The GKE step lists the log lines that show model
 versus extractive summaries, the daily limits, and how to turn it off.
 
-## Upgrades: give CREATEROLE back first (interim)
+## Upgrades: dedicated owner and legacy temporary credentials
 
-**Known self-hosted upgrade issue.** Step 7 ends with `finalize`, which takes
-CREATEROLE back from the HoopDb migration owner (`hoop`). An upgrade then needs
-it again for a short time:
-
-- The chart names the `search-indexer-bootstrap` Job from a hash of the
-  `searchIndexer` values, which include the image digest. Every release with a
-  new services image therefore renders a new bootstrap Job, by design.
-- The services image's search consumer bootstrap requires the migration owner
-  to have SUPERUSER or CREATEROLE, even when `search_consumer_runtime` already
-  exists. Without it, the new Job fails with
-  `42501 current role may not create roles`.
-
-**This is interim.** The fix, a relayhistory-pipeline bootstrap that skips the
-check when the role already exists, is in progress. Once it ships and the chart
-pins it, this section goes away.
+Fresh installs use `hoopdb_owner`, which has neither `SUPERUSER` nor
+`CREATEROLE`, for every migration and bootstrap Job. Ownership transfer for
+older `hoop`-owned installs is a follow-up under #480. On those installs the
+upgrade first copies the administrator URL to `hoopdb-admin-jobs`. The two old
+keys remain until Helm, every affected Job and all Deployments succeed, so the
+previous revision can still roll back. The successful flow then removes both
+old keys and deletes the temporary Secret. Long-running workloads never
+reference the administrator URL.
 
 Fetch the new release into a new directory, not `release`: `gh release
 download` will not overwrite the files from the install. Set the new tag and
@@ -335,59 +338,95 @@ mkdir "$NEW_DIR" && gh release download "$NEW_TAG" -R AgentWorkforce/infra -D "$
 and `echo "$CHART"` names the new chart package. Then:
 
 ```sh
-# Prints the name of the one bootstrap Job the deployed release renders.
-bootstrap_job() {
-  local j
-  j="$(helm -n agent-relay get manifest agent-relay \
-    | awk '/^---/{k=""} /^kind: Job$/{k=1} k && /^  name: /{print $2; k=""}' \
-    | grep -E -- '-search-indexer-bootstrap-[0-9a-f]{8}$')"
-  [ -n "$j" ] && [ "$(printf '%s\n' "$j" | wc -l)" -eq 1 ] \
-    || { echo "expected exactly one search-indexer bootstrap Job in the release" >&2; return 1; }
-  printf '%s' "$j"
+# Prints every Job in the selected release. This includes migrate, search
+# bootstrap, output-facts bootstrap, and future release Jobs.
+release_jobs() {
+  helm -n agent-relay get manifest agent-relay \
+    | yq -N -r 'select(.kind == "Job") | .metadata.name' \
+    | sort -u
 }
 
-# 1. Give the migration owner CREATEROLE back, as postgres-setup.sh pre does.
-PRIMARY="$(kubectl -n agent-relay get cluster.postgresql.cnpg.io hoopdb -o jsonpath='{.status.currentPrimary}')"
-kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- \
-  psql -X -q -v ON_ERROR_STOP=1 -d hoopdb -c 'ALTER ROLE hoop CREATEROLE;'
-kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- \
-  psql -X -A -t -v ON_ERROR_STOP=1 -d hoopdb -c "select 'owner createrole: '||rolcreaterole from pg_roles where rolname='hoop'"
+# 1. Classify the saved layout without changing an existing role graph.
+if ! bash postgres-setup.sh pre; then
+  echo "database setup/classification failed; Helm was not run" >&2
+  exit 1
+fi
 
-# 2. Upgrade, and wait for the bootstrap Job this release renders.
-helm upgrade agent-relay "$CHART" --namespace agent-relay \
-  -f "$NEW_DIR/agent-relay/values-eks.yaml" -f values.yaml -f release-images.values.yaml --timeout 25m \
-  && JOB="$(bootstrap_job)" \
-  && kubectl -n agent-relay wait --for=condition=complete "job/$JOB" --timeout=10m \
-  && kubectl -n agent-relay rollout status deploy --timeout=10m \
-  && echo "upgrade ok"
+admin_jobs_prepared=false
+cleanup_admin_jobs() {
+  $admin_jobs_prepared || return 0
+  bash postgres-setup.sh delete-admin-jobs
+}
+trap 'cleanup_admin_jobs || true' EXIT
+trap 'cleanup_admin_jobs || true; exit 130' INT
+trap 'cleanup_admin_jobs || true; exit 143' TERM
 
-# 3. Take CREATEROLE away again. Always run this, even if step 2 failed.
-bash postgres-setup.sh finalize
+# Existing hoop-owned installs only: create one short-lived administrator Job Secret.
+if [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
+  admin_jobs_prepared=true
+  if ! bash postgres-setup.sh prepare-admin-jobs; then
+    echo "temporary administrator Job Secret preparation failed; Helm was not run" >&2
+    exit 1
+  fi
+fi
+
+# Fail before Helm changes anything if the selected layout's Secret is absent.
+if [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
+  if ! kubectl -n agent-relay get secret hoopdb-admin-jobs >/dev/null; then
+    echo "temporary administrator Job Secret could not be read; Helm was not run" >&2
+    exit 1
+  fi
+fi
+
+# 2. Upgrade, and wait for every Job that reads the temporary Secret.
+upgrade_ok=false
+if helm upgrade agent-relay "$CHART" --namespace agent-relay \
+    -f "$NEW_DIR/agent-relay/values-eks.yaml" -f values.yaml \
+    -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
+    -f release-images.values.yaml --wait --wait-for-jobs --timeout 25m; then
+  upgrade_ok=true
+  JOBS="$(release_jobs)"
+  [ -n "$JOBS" ] || upgrade_ok=false
+  while $upgrade_ok && IFS= read -r JOB; do
+    kubectl -n agent-relay wait --for=condition=complete "job/$JOB" --timeout=10m \
+      || upgrade_ok=false
+  done <<<"$JOBS"
+  $upgrade_ok && kubectl -n agent-relay rollout status deploy --timeout=10m \
+    || upgrade_ok=false
+fi
+
+# 3. Existing installs: only a fully successful upgrade removes the old keys.
+if $upgrade_ok && [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
+  bash postgres-setup.sh remove-legacy-secret-keys || upgrade_ok=false
+fi
+
+# Always delete the temporary copy, including after a failed upgrade.
+cleanup_ok=true
+cleanup_admin_jobs || cleanup_ok=false
+admin_jobs_prepared=false
+trap - EXIT INT TERM
+$upgrade_ok || { echo "upgrade or a temporary-credential Job failed" >&2; exit 1; }
+$cleanup_ok || { echo "temporary hoopdb-admin-jobs Secret was not deleted; run: bash postgres-setup.sh delete-admin-jobs" >&2; exit 1; }
+echo "upgrade ok"
 ```
 
-The first query prints `owner createrole: true`. **Done when:** step 2 prints
-`upgrade ok`, every pod is `Running`, and `finalize` prints
-`owner createrole: false`.
+For a dedicated-owner install, `delete-admin-jobs` is harmless because the
+Secret is absent. For a legacy install, the failed path deletes only the
+temporary Secret; the old long-lived keys stay available to the previous Helm
+revision. Fix the cause and start again at step 1. The successful path removes
+the old keys only after every Job and Deployment is ready. Ownership transfer
+for legacy installs is a follow-up under #480.
 
-Run step 3 whether or not step 2 succeeded: never leave `hoop` with
-CREATEROLE once you stop. Step 2 keeps going only while each command succeeds.
-If it stops, fix the cause and start again from step 1.
-
-If an upgrade already failed with `42501` (because CREATEROLE was not given
-back first, or `finalize` ran before the Job finished), delete the failed Job.
+If an earlier attempt left a failed bootstrap Job, delete it before retrying.
 A Job's pod template is immutable, so Helm does not rerun it. Define
-`bootstrap_job` (above) in your shell, then:
+`release_jobs` (above) in your shell, then:
 
 ```sh
-JOB="$(bootstrap_job)" && kubectl -n agent-relay delete job "$JOB"
+release_jobs | while IFS= read -r JOB; do kubectl -n agent-relay delete job "$JOB"; done
 ```
 
-Then run steps 1 to 3 with the same release.
-
-The RDS ([EKS guide](../enterprise-aws-install.md)) and Cloud SQL
-([GKE guide](../gcp-install/0-START-HERE.md)) installs do not need this: their
-HoopDb migration owner is the database admin role, and their setup scripts
-never take CREATEROLE from it.
+Then run steps 1 to 3 with the same release. Existing-install ownership
+transfer remains a follow-up under #480.
 
 ## AKS receipts upgrade qualification
 
@@ -411,7 +450,7 @@ What the patch does on this install:
   the `relaycast` and `relay-control` images and the Control migration Job
   name (`relay-control-migrate-<identity>`).
 - The `search-indexer-bootstrap` Job keeps its name, so
-  [Upgrades: give CREATEROLE back first](#upgrades-give-createrole-back-first-interim)
+  [Upgrades: dedicated owner and legacy temporary credentials](#upgrades-dedicated-owner-and-legacy-temporary-credentials)
   does not apply to this patch.
 - Relaycast 12.8.0 has already applied `0082` to `0084`. 12.10.0 applies the
   missing `0081` at startup: `deliveries.accepted_at`, `replied_at`,
@@ -461,7 +500,8 @@ kubectl -n agent-relay exec -i <helper pod> -- tar -C /data -xf - < relaycast-da
 kubectl -n agent-relay delete pod <helper pod>
 # The original chart and values files, in the original order, without the overlay
 helm upgrade agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
 ```
 
 - `pg_restore --create` recreates the database with its owner and grants

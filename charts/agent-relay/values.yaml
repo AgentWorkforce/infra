@@ -267,7 +267,7 @@ localKind:
 #           database-url: /agent-relay/relaycontrol/runtime-url
 #           database-migrations-url: /agent-relay/relaycontrol/owner-url
 #           HOOPDB_URL: /agent-relay/hoopdb/runtime-url
-#           HOOPDB_MIGRATION_URL: /agent-relay/hoopdb/migration-url
+#           HOOPDB_MIGRATION_URL: /agent-relay/hoopdb/owner-url  # hoopdb_owner, never the RDS administrator
 #           database-owner-url: /agent-relay/relaycast/owner-url
 #           database-runtime-url: /agent-relay/relaycast/runtime-url
 #           selfhost-setup-key: /agent-relay/selfhost-setup-key

@@ -205,6 +205,7 @@ scripts=(
   "${TEST_DIR}/agent-relay-upgrade-test.sh"
   "${SELFHOST_DIR}/cloud-sql-setup.sh"
   "${TEST_DIR}/cloud-sql-setup-test.sh"
+  "${TEST_DIR}/azure-postgres-setup-test.sh"
   "${SELFHOST_DIR}/desktop-feed-provision.sh"
   "${TEST_DIR}/desktop-feed-provision-test.sh"
   "${SELFHOST_DIR}/rds-setup.sh"
@@ -228,6 +229,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   pass "shellcheck"
 fi
 "${TEST_BASH}" "${TEST_DIR}/cloud-sql-setup-test.sh"
+"${TEST_BASH}" "${TEST_DIR}/azure-postgres-setup-test.sh"
 "${TEST_BASH}" "${TEST_DIR}/desktop-feed-provision-test.sh"
 "${TEST_BASH}" "${TEST_DIR}/agent-relay-upgrade-test.sh"
 "${TEST_BASH}" "${TEST_DIR}/rds-setup-test.sh"
