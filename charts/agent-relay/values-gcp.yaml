@@ -141,9 +141,17 @@ relayauth:
 sessions-pipeline:
   worker:
     image:
-      # Preferred customer services image from relayhistory-pipeline main 7e9b2f0f
-      # (#509 alpha.5 on top of #505), signed publish run 42964243811. Mirror
-      # it by digest to your registry and override repository. Before its
+      # Customer services image from relayhistory-pipeline main efdd4bb2 (issue
+      # 610 Phase 3: staged reconcile on by default), signed publish run
+      # 44489159041. Vendors relayscrubber 0.5.0-alpha.9 under Khaliq's
+      # recorded override of the relayscrubber-lead security block (see
+      # self-hosted/customer-images.yaml); alpha.10 replaces it when it passes.
+      # Mirror it by digest to your registry and override repository. Upgrading
+      # an existing database to efdd4bb2: first re-run cloudsql_migration_roles.sql
+      # from this image as the migration owner (it adds the
+      # bulls96_legacy_export_privacy role), and on a populated database
+      # prebuild the migration 058000 indexes or set
+      # worker.migrations.allowBlockingIndexBuild once. Before its
       # first migrate, run the Cloud SQL
       # bootstraps shipped in the image (/app/supabase/bootstrap/) as the
       # migration owner, in order: cloudsql_migration_roles.sql,
@@ -153,7 +161,7 @@ sessions-pipeline:
       # upgrade from 0.3.6 adds session_token_verifier.sql and
       # session_ingest_roles.sql; the others already ran at install.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
     # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
     existingSecret: example-agent-relay-secrets
     summaryEncryption:
@@ -203,7 +211,7 @@ sessions-pipeline:
     image:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
     # REQUIRED OVERRIDE: existing Secret name; see README for required keys.
     existingSecret: example-agent-relay-secrets
     hoopdb:
@@ -246,7 +254,7 @@ sessions-pipeline:
     image:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
     # REQUIRED OVERRIDE: https://<gkeIngress.hosts.history>.
     origin: https://history.placeholder.company
     completeSince: epoch
@@ -303,7 +311,7 @@ sessions-pipeline:
     image:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
     # REQUIRED OVERRIDE: the same origin as sessionReadApi.origin.
     origin: https://history.placeholder.company
     allowInClusterHttp: true
@@ -339,7 +347,7 @@ sessions-pipeline:
     image:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
     completeSince: epoch
     config: { existingSecret: search-indexer-runtime }
     search: { backend: postgres, backendId: gcp-native }

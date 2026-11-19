@@ -31,6 +31,15 @@ class SearchStaged(unittest.TestCase):
         result = render({'searchIndexer': {'outputFacts': {'enabled': True}, 'stagedReconcile': {'enabled': True}}})
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_streaming_with_output_facts_allowed_unless_staged_off(self):
+        for staged in (None, True):
+            with self.subTest(staged=staged):
+                values = {'streaming': {'enabled': True}, 'outputFacts': {'enabled': True}}
+                if staged is not None:
+                    values['stagedReconcile'] = {'enabled': staged}
+                result = render({'searchIndexer': values})
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_refusals(self):
         for values, message in (
             ({'stagedReconcile': {'enabled': 'true'}}, 'stagedReconcile.enabled must be null, true or false'),
