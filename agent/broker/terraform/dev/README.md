@@ -28,15 +28,18 @@ That change is one-way: a cluster cannot go back to `CONFIG_MAP`.
 
 ## Order
 
-1. The dev account's owner applies this root (below). The role then exists.
-2. `layered-infra-ops` applies `../sandbox` from `main`-equivalent code: the
+1. Merge the change that adds the account to `allowlist.json`. The broker
+   host still runs the old `agent/broker.ref`, so nothing is issued yet.
+2. The dev account's owner applies this root (below). The role then exists.
+3. `layered-infra-ops` applies `../sandbox` from `main`, plan first: the
    broker role's `vend-agent-sessions` policy gains the new role in its
    `sts:AssumeRole` targets (an in-place update).
-3. Merge the PR that adds the account to `allowlist.json`, then move
-   `agent/broker.ref` so the host picks it up.
+4. Move `agent/broker.ref` to the merge commit in a second PR, so the host
+   picks up the allowlist.
 
-Merging the allowlist first is safe but useless: requests would be issued
-and then fail at `AssumeRole` until steps 1 and 2 are done.
+Steps 2 and 3 can run in either order. Moving `broker.ref` before both are
+done is safe but useless: requests would be issued and then fail at
+`AssumeRole`.
 
 ## Apply
 
