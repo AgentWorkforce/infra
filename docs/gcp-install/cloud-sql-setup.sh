@@ -61,6 +61,7 @@ PW_DIR="$STATE_DIR/passwords"
 FILES="$STATE_DIR/secret-files"
 LAYOUT_FILE="$STATE_DIR/hoopdb-layout"
 PENDING_PASSWORDS_FILE="$STATE_DIR/.pending-hoopdb-passwords"
+PENDING_ACTIVATION_FILE="$STATE_DIR/.pending-hoopdb-activation"
 ADMIN_JOBS_SECRET=hoopdb-admin-jobs
 OWNER=hoopdb_owner
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
@@ -192,13 +193,11 @@ run_job() {
   kubectl -n "$NS" delete configmap "$name-run" --ignore-not-found >/dev/null
   if [[ "$ok" != 1 ]]; then
     if [[ "$name" == agent-relay-cloud-sql-pre ]] && \
-       grep -qx 'HOOPDB_STATE=fresh-credentials-committed' "$WORK/$name.log"; then
-      rm -f "$PENDING_PASSWORDS_FILE"
-    fi
-    if [[ "$name" == agent-relay-cloud-sql-pre ]] && \
        grep -qx 'HOOPDB_STATE=dedicated-owner-missing' "$WORK/$name.log"; then
-      for p in $missing_state_names; do rm -f "$PW_DIR/$p"; done
-      rm -f "$PENDING_PASSWORDS_FILE"
+      if [[ ! -s "$PENDING_ACTIVATION_FILE" ]]; then
+        for p in $missing_state_names; do rm -f "$PW_DIR/$p"; done
+        rm -f "$PENDING_PASSWORDS_FILE"
+      fi
       die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_state_names}; database and Secrets were left unchanged"
     fi
     die "job $name did not succeed (inspect the retained Job)"
@@ -283,6 +282,46 @@ write_credential_files() {
 do_pre() {
   kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
   ensure_ca
+
+  # Classify before generating any password. The durable activation marker
+  # distinguishes a fresh setup interrupted after creating the database (or
+  # committing ownership) from a genuinely pre-existing administrator-owned
+  # or dedicated-owner install whose saved state is incomplete.
+  cat >"$WORK/probe.sh" <<'EOS'
+set -eu
+Q="psql -X -A -t -v ON_ERROR_STOP=1"
+if [ -z "$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")" ]; then
+  echo 'HOOPDB_LAYOUT=fresh-dedicated'; exit 0
+fi
+owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
+if [ "$owner" = hoopdb_owner ]; then
+  echo 'HOOPDB_LAYOUT=dedicated-owner'
+elif [ "$owner" = "$PGUSER" ]; then
+  echo 'HOOPDB_LAYOUT=legacy-admin'
+else
+  echo 'HOOPDB_LAYOUT=unknown-owner'
+fi
+EOS
+  run_job agent-relay-cloud-sql-probe "$WORK/probe.sh" ""
+  local probed_layout
+  probed_layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-cloud-sql-probe.log" | tail -n 1)"
+  if [[ "$probed_layout" == legacy-admin && -s "$PENDING_ACTIVATION_FILE" ]]; then
+    probed_layout=fresh-dedicated
+    log "resuming an interrupted fresh activation"
+  fi
+  case "$probed_layout" in
+    legacy-admin)
+      rm -f "$PENDING_PASSWORDS_FILE" "$PENDING_ACTIVATION_FILE"
+      printf '%s\n' "$probed_layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
+      write_legacy_admin_files; write_layout_values "$probed_layout"
+      log "existing administrator-owned HoopDb detected; database and roles were left unchanged"
+      log "use '$0 prepare-admin-jobs' before an upgrade/guide Job; after success run '$0 remove-legacy-secret-keys', then always '$0 delete-admin-jobs'"
+      return
+      ;;
+    fresh-dedicated|dedicated-owner) ;;
+    *) die "HoopDb owner is neither the Cloud SQL administrator nor hoopdb_owner; refusing" ;;
+  esac
+
   local p pending_passwords="" missing_passwords=""
   [[ ! -s "$PENDING_PASSWORDS_FILE" ]] || pending_passwords="$(<"$PENDING_PASSWORDS_FILE")"
   for p in control_owner control_api_runtime "$OWNER" sessions_pipeline_runtime relaycast_owner relaycast_runtime \
@@ -292,6 +331,19 @@ do_pre() {
   done
   if [[ -n "$missing_passwords" ]]; then
     printf '%s\n' "${missing_passwords# }" >"$PENDING_PASSWORDS_FILE"; chmod 600 "$PENDING_PASSWORDS_FILE"
+  fi
+  if [[ "$probed_layout" == dedicated-owner && -n "$missing_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
+    for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
+    rm -f "$PENDING_PASSWORDS_FILE"
+    die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
+  fi
+  if [[ "$probed_layout" == fresh-dedicated && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
+    printf 'fresh activation in progress\n' >"$PENDING_ACTIVATION_FILE"
+    chmod 600 "$PENDING_ACTIVATION_FILE"
+  fi
+  local missing_for_job="$missing_passwords"
+  if [[ "$probed_layout" == dedicated-owner && -s "$PENDING_ACTIVATION_FILE" ]]; then
+    missing_for_job=""
   fi
 
   cat >"$WORK/run.sh" <<'EOS'
@@ -426,32 +478,32 @@ else
   echo 'HOOPDB_LAYOUT=fresh-dedicated'
 fi
 EOS
-  run_job agent-relay-cloud-sql-pre "$WORK/run.sh" "$missing_passwords" \
+  run_job agent-relay-cloud-sql-pre "$WORK/run.sh" "$missing_for_job" \
     control_owner control_api_runtime "$OWNER" sessions_pipeline_runtime \
     search_consumer_runtime relaycast_owner relaycast_runtime
   local layout
   layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-cloud-sql-pre.log" | tail -n 1)"
   case "$layout" in
     dedicated-owner)
-      if [[ -n "$missing_passwords" ]]; then
+      if [[ -n "$missing_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
         for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
         die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
       fi
-      rm -f "$PENDING_PASSWORDS_FILE"
+      rm -f "$PENDING_PASSWORDS_FILE" "$PENDING_ACTIVATION_FILE"
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
       write_credential_files; write_layout_values "$layout"
       log "dedicated hoopdb_owner layout already active; passwords and database were left unchanged"
       ;;
     fresh-dedicated)
       layout=dedicated-owner
-      rm -f "$PENDING_PASSWORDS_FILE"
+      rm -f "$PENDING_PASSWORDS_FILE" "$PENDING_ACTIVATION_FILE"
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
       write_credential_files; write_layout_values "$layout"
       log "pre done; dedicated hoopdb_owner credentials are under $FILES"
       ;;
     legacy-admin)
       for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
-      rm -f "$PENDING_PASSWORDS_FILE"
+      rm -f "$PENDING_PASSWORDS_FILE" "$PENDING_ACTIVATION_FILE"
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
       write_legacy_admin_files; write_layout_values "$layout"
       log "existing administrator-owned HoopDb detected; database and roles were left unchanged"

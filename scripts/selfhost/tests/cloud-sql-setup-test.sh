@@ -110,6 +110,9 @@ case " $* " in
       printf 'setup output without credentials\nHOOPDB_LAYOUT=%s\n' "${MOCK_LAYOUT:-fresh-dedicated}"
     fi
     ;;
+  *" logs job/agent-relay-cloud-sql-probe"*)
+    printf 'HOOPDB_LAYOUT=%s\n' "${MOCK_LAYOUT:-fresh-dedicated}"
+    ;;
   *" logs job/"*) printf 'setup output without credentials\n' ;;
   *" get job agent-relay-worker-migrate-current -o json "*)
     if [[ "${MOCK_MIGRATION_STATUS:-complete}" == failed ]]; then
@@ -118,6 +121,8 @@ case " $* " in
       printf '{"status":{"succeeded":1,"conditions":[{"type":"Complete","status":"True"}]}}\n'
     fi
     ;;
+  *" get job agent-relay-cloud-sql-probe "*"jsonpath={.status.succeeded}"*) printf '1' ;;
+  *" get job agent-relay-cloud-sql-probe "*"jsonpath={.status.failed}"*) ;;
   *" get job agent-relay-cloud-sql-"*"jsonpath={.status.succeeded}"*)
     [[ "${MOCK_SETUP_JOB_FAILED:-false}" == true ]] || printf '1'
     ;;
@@ -185,29 +190,15 @@ pass "dedicated-owner pre rerun finishes an interrupted pre and reuses saved pas
 secret_hashes_before="$(find "$STATE/secret-files" -type f -print0 | sort -z | xargs -0 sha256sum)"
 rm "$STATE/passwords/relaycast_runtime"
 : >"$LOG"
-if MOCK_DEDICATED_MISSING=true MOCK_SETUP_JOB_FAILED=true MOCK_LAYOUT=dedicated-owner \
+rm -f "$CAPTURE/job-agent-relay-cloud-sql-pre.json"
+if MOCK_LAYOUT=dedicated-owner \
     "$TEST_BASH" "$SCRIPT" pre >"$ROOT/pre-dedicated-missing.log" 2>&1; then
   fail "dedicated-owner rerun accepted missing saved credential state"
 fi
 grep -F 'STATE_DIR lacked saved passwords for: relaycast_runtime' "$ROOT/pre-dedicated-missing.log" >/dev/null \
   || fail "missing saved credential state diagnostic is absent"
-[[ "$(cat "$CAPTURE/MISSING_STATE_NAMES")" == " relaycast_runtime" ]] \
-  || fail "setup Job did not receive only the missing credential name"
-missing_exit_line="$(grep -n "HOOPDB_STATE=dedicated-owner-missing" "$CAPTURE/run.sh" | head -1 | cut -d: -f1)"
-first_write_line="$(grep -n '^for db in relaycontrol hoopdb relaycast; do' "$CAPTURE/run.sh" | head -1 | cut -d: -f1)"
-[[ -n "$missing_exit_line" && -n "$first_write_line" && "$missing_exit_line" -lt "$first_write_line" ]] \
-  || fail "missing-state refusal does not precede CREATE, ALTER ROLE and GRANT statements"
-: >"$SQL_LOG"
-if PGUSER=cloud-admin MISSING_STATE_NAMES=' relaycast_runtime' sh "$CAPTURE/run.sh" \
-    >"$ROOT/pre-dedicated-missing-job.log" 2>&1; then
-  fail "generated setup Job accepted missing saved credential state"
-fi
-grep -F 'saved credential state lacks: relaycast_runtime; refusing before database changes' \
-  "$ROOT/pre-dedicated-missing-job.log" >/dev/null \
-  || fail "generated setup Job lacks the early refusal diagnostic"
-if grep -Eq 'ALTER[[:space:]]+ROLE.*PASSWORD|CREATE|GRANT' "$SQL_LOG"; then
-  fail "missing-state setup Job executed ALTER ROLE PASSWORD, CREATE or GRANT"
-fi
+[[ ! -e "$CAPTURE/job-agent-relay-cloud-sql-pre.json" ]] \
+  || fail "dedicated-owner missing-state refusal started the mutating setup Job"
 [[ ! -e "$STATE/passwords/relaycast_runtime" ]] \
   || fail "dedicated-owner refusal retained the newly generated password"
 [[ "$(find "$STATE/secret-files" -type f -print0 | sort -z | xargs -0 sha256sum)" == "$secret_hashes_before" ]] \
@@ -218,6 +209,18 @@ fi
 password_for_repair="$STATE/passwords/relaycast_runtime"
 printf '%048d' 0 >"$password_for_repair"; chmod 600 "$password_for_repair"
 pass "dedicated-owner rerun refuses missing saved state before database or Secret writes"
+
+printf 'relaycast_runtime\n' >"$STATE/.pending-hoopdb-passwords"
+printf 'fresh activation in progress\n' >"$STATE/.pending-hoopdb-activation"
+: >"$LOG"
+MOCK_LAYOUT=dedicated-owner "$TEST_BASH" "$SCRIPT" pre >/dev/null \
+  || fail "an interrupted fresh activation could not resume"
+[[ -s "$STATE/passwords/relaycast_runtime" ]] || fail "resumed activation deleted a committed password"
+[[ ! -e "$STATE/.pending-hoopdb-passwords" && ! -e "$STATE/.pending-hoopdb-activation" ]] \
+  || fail "successful resumed activation retained pending-state markers"
+grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/null \
+  || fail "resumed activation did not finish the setup prerequisites"
+pass "post-commit interruption reuses the committed password files"
 
 : >"$LOG"
 MOCK_LAYOUT=legacy-admin "$TEST_BASH" "$SCRIPT" pre >/dev/null

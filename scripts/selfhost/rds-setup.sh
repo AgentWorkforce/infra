@@ -55,6 +55,7 @@ STATE_DIR="${STATE_DIR:-$HOME/.agent-relay-install}"
 PW_DIR="$STATE_DIR/passwords"
 FILES="$STATE_DIR/secret-files"
 LAYOUT_FILE="$STATE_DIR/hoopdb-layout"
+PENDING_ACTIVATION_FILE="$STATE_DIR/.pending-hoopdb-activation"
 ADMIN_JOBS_SECRET=hoopdb-admin-jobs
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
 SQL_DIR=/app/supabase/bootstrap
@@ -306,15 +307,15 @@ owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database wher
 if [ "$owner" = hoopdb_owner ]; then
   echo 'HOOPDB_LAYOUT=dedicated-owner'; exit 0
 fi
-if [ -n "$($Q -d hoopdb -c "select to_regnamespace('sessions')")" ] || \
-   [ -n "$($Q -d postgres -c "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" ]; then
-  echo 'HOOPDB_LAYOUT=legacy-admin'; exit 0
-fi
-if [ "$version" -ge 160000 ]; then echo 'HOOPDB_LAYOUT=fresh-dedicated'; else echo 'HOOPDB_LAYOUT=fresh-legacy'; fi
+echo 'HOOPDB_LAYOUT=legacy-admin'
 EOS
   run_job agent-relay-rds-layout-probe "$WORK/probe.sh"
   local layout
   layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-rds-layout-probe.log" | tail -n 1)"
+  if [[ "$layout" == legacy-admin && -s "$PENDING_ACTIVATION_FILE" ]]; then
+    layout=fresh-dedicated
+    log "resuming an interrupted fresh activation"
+  fi
   case "$layout" in
     legacy-admin)
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
@@ -333,7 +334,10 @@ EOS
       log "dedicated-owner HoopDb already active; database and roles were left unchanged"
       return
       ;;
-    fresh-dedicated) ;;
+    fresh-dedicated)
+      printf 'fresh activation in progress\n' >"$PENDING_ACTIVATION_FILE"
+      chmod 600 "$PENDING_ACTIVATION_FILE"
+      ;;
     fresh-legacy)
       die "PostgreSQL 16 or later is required for a fresh dedicated-owner install; no database or role was changed. Existing PostgreSQL 15 installs stay on the legacy temporary-Secret path."
       ;;
@@ -522,6 +526,7 @@ EOS
   log "pre done; dedicated hoopdb_owner credentials are under $FILES"
   printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
   write_layout_values "$layout"
+  rm -f "$PENDING_ACTIVATION_FILE"
 }
 
 do_post() {

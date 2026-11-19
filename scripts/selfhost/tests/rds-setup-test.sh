@@ -167,6 +167,22 @@ MOCK_LAYOUT=dedicated-owner bash "${RDS_SETUP}" pre >/dev/null
 grep -q 'agent-relay-rds-layout-probe' "${COMMAND_LOG}" || fail "dedicated-owner rerun skipped classification"
 pass "dedicated-owner pre rerun leaves the database and role graph unchanged"
 
+# An administrator-owned database is legacy unless this exact STATE_DIR says
+# a fresh activation was already in progress. That durable marker makes a
+# crash after CREATE DATABASE retryable without converting an unrelated
+# existing database.
+printf 'fresh activation in progress\n' >"${STATE_DIR}/.pending-hoopdb-activation"
+: >"${COMMAND_LOG}"
+MOCK_LAYOUT=legacy-admin bash "${RDS_SETUP}" pre >/dev/null
+grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "interrupted fresh activation did not resume"
+[[ ! -e "${STATE_DIR}/.pending-hoopdb-activation" ]] || fail "successful activation retained its pending marker"
+: >"${COMMAND_LOG}"
+MOCK_LAYOUT=legacy-admin bash "${RDS_SETUP}" pre >/dev/null
+! grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "existing administrator-owned database was converted"
+[[ "$(<"${STATE_DIR}/hoopdb-layout")" == legacy-admin ]] || fail "administrator-owned database was not marked legacy"
+MOCK_LAYOUT=dedicated-owner bash "${RDS_SETUP}" pre >/dev/null
+pass "RDS classifier resumes only a marked fresh activation"
+
 : >"${COMMAND_LOG}"
 set +e
 pg15_output="$(MOCK_LAYOUT=fresh-legacy bash "${RDS_SETUP}" pre 2>&1)"

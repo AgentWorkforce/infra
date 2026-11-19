@@ -136,7 +136,10 @@ case "\$*" in
     cat "$root/secrets/\$ns/\$name.json" 2>/dev/null || echo '{"data":{}}' ;;
   *"-o json"*) echo '{"items":[]}' ;;
   *"get deploy -l"*"-o name"*) echo deployment.apps/agent-relay-read-api ;;
-  *"patch secret"*) for a in "\$@"; do case "\$a" in */patch.json|*/remove-key.json) cat "\$a" >> "$root/patches"; echo >> "$root/patches";; esac; done ;;
+  *"patch secret"*)
+    for a in "\$@"; do case "\$a" in */patch.json|*/remove-key.json) cat "\$a" >> "$root/patches"; echo >> "$root/patches";; esac; done
+    if [[ "\${MOCK_PATCH_FAIL_SEARCH:-0}" == 1 && " \$* " == *" patch secret search-indexer-owner "* ]]; then exit 1; fi
+    ;;
 esac
 exit 0
 EOF
@@ -399,6 +402,29 @@ grep -q 'UPGRADE FAILED' <<<"$out" || fail "failed legacy upgrade omitted rollba
 grep -q 'kubectl .*patch secret' "$root/log" && fail "failed upgrade removed a long-lived administrator key"
 grep -q '^rds-setup delete-admin-jobs' "$root/log" || fail "failed upgrade did not clean up the temporary Secret"
 pass "failed legacy upgrade preserves old keys for rollback and cleans up only the temporary Secret"
+
+# 20b. a post-deploy partial key-cleanup failure is not reported as a
+# deployment failure: retain the temporary credential and do not suggest an
+# unsafe rollback after one old key may already have been removed.
+make_state; setup_mocks "$root/rel-ok" ok
+mkdir -p "$root/secrets/agent-relay"
+printf '{"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' >"$root/secrets/agent-relay/agent-relay-secrets.json"
+printf '{"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' >"$root/secrets/agent-relay/search-indexer-owner.json"
+export MOCK_PATCH_FAIL_SEARCH=1
+set +e
+out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
+  --apply --db-instance prod-db --yes 2>&1)
+cleanup_rc=$?
+set -e
+unset MOCK_PATCH_FAIL_SEARCH
+[[ "$cleanup_rc" != 0 ]] || fail "partial legacy-key cleanup reported success"
+grep -q 'deployment succeeded, but administrator-key cleanup is incomplete; do not roll back' <<<"$out" \
+  || fail "partial cleanup did not report a cleanup-only failure: $out"
+grep -q 'rollback agent-relay' <<<"$out" && fail "partial cleanup offered an unsafe old-revision rollback"
+grep -q '^rds-setup delete-admin-jobs' "$root/log" && fail "partial cleanup deleted the retained temporary credential"
+grep -q 'kubectl .*patch secret agent-relay-secrets' "$root/log" || fail "partial cleanup did not remove the first old key"
+grep -q 'kubectl .*patch secret search-indexer-owner' "$root/log" || fail "partial cleanup did not attempt the second old key"
+pass "partial legacy-key cleanup retains the temporary credential and suppresses rollback"
 
 # 21. eks-native legacy upgrade with --rds-setup prepares the temporary Secret; without it, never
 make_state; setup_mocks "$root/rel-ok" ok

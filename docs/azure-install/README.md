@@ -342,16 +342,35 @@ release_jobs() {
 }
 
 # 1. Classify the saved layout without changing an existing role graph.
-bash postgres-setup.sh pre
+if ! bash postgres-setup.sh pre; then
+  echo "database setup/classification failed; Helm was not run" >&2
+  exit 1
+fi
+
+admin_jobs_prepared=false
+cleanup_admin_jobs() {
+  $admin_jobs_prepared || return 0
+  bash postgres-setup.sh delete-admin-jobs
+}
+trap 'cleanup_admin_jobs || true' EXIT
+trap 'cleanup_admin_jobs || true; exit 130' INT
+trap 'cleanup_admin_jobs || true; exit 143' TERM
 
 # Existing hoop-owned installs only: create one short-lived administrator Job Secret.
 if [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
-  bash postgres-setup.sh prepare-admin-jobs
+  admin_jobs_prepared=true
+  if ! bash postgres-setup.sh prepare-admin-jobs; then
+    echo "temporary administrator Job Secret preparation failed; Helm was not run" >&2
+    exit 1
+  fi
 fi
 
 # Fail before Helm changes anything if the selected layout's Secret is absent.
 if [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
-  kubectl -n agent-relay get secret hoopdb-admin-jobs >/dev/null || exit 1
+  if ! kubectl -n agent-relay get secret hoopdb-admin-jobs >/dev/null; then
+    echo "temporary administrator Job Secret could not be read; Helm was not run" >&2
+    exit 1
+  fi
 fi
 
 # 2. Upgrade, and wait for every Job that reads the temporary Secret.
@@ -378,7 +397,9 @@ fi
 
 # Always delete the temporary copy, including after a failed upgrade.
 cleanup_ok=true
-bash postgres-setup.sh delete-admin-jobs || cleanup_ok=false
+cleanup_admin_jobs || cleanup_ok=false
+admin_jobs_prepared=false
+trap - EXIT INT TERM
 $upgrade_ok || { echo "upgrade or a temporary-credential Job failed" >&2; exit 1; }
 $cleanup_ok || { echo "temporary hoopdb-admin-jobs Secret was not deleted; run: bash postgres-setup.sh delete-admin-jobs" >&2; exit 1; }
 echo "upgrade ok"

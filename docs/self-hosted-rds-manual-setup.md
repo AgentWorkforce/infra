@@ -114,6 +114,12 @@ psql -X -A -t -d postgres -v db="$HOOPDB_DATABASE" <<'SQL'
 select (select count(*) from pg_database where datname=:'db') as hoopdb,
   (select count(*) from pg_roles where rolname='session_directory_search_worker') as search_role;
 SQL
+psql -X -A -t -d postgres <<'SQL' | grep -qx t || {
+select current_setting('server_version_num')::int >= 160000;
+SQL
+  echo 'PostgreSQL 16 or later is required; no database or role was changed' >&2
+  exit 1
+}
 ```
 
 `0|1` means another install's HoopDb is on this instance: stop and use a
@@ -374,9 +380,12 @@ Immediately before an upgrade or a guide Job, create Secret
 values at that Secret, and delete it after those Jobs complete. Remove the same
 two keys from `agent-relay-secrets` and `search-indexer-owner` only after Helm,
 the affected Jobs, and Deployments succeed. If the temporary Secret is absent,
-the upgrade must stop before Helm changes anything. The scripted equivalent is
-`rds-setup.sh prepare-admin-jobs`, followed after success by its key-removal
-flow and `rds-setup.sh delete-admin-jobs`.
+the upgrade must stop before Helm changes anything. The fully scripted
+equivalent is `agent-relay-upgrade.sh --rds-setup`, which prepares the
+temporary Secret, waits for Helm/Jobs/Deployments, removes the two old keys,
+and deletes the temporary Secret. If running Helm by hand, use
+`rds-setup.sh prepare-admin-jobs`, then run the explicit key-removal block
+below after success, followed by `rds-setup.sh delete-admin-jobs`.
 
 Restrict who can read this temporary administrator Secret as described in
 [Secret access](selfhost-secret-access.md); its short lifetime does not make
@@ -432,8 +441,11 @@ for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
     exit 1
   fi
   if jq -e --arg k "$key" '.data[$k] != null' "$ADMIN_JOB_DIR/$secret.json" >/dev/null; then
-    kubectl -n agent-relay patch secret "$secret" --type=json \
-      -p="[{\"op\":\"remove\",\"path\":\"/data/$key\"}]"
+    if ! kubectl -n agent-relay patch secret "$secret" --type=json \
+      -p="[{\"op\":\"remove\",\"path\":\"/data/$key\"}]"; then
+      echo "could not remove $key from $secret; leave hoopdb-admin-jobs and $ADMIN_JOB_DIR in place and retry cleanup" >&2
+      exit 1
+    fi
   fi
 done
 kubectl -n agent-relay delete secret hoopdb-admin-jobs
@@ -478,7 +490,10 @@ bootstrap has completed, with the settings of 1.1 and a new password
 `PW_bulls96_session_erase_search`:
 
 ```bash
-PGDATABASE="$HOOPDB_DATABASE" psql -X -q -v ON_ERROR_STOP=1 -v post=true -v p1="$PW_bulls96_session_erase_search" -f rds-session-erase-search.sql
+sed 's/^GRANT CONNECT ON DATABASE hoopdb TO bulls96_session_erase_search;$/GRANT CONNECT ON DATABASE :"DBNAME" TO bulls96_session_erase_search;/' \
+  rds-session-erase-search.sql \
+  | PGDATABASE="$HOOPDB_DATABASE" psql -X -q -v ON_ERROR_STOP=1 \
+      -v DBNAME="$HOOPDB_DATABASE" -v post=true -v p1="$PW_bulls96_session_erase_search"
 ```
 
 Its URL (`postgresql://bulls96_session_erase_search:<pw>@<endpoint>:5432/<HoopDb database>?sslmode=verify-full`)

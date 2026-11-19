@@ -600,7 +600,11 @@ remove_legacy_long_lived_keys() {
       || { say "   could not parse Secret $s while removing legacy administrator keys"; return 1; }
     if [ "$key_present" = yes ]; then
       ( umask 077; jq -n --arg path "/data/$k" '[{"op":"remove","path":$path}]' >"$work/remove-key.json" )
-      "${kube[@]}" patch secret "$s" --type json --patch-file "$work/remove-key.json" >/dev/null
+      if ! "${kube[@]}" patch secret "$s" --type json --patch-file "$work/remove-key.json" >/dev/null; then
+        rm -f "$work/remove-key.json"
+        say "   could not remove legacy administrator key $s/$k"
+        return 1
+      fi
       rm -f "$work/remove-key.json"
       say "   removed legacy administrator key $s/$k"
     fi
@@ -708,8 +712,20 @@ if $admin_jobs_created; then
   # successful Helm return is therefore the Job barrier. Do not look those
   # Jobs up again here: ttlSecondsAfterFinished may already have deleted a
   # successfully completed Job while Helm was waiting for other workloads.
-  remove_legacy_long_lived_keys
-  "${rds_env[@]}" "$here/rds-setup.sh" delete-admin-jobs
+  if ! remove_legacy_long_lived_keys; then
+    say "   deployment succeeded, but administrator-key cleanup is incomplete; do not roll back"
+    say "   hoopdb-admin-jobs was retained. Fix cluster access and rerun this same upgrade; key removal is idempotent"
+    admin_jobs_created=false
+    trap - ERR
+    exit 1
+  fi
+  if ! "${rds_env[@]}" "$here/rds-setup.sh" delete-admin-jobs; then
+    say "   deployment and long-lived-key cleanup succeeded, but hoopdb-admin-jobs could not be deleted"
+    say "   run: NAMESPACE=$namespace KUBE_CONTEXT=$context STATE_DIR=$state_dir $here/rds-setup.sh delete-admin-jobs"
+    admin_jobs_created=false
+    trap - ERR
+    exit 1
+  fi
   admin_jobs_created=false
 fi
 trap - ERR
