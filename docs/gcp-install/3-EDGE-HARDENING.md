@@ -295,13 +295,27 @@ connect or upload sessions.
      --certificate fullchain.pem --private-key privkey.pem
    ```
 
-4. **Values.** Copy `values-gcp-internal.yaml` from the chart
-   (`$CHART/values-gcp-internal.yaml`), replace `10.129.0.0/23` with your
-   proxy-only range in all six places, set `staticIpName` and the certificate,
-   and add `-f values-gcp-internal.yaml` last in step 11. The file also
-   clears `gkeIngress.sslPolicy` and `securityPolicy`: GKE cannot apply them
-   to an internal load balancer, so sections 1 and 2 above do not apply to
-   this mode.
+4. **Values.** Copy `values-gcp-internal.yaml` from the chart, replace
+   `10.129.0.0/23` with your proxy-only range in all six places, set
+   `staticIpName` and the certificate, then merge it into `values.yaml`:
+
+   ```sh
+   cp "$CHART/values-gcp-internal.yaml" internal.yaml
+   # edit internal.yaml, then:
+   yq -i '. *= load("internal.yaml")' values.yaml
+   yq '.gkeIngress.mode, .gkeIngress.internal.proxyOnlySubnetCidr' values.yaml
+   ```
+
+   The last command prints `internal` and your range. The settings go into
+   `values.yaml`, not a separate `-f` file, because every `helm upgrade` in
+   this guide (steps 11, 13, 16, 17 and each later upgrade) reads
+   `values.yaml`. Helm keeps nothing from the previous command: an upgrade
+   without these settings would switch the install back to a public load
+   balancer and drop the proxy-only range from the NetworkPolicies.
+
+   The file also clears `gkeIngress.sslPolicy` and `securityPolicy`: GKE
+   cannot apply them to an internal load balancer, so sections 1 and 2 above
+   do not apply to this mode.
 
 **Done when**, from a machine on the VPN:
 

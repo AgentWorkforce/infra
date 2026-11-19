@@ -1,4 +1,7 @@
-# Internal-only GKE edge: apply after values-gcp.yaml (and your site values).
+# Internal-only GKE edge: apply after values-gcp.yaml (and your site values),
+# on EVERY helm upgrade of the release, or merge it into your site values.
+# Helm keeps nothing from the previous command: an upgrade without these
+# settings switches the install back to a public load balancer.
 #
 #   helm upgrade --install ... -f values-gcp.yaml -f site.yaml -f values-gcp-internal.yaml
 #

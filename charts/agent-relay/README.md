@@ -333,6 +333,8 @@ creates the three. Then:
   zone's project. A private CA works if every desktop, CLI and agent trusts it.
 - Agents and desktops outside the VPN cannot upload sessions or connect. Plan
   for that before choosing this mode.
+- Pass the overlay on every `helm upgrade`, or merge it into your site values.
+  An upgrade without it renders the external edge again.
 
 Rendered and tested in CI; not yet proven on a live cluster.
 
