@@ -61,8 +61,8 @@ RDS_SETUP_COMMIT=3c54ec7939c905f5eb427bc96e71b1edcff5165a   # tag agent-relay-20
 RDS_SETUP_SHA256=a1d1d8efaa67656081fc090b7f9dcbb82b07310d67f36f97293c81367bb22d44
 ERASE_SQL_PATH=scripts/selfhost/rds-session-erase-search.sql
 RAW=https://raw.githubusercontent.com/AgentWorkforce/infra
-DIAG_URL="$RAW/aea8a0edc904b6344e8ee90091f77217a2d1f352/scripts/support/diagnose-install.py"
-DIAG_SHA256=11b8a5eb2f9e52bb3a7449fb8313238cecced9c15a032d2d51d522bc328c86be
+DIAG_URL="$RAW/5e47006a82145d8b1b2608c6ec3ce16370472999/scripts/support/diagnose-install.py"
+DIAG_SHA256=7352e4760cfd281c20a5df487a4e74841a90bdfae627d85077c80f89998079e8
 
 log() { printf '\n==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
