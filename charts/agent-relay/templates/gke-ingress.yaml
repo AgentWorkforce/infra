@@ -582,34 +582,10 @@ spec:
     - host: {{ $hostRoot | quote }}
       http:
         paths:
-          - path: /cloud/api
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ index $backendNames "api" }}
-                port: { number: {{ $gke.backends.api.servicePort }} }
-          - path: /login
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ index $backendNames "api" }}
-                port: { number: {{ $gke.backends.api.servicePort }} }
-          # relay-node broker routes (POST /relay-node/v1/nodes, the
-          # GET /relay-node/v1/ws node socket, ...) are served only at the
-          # root path, never under /cloud. Desktop uses this sign-in origin as
-          # its control_url, so they must reach relay-control here, not the
-          # dashboard. The api BackendConfig timeout keeps the socket open.
-          - path: /relay-node
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ index $backendNames "api" }}
-                port: { number: {{ $gke.backends.api.servicePort }} }
-          {{- if $singleHost }}
-          # Single-host mode: flows workers and the integrations OAuth
-          # callback call <publicUrl>/api/v1/...; the api BackendConfig
-          # timeout covers the worker queue SSE stream here too.
-          - path: /api
+          # Control's MCP streams share the existing api BackendConfig timeout.
+          {{- $dashboardContext := dict "Values" (merge (dict "global" .Values.global) (deepCopy $dashboard)) }}
+          {{- range include "relay-webapp.controlPaths" $dashboardContext | fromJsonArray }}
+          - path: {{ . }}
             pathType: Prefix
             backend:
               service:

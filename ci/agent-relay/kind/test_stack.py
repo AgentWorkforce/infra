@@ -131,6 +131,11 @@ class Profiles(unittest.TestCase):
         dashboard = next(d for d in docs if d["kind"] == "Ingress" and d["metadata"]["name"] == "relay-webapp")
         paths = {p["path"]: (p["pathType"], p["backend"]["service"]["name"]) for p in dashboard["spec"]["rules"][0]["http"]["paths"]}
         self.assertEqual(paths["/relay-node"], ("Prefix", "relay-control"))
+        for prefix in ("/mcp", "/cloud/mcp", "/.well-known/oauth-protected-resource",
+                       "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration",
+                       "/cloud/.well-known", "/cloud/oauth"):
+            self.assertEqual(paths[prefix], ("Prefix", "relay-control"))
+        self.assertEqual(paths["/"], ("Prefix", "relay-webapp"))
 
     def test_local_scope_guard_and_configurable_api_ingress(self):
         self.assertIn("allowLocalOnly", self.render(extra=["--set", "localKind.allowLocalOnly=false"], ok=False))

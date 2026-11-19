@@ -238,10 +238,26 @@ of the durable-actors, Relayfile and flows proof overlays.
 One umbrella GKE Ingress reserves a global static address
 (`gkeIngress.staticIpName`), uses one Google ManagedCertificate for all
 four hosts, and enables HTTP-to-HTTPS redirect through a FrontendConfig.
+The dashboard host routes `/mcp`, `/cloud/mcp`,
+`/.well-known/oauth-protected-resource`,
+`/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`,
+`/cloud/.well-known` and `/cloud/oauth` to Control before the `/` dashboard
+catch-all. These cover MCP, OAuth discovery, JWKS and browser consent for the
+pinned Control 0.5.24 image (source `edad6432`). Token, registration and
+revocation already use `/cloud/api`. Only the named root discovery prefixes
+are claimed; `/.well-known/acme-challenge` remains available for ACME.
+The leaf and GKE Ingress share `relay-webapp.controlPaths`; app-prefixed paths
+are derived from the parent of `runtime.apiBasePath` (default `/cloud`).
+
+The GKE dashboard rule has 11 Prefix paths in split-host mode and 12 in
+single-host mode. All Control paths reuse the `api` backend and its
+BackendConfig timeout (`gkeIngress.backends.api.timeoutSec`, default 3600).
+
 For a base domain `relay.example.com`:
 
 - `relay.example.com`: `/cloud/api`, `/login` and `/relay-node` to the
-  control API, then `/` to the dashboard. `/relay-node/v1/*` (Desktop node
+  control API, plus the MCP and OAuth prefixes above, then `/` to the dashboard.
+  `/relay-node/v1/*` (Desktop node
   enrolment and the `GET /relay-node/v1/ws` node WebSocket) is served only at
   the root path, never under `/cloud`, and Desktop calls it on this sign-in
   origin.
@@ -538,7 +554,8 @@ helm template agent-relay . -n agent-relay -f values-gcp.yaml -f values-single-h
 For `global.singleHost.host: relay.example.com`:
 
 - `relay.example.com`: `/cloud/api`, `/login`, `/relay-node` and `/api` to
-  the control API, then `/` to the dashboard. `/api` carries the flows worker endpoints and the
+  the control API, along with the MCP and OAuth prefixes listed above, then
+  `/` to the dashboard. `/api` carries the flows worker endpoints and the
   integrations OAuth callback, which relaycontrol hands out as
   `<publicUrl>/api/v1/...`; it is not routed in the default mode, where the
   api host serves them.

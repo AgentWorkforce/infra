@@ -12,6 +12,7 @@ RECOVERY_DIR="${REPO_ROOT}/charts/agent-relay/scripts"
 TEST_BASH="${TEST_BASH:-bash}"
 # The Node helper uses injected API responses; it never contacts a cluster.
 node --test "${TEST_DIR}/operator-device-login.test.mjs"
+bash "${TEST_DIR}/eks-alb-ingress-test.sh"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
 

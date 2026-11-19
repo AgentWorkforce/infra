@@ -9,7 +9,19 @@ settings are passed with `DASHBOARD_PUBLIC_URL`, `DASHBOARD_APP_PATH`,
 
 The browser calls `runtime.apiBasePath` (default `/cloud/api`) on its current
 origin. When ingress is enabled, the chart routes `runtime.apiBasePath` and
-`runtime.loginPath` to `api.serviceName` and `/` to the dashboard.
+`runtime.loginPath` and `/relay-node` to `api.serviceName` and `/` to the dashboard.
+
+The dashboard host also routes `/mcp`, `/cloud/mcp`,
+`/.well-known/oauth-protected-resource`,
+`/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`,
+`/cloud/.well-known` and `/cloud/oauth` to Control before the `/` dashboard
+catch-all. These cover MCP, OAuth discovery, JWKS and browser consent for the
+pinned Control 0.5.24 image (source `edad6432`). Token, registration and
+revocation already use `/cloud/api`. Only the named root discovery prefixes
+are claimed; `/.well-known/acme-challenge` remains available for ACME.
+The leaf and GKE Ingress share `relay-webapp.controlPaths`; app-prefixed paths
+are derived from the parent of `runtime.apiBasePath` (default `/cloud`).
+
 `api.serviceName` has no default and is required with ingress: set it to the
 relay-control Service in the same namespace, which is that release's
 fullname (`<release>-relay-control`, or its `fullnameOverride`; for example
