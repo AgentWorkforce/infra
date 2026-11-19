@@ -39,7 +39,7 @@ Each cloud gets these exclusively owned fixtures:
 | New peer VPC/VNet and subnet | Holds the hub, observer and test-client fixtures |
 | Four small Ubuntu Linux VMs and OS disks | Private connector, public OpenVPN hub, public HTTPS observer, separate VPN test client |
 | Module NAT and static egress address | The exact resources under test |
-| Three fixture public IPs | Hub, observer and test client; none on the connector |
+| Three fixture public IPs in the baseline topology | Hub, observer and test client; none on the connector; see the restricted-IP GCP variant below |
 | GCP optional global ingress reservation | Test that the module owns and labels the optional address; no GKE/LB is implied |
 | Scoped fixture firewall/NSG rules | Management and explicit hub/observer traffic only |
 | Azure management-only VNet peering | Lets the hub administer the private connector over SSH; connector NSG permits only the hub's private /32 on port 22 |
@@ -56,6 +56,41 @@ directory or inside the owned guests. Deliver credentials over the approved
 encrypted admin transport; never put private keys, client profiles containing
 keys or enrollment tokens in Terraform inputs/state, argv, logs or receipts.
 Use unique credentials for each cloud/run.
+
+### GCP variant when VM external IPs are prohibited
+
+Keep the project policy intact. Use four private VMs without attached service
+accounts in the two new fixture VPCs. Give the peer subnet its own router and
+NAT with a reserved static address for package installation and the test
+client's outbound traffic. The connector still uses the module's separate NAT.
+
+Expose the hub and observer through two **distinct** regional static frontend
+addresses, each with its own forwarding rule, backend service, unmanaged
+instance group and health check. Use a [backend-service external passthrough
+Network Load Balancer](https://docs.cloud.google.com/load-balancing/docs/network/networklb-backend-service)
+so the observer receives the original source address. Forward only UDP 1194
+to the hub at address A and TCP 443 to the observer at address B. Push only B's
+host route into the client tunnel; never route A into the tunnel. This variant
+uses four regional addresses including the two NAT addresses, plus the optional
+global ingress reservation. Include these fixture resources in the saved plan
+and revised cost review; the module inputs and assertions remain unchanged.
+
+Allow hub UDP 1194 from exactly the module NAT /32 and peer NAT /32. Allow
+observer TCP 443 from the module NAT /32 only. Permit the documented probe
+source ranges for this load balancer type only on each reviewed health-check
+port. Before starting VPN tests, prove that the private test client can reach
+frontend A through peer NAT. Stop and report a failure rather than substituting
+a private-address application path. The off-VPN observer request must leave
+through peer NAT and be denied, with an independent denial signal.
+
+Use IAP only through the target's existing approved access. Do not enable an
+API, change IAM or edit project metadata to make administration work. If IAP
+is unavailable, review the startup/serial administration procedure first:
+generate private keys inside each guest and transport only public material
+through instance metadata or serial output. Never put private keys or client
+profiles there. Set `block-project-ssh-keys` on every fixture VM and scope any
+SSH keys to those instances. Remove forwarding rules, backends, health checks,
+fixture public addresses and peer NAT before deleting their fixture VPCs.
 
 ## Inputs and saved plans
 
