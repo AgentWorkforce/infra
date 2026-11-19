@@ -104,7 +104,7 @@ resource "aws_vpc_security_group_egress_rule" "dns_tcp" {
 resource "aws_secretsmanager_secret" "db_owner" {
   #checkov:skip=CKV_AWS_149:Short-lived container read by one instance role in the same account; the AWS-managed Secrets Manager key, no extra KMS lifecycle.
   #checkov:skip=CKV2_AWS_57:The value is written out of band by whoever holds the credential; there is no rotation function to attach.
-  name                   = var.db_owner_secret_name
+  name                    = var.db_owner_secret_name
   description             = "Owner credential of the relayhistory-legacy target database (written out of band)"
   recovery_window_in_days = 0
 }
@@ -168,7 +168,7 @@ resource "aws_iam_instance_profile" "runner" {
 
 resource "aws_instance" "runner" {
   #checkov:skip=CKV_AWS_126:Short-lived runner driven over SSM; nothing reads one-minute EC2 metrics.
-  ami                        = data.aws_ssm_parameter.ami.value
+  ami                         = data.aws_ssm_parameter.ami.value
   instance_type               = var.instance_type
   subnet_id                   = aws_subnet.private.id
   vpc_security_group_ids      = [aws_security_group.this.id]
