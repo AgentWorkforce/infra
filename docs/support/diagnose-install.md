@@ -88,6 +88,7 @@ run against the deployed credential source proves those credentials work.
 | Database login | Distinguishes authentication, missing database, TLS, DNS, network and permission error categories without printing raw error text. |
 | Relaycast role existence | Missing phase 1 bootstrap roles. |
 | Relaycast `schema_owner`, `owner_temp`, `owner_schema_create` | The migration owner lacks the prerequisites associated with identity exit 65. |
+| Relaycast `owner_no_db_create` / owner membership | The migration login has database CREATE or can assume the database owner role. It must own the public schema without owning the database. |
 | Relaycast runtime isolation | Runtime has CREATE, TEMP, owner membership, administrative attributes or broad predefined role membership. |
 | Relaycast default grants | New tables need SELECT/INSERT/UPDATE/DELETE; new sequences need SELECT/USAGE/UPDATE. PUBLIC must not receive object or default grants. |
 | Relaycast existing object grants / owners | Existing public-schema objects were created by a different login, or default grants were applied after objects already existed. Extension-owned objects are excluded. |

@@ -39,6 +39,7 @@ class CredentialTests(unittest.TestCase):
             (json.dumps({'wrong':url('bulls96_read_api')}),'supabase_url','bulls96_read_api','malformed'),
             (url('relaycast_owner')+'&options=unsafe',None,'relaycast_owner','malformed'),
             (url('relaycast_owner')+'&sslmode=disable',None,'relaycast_owner','malformed'),
+            (url('relaycast_owner')+'&sslrootcert=%00',None,'relaycast_owner','malformed'),
         ]
         for value,wrapper,role,reason in cases:
             with self.subTest(reason=reason), self.assertRaisesRegex(diag.DiagnosticError,reason):
@@ -48,6 +49,24 @@ class CredentialTests(unittest.TestCase):
         parsed = diag.parse_credential(url('relaycast_owner','Custom%20DB'),None,'relaycast_owner')
         self.assertEqual(parsed['password'],'p@ss:word')
         self.assertEqual(parsed['database'],'Custom DB')
+
+    def test_malformed_ca_parameter_is_reported_without_stopping_collection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            secret=root/'agent-relay-secrets'
+            secret.mkdir()
+            for key,role in (('database-owner-url','relaycast_owner'),
+                             ('database-runtime-url','relaycast_runtime')):
+                path=secret/key
+                path.write_text(url(role)+('&sslrootcert=%00' if role=='relaycast_owner' else ''))
+                path.chmod(0o600)
+            report=diag.Report()
+            credentials=diag.load_credentials(options(secret_dir=root),report)
+            self.assertNotIn('cast-owner',credentials)
+            self.assertIn('cast-runtime',credentials)
+            finding=next(c for c in report.checks if c['check']=='credential.cast-owner')
+            self.assertEqual(finding['status'],'FAIL')
+            self.assertEqual(finding['detail'],'malformed-url-or-json')
 
     def test_json_slot(self):
         value=json.dumps({'supabase_url':url('bulls96_read_api')})
@@ -247,6 +266,8 @@ RESET ROLE;
              'GRANT USAGE ON SEQUENCE public.diagnostic_fixture_id_seq TO relaycast_runtime;'),
             ('GRANT TEMP ON DATABASE postgres TO PUBLIC;', 'runtime_no_temp',False,
              'REVOKE TEMP ON DATABASE postgres FROM PUBLIC;'),
+            ('GRANT CREATE ON DATABASE postgres TO relaycast_owner;', 'owner_no_db_create',False,
+             'REVOKE CREATE ON DATABASE postgres FROM relaycast_owner;'),
             ('GRANT relaycast_owner TO relaycast_runtime;', 'runtime_no_owner_membership',False,
              'REVOKE relaycast_owner FROM relaycast_runtime;'),
             ('ALTER DEFAULT PRIVILEGES FOR ROLE relaycast_owner IN SCHEMA public REVOKE UPDATE ON TABLES FROM relaycast_runtime;', 'table_defaults',False,
@@ -259,6 +280,23 @@ RESET ROLE;
                     self.assertEqual(self.catalog()[key],expected)
                 finally:
                     self.query(restore)
+
+    def test_migration_login_must_not_own_database(self):
+        original_owner=self.query('SELECT current_user')
+        self.query('ALTER DATABASE postgres OWNER TO relaycast_owner;')
+        try:
+            self.assertFalse(self.catalog()['owner_no_db_create'])
+            identity=json.loads(self.query('BEGIN READ ONLY;'+diag.IDENTITY_SQL+'ROLLBACK;',role='relaycast_owner'))
+            report=diag.Report()
+            with mock.patch.object(diag,'psql',side_effect=[identity,self.catalog()]):
+                diag.database_checks(options(),{'cast-owner':{'user':'relaycast_owner','database':'postgres'}},report)
+            failures={c['check'] for c in report.checks if c['status']=='FAIL'}
+            self.assertIn('database.cast-owner.no-database-owner-membership',failures)
+            self.assertIn('cast.owner_no_db_create',failures)
+        finally:
+            quoted_owner='"'+original_owner.replace('"','""')+'"'
+            self.query('ALTER DATABASE postgres OWNER TO '+quoted_owner+';')
+            self.query('GRANT TEMP ON DATABASE postgres TO relaycast_owner;')
 
     def test_real_tls_and_read_only_client(self):
         if not self.tls:

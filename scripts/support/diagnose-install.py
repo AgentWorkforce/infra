@@ -65,6 +65,7 @@ SELECT json_build_object(
  'schema_owner', coalesce((SELECT pg_get_userbyid(nspowner)='relaycast_owner' FROM pg_namespace WHERE nspname='public'),false),
  'owner_connect', has_database_privilege(owner,current_database(),'CONNECT'),
  'owner_temp', has_database_privilege(owner,current_database(),'TEMP'),
+ 'owner_no_db_create', NOT has_database_privilege(owner,current_database(),'CREATE'),
  'owner_schema_create', has_schema_privilege(owner,'public','CREATE'),
  'runtime_connect', has_database_privilege(runtime,current_database(),'CONNECT'),
  'runtime_usage', has_schema_privilege(runtime,'public','USAGE'),
@@ -152,7 +153,8 @@ def parse_credential(value, wrapper, expected_role):
         credential = {'host': url.hostname, 'port': str(url.port or 5432),
                       'user': unquote(url.username), 'password': unquote(url.password),
                       'database': unquote(url.path[1:]), 'params': params}
-        if any('\x00' in v for k,v in credential.items() if isinstance(v,str)):
+        if (any('\x00' in v for v in credential.values() if isinstance(v,str))
+                or any('\x00' in v for v in params.values())):
             raise ValueError()
     except (ValueError, TypeError, KeyError):
         raise DiagnosticError('malformed-url-or-json') from None
@@ -332,9 +334,9 @@ def database_checks(options, credentials, report):
                 report.test('database.'+slot+'.restricted',identity['restricted'] and not identity['admin_membership'],
                             'Dedicated login has no administrative attributes or broad predefined role membership.',
                             'Have the DBA review role attributes and memberships; never use the admin URL for a runtime service.')
-            if slot.endswith('runtime'):
+            if slot.endswith('runtime') or slot=='cast-owner':
                 report.test('database.'+slot+'.no-database-owner-membership',not identity['database_owner_membership'],
-                            'Runtime cannot assume the database owner role.', 'Have the DBA review inherited and SET-role membership paths.')
+                            'Login cannot assume the database owner role.', 'Have the DBA review inherited and SET-role membership paths; Relaycast migrations must own the public schema without owning the database.')
                 if SLOTS[slot][4]=='hoop':
                     report.test('database.'+slot+'.sessions-usage',identity['sessions_usage'],
                                 'Runtime has USAGE on the sessions schema.', 'Check migrations and post-migration phase 2 role activation/grants.')
