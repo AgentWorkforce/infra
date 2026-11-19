@@ -16,14 +16,16 @@ for attempt in {1..30}; do
   [[ "$attempt" != 30 ]] || { echo "fixture did not become ready" >&2; exit 1; }
   sleep 1
 done
-admin() { docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d hoopdb "$@"; }
-owner() { docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U erase_fixture_owner -d hoopdb "$@"; }
+# A non-default HoopDb name: the SQL must not assume "hoopdb".
+DB=poc_hoopdb
+admin() { docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$DB" "$@"; }
+owner() { docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U erase_fixture_owner -d "$DB" "$@"; }
 role_sql() { owner -v post="$1" -v p1=fixture-only-password < "$SQL"; }
 refuse() {
   if "$@" >/dev/null 2>&1; then echo "expected refusal: $*" >&2; exit 1; fi
 }
 docker exec "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -c 'CREATE ROLE erase_fixture_owner LOGIN CREATEROLE;'
-docker exec "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -c 'CREATE DATABASE hoopdb OWNER erase_fixture_owner;'
+docker exec "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -c "CREATE DATABASE $DB OWNER erase_fixture_owner;"
 role_sql false >/dev/null
 role_sql false >/dev/null
 [[ "$(admin -Atc "SELECT NOT rolcanlogin AND NOT rolinherit AND NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname='bulls96_session_erase_search'")" == t ]]
@@ -53,13 +55,13 @@ role_sql false >/dev/null
 [[ "$(admin -Atc "SELECT admin_option AND NOT inherit_option AND NOT set_option FROM pg_auth_members WHERE roleid='bulls96_session_erase_search'::regrole AND member='erase_fixture_owner'::regrole")" == t ]]
 echo 'ok - RDS-style owner grants and rotates repeatably, retaining only its non-inheriting ADMIN edge'
 admin -c "INSERT INTO search_index.transcript_events VALUES ('org_a','ws','s','id','secret'),('org_b','ws','s','id','neighbor');" >/dev/null
-refuse docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d hoopdb -c 'SELECT content FROM search_index.transcript_events'
-refuse docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d hoopdb -c 'CREATE TABLE search_index.forbidden(id int)'
-refuse docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d hoopdb -c 'TRUNCATE search_index.transcript_events'
-refuse docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d hoopdb -c "INSERT INTO search_index.transcript_events VALUES ('org_a','ws','s','id','payload')"
-docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d hoopdb -c 'DELETE FROM search_index.transcript_events' >/dev/null
+refuse docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d "$DB" -c 'SELECT content FROM search_index.transcript_events'
+refuse docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d "$DB" -c 'CREATE TABLE search_index.forbidden(id int)'
+refuse docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d "$DB" -c 'TRUNCATE search_index.transcript_events'
+refuse docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d "$DB" -c "INSERT INTO search_index.transcript_events VALUES ('org_a','ws','s','id','payload')"
+docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d "$DB" -c 'DELETE FROM search_index.transcript_events' >/dev/null
 [[ "$(admin -Atc 'SELECT count(*) FROM search_index.transcript_events')" == 2 ]]
-docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d hoopdb <<'SQL'
+docker exec -i "$CONTAINER" psql -X -v ON_ERROR_STOP=1 -U bulls96_session_erase_search -d "$DB" <<'SQL'
 BEGIN;
 SET LOCAL bulls96_read.org_id='org_a';
 SET LOCAL bulls96_read.workspace_id='ws';

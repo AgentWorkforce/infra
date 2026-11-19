@@ -56,6 +56,21 @@ No `gh`? Download the same assets from
 https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.16 into
 `release/`. On macOS use `shasum -a 256 -c SHA256SUMS`.
 
+**Installing the chart from a checkout instead of the released `.tgz`?** (A
+chart newer than the pinned release, or your own change.) Build the
+dependencies in this order, then use `infra/charts/agent-relay` wherever the
+steps name the `.tgz` or `$CHART`:
+
+```sh
+helm dependency build infra/charts/sessions-pipeline
+helm dependency build infra/charts/agent-relay
+```
+
+`sessions-pipeline` has dependencies of its own, so it goes first. Without it
+the second command fails or packages a chart whose read API and workers are
+not rendered. Step 7's image values then need the chart's own release, not
+this guide's pins (see the note there).
+
 Tools: `gcloud` (with `gke-gcloud-auth-plugin`), `terraform` ≥ 1.11 (or
 OpenTofu), `helm` 3, `kubectl`, `jq`, `yq`, `openssl`, and
 [`crane`](https://github.com/google/go-containerregistry/releases) for step 5.
@@ -152,7 +167,7 @@ network_self_link    = "projects/<project id>/global/networks/<cluster VPC>"
 sessions_bucket_name = "<globally unique bucket name, e.g. acme-agent-relay-sessions>"
 deletion_protection  = true
 image_mirror_repository = "agent-relay-mirror"   # step 5's registry, readable by the GKE nodes
-# desktop_feed_bucket_name = "<globally unique, e.g. acme-agent-relay-desktop-feed>"   # agent-relay-2026.11.9 or later: the desktop app's update feed
+# desktop_feed_bucket_name = "<globally unique, e.g. acme-agent-relay-desktop-feed>"   # agent-relay-2026.11.9 or later, and only once the feed's signing key exists (see below)
 # gke_node_service_account = "<email>"   # only if the node pool has its own service account
 # kms_key_name = "projects/<p>/locations/<region>/keyRings/<ring>/cryptoKeys/<key>"   # optional CMEK
 labels = { app = "agent-relay" }
@@ -169,7 +184,7 @@ cd -
 change, 0 to destroy` (5 more with `desktop_feed_bucket_name`, 2 fewer
 without `image_mirror_repository`), the apply completes, and `managed-values.json` exists.
 
-From agent-relay-2026.11.9, uncomment `desktop_feed_bucket_name`. It gives the
+From agent-relay-2026.11.9, `desktop_feed_bucket_name` gives the
 desktop app a signed update feed in your project: a private bucket, and a service account relay-control uses to write
 releases there and sign download links. `managed-values.json` carries its
 settings into step 11; if your `values.yaml` sets `relay-control.extraEnv` or
@@ -177,6 +192,31 @@ settings into step 11; if your `values.yaml` sets `relay-control.extraEnv` or
 `terraform output desktop_feed` into them. Earlier releases have neither the
 Terraform input nor relay-control 0.5.25, so leave it commented. Agent Relay sets up
 the feed's signing key with you when we build your branded desktop app.
+
+**Uncomment it only once that signing key is in place** (the key's Secret
+exists and your `values.yaml` sets `relay-control.desktopFeed.signingKeys`).
+The bucket puts the feed's storage settings into `managed-values.json`, and
+relay-control does not start with storage and no signer: it exits with
+`SELFHOST_DESKTOP_FEED_SIGNER and SELFHOST_DESKTOP_FEED_STORAGE must be set together`
+and the pod crash-loops. Adding the bucket later is this step again (5 to
+add), then step 11's command.
+
+**Already applied with the bucket, and no signing key yet?** Keep the bucket
+and take the storage settings out until the key exists:
+
+```sh
+jq 'del(.["relay-control"].extraEnv)' managed-values.json > managed-values.tmp && mv managed-values.tmp managed-values.json
+```
+
+Also remove any `SELFHOST_DESKTOP_FEED_*` entries you copied into
+`values.yaml`. The service account annotations can stay. When the key is in
+place, write `managed-values.json` again (the `terraform output` line above)
+and run step 11's command. The Terraform on `main` (after the pinned release)
+does the same with `desktop_feed_has_signing_keys = false` in
+`terraform.tfvars`: the output then leaves the storage settings out. Outputs
+change only on apply, so after adding or removing that line run
+`terraform plan` and `terraform apply` before writing `managed-values.json`
+again.
 
 **Terraform state.** The example has no `backend` block, so the state stays in
 a local file. To keep it in Cloud Storage, create a private, versioned bucket
@@ -291,6 +331,34 @@ EOF
 source settings.sh
 bash -c 'source ./settings.sh; for v in DOMAIN ORG_ID ORG_NAME ADMIN_EMAIL GCP_PROJECT_ID REGION MIRROR_ROOT CLOUD_SQL_INSTANCE CLOUD_SQL_HOST CLOUD_SQL_ADMIN_USER CLOUD_SQL_ADMIN_SECRET_ID CLOUD_SQL_CA_SHA256 SESSIONS_BUCKET; do [ -n "${!v}" ] && [ "${!v}" != null ] && [[ "${!v}" != *"<"* ]] || echo "MISSING: $v"; done; echo "settings checked"'
 ```
+
+**`SERVICES_IMAGE`, `PSQL_IMAGE` and `agent-relay-0.7.54.tgz` belong to the
+pinned release,** agent-relay-2026.11.16 (chart 0.7.54). Installing another
+release or chart? Don't reuse these digests: the Jobs in steps 8, 13 and 16
+would run an older services image than the workloads. Read the three values
+from that release's own assets in `release/` (step 1, with its tag):
+
+```sh
+ls release/agent-relay-*.tgz
+jq -r '.images[] | select(.name == "sessions-pipeline" or .name == "sessions-migration-postgresql") | "\(.name) \(.ref)"' release/release-manifest.json
+```
+
+`SERVICES_IMAGE` is `$MIRROR_ROOT/` followed by the `sessions-pipeline` ref,
+`PSQL_IMAGE` is `$MIRROR_ROOT/` followed by the `sessions-migration-postgresql`
+ref, and the `.tgz` name replaces `agent-relay-0.7.54.tgz` in steps 11, 13 and
+16.
+
+A chart from a checkout (step 1) has no release assets. Read the same two
+images from the checkout, for the release whose images you run, and mirror
+them (step 5) before use:
+
+```sh
+jq -r '.pins["sessions-pipeline"] | "\(.repository)@\(.digest)"' infra/releases/<release tag>/pins.json
+grep -m1 -o 'ghcr.io/cloudnative-pg/postgresql[^ ]*' infra/charts/sessions-pipeline/values.yaml
+```
+
+The second line prints `repository:tag@sha256:...`; `PSQL_IMAGE` takes it
+without the tag (`repository@sha256:...`), as step 5 mirrors by digest.
 
 **Brought your own resources (step 3)?** Replace the six lines between `PG=`
 and `unset` with the values from 1-BRING-YOUR-OWN.md.
@@ -603,7 +671,7 @@ with `echo $CLOUD_SQL_CA_SHA256`.
 kubectl -n $NAMESPACE get managedcertificate agent-relay -o jsonpath='{.status.certificateStatus}{"\n"}'
 ```
 
-Repeat until it prints `Active`. Then:
+Repeat until it prints `Active` (what is normal while you wait is below). Then:
 
 ```sh
 curl -fsS "https://api.$DOMAIN/readyz" && echo " api ok"
@@ -615,12 +683,32 @@ curl -s -o /dev/null -w "history %{http_code}\n" "https://history.$DOMAIN/v1/ses
 **Done when:** `Active`, then `api ok`, `cast ok`, `dashboard 200` and
 `history 401`.
 
+**The Ingress can take 15 to 20 minutes to get its address** after step 11.
+The certificate cannot leave `Provisioning` before that. To look:
+
+```sh
+kubectl -n $NAMESPACE get ingress
+kubectl -n $NAMESPACE describe ingress | sed -n '/^Events:/,$p'
+```
+
+A `Translation failed ... no BackendConfig for service port exists` warning
+on the first sync is harmless when it does not repeat: the load balancer
+controller read the Services before their BackendConfigs, and a later sync
+heals it by itself. Worry only if the `ADDRESS` column is still empty, or the
+warning still repeats, after about 20 minutes; then send us the events.
+
 - **Stuck in `Provisioning` for over an hour:** one of the four names does not
   resolve to the address from step 6, or a CAA record blocks Google. Fix DNS;
   the certificate retries by itself.
 - **`FailedNotVisible`:** the same: DNS does not point at the load balancer yet.
 - **502 for a few minutes after `Active`:** the load balancer's health checks
   are still converging. Wait 5 minutes.
+- **502 on `/internal` and other closed paths is not an outage.** The chart
+  routes paths that must not be public (for example
+  `https://api.<domain>/internal/...`) to the `...-cast-edge-deny` Service,
+  which has no endpoints on purpose. Without a Cloud Armor policy the load
+  balancer answers those paths with 502, not 403 or 404. Only the four checks
+  above tell you whether the install is up.
 
 The load balancer accepts TLS 1.0 and later until it has an SSL policy. To
 require TLS 1.2, add Cloud Armor, or put Cloudflare in front, see
@@ -657,6 +745,19 @@ and signs in at `https://<domain>/login`. The setup key works once, within 24
 hours: the script never retries, and it stops if the secret already exists.
 A `403 csrf_rejected` means the request lacked your dashboard's origin; it is
 refused before the key is read, so the key stays unused.
+
+Two settings, both optional:
+
+- **The API is not at `api.<app hostname>`** (your own four host names): name
+  it with `API_HOST=<api hostname> bash first-admin.sh ...`. The script calls
+  that host and still sends the app hostname as the origin.
+- **No Secret Manager** (the API is off, or you may not create secrets there):
+  `PASSWORD_FILE=<path> bash first-admin.sh ...` keeps the password in that
+  new local file (mode 0600) instead; `<project id>` is then unused and can be
+  `-`. The script stops if the file exists. Hand the file to the admin over a
+  channel you trust, then delete it. By default the script needs
+  `secretmanager.googleapis.com` and permission to create a secret in the
+  project.
 
 Then add users:
 
@@ -1182,6 +1283,7 @@ gcloud artifacts repositories delete agent-relay-mirror --location $REGION
 - **Used `first-admin.sh` (step 15)?** Delete the password it stored, or it
   will refuse to run for a new install in this project:
   `gcloud secrets delete agent-relay-first-admin-password --project $GCP_PROJECT_ID`.
+  With `PASSWORD_FILE`, delete that file instead.
 - **Used vals with Secret Manager (step 10c)?** Delete its secrets:
   `gcloud secrets list --filter='name~agent-relay--' --format='value(name)' | xargs -r -n1 gcloud secrets delete --quiet`.
 - Delete `~/.agent-relay-install` from wherever you copied it: the database
