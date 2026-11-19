@@ -643,7 +643,7 @@ candidate recorded in that handoff. Candidate identifiers from an older packet
 are superseded; never carry them forward or substitute an unreviewed run.
 
 ```bash
-export DESKTOP_REPO="AgentWorkforce/relay-desktop"
+export DESKTOP_REPO="AgentWorkforce/relay-app"
 export DESKTOP_SITE_URL="https://api.<customer-domain>"
 export DESKTOP_ORG_ID="<organization-id>"
 export DESKTOP_PROFILE_ID="<profile-id>"
