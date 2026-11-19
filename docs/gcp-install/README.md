@@ -10,6 +10,7 @@ cluster, the GCP counterpart of the AWS EKS guide. Start with
 | `1-BRING-YOUR-OWN.md` | Specs for creating Cloud SQL, GCS, Memorystore, Pub/Sub, search and certificates yourself instead of Terraform |
 | `2-SERVICE-ACCOUNTS.md` | Workload Identity: every grant the install needs, and who needs which roles |
 | `3-EDGE-HARDENING.md` | Optional: the load balancer's TLS policy, Cloud Armor, and Cloudflare in front |
+| `EDGE-DESKTOP-CONFIG.md` | Optional: prepare consistent edge, Desktop and signed-feed configuration |
 | `NOT-QUALIFIED.md` | What 2026.11.16 does not yet qualify on GKE. Read before a production rollout |
 | `REGULATED-PROFILE.md` | Optional: customer-managed encryption keys (Kubernetes Secrets, Cloud SQL, bucket, Pub/Sub, Redis, disks) and Binary Authorization |
 | `images.md` | The release images and how they are mirrored |

@@ -1,5 +1,8 @@
 # Agent Relay self-host safety checks
 
+`prepare-gcp-edge.py` prepares non-secret external-GKE edge and Desktop feed
+configuration locally. See [the configuration guide](../../docs/gcp-install/EDGE-DESKTOP-CONFIG.md).
+
 For first-admin recovery and device-code inventory, lookup and approve/deny,
 use the [operator login runbook](../../docs/operator-device-login.md). Its
 standalone in-pod helper is separate from the read-only safety checks below;
