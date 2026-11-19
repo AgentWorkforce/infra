@@ -441,6 +441,20 @@ searchIndexer:
     maxReadBytes: ""
     # SEARCH_INDEX_STREAM_MAX_READ_EVENTS: 4x limits.maxScopeEvents..2000000.
     maxReadEvents: null
+  # Staged reconcile (issue 610 Phase 3), consumer only:
+  # SEARCH_INDEX_STAGED_RECONCILE_ENABLED. Tri-state like streaming.enabled:
+  # null (default) renders nothing and keeps the image default, which is ON
+  # from the first services image built from relayhistory-pipeline efdd4bb2 or
+  # later (off in older images); true or false render explicitly, and false
+  # keeps the pre-staged path. true with streaming.enabled=false is refused.
+  # On needs migration 20261105062110 (and 20261105062140 with outputFacts
+  # enabled) and the same memory as streaming (see above).
+  # Upgrade note: the migrate Job is a plain Job, not a hook, so on an upgrade
+  # to a default-on image the indexer pod restarts until migrate has applied
+  # those migrations, then starts; this is expected. Set enabled: false to
+  # stay on the pre-staged path.
+  stagedReconcile:
+    enabled: null
   # GCS readiness settings (Cloud SQL, Memorystore and Pub/Sub). Empty for S3.
   extraEnv: []
   postgres:
