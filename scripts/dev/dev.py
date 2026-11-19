@@ -355,6 +355,7 @@ class Supervisor:
         self.env = env
         self.children = []
         self.logs = []
+        self.backend_log_offset = None  # Where this invocation's backends.log events begin.
         self.desktop_process = None
 
     def log(self, name):
@@ -388,6 +389,21 @@ class Supervisor:
         self.children.append((name, process))
         return process
 
+    def backends_restored(self, process):
+        """Only a clean exit whose own log reports restore_complete counts as restored."""
+        if process.returncode != 0:
+            return False
+        try:
+            with (STATE / "backends.log").open() as stream:
+                stream.seek(self.backend_log_offset or 0)
+                for line in stream:
+                    with suppress(ValueError, AttributeError):
+                        if json.loads(line).get("stage") == "restore_complete":
+                            return True
+        except OSError:
+            pass
+        return False
+
     def check(self):
         for name, process in self.children:
             if process.poll() is not None:
@@ -417,8 +433,16 @@ class Supervisor:
                     RESTORING.chmod(0o600)
                 process.wait(timeout=1800 if name == "backends" else 8)
                 if name == "backends":
-                    with suppress(FileNotFoundError):
-                        RESTORING.unlink()
+                    if self.backends_restored(process):
+                        with suppress(FileNotFoundError):
+                            RESTORING.unlink()
+                    else:
+                        # Kept until the developer recovers: a later run must not adopt
+                        # leftover development images as its starting state.
+                        RESTORING.write_text(json.dumps({"pid": process.pid, "failed": True}))
+                        RESTORING.chmod(0o600)
+                        say("Backend restoration did not complete; see backends.log and the source-loop recovery guide.")
+                        restored = False
             except subprocess.TimeoutExpired:
                 if name == "backends":
                     say("Backend restoration is still running; inspect backends.log before another startup.")
@@ -433,15 +457,23 @@ class Supervisor:
         return restored
 
 
-def restore_in_progress():
-    """The pid of a backend watcher an earlier launcher left restoring deployments, if it still runs."""
+def restore_block():
+    """Why an earlier backend watcher's restoration blocks this run, or None.
+
+    A watcher still running holds the deployments; one that exited without
+    confirming restore_complete may have left development images behind.
+    """
     try:
-        pid = json.loads(RESTORING.read_text())["pid"]
+        record = json.loads(RESTORING.read_text())
+        pid = record["pid"]
     except (OSError, ValueError, KeyError, TypeError):
         return None
     listing = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True)
     if listing.returncode == 0 and "ci/agent-relay/dev/dev.py" in listing.stdout:
-        return pid
+        return f"An earlier backend watcher (pid {pid}) is still restoring deployments. Wait for it to exit; see .kind/dev/backends.log."
+    if record.get("failed"):
+        return ("The last backend restoration did not complete, so deployments may still run development images. "
+                "Follow source-loop recovery in docs/kind-development.md, then delete .kind/dev/restoring.json.")
     with suppress(OSError):
         RESTORING.unlink()
     return None
@@ -487,7 +519,10 @@ def configure_control(stack, config, auth):
                    SELFHOST_OIDC_REDIRECT_URL=origin + "/login/oidc/callback")
     changes = [{"name": k, "value": v} for k, v in env.items()]
     for name, key in [("SELFHOST_OIDC_CLIENT_ID", "client-id"), ("SELFHOST_OIDC_CLIENT_SECRET", "client-secret")]:
-        changes.append({"name": name, "valueFrom": {"secretKeyRef": {"name": "local-dev-google", "key": key}}} if auth == "google" else {"name": name, "$patch": "delete"})
+        # value: null clears a chart-rendered literal (native make local-google-oidc sets
+        # the client id as value); Kubernetes rejects an entry with both value and valueFrom.
+        changes.append({"name": name, "value": None, "valueFrom": {"secretKeyRef": {"name": "local-dev-google", "key": key}}}
+                       if auth == "google" else {"name": name, "$patch": "delete"})
     if auth != "google":
         changes.extend({"name": name, "$patch": "delete"} for name in ["SELFHOST_OIDC_ISSUER", "SELFHOST_OIDC_DISPLAY_NAME", "SELFHOST_OIDC_REDIRECT_URL"])
     # The chart renders these when the native stack has its own Google client
@@ -563,6 +598,7 @@ def start_backends(parent, python, supervisor):
         "--kubectl", shutil.which("kubectl", path=supervisor.env["PATH"])])
     log = STATE / "backends.log"
     offset = log.stat().st_size if log.exists() else 0
+    supervisor.backend_log_offset = offset
     supervisor.start("backends", [python, ROOT / "ci/agent-relay/dev/dev.py", "run",
         "--config", backend_config, "--components", "control,pipeline,cast"])
     say("Building backend services from sibling sources; cold container builds can take several minutes.")
@@ -609,9 +645,9 @@ def main():
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise DevError("A dev.sh is running in this checkout. Stop it with Ctrl-C; it pauses the cluster on exit.") from None
-            pid = restore_in_progress()
-            if pid:
-                raise DevError(f"The backend watcher (pid {pid}) is still restoring deployments; wait for it before pausing. See backends.log.")
+            blocked = restore_block()
+            if blocked and "still restoring" in blocked:
+                raise DevError(blocked + " Pause after it exits.")
             if not docker_running(env):
                 say("Docker is not running, so the local cluster is not either; nothing to pause.")
                 return 0
@@ -623,9 +659,9 @@ def main():
         for name in BOOTSTRAPPED:
             if not shutil.which(name, path=env["PATH"]):
                 say(f"{name} is not installed yet; dev.sh prepares the pinned version under .kind/tools before using it.")
-    pid = restore_in_progress()
-    if pid:
-        errors.append(f"An earlier backend watcher (pid {pid}) is still restoring deployments. Wait for it to exit; see .kind/dev/backends.log.")
+    blocked = restore_block()
+    if blocked:
+        errors.append(blocked)
     if not args.no_desktop and not args.proof and sys.platform == "darwin":
         executable = str(parent / "relay-desktop/out/dev/Agent Relay Dev.app/Contents/MacOS/RelayDesktop")
         listing = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True)
@@ -736,8 +772,8 @@ def finish_cluster(env, keep_running, restored):
     """Pause on exit unless asked not to, or while the backend watcher still needs the API server."""
     try:
         if not restored:
-            say("Cluster left running: the backend watcher is still restoring deployments. "
-                "Run ./dev.sh --stop after it exits; a new dev.sh refuses to start until then.")
+            say("Cluster left running: backend restoration is unfinished or failed. "
+                "A new dev.sh refuses to start until it is resolved; ./dev.sh --stop pauses it afterwards.")
         elif keep_running:
             if node_state(env) == "running":
                 say("Cluster left running (--keep-running). Pause it later with ./dev.sh --stop.")

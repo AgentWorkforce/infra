@@ -148,9 +148,12 @@ Pause and resume act only on the node this launcher recorded after the stack
 verified the checkout's ownership receipt, on the same Docker endpoint. A
 same-named node from another checkout is never stopped or started; a stopped
 node the launcher did not record fails startup with a `docker start` hint.
-If backend restoration is still running when the launcher gives up waiting, the
-cluster is left running and a new `./dev.sh` or `./dev.sh --stop` refuses to
-proceed until that watcher exits. `--stop` exits nonzero when a pause fails.
+Restoration counts as done only when the watcher exits cleanly after logging
+`restore_complete`. If it is still running when the launcher gives up waiting,
+the cluster is left running and a new `./dev.sh` or `./dev.sh --stop` refuses to
+proceed until that watcher exits. If it failed, the cluster is left running and
+`./dev.sh` refuses to start until you follow
+[source-loop recovery](kind-development.md) and delete `.kind/dev/restoring.json`. `--stop` exits nonzero when a pause fails.
 
 ## E2E verification
 

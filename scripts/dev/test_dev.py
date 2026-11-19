@@ -242,7 +242,9 @@ class LauncherTests(unittest.TestCase):
     def test_close_reports_unfinished_restoration_and_blocks_the_next_start(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)
-            with patch.object(dev, "STATE", state), patch.object(dev, "RESTORING", state / "restoring.json"), patch.object(dev, "say"):
+            marker = state / "restoring.json"
+            log = state / "backends.log"
+            with patch.object(dev, "STATE", state), patch.object(dev, "RESTORING", marker), patch.object(dev, "say"):
                 supervisor = dev.Supervisor({})
                 backend = Mock(pid=4242)
                 backend.poll.return_value = None
@@ -250,19 +252,35 @@ class LauncherTests(unittest.TestCase):
                 supervisor.children = [("backends", backend)]
                 self.assertFalse(supervisor.close())
                 backend.terminate.assert_called_once()
-                self.assertEqual(json.loads((state / "restoring.json").read_text()), {"pid": 4242})
+                self.assertEqual(json.loads(marker.read_text()), {"pid": 4242})
                 alive = SimpleNamespace(returncode=0, stdout="python ci/agent-relay/dev/dev.py run\n")
                 with patch.object(dev.subprocess, "run", return_value=alive):
-                    self.assertEqual(dev.restore_in_progress(), 4242)
-                with patch.object(dev.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout="")):
-                    self.assertIsNone(dev.restore_in_progress())
-                self.assertFalse((state / "restoring.json").exists())
-                finished = Mock(pid=4243)
-                finished.poll.return_value = None
-                supervisor = dev.Supervisor({})
-                supervisor.children = [("backends", finished)]
-                self.assertTrue(supervisor.close())
-                self.assertFalse((state / "restoring.json").exists())
+                    self.assertIn("pid 4242", dev.restore_block())
+                gone = SimpleNamespace(returncode=1, stdout="")
+                with patch.object(dev.subprocess, "run", return_value=gone):
+                    self.assertIsNone(dev.restore_block())
+                self.assertFalse(marker.exists())
+
+                def finished(returncode, events):
+                    log.write_text("old\n" + json.dumps({"stage": "restore_complete"}) + "\n")  # An earlier run's event.
+                    supervisor = dev.Supervisor({})
+                    supervisor.backend_log_offset = log.stat().st_size
+                    with log.open("a") as stream:
+                        stream.writelines(json.dumps({"stage": e}) + "\n" for e in events)
+                    process = Mock(pid=4243, returncode=returncode)
+                    process.poll.return_value = None
+                    supervisor.children = [("backends", process)]
+                    return supervisor.close()
+
+                self.assertTrue(finished(0, ["watching", "restore_complete"]))
+                self.assertFalse(marker.exists())
+                for returncode, events in ((1, ["restore_incomplete"]), (0, ["watching"]), (1, ["restore_complete"])):
+                    with self.subTest(returncode=returncode, events=events):
+                        self.assertFalse(finished(returncode, events))
+                        self.assertTrue(json.loads(marker.read_text())["failed"])
+                        with patch.object(dev.subprocess, "run", return_value=gone):
+                            self.assertIn("did not complete", dev.restore_block())  # Persists after the watcher exits.
+                        marker.unlink()
 
     def test_bootstrap_tools_are_not_required_before_their_preparation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -318,7 +336,13 @@ class LauncherTests(unittest.TestCase):
                 if auth == "operator":
                     self.assertIn("SELFHOST_OIDC_ISSUER", deleted)
                 else:
-                    self.assertIn("SELFHOST_OIDC_ISSUER", {e["name"] for e in env if "value" in e})
+                    self.assertIn("SELFHOST_OIDC_ISSUER", {e["name"] for e in env if e.get("value")})
+                    # The chart's literal client id must be cleared when switching to the Secret.
+                    for e in env:
+                        if "valueFrom" in e:
+                            self.assertIn("value", e)
+                            self.assertIsNone(e["value"])
+                    self.assertIn("SELFHOST_OIDC_CLIENT_ID", {e["name"] for e in env if "valueFrom" in e})
 
     def test_snapshot_notices_deletion_but_ignores_build_cache(self):
         with tempfile.TemporaryDirectory() as directory:
