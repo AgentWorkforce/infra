@@ -306,7 +306,7 @@ def _yaml_scalar(raw):
 def _parse_manifest_doc(lines):
     """Minimal parser for Kubernetes Secret manifests (no PyYAML on operator machines)."""
     kind = name = section = None
-    values = {}
+    sections = {'stringData': {}, 'data': {}}
     i = 0
     while i < len(lines):
         line = lines[i].rstrip('\n')
@@ -334,10 +334,19 @@ def _parse_manifest_doc(lines):
                 value = ('\n' if rest[0] == '|' else ' ').join(block).strip()
             else:
                 value = _yaml_scalar(rest)
-            if section == 'data':
-                value = base64.b64decode(value, validate=True).decode()
-            values[key] = value
-    return kind, name, values
+            sections[section][key] = value
+    return kind, name, sections['stringData'], sections['data']
+
+
+def _secret_values(string_data, data):
+    """Kubernetes semantics: decoded data first, stringData wins regardless of field order."""
+    if not isinstance(string_data, dict) or not isinstance(data, dict):
+        raise DiagnosticError('manifest-invalid-fields')
+    if not all(isinstance(v, str) for v in list(string_data.values()) + list(data.values())):
+        raise DiagnosticError('manifest-invalid-fields')
+    values = {k: base64.b64decode(v, validate=True).decode() for k, v in data.items()}
+    values.update(string_data)
+    return values
 
 
 def load_secret_manifests(paths):
@@ -356,24 +365,27 @@ def load_secret_manifests(paths):
         if f.stat().st_mode & 0o077:
             print('warning: '+f.name+' is readable by other users; chmod 600 it after this run.', file=sys.stderr)
         docs = []
-        if text.lstrip().startswith('{'):
+        if text.lstrip()[:1] in ('{', '['):
             obj = json.loads(text)
-            for item in obj.get('items', [obj]):
-                data = {k: base64.b64decode(v, validate=True).decode() for k, v in (item.get('data') or {}).items()}
-                data.update(item.get('stringData') or {})
-                docs.append((item.get('kind'), (item.get('metadata') or {}).get('name'), data))
+            items = obj.get('items', [obj]) if isinstance(obj, dict) else None
+            if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+                raise DiagnosticError('manifest-invalid-fields')
+            for item in items:
+                metadata = item.get('metadata') or {}
+                docs.append((item.get('kind'), metadata.get('name') if isinstance(metadata, dict) else None,
+                             item.get('stringData') or {}, item.get('data') or {}))
         else:
             chunk = []
             for line in text.splitlines(True) + ['---\n']:
-                if line.rstrip() == '---':
+                if re.fullmatch(r'---(?:[ \t]+#.*)?', line.rstrip()):
                     if chunk:
                         docs.append(_parse_manifest_doc(chunk))
                     chunk = []
                 else:
                     chunk.append(line)
-        for kind, name, data in docs:
-            if kind == 'Secret' and name:
-                secrets.setdefault(name, {}).update(data)
+        for kind, name, string_data, data in docs:
+            if kind == 'Secret' and isinstance(name, str) and name:
+                secrets.setdefault(name, {}).update(_secret_values(string_data, data))
     return secrets
 
 
@@ -384,7 +396,9 @@ def load_credentials(options, report):
     if getattr(options, 'secret_manifests', None):
         try:
             manifests = load_secret_manifests(options.secret_manifests)
-        except (DiagnosticError, ValueError, OSError):
+        except DiagnosticError as exc:
+            manifests = exc
+        except (ValueError, OSError, TypeError, AttributeError):
             manifests = DiagnosticError('manifest-unreadable')
     for slot,(secret,key,wrapper,role,group) in SLOTS.items():
         try:

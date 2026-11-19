@@ -110,6 +110,33 @@ class CredentialTests(unittest.TestCase):
             self.assertIn('manifest-secret-missing', text)
             self.assertNotIn('p%40ss', text)
 
+    def test_secret_manifest_review_cases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old = base64.b64encode(url('relaycast_owner', db='old_db').encode()).decode()
+            new = url('relaycast_owner')
+            # ConfigMap with non-base64 data, commented separator, data after stringData.
+            (root/'a.yaml').write_text("kind: Secret\nmetadata:\n  name: agent-relay-secrets\n"
+                                        "stringData:\n  database-owner-url: '" + new + "'\n"
+                                        "data:\n  database-owner-url: " + old + "\n"
+                                        "--- # CA bundle\nkind: ConfigMap\nmetadata:\n  name: rds-ca\n"
+                                        "data:\n  ca.crt: |\n    -----BEGIN CERTIFICATE-----\n    AAAA\n")
+            (root/'b.json').write_text(json.dumps({'kind':'List','items':[
+                {'kind':'ConfigMap','metadata':{'name':'x'},'data':{'mode':'production'}},
+                {'kind':'Secret','metadata':{'name':'agent-relay-read-api'},'data':{'k':base64.b64encode(b'v').decode()}}]}))
+            secrets = diag.load_secret_manifests([root])
+            self.assertEqual(secrets['agent-relay-secrets']['database-owner-url'], new)
+            self.assertEqual(secrets['agent-relay-read-api']['k'], 'v')
+            self.assertNotIn('rds-ca', secrets)
+            (root/'b.json').write_text(json.dumps({'kind':'Secret','metadata':{'name':'s'},'data':{'database-url':None}}))
+            report = diag.Report()
+            diag.load_credentials(options(secret_manifests=[root/'b.json']),report)
+            self.assertIn('manifest-invalid-fields', json.dumps(report.result()))
+            (root/'b.json').write_text('[1, 2]')
+            report = diag.Report()
+            diag.load_credentials(options(secret_manifests=[root/'b.json']),report)
+            self.assertIn('manifest-invalid-fields', json.dumps(report.result()))
+
     def test_secret_manifest_args(self):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             diag.parse_args(['--scope','database','--secret-dir','a','--secret-manifests','b'])
