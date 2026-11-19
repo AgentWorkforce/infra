@@ -55,6 +55,7 @@ run "wires_broker_to_its_roles_and_matches_the_allowlist" {
     condition = toset(module.broker_role.permissions_policy.Statement[0].Resource) == toset([
       jsondecode(file("${path.module}/../../allowlist.json")).accounts["805532413586"].roles.scoped,
       jsondecode(file("${path.module}/../../allowlist.json")).accounts["500268966557"].roles.elevated,
+      jsondecode(file("${path.module}/../../allowlist.json")).accounts["154551280135"].roles.elevated,
     ])
     error_message = "the broker may vend into exactly the allowlist's roles"
   }
