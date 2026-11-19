@@ -1,6 +1,8 @@
 # Alerting scaffold for the exit tooling that runs on this box (the legacy
 # erasure CLI writes one JSON line per event). The CloudWatch agent ships
-# every *.log under var.runner_log_dir to one log group; metric filters turn
+# each file in var.runner_log_files under var.runner_log_dir to one log group
+# (one collect entry per file: a wildcard would ship only the newest match);
+# metric filters turn
 # the fence signals (var.alert_signals) into metrics; one alarm per signal
 # publishes to the ops SNS topic. Where the topic delivers is
 # var.alert_endpoint: until it is set the topic has no subscription, so the
@@ -39,10 +41,12 @@ locals {
     logs = {
       logs_collected = {
         files = {
-          collect_list = [{
-            file_path       = "${var.runner_log_dir}/*.log"
+          # One entry per file: with a wildcard the agent ships only the
+          # newest matching file, so older files would be skipped.
+          collect_list = [for f in var.runner_log_files : {
+            file_path       = "${var.runner_log_dir}/${f}"
             log_group_name  = aws_cloudwatch_log_group.runner.name
-            log_stream_name = "{instance_id}"
+            log_stream_name = "{instance_id}/${trimsuffix(f, ".log")}"
             timezone        = "UTC"
           }]
         }
@@ -52,8 +56,8 @@ locals {
 }
 
 resource "aws_ssm_parameter" "cloudwatch_agent" {
-  #checkov:skip=CKV_AWS_337:The agent configuration names a file glob and a log group; nothing secret.
-  #checkov:skip=CKV2_AWS_34:The agent configuration names a file glob and a log group; nothing secret.
+  #checkov:skip=CKV_AWS_337:The agent configuration names file paths and a log group; nothing secret.
+  #checkov:skip=CKV2_AWS_34:The agent configuration names file paths and a log group; nothing secret.
   name        = "/${var.name}/cloudwatch-agent"
   description = "CloudWatch agent configuration for the Neon exit runner (log shipping only)"
   type        = "String"

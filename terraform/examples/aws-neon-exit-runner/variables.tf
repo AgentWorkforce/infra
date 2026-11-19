@@ -80,7 +80,7 @@ variable "tags" {
 # --- alerting (alerting.tf) -------------------------------------------------
 
 variable "log_group_name" {
-  description = "CloudWatch Logs group that receives the runner's *.log files."
+  description = "CloudWatch Logs group that receives the files listed in runner_log_files."
   type        = string
   default     = "/neon-exit/runner"
 }
@@ -92,12 +92,26 @@ variable "log_retention_days" {
 }
 
 variable "runner_log_dir" {
-  description = "Directory on the runner whose *.log files the CloudWatch agent ships. Write the erasure CLI's structured stdout there (for example `| tee -a /var/log/neon-exit/erasure.log`)."
+  description = "Directory on the runner that holds the files listed in runner_log_files, which the CloudWatch agent ships. Write the erasure CLI's structured stdout there (for example `| tee -a /var/log/neon-exit/erasure.log`)."
   type        = string
   default     = "/var/log/neon-exit"
   validation {
     condition     = can(regex("^/[A-Za-z0-9_./-]+$", var.runner_log_dir)) && !endswith(var.runner_log_dir, "/")
     error_message = "runner_log_dir must be an absolute path without a trailing slash."
+  }
+}
+
+variable "runner_log_files" {
+  description = "File names under runner_log_dir that the CloudWatch agent ships. Each file gets its own collect entry (and log stream) because a wildcard would ship only the newest match. A new log file name must be added here before its lines reach the alarms."
+  type        = list(string)
+  default     = ["erasure.log", "canary.log"]
+  validation {
+    condition     = length(var.runner_log_files) > 0 && alltrue([for f in var.runner_log_files : can(regex("^[A-Za-z0-9_.-]+\\.log$", f))])
+    error_message = "runner_log_files needs at least one entry, each a plain file name ending in .log (no slash, no wildcard)."
+  }
+  validation {
+    condition     = length(distinct(var.runner_log_files)) == length(var.runner_log_files)
+    error_message = "runner_log_files entries must be distinct."
   }
 }
 

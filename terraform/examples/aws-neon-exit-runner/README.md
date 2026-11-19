@@ -43,8 +43,11 @@ object per line to stdout, always with `service: "neon-s3-erasure"`. This
 scaffold turns those lines into pages:
 
 - a CloudWatch Logs group (`log_group_name`, default `/neon-exit/runner`) fed
-  by the CloudWatch agent from every `*.log` under `runner_log_dir`
-  (default `/var/log/neon-exit`, mode 0750, owned by `runner_log_owner`);
+  by the CloudWatch agent from the files named in `runner_log_files`
+  (default `erasure.log` and `canary.log`, one collect entry and log stream
+  each) under `runner_log_dir` (default `/var/log/neon-exit`, mode 0750,
+  owned by `runner_log_owner`); a new file name must be added to
+  `runner_log_files`;
 - one metric filter and one alarm per `alert_signals` entry, every pattern
   scoped to `$.service = "neon-s3-erasure"`. Defaults:
   `legacy_fence_failed` (the `@metric` line with `legacyFenceFailed > 0` and
@@ -84,7 +87,9 @@ aws ssm start-associations-once --association-ids "$(terraform output -raw cloud
 
 ### Running the eraser so it is watched
 
-Only files under `runner_log_dir` are shipped, so stdout must land there.
+Only the files listed in `runner_log_files` under `runner_log_dir` are shipped
+(a wildcard would ship just the newest match), so stdout must land in one of
+them; add any other file name to `runner_log_files`.
 stderr stays local (not JSON, never matches a filter):
 
 ```sh
@@ -186,14 +191,15 @@ aws logs test-metric-filter \
 | heartbeat\_pattern | Filter pattern for the eraser's per-sweep summary line. | `string` | `"{ ($.service = \"neon-s3-erasure\") && ($.message = \"erasure sweep\") }"` | no |
 | heartbeat\_period\_seconds | Expected sweep cadence in seconds (the eraser's default is 600). One alarm period. | `number` | `600` | no |
 | instance\_type | Instance type with local NVMe for the dump. | `string` | `"m6id.4xlarge"` | no |
-| log\_group\_name | CloudWatch Logs group that receives the runner's *.log files. | `string` | `"/neon-exit/runner"` | no |
+| log\_group\_name | CloudWatch Logs group that receives the files listed in runner\_log\_files. | `string` | `"/neon-exit/runner"` | no |
 | log\_retention\_days | Days CloudWatch keeps the runner log. | `number` | `90` | no |
 | metric\_namespace | CloudWatch metric namespace for the signals extracted from the log. | `string` | `"neon-exit"` | no |
 | name | Name prefix for every resource. | `string` | `"neon-exit-runner"` | no |
 | private\_subnet\_cidr | CIDR of the new private subnet; must be free inside the VPC. | `string` | `"172.31.96.0/20"` | no |
 | region | Region of the runner. us-east-1 keeps it next to the Neon and Supabase projects. | `string` | `"us-east-1"` | no |
 | root\_volume\_size\_gb | Root EBS volume size. The dump goes to the NVMe instance store at /scratch, not here. | `number` | `50` | no |
-| runner\_log\_dir | Directory on the runner whose *.log files the CloudWatch agent ships. Write the erasure CLI's structured stdout there (for example `| tee -a /var/log/neon-exit/erasure.log`). | `string` | `"/var/log/neon-exit"` | no |
+| runner\_log\_dir | Directory on the runner that holds the files listed in runner\_log\_files, which the CloudWatch agent ships. Write the erasure CLI's structured stdout there (for example `| tee -a /var/log/neon-exit/erasure.log`). | `string` | `"/var/log/neon-exit"` | no |
+| runner\_log\_files | File names under runner\_log\_dir that the CloudWatch agent ships. Each file gets its own collect entry (and log stream) because a wildcard would ship only the newest match. A new log file name must be added here before its lines reach the alarms. | `list(string)` | ```[ "erasure.log", "canary.log" ]``` | no |
 | runner\_log\_owner | User that owns runner\_log\_dir (0750). The eraser runs as this user; the CloudWatch agent reads as root. | `string` | `"ssm-user"` | no |
 | tags | Tags applied to every resource. | `map(string)` | ```{ "ephemeral": "true", "managed": "terraform", "project": "neon-exit" }``` | no |
 
@@ -209,10 +215,11 @@ aws logs test-metric-filter \
 | db\_owner\_secret\_arn | Secrets Manager ARN of the empty target credential. |
 | db\_owner\_secret\_name | Secrets Manager name of the target credential. |
 | instance\_id | Runner instance id (target of ssm start-session). |
-| log\_group\_name | CloudWatch Logs group that receives the runner's *.log files. |
+| log\_group\_name | CloudWatch Logs group that receives the files listed in runner\_log\_files. |
 | nat\_gateway\_id | NAT gateway that carries the runner's egress. |
 | private\_subnet\_id | Private subnet the runner sits in. |
-| runner\_log\_dir | Directory on the runner whose *.log files are shipped. |
+| runner\_log\_dir | Directory on the runner that holds the shipped log files (runner\_log\_files). |
+| runner\_log\_files | File names under runner\_log\_dir that are shipped; a new file name must be added to runner\_log\_files. |
 | runner\_role\_arn | Instance role: SSM core plus read of the two exit secrets. |
 | security\_group\_id | Runner security group (no ingress). |
 | ssm\_session\_command | Shell on the runner for a principal allowed ssm:StartSession on it. |
