@@ -527,15 +527,17 @@ start by themselves once it does.
   ```sh
   yq -i '
     del(.externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_MIGRATION_URL) |
-    del(.externalSecrets.secrets.search-indexer-owner.data.RELAYHISTORY_PIPELINE_CONSUMER_SECRET)
+    del(.externalSecrets.secrets.search-indexer-owner)
   ' values.yaml
   ```
 
-  Apply that values file with the successful upgrade, then remove the same
-  mappings from the live ExternalSecrets and delete the two values from Secret
-  Manager. Wait for reconciliation; do not patch the generated Kubernetes
-  Secrets. Delete `hoopdb-admin-jobs` only after the upgrade Jobs, Deployments,
-  and this store-side cleanup succeed. Do not append
+  `search-indexer-owner` has no other keys, so remove its whole values entry;
+  leaving an empty `data` map makes chart validation refuse the upgrade. Apply
+  that values file with the successful upgrade, then remove the remaining
+  `agent-relay-secrets` mapping from its live ExternalSecret and delete both
+  old values from Secret Manager. Wait for reconciliation; do not patch the
+  generated Kubernetes Secrets. Delete `hoopdb-admin-jobs` only after the
+  upgrade Jobs, Deployments, and this store-side cleanup succeed. Do not append
   `external-secrets-values.yaml` to this existing install again: it would
   restore the removed mappings.
 - **`helm uninstall` deletes these five Secrets** (ESO owns them). The values
