@@ -551,6 +551,31 @@ grep -q 'remove that mapping from the Helm release values' <<<"$out" \
   || fail "active ExternalSecret mapping refusal omitted its values source: $out"
 grep -q '^rds-setup delete-admin-jobs' "$root/log" \
   && fail "active ExternalSecret mapping deleted the retained temporary credential"
+for style in template-data template-from; do
+  make_state; setup_mocks "$root/rel-ok" ok
+  mkdir -p "$root/secrets/agent-relay"
+  printf '{"metadata":{},"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' \
+    >"$root/secrets/agent-relay/agent-relay-secrets.json"
+  printf '{"metadata":{},"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' \
+    >"$root/secrets/agent-relay/search-indexer-owner.json"
+  if [ "$style" = template-data ]; then
+    printf '%s\n' '{"items":[{"metadata":{"name":"migration"},"spec":{"target":{"name":"agent-relay-secrets","template":{"data":{"HOOPDB_MIGRATION_URL":"{{ .adminUrl }}"}}}}}]}' \
+      >"$root/external-secrets.json"
+  else
+    printf '%s\n' '{"items":[{"metadata":{"name":"migration"},"spec":{"target":{"name":"agent-relay-secrets","template":{"templateFrom":[{"configMap":{"name":"outputs"}}]}}}}]}' \
+      >"$root/external-secrets.json"
+  fi
+  if out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
+      --apply --db-instance prod-db --yes 2>&1); then
+    fail "ExternalSecret $style output was patched during automated cleanup"
+  fi
+  grep -q 'External Secrets still maps agent-relay-secrets/HOOPDB_MIGRATION_URL' <<<"$out" \
+    || fail "ExternalSecret $style refusal did not name the rendered administrator key: $out"
+  grep -q 'kubectl .*patch secret agent-relay-secrets' "$root/log" \
+    && fail "ExternalSecret $style output reached an automated Secret patch"
+  grep -q '^rds-setup delete-admin-jobs' "$root/log" \
+    && fail "ExternalSecret $style refusal deleted the temporary administrator Secret"
+done
 pass "legacy cleanup refuses managed keys and finishes after ESO removes them"
 
 # 21. eks-native legacy upgrade with --rds-setup prepares the temporary Secret; without it, never

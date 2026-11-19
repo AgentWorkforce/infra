@@ -77,6 +77,14 @@ done
 KUBECTL_CONTEXT_ARGS=()
 if [[ -n "$KUBE_CONTEXT" ]]; then KUBECTL_CONTEXT_ARGS=(--context "$KUBE_CONTEXT"); fi
 kubectl() { command kubectl ${KUBECTL_CONTEXT_ARGS[@]+"${KUBECTL_CONTEXT_ARGS[@]}"} "$@"; }
+selected_activation_target() {
+  local context="$KUBE_CONTEXT"
+  if [[ -z "$context" ]]; then
+    context="$(command kubectl config current-context)" || die "could not resolve the current Kubernetes context"
+    [[ -n "$context" ]] || die "kubectl has no current context"
+  fi
+  printf 'context=%s\nnamespace=%s\ncluster=%s\n' "$context" "$NS" "$CLUSTER"
+}
 [[ "$SERVICES_IMAGE" == *@sha256:* ]] || die "SERVICES_IMAGE must be pinned by digest"
 
 mkdir -p "$STATE_DIR" "$PW_DIR" "$FILES"
@@ -124,6 +132,22 @@ psql_su() {
 }
 query_su() { # database sql
   kubectl -n "$NS" exec -i "$(primary)" -c postgres -- psql -X -A -t -v ON_ERROR_STOP=1 -d "$1" -c "$2"
+}
+verify_saved_owner_credential() {
+  local out="$WORK/owner-auth.out" rc=0
+  printf '%s:5432:hoopdb:%s:%s\n' "$DB_HOST" "$OWNER" "$(pw "$OWNER")" \
+    | kubectl -n "$NS" exec -i "$(primary)" -c postgres -- sh -ceu '
+        passfile="$(mktemp)"
+        trap '\''rm -f "$passfile"'\'' EXIT
+        cat >"$passfile"
+        chmod 600 "$passfile"
+        PGPASSFILE="$passfile" psql -X -A -t -v ON_ERROR_STOP=1 -h "$1" -p 5432 -U "$2" -d hoopdb -c "select 1"
+      ' sh "$DB_HOST" "$OWNER" >"$out" 2>&1 || rc=$?
+  if [[ "$rc" != 0 || "$(tr -d '[:space:]' <"$out")" != 1 ]]; then
+    rm -f "$out"
+    die "saved hoopdb_owner credential does not authenticate to the selected CloudNativePG cluster; refusing before database writes"
+  fi
+  rm -f "$out"
 }
 quiet() { printf "SET log_statement='none'; SET log_min_error_statement='panic';\n"; }
 
@@ -228,7 +252,11 @@ external_secret_mapping_active() { # target-secret key: 0 active, 1 absent, 2 un
   jq -e --arg target "$target" --arg key "$key" '
     any(.items[]?;
       ((.spec.target.name // .metadata.name) == $target) and
-      (any(.spec.data[]?; .secretKey == $key) or ((.spec.dataFrom // []) | length > 0)))' "$json" >/dev/null || rc=$?
+      (any(.spec.data[]?; .secretKey == $key) or
+       ((.spec.dataFrom // []) | length > 0) or
+       ((.spec.target.template.data // {}) | has($key)) or
+       ((.spec.target.template.templateFrom // []) | length > 0) or
+       ((.spec.target.templateFrom // []) | length > 0)))' "$json" >/dev/null || rc=$?
   case "$rc" in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
 }
 
@@ -292,6 +320,13 @@ do_pre() {
   ensure_ca
   fetch_sql
 
+  local activation_target="$WORK/activation-target"
+  selected_activation_target >"$activation_target"
+  if [[ -s "$PENDING_ACTIVATION_FILE" ]]; then
+    cmp -s "$activation_target" "$PENDING_ACTIVATION_FILE" \
+      || die "pending activation state belongs to a different Kubernetes context, namespace, or CloudNativePG cluster; refusing"
+  fi
+
   local p pending_passwords="" pending_candidates="" missing_passwords="" untrusted_passwords=""
   [[ ! -s "$PENDING_PASSWORDS_FILE" ]] || pending_passwords="$(<"$PENDING_PASSWORDS_FILE")"
   for p in control_owner control_api_runtime "$OWNER" "$RUNTIME" bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
@@ -311,7 +346,7 @@ do_pre() {
 
   local db_owner legacy_schema legacy_role existing_dedicated=false
   db_owner="$(query_su postgres "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
-  if [[ "$db_owner" == "$LEGACY_OWNER" ]] && \
+  if [[ "$db_owner" == "$LEGACY_OWNER" && ! -s "$PENDING_ACTIVATION_FILE" ]] && \
      { legacy_schema="$(query_su hoopdb "select to_regnamespace('sessions')")" || die "could not inspect the HoopDb sessions schema";
        legacy_role="$(query_su hoopdb "select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker') limit 1")" || die "could not inspect the HoopDb role graph";
        [[ -n "$legacy_schema" || -n "$legacy_role" ]]; }; then
@@ -338,9 +373,17 @@ do_pre() {
   [[ "$db_owner" == "$LEGACY_OWNER" || "$existing_dedicated" == true ]] \
     || die "HoopDb owner is neither $LEGACY_OWNER nor $OWNER; refusing"
 
+  if [[ "$existing_dedicated" == true && -s "$PENDING_ACTIVATION_FILE" ]]; then
+    verify_saved_owner_credential
+  fi
+
   for p in control_owner control_api_runtime "$OWNER" "$RUNTIME" bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
     password_for "$p"
   done
+  if [[ "$existing_dedicated" == false && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
+    cp "$activation_target" "$PENDING_ACTIVATION_FILE"
+    chmod 600 "$PENDING_ACTIVATION_FILE"
+  fi
 
   # Control: its own database. The owner runs migrations, the runtime role
   # serves requests.
@@ -374,8 +417,6 @@ SQL
   done
 
   if [[ "$existing_dedicated" == false ]]; then
-    printf 'fresh activation in progress\n' >"$PENDING_ACTIVATION_FILE"
-    chmod 600 "$PENDING_ACTIVATION_FILE"
     {
       quiet
       printf 'BEGIN;\n'

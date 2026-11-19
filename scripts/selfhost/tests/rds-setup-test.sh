@@ -92,7 +92,15 @@ case " $* " in
   *" get secret search-indexer-owner -o json "*|*" get secret search-indexer-owner --ignore-not-found -o json "*)
     if [[ "${MOCK_SEARCH_SECRET_ABSENT:-0}" == 1 && ! -e "$MOCK_CAPTURE_DIR/search-secret-created" ]]; then exit 0; fi
     printf '%s\n' '{"metadata":{},"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}'; exit 0 ;;
-  *" get externalsecrets.external-secrets.io "*) printf '%s\n' '{"items":[]}'; exit 0 ;;
+  *" get externalsecrets.external-secrets.io "*)
+    case "${MOCK_ES_MAPPING_STYLE:-none}" in
+      template-data)
+        printf '%s\n' '{"items":[{"metadata":{"name":"migration"},"spec":{"target":{"name":"agent-relay-secrets","template":{"data":{"HOOPDB_MIGRATION_URL":"{{ .adminUrl }}"}}}}}]}' ;;
+      template-from)
+        printf '%s\n' '{"items":[{"metadata":{"name":"migration"},"spec":{"target":{"name":"agent-relay-secrets","template":{"templateFrom":[{"configMap":{"name":"outputs"}}]}}}}]}' ;;
+      *) printf '%s\n' '{"items":[]}' ;;
+    esac
+    exit 0 ;;
   *" logs job/agent-relay-rds-layout-probe"*) printf 'HOOPDB_LAYOUT=%s\n' "${MOCK_LAYOUT:-fresh-dedicated}"; exit 0 ;;
   *" logs job/"*) printf 'fixture job completed\n'; exit 0 ;;
 esac
@@ -111,10 +119,12 @@ case "$query" in
   *"server_version_num"*) printf '%s\n' "${MOCK_SERVER_VERSION:-170000}" ;;
   *"select 1 from pg_database where datname='hoopdb'"*)
     [[ "${MOCK_PSQL_FAIL_DATABASE:-0}" == 0 ]] || exit 1
-    [[ "${MOCK_DB_EXISTS:-1}" == 1 ]] && printf '1\n'
+    if [[ "${MOCK_DB_EXISTS:-1}" == 1 ]]; then printf '1\n'; fi
     ;;
   *"pg_get_userbyid(datdba)"*) printf '%s\n' "${MOCK_DB_OWNER:-dbadmin}" ;;
-  *"select 1 where"*) [[ "${MOCK_PRISTINE:-0}" == 1 ]] && printf '1\n' ;;
+  *"select 1 where"*)
+    if [[ "${MOCK_PRISTINE:-0}" == 1 ]]; then printf '1\n'; fi
+    ;;
 esac
 MOCK
 
@@ -170,6 +180,7 @@ pre_output="$(bash "${RDS_SETUP}" pre 2>&1)"
 grep -q 'hoopdb_owner' "${STATE_DIR}/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" || fail "migration credential is not the dedicated owner"
 grep -q 'hoopdb_owner' "${STATE_DIR}/secret-files/search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" || fail "search bootstrap credential is not the dedicated owner"
 [[ "$(<"${STATE_DIR}/hoopdb-layout")" == dedicated-owner ]] || fail "dedicated layout marker was not written"
+[[ -s "${STATE_DIR}/hoopdb-target" ]] || fail "RDS target marker was not written"
 grep -q 'rdsLayout: separate-database' "${STATE_DIR}/hoopdb-layout-values.yaml" || fail "dedicated layout values are missing"
 [[ "$(stat -c '%a' "${STATE_DIR}/passwords/control_owner")" == 600 ]] || fail "password file mode is not 0600"
 [[ "$(stat -c '%a' "${STATE_DIR}/secret-files/agent-relay-secrets")" == 700 ]] || fail "secret directory mode is not 0700"
@@ -257,12 +268,12 @@ pass "RDS classifier executes pristine, third-party-owner and query-failure bran
 # The RDS owner handoff is one transaction. A marker cannot convert an
 # administrator-owned non-pristine database; dedicated-owner convergence
 # removes a marker left after the commit.
-printf 'fresh activation in progress\n' >"${STATE_DIR}/.pending-hoopdb-activation"
+cp "${STATE_DIR}/hoopdb-target" "${STATE_DIR}/.pending-hoopdb-activation"
 : >"${COMMAND_LOG}"
 MOCK_LAYOUT=legacy-admin bash "${RDS_SETUP}" pre >/dev/null
 ! grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "marker converted a legacy RDS database"
 [[ ! -e "${STATE_DIR}/.pending-hoopdb-activation" ]] || fail "legacy classification retained a stale pending marker"
-printf 'fresh activation in progress\n' >"${STATE_DIR}/.pending-hoopdb-activation"
+cp "${STATE_DIR}/hoopdb-target" "${STATE_DIR}/.pending-hoopdb-activation"
 : >"${COMMAND_LOG}"
 MOCK_LAYOUT=dedicated-owner bash "${RDS_SETUP}" pre >/dev/null
 [[ ! -e "${STATE_DIR}/.pending-hoopdb-activation" ]] || fail "dedicated-owner rerun retained its activation marker"
@@ -377,6 +388,32 @@ absent_search_output="$(MOCK_SEARCH_SECRET_ABSENT=1 env -u SERVICES_IMAGE bash "
 grep -q 'create secret generic search-indexer-owner --from-file=RELAYHISTORY_PIPELINE_CONSUMER_SECRET=' "$COMMAND_LOG" \
   || fail "absent bootstrap Secret was not reconstructed from the private rollback value"
 pass "rollback preparation reconstructs an absent unmanaged bootstrap Secret"
+
+: >"${COMMAND_LOG}"
+if MOCK_ES_MAPPING_STYLE=template-data env -u SERVICES_IMAGE bash "$RDS_SETUP" prepare-rollback-admin-keys >"$TEST_ROOT/rollback-template-map.log" 2>&1; then
+  fail "rollback preparation patched an existing Secret with an ExternalSecret template output"
+fi
+grep -q 'supplied by External Secrets' "$TEST_ROOT/rollback-template-map.log" \
+  || fail "template-output rollback refusal was unclear"
+! grep -q 'patch secret' "$COMMAND_LOG" || fail "template-output rollback refusal reached a patch"
+: >"${COMMAND_LOG}"
+if MOCK_ES_MAPPING_STYLE=template-from env -u SERVICES_IMAGE bash "$RDS_SETUP" remove-rollback-admin-keys >"$TEST_ROOT/remove-template-map.log" 2>&1; then
+  fail "rollback removal accepted an uninspectable ExternalSecret templateFrom"
+fi
+grep -q 'External Secrets still maps' "$TEST_ROOT/remove-template-map.log" \
+  || fail "templateFrom rollback refusal was unclear"
+! grep -q 'patch secret' "$COMMAND_LOG" || fail "templateFrom rollback refusal reached a patch"
+pass "rollback preparation and removal refuse explicit and uninspectable ExternalSecret templates"
+
+: >"${COMMAND_LOG}"
+if RDS_HOST=other-db.example.invalid env -u SERVICES_IMAGE bash "$RDS_SETUP" remove-rollback-admin-keys >"$TEST_ROOT/rollback-target-mismatch.log" 2>&1; then
+  fail "rollback-key removal accepted state from another RDS target"
+fi
+grep -q 'STATE_DIR belongs to a different' "$TEST_ROOT/rollback-target-mismatch.log" \
+  || fail "rollback target mismatch refusal was unclear"
+! grep -q 'get secret' "$COMMAND_LOG" || fail "rollback target mismatch read a live Secret"
+! grep -q 'patch secret' "$COMMAND_LOG" || fail "rollback target mismatch patched a live Secret"
+pass "rollback-key removal binds state to the Kubernetes and RDS target"
 
 printf '%s\n' dedicated-owner >"${STATE_DIR}/hoopdb-layout"
 : >"${COMMAND_LOG}"

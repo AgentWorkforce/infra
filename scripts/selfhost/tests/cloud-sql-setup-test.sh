@@ -163,7 +163,11 @@ case " $* " in
     fi
     ;;
   *" get externalsecrets.external-secrets.io "*)
-    if [[ "${MOCK_ES_MAPPING_ACTIVE:-auto}" == 1 || ( "${MOCK_ES_MAPPING_ACTIVE:-auto}" == auto && "${MOCK_EXTERNAL_SECRET_MODE:-none}" != none ) ]]; then
+    if [[ "${MOCK_ES_MAPPING_STYLE:-}" == template-data ]]; then
+      printf '%s\n' '{"items":[{"metadata":{"name":"migration"},"spec":{"target":{"name":"agent-relay-secrets","template":{"data":{"HOOPDB_MIGRATION_URL":"{{ .adminUrl }}"}}}}}]}'
+    elif [[ "${MOCK_ES_MAPPING_STYLE:-}" == template-from ]]; then
+      printf '%s\n' '{"items":[{"metadata":{"name":"migration"},"spec":{"target":{"name":"agent-relay-secrets","template":{"templateFrom":[{"configMap":{"name":"outputs"}}]}}}}]}'
+    elif [[ "${MOCK_ES_MAPPING_ACTIVE:-auto}" == 1 || ( "${MOCK_ES_MAPPING_ACTIVE:-auto}" == auto && "${MOCK_EXTERNAL_SECRET_MODE:-none}" != none ) ]]; then
       printf '%s\n' '{"items":[{"metadata":{"name":"agent-relay-secrets"},"spec":{"target":{"name":"agent-relay-secrets"},"data":[{"secretKey":"HOOPDB_MIGRATION_URL"}]}},{"metadata":{"name":"search-indexer-owner"},"spec":{"target":{"name":"search-indexer-owner"},"data":[{"secretKey":"RELAYHISTORY_PIPELINE_CONSUMER_SECRET"}]}}]}'
     else
       printf '%s\n' '{"items":[]}'
@@ -543,6 +547,16 @@ fi
 grep -Fq 'External Secrets still maps agent-relay-secrets/HOOPDB_MIGRATION_URL' "$ROOT/remove-merge-mapping.log" \
   || fail "unlabelled Merge ExternalSecret mapping refusal did not name the key"
 grep -Fq 'patch secret' "$LOG" && fail "unlabelled Merge ExternalSecret mapping reached a patch"
+for style in template-data template-from; do
+  : >"$LOG"
+  if MOCK_ES_MAPPING_STYLE="$style" MOCK_EXTERNAL_SECRET_MODE=none \
+      "$TEST_BASH" "$SCRIPT" remove-legacy-secret-keys >"$ROOT/remove-$style.log" 2>&1; then
+    fail "ExternalSecret $style output was patched"
+  fi
+  grep -Fq 'External Secrets still maps agent-relay-secrets/HOOPDB_MIGRATION_URL' "$ROOT/remove-$style.log" \
+    || fail "ExternalSecret $style refusal did not name the output key"
+  grep -Fq 'patch secret' "$LOG" && fail "ExternalSecret $style output reached a patch"
+done
 pass "legacy cleanup distinguishes NotFound, API errors and External Secrets key ownership"
 
 # Terraform's chart_values pin sha256(server_ca_cert): the PEM with exactly one

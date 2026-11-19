@@ -59,10 +59,21 @@ pending_names_line="$(line_of 'printf '\''%s\n'\'' "${untrusted_passwords# }"')"
 password_generation_line="$(last_line_of 'password_for "$p"')"
 [[ -n "$pending_names_line" && -n "$password_generation_line" && "$pending_names_line" -lt "$password_generation_line" ]] \
   || fail "Azure can generate a password before recording its name as pending"
-activation_mark_line="$(line_of "printf 'fresh activation in progress")"
+activation_mark_line="$(line_of 'cp "$activation_target" "$PENDING_ACTIVATION_FILE"')"
+first_database_write_line="$(line_of '# Control: its own database.')"
 owner_transaction_line="$(line_of "printf 'BEGIN;")"
-[[ -n "$activation_mark_line" && -n "$owner_transaction_line" && "$activation_mark_line" -lt "$owner_transaction_line" ]] \
-  || fail "the fresh-activation marker is not durable before the owner transaction"
+[[ -n "$activation_mark_line" && -n "$first_database_write_line" && -n "$owner_transaction_line" \
+   && "$activation_mark_line" -lt "$first_database_write_line" && "$activation_mark_line" -lt "$owner_transaction_line" ]] \
+  || fail "the target-bound fresh-activation marker is not durable before database writes"
+grep -Fq "printf 'context=%s\\nnamespace=%s\\ncluster=%s\\n'" "$SCRIPT" \
+  || fail "Azure activation state is not bound to context, namespace and cluster"
+grep -Fq 'cmp -s "$activation_target" "$PENDING_ACTIVATION_FILE"' "$SCRIPT" \
+  || fail "Azure retry does not refuse activation state from another cluster"
+legacy_condition="$(grep -F '[[ "$db_owner" == "$LEGACY_OWNER" && ! -s "$PENDING_ACTIVATION_FILE" ]]' "$SCRIPT")"
+[[ -n "$legacy_condition" ]] || fail "Azure retry can classify a pending fresh activation as legacy"
+owner_verify_line="$(last_line_of 'verify_saved_owner_credential')"
+[[ -n "$owner_verify_line" && "$owner_verify_line" -lt "$first_database_write_line" ]] \
+  || fail "Azure retry does not verify its saved owner credential before writes"
 grep -Fq 'rm -f "$PENDING_PASSWORDS_FILE" "$PENDING_ACTIVATION_FILE"' "$SCRIPT" \
   || fail "successful setup does not clear both pending-state markers"
 pass "dedicated-owner rerun resumes an interrupted fresh activation but refuses missing saved state"
@@ -100,6 +111,10 @@ external_check_line="$(line_of 'externally_managed="$(jq -r')"
   || fail "Azure cleanup checks ESO ownership before seeing that the mapped key is already absent"
 grep -Fq 'external_secret_mapping_active "$secret" "$key"' "$SCRIPT" \
   || fail "Azure cleanup does not check for an active mapping after the generated key disappears"
+grep -Fq '((.spec.target.template.data // {}) | has($key))' "$SCRIPT" \
+  || fail "Azure cleanup ignores explicit ExternalSecret template outputs"
+grep -Fq '((.spec.target.template.templateFrom // []) | length > 0)' "$SCRIPT" \
+  || fail "Azure cleanup accepts uninspectable ExternalSecret templateFrom outputs"
 pass "Azure cleanup refuses managed keys and checks active mappings after key removal"
 
 grep -Fq 'rm -f "$PENDING_PASSWORDS_FILE"' "$SCRIPT" \

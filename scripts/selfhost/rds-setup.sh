@@ -58,6 +58,7 @@ STATE_DIR="${STATE_DIR:-$HOME/.agent-relay-install}"
 PW_DIR="$STATE_DIR/passwords"
 FILES="$STATE_DIR/secret-files"
 LAYOUT_FILE="$STATE_DIR/hoopdb-layout"
+TARGET_FILE="$STATE_DIR/hoopdb-target"
 PENDING_ACTIVATION_FILE="$STATE_DIR/.pending-hoopdb-activation"
 ADMIN_JOBS_SECRET=hoopdb-admin-jobs
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
@@ -76,6 +77,27 @@ done
 KUBECTL_CONTEXT_ARGS=()
 if [[ -n "$KUBE_CONTEXT" ]]; then KUBECTL_CONTEXT_ARGS=(--context "$KUBE_CONTEXT"); fi
 kubectl() { command kubectl "${KUBECTL_CONTEXT_ARGS[@]}" "$@"; }
+selected_target() {
+  local context="$KUBE_CONTEXT"
+  if [[ -z "$context" ]]; then
+    context="$(command kubectl config current-context)" || die "could not resolve the current Kubernetes context"
+    [[ -n "$context" ]] || die "kubectl has no current context"
+  fi
+  printf 'context=%s\nnamespace=%s\nregion=%s\nrds_host=%s\n' \
+    "$context" "$NS" "$AWS_REGION" "$RDS_HOST"
+}
+write_target_file() {
+  selected_target >"$TARGET_FILE"
+  chmod 600 "$TARGET_FILE"
+}
+require_target_match() {
+  local current="$WORK/current-target"
+  selected_target >"$current"
+  [[ -s "$TARGET_FILE" ]] \
+    || die "missing HoopDb target marker: run '$0 pre' for this Kubernetes context and RDS instance first"
+  cmp -s "$current" "$TARGET_FILE" \
+    || die "STATE_DIR belongs to a different Kubernetes context, namespace, region, or RDS host; refusing before reading or changing Secrets"
+}
 [[ "$SERVICES_IMAGE" == *@sha256:* ]] || die "SERVICES_IMAGE must be pinned by digest"
 [[ "$PSQL_IMAGE" == *@sha256:* ]] || die "PSQL_IMAGE must be pinned by digest"
 if [[ "$SERVICES_IMAGE" == *__* ]]; then die "SERVICES_IMAGE still holds a placeholder"; fi
@@ -278,6 +300,7 @@ do_refresh-admin() {
 }
 
 do_prepare-admin-jobs() {
+  require_target_match
   do_refresh-admin
   kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
   kubectl -n "$NS" create secret generic "$ADMIN_JOBS_SECRET" \
@@ -286,6 +309,7 @@ do_prepare-admin-jobs() {
 }
 
 do_delete-admin-jobs() {
+  require_target_match
   kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
   log "$ADMIN_JOBS_SECRET deleted; long-running pods are unaffected"
 }
@@ -312,26 +336,31 @@ external_secret_mapping_active() { # target-secret key: 0 active, 1 absent, 2 un
   jq -e --arg target "$target" --arg key "$key" '
     any(.items[]?;
       ((.spec.target.name // .metadata.name) == $target) and
-      (any(.spec.data[]?; .secretKey == $key) or ((.spec.dataFrom // []) | length > 0)))' "$json" >/dev/null || rc=$?
+      (any(.spec.data[]?; .secretKey == $key) or
+       ((.spec.dataFrom // []) | length > 0) or
+       ((.spec.target.template.data // {}) | has($key)) or
+       ((.spec.target.template.templateFrom // []) | length > 0) or
+       ((.spec.target.templateFrom // []) | length > 0)))' "$json" >/dev/null || rc=$?
   case "$rc" in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
 }
 
 do_prepare-rollback-admin-keys() {
+  require_target_match
   do_refresh-admin
   local secret key source patch secret_json mapping_rc
   for secret in agent-relay-secrets search-indexer-owner; do
     if [[ "$secret" == agent-relay-secrets ]]; then key=HOOPDB_MIGRATION_URL; else key=RELAYHISTORY_PIPELINE_CONSUMER_SECRET; fi
+    mapping_rc=1
+    if external_secret_mapping_active "$secret" "$key"; then mapping_rc=0; else mapping_rc=$?; fi
+    if [[ "$mapping_rc" == 0 ]]; then
+      die "Secret $secret is supplied by External Secrets; restore $key through its ExternalSecret and backing store instead of patching or creating it"
+    elif [[ "$mapping_rc" == 2 ]]; then
+      die "could not inspect ExternalSecret mappings for Secret $secret"
+    fi
     secret_json="$WORK/$secret-rollback-source.json"
     kubectl -n "$NS" get secret "$secret" --ignore-not-found -o json >"$secret_json" \
       || die "could not read Secret $secret while preparing rollback keys"
     if [[ ! -s "$secret_json" ]]; then
-      mapping_rc=1
-      if external_secret_mapping_active "$secret" "$key"; then mapping_rc=0; else mapping_rc=$?; fi
-      if [[ "$mapping_rc" == 0 ]]; then
-        die "Secret $secret is supplied by External Secrets; restore $key through its ExternalSecret and backing store instead of creating it"
-      elif [[ "$mapping_rc" == 2 ]]; then
-        die "could not inspect ExternalSecret mappings for absent Secret $secret"
-      fi
       if [[ "$secret" == agent-relay-secrets ]]; then
         die "Secret agent-relay-secrets is absent; restore that revision's complete runtime Secret before preparing rollback keys"
       fi
@@ -354,14 +383,22 @@ do_prepare-rollback-admin-keys() {
 }
 
 do_remove-rollback-admin-keys() {
+  require_target_match
   [[ -s "$LAYOUT_FILE" && "$(<"$LAYOUT_FILE")" == legacy-admin ]] \
     || die "remove-rollback-admin-keys is only for an existing administrator-owned install; run '$0 pre' first"
-  local secret key patch
+  local secret key patch mapping_rc
   for secret in agent-relay-secrets search-indexer-owner; do
+    if [[ "$secret" == agent-relay-secrets ]]; then key=HOOPDB_MIGRATION_URL; else key=RELAYHISTORY_PIPELINE_CONSUMER_SECRET; fi
+    mapping_rc=1
+    if external_secret_mapping_active "$secret" "$key"; then mapping_rc=0; else mapping_rc=$?; fi
+    if [[ "$mapping_rc" == 0 ]]; then
+      die "External Secrets still maps $secret/$key; remove it through the release values, ExternalSecret and backing store"
+    elif [[ "$mapping_rc" == 2 ]]; then
+      die "could not inspect ExternalSecret mappings while removing $secret/$key"
+    fi
     kubectl -n "$NS" get secret "$secret" --ignore-not-found -o json >"$WORK/$secret.json" \
       || die "could not read Secret $secret while removing rollback keys"
     [[ -s "$WORK/$secret.json" ]] || continue
-    if [[ "$secret" == agent-relay-secrets ]]; then key=HOOPDB_MIGRATION_URL; else key=RELAYHISTORY_PIPELINE_CONSUMER_SECRET; fi
     [[ "$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$WORK/$secret.json")" == yes ]] || continue
     secret_is_external "$secret" && die "Secret $secret became managed by External Secrets; remove $key through its release values, ExternalSecret and backing store"
     patch="$WORK/$secret-remove.json"
@@ -387,6 +424,13 @@ do_pre() {
   rm -f "$WORK/admin.json"
   kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
   ensure_ca
+
+  local current_target="$WORK/current-target"
+  selected_target >"$current_target"
+  if [[ -s "$PENDING_ACTIVATION_FILE" ]]; then
+    cmp -s "$current_target" "$PENDING_ACTIVATION_FILE" \
+      || die "pending activation state belongs to a different Kubernetes context, namespace, region, or RDS host; refusing"
+  fi
 
   local p
   local password_roles=(control_owner control_api_runtime hoopdb_owner sessions_pipeline_runtime relaycast_owner
@@ -435,6 +479,7 @@ EOS
     legacy-admin)
       rm -f "$PENDING_ACTIVATION_FILE"
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
+      write_target_file
       write_admin_files; write_layout_values "$layout"
       log "existing administrator-owned HoopDb detected; database and roles were left unchanged"
       log "use '$0 prepare-admin-jobs' immediately before an upgrade or guide Job, then '$0 delete-admin-jobs'"
@@ -447,12 +492,13 @@ EOS
         || die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
       rm -f "$PENDING_ACTIVATION_FILE"
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
+      write_target_file
       write_credential_files; write_owner_files; write_layout_values "$layout"
       log "dedicated-owner HoopDb already active; database and roles were left unchanged"
       return
       ;;
     fresh-dedicated)
-      printf 'fresh activation in progress\n' >"$PENDING_ACTIVATION_FILE"
+      cp "$current_target" "$PENDING_ACTIVATION_FILE"
       chmod 600 "$PENDING_ACTIVATION_FILE"
       ;;
     fresh-legacy)
@@ -647,6 +693,7 @@ EOS
   write_owner_files
   log "pre done; dedicated hoopdb_owner credentials are under $FILES"
   printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
+  write_target_file
   write_layout_values "$layout"
   rm -f "$PENDING_ACTIVATION_FILE"
 }
@@ -659,6 +706,7 @@ do_post() {
   local layout
   [[ -s "$LAYOUT_FILE" ]] || die "missing HoopDb layout marker: run '$0 pre' first"
   layout="$(<"$LAYOUT_FILE")"
+  require_target_match
   local post_passwords=(bulls96_read_api bulls96_session_ingest search_consumer_runtime)
   for p in "${post_passwords[@]}"; do
     [[ -s "$PW_DIR/$p" ]] || die "missing $p password: run '$0 pre' first"

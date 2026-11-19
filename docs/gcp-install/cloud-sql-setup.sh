@@ -270,7 +270,11 @@ external_secret_mapping_active() { # target-secret key: 0 active, 1 absent, 2 un
   jq -e --arg target "$target" --arg key "$key" '
     any(.items[]?;
       ((.spec.target.name // .metadata.name) == $target) and
-      (any(.spec.data[]?; .secretKey == $key) or ((.spec.dataFrom // []) | length > 0)))' "$json" >/dev/null || rc=$?
+      (any(.spec.data[]?; .secretKey == $key) or
+       ((.spec.dataFrom // []) | length > 0) or
+       ((.spec.target.template.data // {}) | has($key)) or
+       ((.spec.target.template.templateFrom // []) | length > 0) or
+       ((.spec.target.templateFrom // []) | length > 0)))' "$json" >/dev/null || rc=$?
   case "$rc" in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
 }
 

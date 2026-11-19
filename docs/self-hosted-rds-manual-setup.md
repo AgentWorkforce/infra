@@ -444,7 +444,10 @@ as potentially containing either administrator key because Kubernetes cannot
 show which remote keys it may produce later. Replace that `dataFrom` entry with
 equivalent explicit `data` mappings for the runtime keys you still need,
 excluding the administrator key, wait for reconciliation, and rerun cleanup;
-do not delete or replace unrelated runtime values.
+do not delete or replace unrelated runtime values. The guard also checks
+explicit output keys in `spec.target.template.data`. Any `templateFrom` entry
+is treated as unknown until it is removed or replaced with inspectable explicit
+outputs.
 
 ```bash
 for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
@@ -470,7 +473,11 @@ for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
     mapping_rc=0
     jq -e --arg target "$secret" --arg key "$key" '
         any(.items[]?; ((.spec.target.name // .metadata.name) == $target) and
-          (any(.spec.data[]?; .secretKey == $key) or ((.spec.dataFrom // []) | length > 0)))' \
+          (any(.spec.data[]?; .secretKey == $key) or
+           ((.spec.dataFrom // []) | length > 0) or
+           ((.spec.target.template.data // {}) | has($key)) or
+           ((.spec.target.template.templateFrom // []) | length > 0) or
+           ((.spec.target.templateFrom // []) | length > 0)))' \
         "$ADMIN_JOB_DIR/externalsecrets.json" >/dev/null || mapping_rc=$?
     if [ "$mapping_rc" = 0 ]; then
       echo "External Secrets still maps $secret/$key: remove it from the Helm release values, ExternalSecret and backing store; leave hoopdb-admin-jobs in place" >&2
@@ -510,29 +517,54 @@ kubectl -n agent-relay get secret search-indexer-owner -o json | jq -e '.data.RE
 Rollback after a failed upgrade: delete only `hoopdb-admin-jobs`; the old keys
 remain for the previous revision. After successful cleanup, a rollback to a
 revision that references the old keys must restore those keys from the staged
-files before `helm rollback` (re-enter the URL if the directory was removed):
+files before `helm rollback` (re-enter the URL if the directory was removed).
+First inspect the selected revision: `helm -n agent-relay get manifest
+agent-relay --revision <revision>`. Stage the Secret names and keys that its
+Jobs already reference; `helm rollback` cannot accept a values overlay.
+
+For unmanaged Secrets, `agent-relay-secrets` must already exist because it
+contains unrelated runtime keys. An absent `search-indexer-owner` may be
+recreated from the staged file. Stop and use the ExternalSecret and backing
+store instead if either target is ESO-managed or mapped by ESO:
 
 ```bash
+kubectl -n agent-relay get secret agent-relay-secrets >/dev/null || {
+  echo 'restore the complete agent-relay-secrets for the target revision first' >&2
+  exit 1
+}
+if ! kubectl -n agent-relay get secret search-indexer-owner --ignore-not-found -o name \
+    >"$ADMIN_JOB_DIR/search-secret-name"; then
+  echo 'could not inspect search-indexer-owner; no rollback Secret was changed' >&2
+  exit 1
+fi
 jq -n --rawfile u "$ADMIN_JOB_DIR/HOOPDB_MIGRATION_URL" \
   '{data:{HOOPDB_MIGRATION_URL:($u|@base64)}}' >"$ADMIN_JOB_DIR/migration-patch.json"
 kubectl -n agent-relay patch secret agent-relay-secrets --type=merge \
   --patch-file="$ADMIN_JOB_DIR/migration-patch.json"
-jq -n --rawfile u "$ADMIN_JOB_DIR/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" \
-  '{data:{RELAYHISTORY_PIPELINE_CONSUMER_SECRET:($u|@base64)}}' >"$ADMIN_JOB_DIR/search-patch.json"
-kubectl -n agent-relay patch secret search-indexer-owner --type=merge \
-  --patch-file="$ADMIN_JOB_DIR/search-patch.json"
+if [ -s "$ADMIN_JOB_DIR/search-secret-name" ]; then
+  jq -n --rawfile u "$ADMIN_JOB_DIR/RELAYHISTORY_PIPELINE_CONSUMER_SECRET" \
+    '{data:{RELAYHISTORY_PIPELINE_CONSUMER_SECRET:($u|@base64)}}' >"$ADMIN_JOB_DIR/search-patch.json"
+  kubectl -n agent-relay patch secret search-indexer-owner --type=merge \
+    --patch-file="$ADMIN_JOB_DIR/search-patch.json"
+else
+  kubectl -n agent-relay create secret generic search-indexer-owner \
+    --from-file="RELAYHISTORY_PIPELINE_CONSUMER_SECRET=$ADMIN_JOB_DIR/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
+fi
 ```
 
-Recreate `hoopdb-admin-jobs` and use the same values overlay for any rollback
-Jobs that reference it. After rollback Jobs and workloads finish, remove the
-two restored long-lived keys with the cleanup loop above and delete
+Recreate `hoopdb-admin-jobs` only if the selected revision already references
+it. The values overlay above is only for Jobs rendered separately; it cannot
+change a saved Helm revision. After rollback Jobs and workloads finish, remove
+the two restored long-lived keys with the cleanup loop above and delete
 `hoopdb-admin-jobs` again. For ESO-managed Secrets, make the temporary restore
-and removal through the rollback release values, ExternalSecrets and backing
-store; never patch the generated Secrets.
+and removal through the target revision's ExternalSecrets and backing store;
+never patch the generated Secrets.
 Long-running pods do not use this Secret and are unaffected by its creation or
 deletion. The database stays administrator-owned; verify without assuming its
 name with `psql -X -A -t -d "$HOOPDB_DATABASE" -c 'select
-current_database(),current_user'`.
+current_database(),pg_get_userbyid(datdba) from pg_database where
+datname=current_database()'`. The second column must be the expected provider
+administrator role, not merely the login used for the check.
 
 ## Optional: the session-erase search login
 
