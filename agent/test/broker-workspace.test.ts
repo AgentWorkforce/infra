@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Broker } from "../broker/src/broker.ts";
 import { defaultDeliverer } from "../broker/src/deliver.ts";
-import { checkWorkspaceAuto, workspaceAutoProblems, type Allowlist, type CredentialRequest } from "../broker/src/policy.ts";
+import { checkWorkspaceAuto, workspaceAutoProblems, type Allowlist, type CredentialRequest, type PolicyStatement } from "../broker/src/policy.ts";
 import { dmChannelId, type RelayAgent, type RelayApi, type RelayMessage } from "../broker/src/relay.ts";
 import type { StsClient } from "../broker/src/sts.ts";
 
@@ -57,7 +57,7 @@ const msg = (id: string, from: string, text: string, ws = agents[from]!.workspac
 
 function setup(list: Allowlist = shipped) {
   const dir = mkdtempSync(join(tmpdir(), "broker-ws-"));
-  const calls: { roleArn: string; policy: { Statement: { Sid: string }[] } }[] = [];
+  const calls: { roleArn: string; policy: { Statement: PolicyStatement[] } }[] = [];
   const sts: StsClient = { async assumeRole(i) { calls.push(i as never); return { accessKeyId: "ASIAFAKE", secretAccessKey: "s".repeat(40), sessionToken: "t".repeat(300), expiration: new Date(NOW.getTime() + i.durationSeconds * 1000).toISOString() }; } };
   let n = 0;
   const broker = new Broker({ allowlist: list, stateDir: join(dir, "state"), sts, deliverer: defaultDeliverer(join(dir, "creds")), now: () => NOW, newId: () => `cb-${(++n).toString(16).padStart(12, "0")}`, newNamespaceSuffix: () => "0a1b2c3d" });
@@ -200,7 +200,7 @@ test("dev cluster: a verified workspace agent gets eks:DescribeCluster on exactl
   assert.equal(r.outcome, "issued", r.reasons.join("; "));
   assert.equal(calls[0]!.roleArn, shipped.accounts[DEV]!.roles.elevated);
   assert.match(r.reasons.join("; "), /issued without approval: any-workspace-agent .*dev-cluster-read \(dev-cluster-describe\)/);
-  const allows = (calls[0]!.policy.Statement as { Effect: string; Action?: string[]; Resource?: string | string[] }[]).filter((s) => s.Effect === "Allow");
+  const allows = calls[0]!.policy.Statement.filter((s) => s.Effect === "Allow");
   assert.deepEqual(allows.map((s) => ({ a: s.Action, r: s.Resource })), [{ a: ["eks:DescribeCluster"], r: CLUSTER }]);
   const lines = readFileSync(broker.auditPath, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { kind: string; approver?: unknown });
   assert.deepEqual(lines.find((l) => l.kind === "approved")!.approver, { name: "workspace-auto", address: "rw_7ccfea89", kind: "policy" });
@@ -249,7 +249,7 @@ test("dev cluster: the default scope with the exact cluster ARN is the same read
   const { broker, calls } = setup();
   const r = await broker.requestViaRelay(relay([msg("7100003", AGENT, JSON.stringify(devReq({ scope: undefined })))]), "7100003", BROKER);
   assert.equal(r.outcome, "issued", r.reasons.join("; "));
-  assert.deepEqual((calls[0]!.policy.Statement as { Effect: string; Action?: string[] }[]).filter((s) => s.Effect === "Allow").flatMap((s) => s.Action ?? []), ["eks:DescribeCluster"]);
+  assert.deepEqual(calls[0]!.policy.Statement.filter((s) => s.Effect === "Allow").flatMap((s) => s.Action ?? []), ["eks:DescribeCluster"]);
   agents["dev-human"] = { id: "300000000000000015", name: "dev-human", type: "human", workspaceId: WS };
   for (const who of ["dev-human"]) {
     const h = await setup().broker.requestViaRelay(relay([msg("7100004", who, JSON.stringify(devReq()))]), "7100004", BROKER);
