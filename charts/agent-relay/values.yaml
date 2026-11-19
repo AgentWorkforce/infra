@@ -149,6 +149,22 @@ gkeIngress:
   # front of the load balancer, where Google cannot issue a managed
   # certificate. The certificate must cover every host below.
   tlsSecretName: ""
+  # external (default): a global external Application Load Balancer.
+  # internal: a regional internal one (Ingress class gce-internal) that
+  # answers only inside the VPC and the networks routed to it. Start from
+  # values-gcp-internal.yaml; README: Internal-only GKE edge. In internal
+  # mode staticIpName names a regional internal address, the certificate is
+  # tlsSecretName or internal.preSharedCerts, managedCertificateName and
+  # frontendConfigName are unused, and sslPolicy and securityPolicy are
+  # refused (GKE supports neither on an internal Ingress).
+  mode: external
+  internal:
+    # Range of the VPC's proxy-only subnet (purpose REGIONAL_MANAGED_PROXY) in
+    # the cluster's region. Required in internal mode, and every backend's
+    # networkPolicy must allow it.
+    proxyOnlySubnetCidr: ""
+    # Regional self-managed SSL certificate names, instead of tlsSecretName.
+    preSharedCerts: []
   hosts:
     root: ""
     api: ""
