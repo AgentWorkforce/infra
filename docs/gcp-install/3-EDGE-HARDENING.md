@@ -265,6 +265,30 @@ curl -sk -o /dev/null -w "direct %{http_code}\n" --resolve "api.$DOMAIN:443:$(gc
 
 ## Removing these
 
-`terraform destroy` (or setting `create = false`) removes the policies. Clear
-`gkeIngress.sslPolicy` and `gkeIngress.securityPolicy` and run `helm upgrade`
-first: a policy that a load balancer still uses cannot be deleted.
+**Cloud Armor.** Clearing `gkeIngress.securityPolicy` alone does not detach
+the policy: GKE leaves a backend's policy in place when the field is absent,
+and detaches only when it is set to an empty name. A policy that a backend
+still uses cannot be deleted. So, in this order:
+
+```sh
+# 1. Detach from every backend, while the value is still set.
+for bc in $(kubectl -n $NAMESPACE get backendconfig -o name); do
+  kubectl -n $NAMESPACE patch "$bc" --type merge -p '{"spec":{"securityPolicy":{"name":""}}}'
+done
+# 2. Wait until no backend service uses it (prints 0; allow 10 minutes).
+gcloud compute backend-services list --format='value(securityPolicy)' | grep -c agent-relay-edge
+```
+
+3. Clear `gkeIngress.securityPolicy` (and the dashboard's `backend-config`
+   annotation) in `values.yaml` and run step 11's `helm upgrade`.
+4. Set `edge_security_policy = { create = false }` and `terraform apply`.
+
+**TLS policy.** Clear `gkeIngress.sslPolicy` (write `managed-values.json`
+again after `edge_ssl_policy = { create = false }`, or override it in
+`values.yaml`), run `helm upgrade`, wait until
+`gcloud compute target-https-proxies list --format='value(sslPolicy)'` no
+longer shows it, then `terraform apply`. The load balancer goes back to
+Google's default policy.
+
+The detach behaviour is from Google's documentation and has not been run on a
+live install here.
