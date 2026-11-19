@@ -208,6 +208,20 @@ write_layout_values() {
   chmod 600 "$STATE_DIR/hoopdb-layout-values.yaml"
 }
 
+remove_legacy_secret_keys() {
+  local pair secret key
+  for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
+              search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
+    secret="${pair%%:*}"; key="${pair#*:}"
+    if kubectl -n "$NS" get secret "$secret" -o json \
+        | jq -e --arg key "$key" '.data[$key] != null' >/dev/null 2>&1; then
+      kubectl -n "$NS" patch secret "$secret" --type=merge \
+        -p "{\"data\":{\"$key\":null}}" >/dev/null
+      log "removed legacy administrator key $secret/$key"
+    fi
+  done
+}
+
 # Every generated URL uses sslmode=verify-full against DB_HOST, so the server
 # certificate must carry that name. postgres-tls.yaml lists the names for the
 # default CLUSTER and NAMESPACE; with other values, change its dnsNames first.
@@ -239,7 +253,7 @@ do_pre() {
     password_for "$p"
   done
 
-  local db_owner
+  local db_owner existing_dedicated=false
   db_owner="$(query_su postgres "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
   if [[ "$db_owner" == "$LEGACY_OWNER" ]] && \
      { [[ -n "$(query_su hoopdb "select to_regnamespace('sessions')")" ]] || [[ -n "$(query_su hoopdb "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" ]]; }; then
@@ -255,12 +269,9 @@ do_pre() {
       for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
       die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
     fi
-    printf '%s\n' dedicated-owner >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
-    write_credential_files; write_layout_values dedicated-owner
-    log "dedicated hoopdb_owner layout already active; database and roles were left unchanged"
-    return
+    existing_dedicated=true
   fi
-  [[ "$db_owner" == "$LEGACY_OWNER" ]] \
+  [[ "$db_owner" == "$LEGACY_OWNER" || "$existing_dedicated" == true ]] \
     || die "HoopDb owner is neither $LEGACY_OWNER nor $OWNER; refusing"
 
   # Control: its own database. The owner runs migrations, the runtime role
@@ -294,22 +305,44 @@ SQL
     log "$f ok"
   done
 
-  {
-    quiet
-    printf 'BEGIN;\n'
-    printf "CREATE ROLE %s LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '%s';\n" "$OWNER" "$(pw "$OWNER")"
-    printf 'ALTER DATABASE hoopdb OWNER TO %s;\nSET LOCAL ROLE %s;\nCREATE SCHEMA sessions;\nCREATE SCHEMA search_index;\nRESET ROLE;\n' "$OWNER" "$OWNER"
-    printf "CREATE ROLE search_consumer_runtime LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '%s';\n" "$(pw search_consumer_runtime)"
-    printf "ALTER ROLE search_consumer_runtime SET statement_timeout = '60s';\n"
-    printf 'COMMIT;\n'
-  } | psql_su hoopdb
-  log "dedicated owner and search consumer ready"
+  if [[ "$existing_dedicated" == false ]]; then
+    {
+      quiet
+      printf 'BEGIN;\n'
+      printf "CREATE ROLE %s LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '%s';\n" "$OWNER" "$(pw "$OWNER")"
+      printf 'ALTER DATABASE hoopdb OWNER TO %s;\nSET LOCAL ROLE %s;\nCREATE SCHEMA sessions;\nCREATE SCHEMA search_index;\nRESET ROLE;\n' "$OWNER" "$OWNER"
+      printf "CREATE ROLE search_consumer_runtime LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '%s';\n" "$(pw search_consumer_runtime)"
+      printf "ALTER ROLE search_consumer_runtime SET statement_timeout = '60s';\n"
+      printf 'COMMIT;\n'
+    } | psql_su hoopdb
+    log "dedicated owner and search consumer ready"
+  else
+    log "dedicated HoopDb ownership already committed; finishing prerequisites"
+  fi
 
   sql_file hoopdb_runtime_role.sql "runtime_role=$RUNTIME" runtime_login=true | psql_su hoopdb
   { quiet; printf "ALTER ROLE %s PASSWORD '%s';\n" "$RUNTIME" "$(pw "$RUNTIME")"; } | psql_su hoopdb
   log "hoopdb_runtime_role ok"
   sql_file hoopdb_function_default_revoke.sql "migration_owner=$OWNER" | psql_su hoopdb
   log "hoopdb_function_default_revoke ok"
+
+  local protected_edges
+  protected_edges="$(query_su hoopdb "with protected(name) as (values
+    ('anon'),('authenticated'),('service_role'),('session_directory_search_worker'),
+    ('session_token_verifier'),('bulls96_session_ingest_seeder'),
+    ('bulls96_canonical_feature_producer'),('bulls96_babysitter_retention'),
+    ('hoopdb_owner'),('sessions_pipeline_runtime'),('search_consumer_runtime'),
+    ('bulls96_read_api'),('bulls96_session_ingest'),('buffered_search_feed_runtime'),
+    ('bulls96_acquisition_installer'),('bulls96_analysis_admit'),
+    ('bulls96_digest_narrative'),('bulls96_legacy_export_privacy'),
+    ('bulls96_privacy_eraser'),('bulls96_project_events'))
+  select count(*) from pg_auth_members m
+  join pg_roles granted on granted.oid=m.roleid
+  join pg_roles member on member.oid=m.member
+  where granted.rolname in (select name from protected)
+     or member.rolname in (select name from protected)")"
+  log "protected role membership edges: $protected_edges"
+  [[ "$protected_edges" == 0 ]] || die "protected HoopDb roles have membership edges; refusing"
 
   query_su hoopdb "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
   query_su hoopdb "select 'extensions: '||string_agg(extname,',' order by extname) from pg_extension"
@@ -369,6 +402,7 @@ do_post() {
 
 do_finalize() {
   local layout
+  [[ -s "$LAYOUT_FILE" ]] || die "missing HoopDb layout marker: run '$0 pre' first"
   layout="$(<"$LAYOUT_FILE")"
   if [[ "$layout" == legacy-admin ]]; then
     printf 'ALTER ROLE %s NOCREATEROLE;\n' "$LEGACY_OWNER" | psql_su hoopdb
@@ -386,6 +420,7 @@ do_prepare-admin-jobs() {
   kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
   kubectl -n "$NS" create secret generic "$ADMIN_JOBS_SECRET" \
     --from-file="$FILES/$ADMIN_JOBS_SECRET" >/dev/null
+  remove_legacy_secret_keys
   log "$ADMIN_JOBS_SECRET created for migration/bootstrap Jobs only; delete it as soon as those Jobs finish"
 }
 

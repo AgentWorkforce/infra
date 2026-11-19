@@ -276,9 +276,10 @@ compatibility:
       digest: sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9
       built_by: publish-image-ecr run 41375747474
     ghcr-rds:
-      repository: ghcr.io/agentworkforce/96bulls-services
-      digest: sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821
-      built_by: publish-image run 42462161615
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:fd2efd61dca4761dfb55256aa4797cb7f61c3434cc8af4833287e0e7bb7b59a9
+      source_commit: b96e1e1e97185f212d86928dd1eff6b599000892
+      built_by: agent-relay-2026.11.17 release pin
   releases:
     - id: telemetry-collector-0.1.7
       status: unreleased
@@ -3930,7 +3931,7 @@ entries:
       The ECR path (EKS node role) needs none.
     chart: sessions-pipeline
     values: [worker.imagePullSecrets, alleyoop.imagePullSecrets]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     secrets:
@@ -4744,8 +4745,8 @@ entries:
     description: |
       Selects the shipped migrator's RDS ownership preflight. Fresh PostgreSQL
       16+ installs use separate-database with hoopdb_owner and no creator edges.
-      Existing administrator-owned installs remain master-owner until the
-      upstream legacy-edge transfer support is released.
+      Existing administrator-owned installs remain master-owner; their
+      ownership transfer is a follow-up under infra #480.
     chart: sessions-pipeline
     values: [worker.migrations.rdsLayout]
     env: [HOOPDB_RDS_LAYOUT]

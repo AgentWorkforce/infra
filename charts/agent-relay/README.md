@@ -113,6 +113,13 @@ the dedicated `hoopdb_owner` URL, never a provider administrator URL. Legacy
 administrator-owned installs use `hoopdb-admin-jobs` only while the relevant
 Jobs run and delete it immediately afterwards.
 
+> **RDS upgrade note:** the shared `external-rds.yaml` and
+> `aws-rds-native.yaml` profiles default to `rdsLayout: separate-database` for
+> fresh `hoopdb_owner` installs. Before upgrading an administrator-owned RDS
+> install with either profile, run the setup classifier and pass its layout
+> overlay, which selects `rdsLayout: master-owner`. Without that override the
+> migrator intentionally refuses the legacy layout before changing anything.
+
 With RelayAuth on, `relayauth-api-key` and `relayauth-bootstrap-api-key` must
 contain the same value. `selfhost-bootstrap-token` must be at least 32 bytes.
 `selfhost-encryption-key` must encode exactly 32 bytes as either 64 hexadecimal

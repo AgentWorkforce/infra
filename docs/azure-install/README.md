@@ -309,9 +309,8 @@ versus extractive summaries, the daily limits, and how to turn it off.
 ## Upgrades: dedicated owner and legacy temporary credentials
 
 Fresh installs use `hoopdb_owner`, which has neither `SUPERUSER` nor
-`CREATEROLE`, for every migration and bootstrap Job. Older installs remain
-owned by `hoop` for now because the pinned pipeline refuses their PostgreSQL
-16+ creator edges after an ownership-only transfer. On those installs the
+`CREATEROLE`, for every migration and bootstrap Job. Ownership transfer for
+older `hoop`-owned installs is a follow-up under #480. On those installs the
 administrator URL exists in Kubernetes only in `hoopdb-admin-jobs`, while the
 upgrade Jobs run. The long-running workloads never reference it.
 
@@ -331,15 +330,15 @@ mkdir "$NEW_DIR" && gh release download "$NEW_TAG" -R AgentWorkforce/infra -D "$
 and `echo "$CHART"` names the new chart package. Then:
 
 ```sh
-# Prints the name of the one bootstrap Job the deployed release renders.
-bootstrap_job() {
-  local j
-  j="$(helm -n agent-relay get manifest agent-relay \
-    | awk '/^---/{k=""} /^kind: Job$/{k=1} k && /^  name: /{print $2; k=""}' \
-    | grep -E -- '-search-indexer-bootstrap-[0-9a-f]{8}$')"
-  [ -n "$j" ] && [ "$(printf '%s\n' "$j" | wc -l)" -eq 1 ] \
-    || { echo "expected exactly one search-indexer bootstrap Job in the release" >&2; return 1; }
-  printf '%s' "$j"
+# Prints every Job whose pod reads the temporary administrator Secret. This
+# includes migrate, search bootstrap, output-facts bootstrap, and future Jobs
+# that adopt the same explicit Secret reference.
+admin_jobs() {
+  helm -n agent-relay get manifest agent-relay \
+    | yq -N -r 'select(.kind == "Job") |
+        select(.. | select(has("secretKeyRef")) | .secretKeyRef.name == "hoopdb-admin-jobs") |
+        .metadata.name' \
+    | sort -u
 }
 
 # 1. Classify the saved layout without changing an existing role graph.
@@ -355,38 +354,47 @@ if [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
   kubectl -n agent-relay get secret hoopdb-admin-jobs >/dev/null || exit 1
 fi
 
-# 2. Upgrade, and wait for the bootstrap Job this release renders.
-helm upgrade agent-relay "$CHART" --namespace agent-relay \
-  -f "$NEW_DIR/agent-relay/values-eks.yaml" -f values.yaml \
-  -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
-  -f release-images.values.yaml --timeout 25m \
-  && JOB="$(bootstrap_job)" \
-  && kubectl -n agent-relay wait --for=condition=complete "job/$JOB" --timeout=10m \
-  && kubectl -n agent-relay rollout status deploy --timeout=10m \
-  && echo "upgrade ok"
+# 2. Upgrade, and wait for every Job that reads the temporary Secret.
+upgrade_ok=false
+if helm upgrade agent-relay "$CHART" --namespace agent-relay \
+    -f "$NEW_DIR/agent-relay/values-eks.yaml" -f values.yaml \
+    -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
+    -f release-images.values.yaml --timeout 25m; then
+  upgrade_ok=true
+  if [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
+    JOBS="$(admin_jobs)"
+    [ -n "$JOBS" ] || upgrade_ok=false
+    while $upgrade_ok && IFS= read -r JOB; do
+      kubectl -n agent-relay wait --for=condition=complete "job/$JOB" --timeout=10m \
+        || upgrade_ok=false
+    done <<<"$JOBS"
+  fi
+  $upgrade_ok && kubectl -n agent-relay rollout status deploy --timeout=10m \
+    || upgrade_ok=false
+fi
 
 # 3. Existing installs: delete the administrator credential immediately.
 bash postgres-setup.sh delete-admin-jobs
+$upgrade_ok || { echo "upgrade or a temporary-credential Job failed" >&2; exit 1; }
+echo "upgrade ok"
 ```
 
 For a dedicated-owner install, `delete-admin-jobs` is harmless because the
 Secret is absent. For a legacy install, run step 3 whether or not Helm
 succeeded. Long-running pods do not use it. If Helm stops, delete the Secret,
-fix the cause, and start again at step 1. Legacy installs remain
-administrator-run until the upstream creator-edge transfer support described
-in `../upstream-hoopdb-legacy-creator-edge-transfer.md` is released.
+fix the cause, and start again at step 1. Ownership transfer for legacy
+installs is a follow-up under #480.
 
 If an earlier attempt left a failed bootstrap Job, delete it before retrying.
 A Job's pod template is immutable, so Helm does not rerun it. Define
-`bootstrap_job` (above) in your shell, then:
+`admin_jobs` (above) in your shell, then:
 
 ```sh
-JOB="$(bootstrap_job)" && kubectl -n agent-relay delete job "$JOB"
+admin_jobs | while IFS= read -r JOB; do kubectl -n agent-relay delete job "$JOB"; done
 ```
 
-Then run steps 1 to 3 with the same release. The future ownership-transfer
-procedure depends on the pipeline change recorded in
-`../upstream-hoopdb-legacy-creator-edge-transfer.md`.
+Then run steps 1 to 3 with the same release. Existing-install ownership
+transfer remains a follow-up under #480.
 
 ## AKS receipts upgrade qualification
 

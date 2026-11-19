@@ -172,7 +172,7 @@ if $apply; then for tool in aws crane; do command -v "$tool" >/dev/null || die "
 [ -x "$here/mirror-images-to-ecr.sh" ] || die "mirror-images-to-ecr.sh must sit next to this script"
 state_dir="${STATE_DIR:-${HOME:-}/.agent-relay-install}"
 hoopdb_layout=""
-if $rds_setup && [ -s "$state_dir/hoopdb-layout" ]; then
+if $rds_setup; then
   [ -x "$here/rds-setup.sh" ] || die "rds-setup.sh must sit next to this script (--rds-setup)"
   [ -d "$state_dir" ] || die "STATE_DIR $state_dir does not exist: run 'rds-setup.sh pre' first (or set STATE_DIR)"
   [ -s "$state_dir/hoopdb-layout" ] || die "STATE_DIR has no hoopdb-layout marker: run 'rds-setup.sh pre' first"
@@ -579,6 +579,25 @@ if [ -n "$rta_phase" ]; then die() { printf 'agent-relay-upgrade: %s\n' "$*" >&2
 
 # rds-setup.sh reads its inputs from the environment (never argv).
 rds_env=(env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir")
+prepare_legacy_admin_jobs() {
+  say "== 5. create the temporary administrator credential for migration/bootstrap Jobs"
+  "${rds_env[@]}" "$here/rds-setup.sh" prepare-admin-jobs
+  admin_jobs_created=true
+  "${kube[@]}" get secret hoopdb-admin-jobs -o name >/dev/null \
+    || { say "   hoopdb-admin-jobs is absent; refusing before Helm changes anything"; false; }
+}
+remove_legacy_long_lived_keys() {
+  local pair s k
+  for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
+    s=${pair%%:*}; k=${pair#*:}
+    if "${kube[@]}" get secret "$s" -o json | jq -e --arg k "$k" '.data[$k] != null' >/dev/null; then
+      ( umask 077; jq -n --arg path "/data/$k" '[{"op":"remove","path":$path}]' >"$work/remove-key.json" )
+      "${kube[@]}" patch secret "$s" --type json --patch-file "$work/remove-key.json" >/dev/null
+      rm -f "$work/remove-key.json"
+      say "   removed legacy administrator key $s/$k"
+    fi
+  done
+}
 # wait_jobs NAME...: poll each Job until it completes; a Job that fails (its
 # Failed condition) or is still unfinished at the deadline fails the run with
 # its name and the last lines of its logs. Jobs confirmed complete are
@@ -626,6 +645,9 @@ wait_jobs() {
 mirrored_ref() { jq -r --arg n "$1" --arg root "${registry}/${prefix}" '[.images[] | select(.name == $n) | "\($root)/\(.ref)"] | first // empty' "$manifest"; }
 
 if [ -n "$rta_phase" ]; then
+  if $rds_setup && [ "$hoopdb_layout" = legacy-admin ]; then
+    prepare_legacy_admin_jobs
+  fi
   if [ "$rta_phase" = credentials ]; then rta_credentials; else rta_cutover; fi
 elif $first_install; then
   say "== 5. helm install $release at $version"
@@ -662,31 +684,22 @@ elif $first_install; then
   fi
 else
   if $rds_setup && [ "$hoopdb_layout" = legacy-admin ]; then
-    say "== 5. create the temporary administrator credential for migration/bootstrap Jobs"
-    "${rds_env[@]}" "$here/rds-setup.sh" prepare-admin-jobs
-    admin_jobs_created=true
-    "${kube[@]}" get secret hoopdb-admin-jobs -o name >/dev/null \
-      || { say "   hoopdb-admin-jobs is absent; refusing before Helm changes anything"; false; }
-    for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
-      s=${pair%%:*}; k=${pair#*:}
-      if "${kube[@]}" get secret "$s" -o json | jq -e --arg k "$k" '.data[$k] != null' >/dev/null; then
-        ( umask 077; jq -n --arg path "/data/$k" '[{"op":"remove","path":$path}]' >"$work/remove-key.json" )
-        "${kube[@]}" patch secret "$s" --type json --patch-file "$work/remove-key.json" >/dev/null
-        rm -f "$work/remove-key.json"
-        say "   removed legacy administrator key $s/$k"
-      fi
-    done
+    prepare_legacy_admin_jobs
   fi
   say "== $($rds_setup && echo 6 || echo 5). helm upgrade $release to $version"
   "${helmx[@]}" upgrade "$release" "$chart" "${base[@]}" --wait --wait-for-jobs --timeout 15m
-  if $admin_jobs_created; then
-    "${rds_env[@]}" "$here/rds-setup.sh" delete-admin-jobs
-    admin_jobs_created=false
-  fi
 fi
 "${kube[@]}" get deploy -l "$release_selector" -o name | while read -r d; do "${kube[@]}" rollout status "$d" --timeout 20m; done
 failed=$("${kube[@]}" get jobs -l "$release_selector" -o json | jq -r '[.items[]|select((.status.failed // 0) > 0 and (.status.succeeded // 0) == 0)|.metadata.name]|join(",")')
 [ -z "$failed" ] || { say "   failed Jobs: $failed"; false; }
+if $admin_jobs_created; then
+  # Keep the old revision's keys until the new Helm revision, all of its Jobs,
+  # and every Deployment have succeeded. A failed upgrade can therefore use
+  # the printed rollback command without first reconstructing credentials.
+  remove_legacy_long_lived_keys
+  "${rds_env[@]}" "$here/rds-setup.sh" delete-admin-jobs
+  admin_jobs_created=false
+fi
 trap - ERR
 if [ -n "$rta_phase" ]; then
   say ""; say "Relaycast durable-actors $rta_phase phase done in $release (chart $chart_version). Snapshot kept: $snapshot"

@@ -203,19 +203,25 @@ out=$(run --version 2026.11.1 --registry "$REG" --profile eks --values "$vals" 2
 grep 'helm .*template' "$root/log" | grep -q 'values-eks-native.yaml' && fail "eks profile loaded the native overlay"
 pass "--profile is required and is never switched"
 
-# 4. eks-rds-native composes values-eks.yaml then values-eks-rds-native.yaml, then site values, then the overlay
+# 4. eks-rds-native refuses even a plan without pre state, then composes the files in order
 setup_mocks "$root/rel-ok" ok
-out=$(run --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" 2>&1) || fail "eks-rds-native plan failed: $out"
+rm -rf "$root/state"
+out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" 2>&1) \
+  && fail "eks-rds-native plan without rds-setup pre state was accepted"
+grep -q "run 'rds-setup.sh pre' first" <<<"$out" || fail "missing plan state refused for the wrong reason: $out"
+[ -s "$root/log" ] && fail "missing plan state contacted external tools"
+make_state; setup_mocks "$root/rel-ok" ok
+out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" 2>&1) || fail "eks-rds-native plan failed: $out"
 tmpl=$(grep 'helm .*template' "$root/log")
 grep -q 'values-eks-native.yaml' <<<"$tmpl" && fail "eks-rds-native loaded values-eks-native.yaml"
 files=$(tr ' ' '\n' <<<"$tmpl" | grep -E 'values-eks.yaml$|values-eks-rds-native.yaml$|/values.yaml$|release-images.values.yaml$' | sed 's#.*/##' | tr '\n' ' ')
 [ "$files" = "values-eks.yaml values-eks-rds-native.yaml values.yaml release-images.values.yaml " ] \
   || fail "eks-rds-native file order wrong: $files"
-pass "eks-rds-native layers values-eks.yaml + values-eks-rds-native.yaml, site values, overlay last"
+pass "eks-rds-native plan requires pre state and layers profile, site values, then overlay"
 
 # 5. a release whose chart lacks values-eks-rds-native.yaml refuses eks-rds-native before rendering
 make_release "$root/rel-old" no-rds-native; setup_mocks "$root/rel-old" ok
-out=$(run --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" 2>&1) && fail "missing profile file was accepted"
+out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" 2>&1) && fail "missing profile file was accepted"
 grep -q 'does not ship values-eks-rds-native.yaml' <<<"$out" || fail "missing profile file refused for the wrong reason: $out"
 grep -q 'helm .*template' "$root/log" && fail "rendered without the profile file"
 out=$(run "${args[@]}" 2>&1) || fail "eks-native failed on a release without the rds-native file: $out"
@@ -340,7 +346,7 @@ grep -q "rds-setup.sh pre" <<<"$out" || fail "missing pre state refused for the 
 [ -s "$root/log" ] && fail "a refused --rds-setup apply contacted tools"
 pass "--rds-setup apply checks its environment and pre state first"
 
-# 19. legacy eks-rds-native upgrade: snapshot -> temporary Secret -> remove old keys -> helm -> delete
+# 19. legacy eks-rds-native upgrade: snapshot -> temporary Secret -> helm/Jobs -> remove old keys -> delete
 make_state; setup_mocks "$root/rel-ok" ok
 mkdir -p "$root/secrets/agent-relay"
 printf '{"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' >"$root/secrets/agent-relay/agent-relay-secrets.json"
@@ -348,9 +354,10 @@ printf '{"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' >"$root/sec
 out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
   --apply --db-instance prod-db --yes 2>&1) || fail "rds-native upgrade failed: $out"
 before 'aws rds create-db-snapshot' '^rds-setup prepare-admin-jobs' || fail "temporary Secret must follow the snapshot"
-before '^rds-setup prepare-admin-jobs' 'kubectl .*patch secret agent-relay-secrets' || fail "old-key removal must follow temporary Secret creation"
-before 'kubectl .*patch secret search-indexer-owner' 'helm .* upgrade ' || fail "old-key removal must precede helm upgrade"
-before 'helm .* upgrade ' '^rds-setup delete-admin-jobs' || fail "temporary Secret was not deleted after Helm"
+before '^rds-setup prepare-admin-jobs' 'helm .* upgrade ' || fail "temporary Secret must precede helm upgrade"
+before 'helm .* upgrade ' 'kubectl .*patch secret agent-relay-secrets' || fail "old-key removal must follow helm upgrade"
+before 'kubectl .*rollout status' 'kubectl .*patch secret agent-relay-secrets' || fail "old-key removal must follow rollout success"
+before 'kubectl .*patch secret search-indexer-owner' '^rds-setup delete-admin-jobs' || fail "temporary Secret was deleted before old-key removal"
 grep 'kubectl .*patch secret' "$root/log" | grep -qv -- '--patch-file' && fail "Secret patched without a patch file"
 grep -q 'rotated-admin-pw' "$root/log" && fail "a credential appeared on a command line"
 grep -q 'rotated-admin-pw' <<<"$out" && fail "a credential was printed"
@@ -360,7 +367,19 @@ grep -q 'RELAYHISTORY_PIPELINE_CONSUMER_SECRET' "$root/patches" || fail "search 
 grep -q '^rds-setup post' "$root/log" && fail "upgrade ran post"
 pass "legacy rds-native upgrade uses and deletes one temporary admin Job Secret"
 
-# 20. eks-native legacy upgrade with --rds-setup prepares the temporary Secret; without it, never
+# 20. a failed legacy Helm upgrade keeps both old keys for the printed rollback
+make_state; setup_mocks "$root/rel-ok" ok; write_helm "exit 1"
+mkdir -p "$root/secrets/agent-relay"
+printf '{"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' >"$root/secrets/agent-relay/agent-relay-secrets.json"
+printf '{"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' >"$root/secrets/agent-relay/search-indexer-owner.json"
+out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
+  --apply --db-instance prod-db --yes 2>&1) && fail "failed legacy Helm upgrade reported success"
+grep -q 'UPGRADE FAILED' <<<"$out" || fail "failed legacy upgrade omitted rollback guidance: $out"
+grep -q 'kubectl .*patch secret' "$root/log" && fail "failed upgrade removed a long-lived administrator key"
+grep -q '^rds-setup delete-admin-jobs' "$root/log" || fail "failed upgrade did not clean up the temporary Secret"
+pass "failed legacy upgrade preserves old keys for rollback and cleans up only the temporary Secret"
+
+# 21. eks-native legacy upgrade with --rds-setup prepares the temporary Secret; without it, never
 make_state; setup_mocks "$root/rel-ok" ok
 out=$(run_rds "${args[@]}" --rds-setup --apply --db-instance prod-db --yes 2>&1) || fail "eks-native --rds-setup upgrade failed: $out"
 grep -q '^rds-setup prepare-admin-jobs' "$root/log" || fail "--rds-setup upgrade did not prepare the temporary Secret"
@@ -482,7 +501,7 @@ grep -q 'readable beyond its owner' <<<"$out" || fail "open STATE_DIR refused fo
 [ -s "$root/log" ] && fail "an open STATE_DIR contacted tools"
 pass "--rds-setup refuses a STATE_DIR readable beyond its owner"
 
-# 31. --relaycast-actors: opt-in, plan-mode guards that refuse before changing anything
+# 32. --relaycast-actors: opt-in, plan-mode guards that refuse before changing anything
 rds_args=(--version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals")
 live_pg="relaycast:
   existingSecret: relaycast-secrets
@@ -493,6 +512,7 @@ relay-control:
 secret() { mkdir -p "$root/secrets/$1"; printf '%s\n' "$3" > "$root/secrets/$1/$2.json"; }
 keyring() { secret agent-relay relaycast-secrets '{"data":{"credential-keyring":"eA==","internal-secret":"aQ==","file-signing-secret":"Zg==","workspace-bootstrap-secret":"Yg=="}}'; }
 make_release "$root/rel-ok" ok; setup_mocks "$root/rel-ok" ok
+make_state
 out=$(run "${args[@]}" --relaycast-actors cutover 2>&1) && fail "--relaycast-actors on eks-native was accepted"
 grep -q 'needs --profile eks-rds-native' <<<"$out" || fail "wrong-profile migration refused for the wrong reason: $out"
 out=$(run "${rds_args[@]}" --relaycast-actors everything 2>&1) && fail "an unknown phase was accepted"
@@ -588,6 +608,8 @@ setup_mocks "$root/rel-ok" ok; printf '%s\n' "$live_pg" > "$root/live-values.yam
 st="$root/state/relaycast-actors/agent-relay-agent-relay"
 ( umask 077; mkdir -p "$root/state/relaycast-actors"; echo 1700000000 > "$st.ar-since" )
 out=$(run_rds "${rds_args[@]}" --relaycast-actors credentials --apply --db-instance prod-db --yes 2>&1) || fail "credentials apply failed: $out"
+before '^rds-setup prepare-admin-jobs' 'helm .* upgrade ' || fail "actors credentials phase did not prepare the legacy Job Secret before Helm"
+before 'helm .* upgrade ' '^rds-setup delete-admin-jobs' || fail "actors credentials phase did not retain the legacy Job Secret through Helm"
 [ "$(cat "$st.ar-since")" = 1700000000 ] || fail "a retried credentials phase overwrote the first switch time"
 grep -qx rekey-run-1 "$st.rekey-runs" || fail "the relaycast-rekey run id was not recorded"
 grep -q 'relaycast_rekey.summary' "$st.rekey-rekey-run-1.jsonl" || fail "the relaycast-rekey report was not kept"

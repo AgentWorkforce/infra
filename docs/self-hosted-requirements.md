@@ -618,7 +618,6 @@ chart `sessions-pipeline` · values [`profiles/external-rds.yaml`](../charts/ses
 | | requirement | provided by | maps to | verify |
 | --- | --- | --- | --- | --- |
 | shipped | [External Secrets Operator and a ClusterSecretStore (only with externalSecrets.enabled)](#req-k8s-external-secrets-operator) | operator | values `sessions-pipeline-worker:externalSecrets.*`, `session-ingest-api:externalSecrets.*`, `agent-relay:externalSecrets.*` | kubectl get crd externalsecrets.external-secrets.io && kubectl get clustersecretstore <name>; the ExternalSecret reports Ready |
-| shipped | [Pull Secret for the private GHCR services image](#req-secret-image-pull) | operator | values `worker.imagePullSecrets`, `alleyoop.imagePullSecrets`; Secret `<pull secret>` (type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services) | kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff |
 | shipped | [Locker credential Secret (MinIO root / S3 static keys)](#req-secret-locker-credentials) | operator | values `worker.existingSecret`, `alleyoop.existingSecret`, `session-object-storage.existingSecret`, `worker.secretKeys.lockerAccessKeyId`, `worker.secretKeys.lockerSecretAccessKey`, `alleyoop.secretKeys.lockerAccessKeyId`, `alleyoop.secretKeys.lockerSecretAccessKey`; env `LOCKER_ACCESS_KEY_ID`, `LOCKER_SECRET_ACCESS_KEY`; Secret `sessions-pipeline-locker` keys `rootUser`, `rootPassword`; Secret `sessions-pipeline-locker` (the bundled upstream MinIO requires literal Secret data keys rootUser and rootPassword) | kubectl get secret sessions-pipeline-locker -o jsonpath='{.data}' has rootUser and rootPassword |
 | shipped | [Summary encryption keyring (SUMMARY_MASTER_KEYS)](#req-secret-summary-master-keys) | operator | values `worker.summaryEncryption.existingSecret`, `worker.summaryEncryption.key`, `worker.summaryEncryption.mountPath`, `worker.summaryEncryption.fileName`; env `SUMMARY_MASTER_KEYS_FILE`, `SUMMARY_MASTER_KEYS`; Secret `sessions-pipeline-locker` keys `SUMMARY_MASTER_KEYS` | kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex> |
 | shipped | [HoopDb connection Secret (HOOPDB_URL)](#req-secret-hoopdb-url) | operator | values `worker.hoopdb.existingSecret`, `worker.hoopdb.key`, `worker.secretKeys.hoopdbUrl`, `alleyoop.hoopdb.existingSecret`, `alleyoop.hoopdb.key`, `alleyoop.secretKeys.hoopdbUrl`; env `HOOPDB_URL`; Secret `sessions-pipeline-hoopdb` keys `HOOPDB_URL` | psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_URL}' \| base64 -d \| sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -X -c 'select 1' |
@@ -1590,7 +1589,7 @@ kms:Decrypt for SecureString).
 
 <a id="req-secret-image-pull"></a>
 
-**Pull Secret for the private GHCR services image** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql
+**Pull Secret for the private GHCR services image** · shipped · chart `sessions-pipeline` · profiles selfhost-postgres, migration, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql
 
 ghcr.io/agentworkforce/96bulls-services is a private package. Create a
 docker-registry Secret and list it in the umbrella's shared imagePullSecrets
@@ -2779,8 +2778,8 @@ worker.hoopdb URL. Set both or neither.
 
 Selects the shipped migrator's RDS ownership preflight. Fresh PostgreSQL
 16+ installs use separate-database with hoopdb_owner and no creator edges.
-Existing administrator-owned installs remain master-owner until the
-upstream legacy-edge transfer support is released.
+Existing administrator-owned installs remain master-owner; their
+ownership transfer is a follow-up under infra #480.
 
 - Default: `master-owner` (by profile: external-rds `separate-database`, aws-rds-native `separate-database`)
 - Choices: `master-owner`: interim existing-install layout; `separate-database`: fresh PG16+ dedicated hoopdb_owner layout

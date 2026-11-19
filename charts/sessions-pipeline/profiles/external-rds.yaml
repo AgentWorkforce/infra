@@ -31,13 +31,15 @@
 #      SESSION_POSTGRES_CA_SHA256 through sessionReadApi.postgresCa, which mounts the file
 #      and sets them; the ingest edge takes
 #      ingestEdge.postgres.caConfigMap, caKey and caSha256.
-# Pinned: GHCR, built from sessions-pipeline main 78511e03, the first published
-# image containing rds mode (publish-image run 42462161615).
+# Pinned: public GHCR image built from relayhistory-pipeline b96e1e1e. This is
+# the release-qualified image that added the name-agnostic separate-database
+# preflight selected by rdsLayout below.
 hoopdb:
   enabled: false
 worker:
   image:
-    digest: "sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821"
+    repository: ghcr.io/agentworkforce/sessions-pipeline
+    digest: "sha256:fd2efd61dca4761dfb55256aa4797cb7f61c3434cc8af4833287e0e7bb7b59a9"
   hoopdb:
     existingSecret: sessions-pipeline-hoopdb
     key: HOOPDB_URL
@@ -47,8 +49,8 @@ worker:
       key: HOOPDB_MIGRATION_URL
     databaseMode: rds
     # New installs use the dedicated migration owner. Existing administrator-
-    # owned installs must override this to master-owner until ownership transfer
-    # is supported by the pinned sessions-pipeline release.
+    # owned installs must override this to master-owner; their ownership
+    # transfer is a follow-up under infra #480.
     rdsLayout: separate-database
     supabaseShim: false
     runtimeRole: ""
@@ -65,7 +67,8 @@ worker:
       functionDefault: false
 alleyoop:
   image:
-    digest: "sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821"
+    repository: ghcr.io/agentworkforce/sessions-pipeline
+    digest: "sha256:fd2efd61dca4761dfb55256aa4797cb7f61c3434cc8af4833287e0e7bb7b59a9"
   hoopdb:
     existingSecret: sessions-pipeline-hoopdb
     key: HOOPDB_URL

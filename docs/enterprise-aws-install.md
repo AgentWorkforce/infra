@@ -544,12 +544,11 @@ and `STATE_DIR` as for `pre`. Fresh PostgreSQL 16+ installs store the dedicated
 `hoopdb_owner` URL in the two long-lived keys; no administrator URL enters the
 cluster. An existing administrator-owned install is detected and left in its
 legacy role graph. Immediately before its upgrade the upgrader creates
-`hoopdb-admin-jobs`, points only migrate/bootstrap Jobs at it, removes the old
-administrator-derived keys from the long-lived Secrets, and deletes the
-temporary Secret after the Jobs finish. If that Secret cannot be created, the
-upgrade stops before Helm changes anything. Existing installs keep this
-administrator-run migration until the pipeline accepts the legacy creator
-edge; see `docs/upstream-hoopdb-legacy-creator-edge-transfer.md`. When values
+`hoopdb-admin-jobs` and points only migrate/bootstrap Jobs at it. After Helm,
+all Jobs and all Deployments succeed, it removes the old administrator-derived
+keys from the long-lived Secrets and deletes the temporary Secret. If that
+Secret cannot be created, the upgrade stops before Helm changes anything.
+Ownership transfer for existing installs is a follow-up under #480. When values
 select `databaseMode: rds` without `--rds-setup`, the plan prints a note rather
 than guessing.
 

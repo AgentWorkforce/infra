@@ -131,6 +131,12 @@ pass "pre mode creates private credential files without leaking secrets"
 grep -q 'CREATE ROLE agent_relay_hoopdb_role_creator' "${MOCK_CAPTURE_DIR}/run.sh" || fail "pre omitted disposable role creator"
 grep -q 'CREATE ROLE search_consumer_runtime LOGIN' "${MOCK_CAPTURE_DIR}/run.sh" || fail "pre omitted search runtime"
 grep -q 'DROP ROLE agent_relay_hoopdb_role_creator' "${MOCK_CAPTURE_DIR}/run.sh" || fail "pre did not drop disposable role creator"
+diff -u \
+  <(tail -n +5 "${TEST_DIR}/../rds-hoopdb-activate.sql" \
+    | sed -E "s/^SELECT format\('ALTER DATABASE %I OWNER TO hoopdb_owner'.*/ALTER DATABASE hoopdb OWNER TO hoopdb_owner;/; s/DATABASE :\"DBNAME\"/DATABASE hoopdb/g") \
+  <(awk '/-v project_password=.*<<'"'"'SQL'"'"'/{capture=1; next} capture && /^SQL$/{exit} capture{print}' "${MOCK_CAPTURE_DIR}/run.sh") \
+  >/dev/null || fail "inline activation SQL drifted from rds-hoopdb-activate.sql"
+grep -q 'protected role membership edges:' "${MOCK_CAPTURE_DIR}/run.sh" || fail "pre omitted the protected-role membership census"
 pass "pre mode submits the membership-free dedicated-owner role graph"
 
 : >"${COMMAND_LOG}"
@@ -161,6 +167,10 @@ post_output="$(bash "${RDS_SETUP}" post 2>&1)"
 [[ "${post_output}" != *"admin-secret-material"* ]] || fail "admin password leaked in post mode"
 grep -q -- '--context customer-context -n agent-relay get job sessions-pipeline-worker-migrate-current -o json' "${COMMAND_LOG}" || fail "post mode did not verify the exact current migration Job in the selected context"
 grep -q 'agent-relay-rds-post' "${COMMAND_LOG}" || fail "post bootstrap Job was not applied"
+grep -q "filtered session_read_api_role.sql still contains ALTER ROLE or CREATE ROLE" "${MOCK_CAPTURE_DIR}/run.sh" \
+  || fail "post does not fail closed if the read-role filter misses role DDL"
+grep -q "filtered session_ingest_role.sql still contains ALTER ROLE or CREATE ROLE" "${MOCK_CAPTURE_DIR}/run.sh" \
+  || fail "post does not fail closed if the ingest-role filter misses role DDL"
 pass "post mode requires migration evidence and activates runtime roles"
 
 [[ -s "$STATE_DIR/passwords/bulls96_session_erase_search" ]] || fail "erase search password missing"

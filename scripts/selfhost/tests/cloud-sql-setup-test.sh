@@ -58,6 +58,9 @@ cat >"$BIN/kubectl" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'kubectl %s\n' "$*" >>"$MOCK_LOG"
+for argument in "$@"; do
+  case "$argument" in --from-file=run.sh=*) cp "${argument#--from-file=run.sh=}" "$MOCK_CAPTURE/run.sh" ;; esac
+done
 case " $* " in
   *" create configmap "*" --dry-run=client "*)
     printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: mock\n'
@@ -70,6 +73,9 @@ case " $* " in
     fi
     ;;
   *" create secret generic "*) ;;
+  *" get secret agent-relay-secrets -o json "*) printf '{"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' ;;
+  *" get secret search-indexer-owner -o json "*) printf '{"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' ;;
+  *" patch secret "*) ;;
   *" get namespace "*) ;;
   *" create namespace "*) ;;
   *" delete "*) ;;
@@ -128,6 +134,8 @@ grep -F 'hoopdb_owner:' "$STATE/secret-files/search-indexer-owner/RELAYHISTORY_P
 [[ "$(cat "$STATE/hoopdb-layout")" == dedicated-owner ]] || fail "dedicated-owner layout marker is missing"
 grep -F 'sessions_pipeline_runtime:' "$STATE/secret-files/agent-relay-secrets/HOOPDB_URL" >/dev/null || fail "runtime URL uses the wrong role"
 grep -F 'sslmode=verify-full' "$STATE/secret-files/agent-relay-secrets/HOOPDB_URL" >/dev/null || fail "runtime URL does not verify Cloud SQL TLS"
+grep -F 'sslrootcert=/etc/postgres-ca/ca.crt' "$STATE/secret-files/agent-relay-secrets/HOOPDB_URL" >/dev/null \
+  || fail "runtime URL does not name the mounted CA for native brief workers"
 [[ "$(stat -c %a "$STATE/secret-files/agent-relay-secrets/HOOPDB_URL")" == 600 ]] || fail "credential file mode is not 0600"
 pass "pre creates hardened Job, create-only temporary Secret and credential files"
 
@@ -135,7 +143,22 @@ pass "pre creates hardened Job, create-only temporary Secret and credential file
 MOCK_LAYOUT=dedicated-owner "$TEST_BASH" "$SCRIPT" pre >/dev/null
 grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/null || fail "dedicated rerun did not classify the database"
 grep -F 'hoopdb_owner:' "$STATE/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" >/dev/null || fail "dedicated rerun changed the owner URL"
-pass "dedicated-owner pre rerun reuses saved passwords"
+grep -F 'dedicated HoopDb ownership already committed; finishing prerequisites' "$CAPTURE/run.sh" >/dev/null \
+  || fail "dedicated rerun exits instead of finishing interrupted prerequisites"
+grep -F 'for f in session_directory_search_worker session_token_verifier session_ingest_roles session_read_api_roles' "$CAPTURE/run.sh" >/dev/null \
+  || fail "dedicated rerun omits the role prerequisites after an interrupted pre"
+grep -F 'protected role membership edges:' "$CAPTURE/run.sh" >/dev/null \
+  || fail "dedicated rerun omits the protected-role membership census"
+pass "dedicated-owner pre rerun finishes an interrupted pre and reuses saved passwords"
+
+: >"$LOG"
+MOCK_LAYOUT=legacy-admin "$TEST_BASH" "$SCRIPT" pre >/dev/null
+"$TEST_BASH" "$SCRIPT" prepare-admin-jobs >/dev/null
+grep -F 'create secret generic hoopdb-admin-jobs' "$LOG" >/dev/null || fail "legacy prepare did not create the temporary Secret"
+before_migration=$(grep -n 'patch secret agent-relay-secrets' "$LOG" | head -1 | cut -d: -f1)
+before_search=$(grep -n 'patch secret search-indexer-owner' "$LOG" | head -1 | cut -d: -f1)
+[[ -n "$before_migration" && -n "$before_search" ]] || fail "legacy prepare did not remove both live administrator keys"
+pass "legacy prepare creates the temporary Secret then removes both live administrator keys"
 
 # Terraform's chart_values pin sha256(server_ca_cert): the PEM with exactly one
 # trailing newline. The bundle written for the ConfigMap must be those bytes.

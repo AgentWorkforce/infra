@@ -6,7 +6,10 @@
 # REQUIRED before render/install:
 # - global.tenant.orgId
 # - the same approved services image digest under worker, alleyoop,
-#   sessionReadApi, ingestEdge, and searchIndexer (and customer registry paths)
+#   sessionReadApi, ingestEdge, and searchIndexer (and customer registry paths),
+#   from relayhistory-pipeline b96e1e1e or later. Digests sha256:6f22ea17...
+#   and sha256:b2b74a19... do not implement HOOPDB_RDS_LAYOUT and must not be
+#   used with this profile's separate-database layout.
 # - worker/alleyoop/ingestEdge/searchIndexer locker bucket and AWS region
 # - sessionReadApi + ingestEdge public origin (the same value)
 # - ingestEdge.relaycontrol.url for the parent release's Control Service

@@ -110,8 +110,10 @@ from this repository at your release tag into the same directory.
 ### 1.5 Refuse an instance that already has another HoopDb
 
 ```bash
-psql -X -A -t -d postgres -v db="$HOOPDB_DATABASE" -c "select (select count(*) from pg_database where datname=:'db') as hoopdb,
-  (select count(*) from pg_roles where rolname='session_directory_search_worker') as search_role"
+psql -X -A -t -d postgres -v db="$HOOPDB_DATABASE" <<'SQL'
+select (select count(*) from pg_database where datname=:'db') as hoopdb,
+  (select count(*) from pg_roles where rolname='session_directory_search_worker') as search_role;
+SQL
 ```
 
 `0|1` means another install's HoopDb is on this instance: stop and use a
@@ -201,6 +203,26 @@ Check:
 psql -X -A -t -d "$HOOPDB_DATABASE" -c "select current_database(), pg_get_userbyid(datdba) from pg_database where datname=current_database()"
 psql -X -A -t -d "$HOOPDB_DATABASE" -c "select rolsuper,rolcreaterole,rolcreatedb from pg_roles where rolname='hoopdb_owner'"
 psql -X -A -t -d "$HOOPDB_DATABASE" -c "select string_agg(extname,',' order by extname) from pg_extension"
+protected_edges="$(psql -X -A -t -d "$HOOPDB_DATABASE" <<'SQL'
+with protected(name) as (values
+  ('anon'),('authenticated'),('service_role'),('session_directory_search_worker'),
+  ('session_token_verifier'),('bulls96_session_ingest_seeder'),
+  ('bulls96_canonical_feature_producer'),('bulls96_babysitter_retention'),
+  ('bulls96_session_erase_search'),('hoopdb_owner'),('sessions_pipeline_runtime'),
+  ('search_consumer_runtime'),('bulls96_read_api'),('bulls96_session_ingest'),
+  ('buffered_search_feed_runtime'),('bulls96_acquisition_installer'),
+  ('bulls96_analysis_admit'),('bulls96_digest_narrative'),
+  ('bulls96_legacy_export_privacy'),('bulls96_privacy_eraser'),
+  ('bulls96_project_events'))
+select count(*) from pg_auth_members m
+join pg_roles granted on granted.oid=m.roleid
+join pg_roles member on member.oid=m.member
+where granted.rolname in (select name from protected)
+   or member.rolname in (select name from protected);
+SQL
+)"
+printf 'protected role membership edges: %s\n' "$protected_edges"
+test "$protected_edges" = 0
 ```
 
 The extensions line must include `btree_gin`, `pg_trgm` and `vector`.
@@ -297,10 +319,14 @@ Then finish the search bootstrap as the install guide says.
 
 ## Phase 3: existing administrator-owned installs
 
-Do not transfer ownership yet. The pinned pipeline rejects the legacy creator
-edges after such a transfer. Existing installs remain administrator-owned until
-the follow-up described in
-[`upstream-hoopdb-legacy-creator-edge-transfer.md`](upstream-hoopdb-legacy-creator-edge-transfer.md).
+> **Upgrade gate:** both shared RDS profiles now default to
+> `rdsLayout: separate-database` for fresh dedicated-owner installs. An existing
+> administrator-owned database must apply the `master-owner` overlay below on
+> its very first upgrade with these profiles or the migrator will refuse its
+> layout. Run the setup classifier before rendering Helm values.
+
+Ownership transfer for existing installs is a separate follow-up under #480.
+Do not transfer ownership as part of this temporary-Secret upgrade flow.
 
 Immediately before an upgrade or a guide Job, create Secret
 `hoopdb-admin-jobs` with keys `HOOPDB_MIGRATION_URL` and
@@ -320,7 +346,7 @@ umask 077
 ADMIN_JOB_DIR="$(mktemp -d)"
 read -r -s -p "Current administrator URL for $HOOPDB_DATABASE: " HOOPDB_ADMIN_URL; echo
 printf '%s' "$HOOPDB_ADMIN_URL" >"$ADMIN_JOB_DIR/HOOPDB_MIGRATION_URL"
-jq -cn --arg u "$HOOPDB_ADMIN_URL" '{hoopdb_url:$u}' \
+jq -n --rawfile u "$ADMIN_JOB_DIR/HOOPDB_MIGRATION_URL" '{hoopdb_url:$u}' \
   >"$ADMIN_JOB_DIR/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
 unset HOOPDB_ADMIN_URL
 kubectl -n agent-relay delete secret hoopdb-admin-jobs --ignore-not-found

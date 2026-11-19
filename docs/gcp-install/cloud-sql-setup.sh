@@ -219,10 +219,27 @@ write_layout_values() {
   chmod 600 "$STATE_DIR/hoopdb-layout-values.yaml"
 }
 
+remove_legacy_secret_keys() {
+  local pair secret key
+  for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
+              search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
+    secret="${pair%%:*}"; key="${pair#*:}"
+    if kubectl -n "$NS" get secret "$secret" -o json \
+        | jq -e --arg key "$key" '.data[$key] != null' >/dev/null 2>&1; then
+      kubectl -n "$NS" patch secret "$secret" --type=merge \
+        -p "{\"data\":{\"$key\":null}}" >/dev/null
+      log "removed legacy administrator key $secret/$key"
+    fi
+  done
+}
+
 write_credential_files() {
   write_file agent-relay-secrets database-migrations-url < <(url postgresql control_owner "$(pw control_owner)" relaycontrol)
   write_file agent-relay-secrets database-url < <(url postgresql control_api_runtime "$(pw control_api_runtime)" relaycontrol)
-  write_file agent-relay-secrets HOOPDB_URL < <(url postgresql sessions_pipeline_runtime "$(pw sessions_pipeline_runtime)" hoopdb)
+  # Native brief workers require the mounted CA path in the URL in addition to
+  # NODE_EXTRA_CA_CERTS; keep this query parameter on every generated copy.
+  write_file agent-relay-secrets HOOPDB_URL \
+    < <(printf '%s&sslrootcert=/etc/postgres-ca/ca.crt' "$(url postgresql sessions_pipeline_runtime "$(pw sessions_pipeline_runtime)" hoopdb)")
   write_file agent-relay-secrets database-owner-url < <(url postgres relaycast_owner "$(pw relaycast_owner)" relaycast)
   write_file agent-relay-secrets database-runtime-url < <(url postgres relaycast_runtime "$(pw relaycast_runtime)" relaycast)
   write_file agent-relay-read-api RELAYHISTORY_READ_API_SECRET < <(json_url supabase_url "$(url postgresql bulls96_read_api "$(pw bulls96_read_api)" hoopdb)")
@@ -259,15 +276,14 @@ echo "databases ready"
 
 export PGDATABASE=hoopdb
 owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
+existing_dedicated=0
 if [ "$owner" = "$PGUSER" ] && { [ -n "$($Q -c "select to_regnamespace('sessions')")" ] || [ -n "$($Q -c "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" ]; }; then
   echo 'HOOPDB_LAYOUT=legacy-admin'
   exit 0
 fi
 if [ "$owner" = 'hoopdb_owner' ]; then
-  echo 'HOOPDB_LAYOUT=dedicated-owner'
-  exit 0
-fi
-if [ "$owner" != "$PGUSER" ]; then
+  existing_dedicated=1
+elif [ "$owner" != "$PGUSER" ]; then
   echo "HoopDb owner is neither the Cloud SQL administrator nor hoopdb_owner; refusing" >&2
   exit 3
 fi
@@ -304,7 +320,8 @@ export PGDATABASE=hoopdb
 
 $P -c 'CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public;'
 $P -f /sql/cloudsql_migration_roles.sql
-$P -v owner_password="$hoopdb_owner" -v runtime_password="$sessions_pipeline_runtime" -v search_password="$search_consumer_runtime" <<'SQL'
+if [ "$existing_dedicated" = 0 ]; then
+  $P -v owner_password="$hoopdb_owner" -v runtime_password="$sessions_pipeline_runtime" -v search_password="$search_consumer_runtime" <<'SQL'
 BEGIN;
 CREATE ROLE agent_relay_hoopdb_role_creator NOLOGIN NOINHERIT CREATEROLE NOSUPERUSER NOCREATEDB NOREPLICATION NOBYPASSRLS;
 GRANT agent_relay_hoopdb_role_creator TO CURRENT_USER WITH INHERIT FALSE, SET TRUE;
@@ -326,15 +343,38 @@ RESET ROLE;
 DROP ROLE agent_relay_hoopdb_role_creator;
 COMMIT;
 SQL
-echo "dedicated HoopDb owner and runtime roles ready"
+  echo "dedicated HoopDb owner and runtime roles ready"
+else
+  echo "dedicated HoopDb ownership already committed; finishing prerequisites"
+fi
 
 for f in session_directory_search_worker session_token_verifier session_ingest_roles session_read_api_roles; do
   $P -f "/sql/$f.sql"; echo "$f ok"
 done
+protected_edges="$($Q -c "with protected(name) as (values
+  ('anon'),('authenticated'),('service_role'),('session_directory_search_worker'),
+  ('session_token_verifier'),('bulls96_session_ingest_seeder'),
+  ('bulls96_canonical_feature_producer'),('bulls96_babysitter_retention'),
+  ('hoopdb_owner'),('sessions_pipeline_runtime'),('search_consumer_runtime'),
+  ('bulls96_read_api'),('bulls96_session_ingest'),('buffered_search_feed_runtime'),
+  ('bulls96_acquisition_installer'),('bulls96_analysis_admit'),
+  ('bulls96_digest_narrative'),('bulls96_legacy_export_privacy'),
+  ('bulls96_privacy_eraser'),('bulls96_project_events'))
+select count(*) from pg_auth_members m
+join pg_roles granted on granted.oid=m.roleid
+join pg_roles member on member.oid=m.member
+where granted.rolname in (select name from protected)
+   or member.rolname in (select name from protected)")"
+echo "protected role membership edges: $protected_edges"
+[ "$protected_edges" = 0 ] || { echo 'protected HoopDb roles have membership edges; refusing' >&2; exit 3; }
 $Q -c "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
 $Q -c "select 'tls: '||ssl from pg_stat_ssl where pid=pg_backend_pid()"
 $Q -c "select 'extensions: '||string_agg(extname,',' order by extname) from pg_extension"
-echo 'HOOPDB_LAYOUT=fresh-dedicated'
+if [ "$existing_dedicated" = 1 ]; then
+  echo 'HOOPDB_LAYOUT=dedicated-owner'
+else
+  echo 'HOOPDB_LAYOUT=fresh-dedicated'
+fi
 EOS
   run_job agent-relay-cloud-sql-pre "$WORK/run.sh" control_owner control_api_runtime "$OWNER" \
     sessions_pipeline_runtime search_consumer_runtime relaycast_owner relaycast_runtime
@@ -430,6 +470,7 @@ do_prepare-admin-jobs() {
   kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
   kubectl -n "$NS" create secret generic "$ADMIN_JOBS_SECRET" \
     --from-file="$FILES/$ADMIN_JOBS_SECRET" >/dev/null
+  remove_legacy_secret_keys
   log "$ADMIN_JOBS_SECRET created for migration/bootstrap Jobs only; delete it as soon as those Jobs finish"
 }
 

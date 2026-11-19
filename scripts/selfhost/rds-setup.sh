@@ -489,6 +489,23 @@ DROP ROLE agent_relay_hoopdb_role_creator;
 COMMIT;
 SQL
 echo "dedicated HoopDb owner and membership-free roles ready"
+protected_edges="$($Q -c "with protected(name) as (values
+  ('anon'),('authenticated'),('service_role'),('session_directory_search_worker'),
+  ('session_token_verifier'),('bulls96_session_ingest_seeder'),
+  ('bulls96_canonical_feature_producer'),('bulls96_babysitter_retention'),
+  ('bulls96_session_erase_search'),('hoopdb_owner'),('sessions_pipeline_runtime'),
+  ('search_consumer_runtime'),('bulls96_read_api'),('bulls96_session_ingest'),
+  ('buffered_search_feed_runtime'),('bulls96_acquisition_installer'),
+  ('bulls96_analysis_admit'),('bulls96_digest_narrative'),
+  ('bulls96_legacy_export_privacy'),('bulls96_privacy_eraser'),
+  ('bulls96_project_events'))
+select count(*) from pg_auth_members m
+join pg_roles granted on granted.oid=m.roleid
+join pg_roles member on member.oid=m.member
+where granted.rolname in (select name from protected)
+   or member.rolname in (select name from protected)")"
+echo "protected role membership edges: $protected_edges"
+[ "$protected_edges" = 0 ] || { echo 'protected HoopDb roles have membership edges; refusing' >&2; exit 3; }
 $Q -c "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
 $Q -c "select 'rdsadmin superuser: '||rolsuper from pg_roles where rolname='rdsadmin'"
 $Q -c "select 'extensions: '||string_agg(extname,',' order by extname) from pg_extension"
@@ -548,7 +565,11 @@ P="psql -X -q -v ON_ERROR_STOP=1"
 Q="psql -X -A -t -v ON_ERROR_STOP=1"
 
 if [ "$hoopdb_layout" = dedicated-owner ]; then
-  sed '/^ALTER ROLE bulls96_read_api /d' /sql/session_read_api_role.sql | $P
+  sed '/^ALTER ROLE bulls96_read_api /d' /sql/session_read_api_role.sql > /tmp/session_read_api_role.sql
+  if grep -Eq '^[[:space:]]*(ALTER|CREATE)[[:space:]]+ROLE([[:space:]]|$)' /tmp/session_read_api_role.sql; then
+    echo 'filtered session_read_api_role.sql still contains ALTER ROLE or CREATE ROLE' >&2; exit 3
+  fi
+  $P -f /tmp/session_read_api_role.sql
 else
   $P -f /sql/session_read_api_role.sql
 fi
@@ -560,7 +581,11 @@ $P -f /sql/session_read_api_role_verify.sql
 echo "read API role ok"
 
 if [ "$hoopdb_layout" = dedicated-owner ]; then
-  sed '/^ALTER ROLE bulls96_session_ingest /d' /sql/session_ingest_role.sql | $P
+  sed '/^ALTER ROLE bulls96_session_ingest /d' /sql/session_ingest_role.sql > /tmp/session_ingest_role.sql
+  if grep -Eq '^[[:space:]]*(ALTER|CREATE)[[:space:]]+ROLE([[:space:]]|$)' /tmp/session_ingest_role.sql; then
+    echo 'filtered session_ingest_role.sql still contains ALTER ROLE or CREATE ROLE' >&2; exit 3
+  fi
+  $P -f /tmp/session_ingest_role.sql
 else
   $P -f /sql/session_ingest_role.sql
 fi
