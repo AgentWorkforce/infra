@@ -111,9 +111,12 @@ variable "security_policy" {
     ) : can(cidrhost(c, 0)) && !contains(["0.0.0.0/0", "::/0"], c)])
     error_message = "Every allowlist entry must be a CIDR range, and never 0.0.0.0/0 or ::/0."
   }
+  # Capture groups: after dropping escaped characters and character classes,
+  # a "(" that is not followed by "?" opens one, and so does a named group
+  # ((?P<name> or (?<name>). Flags such as (?i) and (?:...) are fine.
   validation {
     condition = alltrue([for r in var.security_policy.rate_limits :
-      can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && !strcontains(r.path_regex, "'") && !strcontains(replace(replace(r.path_regex, "(?:", ""), "\\(", ""), "(") && length(r.path_regex) <= 512 &&
+      can(regex("^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$", r.name)) && !strcontains(r.path_regex, "'") && length(regexall("\\((?:[^?]|$)|\\(\\?P?<[A-Za-z_]", replace(replace(r.path_regex, "/\\\\./", ""), "/\\[[^\\]]*\\]/", ""))) == 0 && length(r.path_regex) <= 512 &&
       r.count >= 1 && contains([10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1800, 2700, 3600], r.interval_sec) && r.ban_duration_sec >= 0
     ]) && length(var.security_policy.rate_limits) <= 9 && length(distinct(var.security_policy.rate_limits[*].name)) == length(var.security_policy.rate_limits)
     error_message = "At most 9 rate_limits with unique lowercase names, a path_regex without single quotes or capture groups (Cloud Armor rejects them: write (?:a|b), not (a|b)), count >= 1 and an interval_sec Cloud Armor accepts (10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1800, 2700 or 3600)."

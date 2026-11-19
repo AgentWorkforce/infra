@@ -508,3 +508,39 @@ run "long_list_keeps_its_band_and_order" {
     error_message = "Client rules stay ahead of the allowlist, and the count is reported (100 + 2 denies + 1 staff allow + secret header + 2 WAF)."
   }
 }
+
+# Patterns without a capture group that contain other parentheses are accepted.
+run "flags_and_bracketed_parentheses_accepted" {
+  command = apply
+  variables {
+    security_policy = {
+      create = true
+      waf    = { enabled = false }
+      rate_limits = [
+        { name = "flag", path_regex = "(?i)^/login", count = 10, interval_sec = 60 },
+        { name = "class", path_regex = "^/file[(]old[)]$", count = 10, interval_sec = 60 },
+        { name = "escaped", path_regex = "^/a\\(b\\)(?:c|d)", count = 10, interval_sec = 60 },
+      ]
+    }
+  }
+  assert {
+    condition     = length(google_compute_security_policy_rule.rate_limit) == 3
+    error_message = "Flags, parentheses in a character class and escaped parentheses are not capture groups."
+  }
+}
+
+run "named_capture_group_refused" {
+  command = plan
+  variables {
+    security_policy = { create = true, rate_limits = [{ name = "named", path_regex = "^/(?P<v>v1|v2)/", count = 10, interval_sec = 60 }] }
+  }
+  expect_failures = [var.security_policy]
+}
+
+run "capture_group_after_a_class_refused" {
+  command = plan
+  variables {
+    security_policy = { create = true, rate_limits = [{ name = "mixed", path_regex = "^/[(]x[)](a|b)", count = 10, interval_sec = 60 }] }
+  }
+  expect_failures = [var.security_policy]
+}
