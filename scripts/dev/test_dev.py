@@ -166,7 +166,8 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(run.call_args_list[0].args[0], ["docker", "update", "--restart", "no", dev.NODE])
             self.assertEqual(run.call_args.args[0][:2], ["docker", "stop"])
             self.assertEqual(run.call_args.args[0][-1], dev.NODE)
-        with patch.object(dev, "node_state", return_value=None), patch.object(dev.subprocess, "run") as run:
+        with patch.object(dev, "node_state", return_value=None), patch.object(dev, "inspect_node", return_value=None), \
+                patch.object(dev.subprocess, "run") as run:
             self.assertFalse(dev.resume_cluster(env))
             run.assert_not_called()
         with patch.object(dev, "node_state", return_value="running"), patch.object(dev.subprocess, "run", return_value=ok) as run:
@@ -181,12 +182,143 @@ class LauncherTests(unittest.TestCase):
                 patch.object(dev.subprocess, "run", return_value=ok) as run:
             self.assertTrue(dev.resume_cluster(env))
             self.assertEqual(run.call_args_list[0].args[0], ["docker", "start", dev.NODE])
-        foreign = SimpleNamespace(returncode=0, stdout="running some-other-cluster\n")
-        with patch.object(dev.subprocess, "run", return_value=foreign):
-            self.assertIsNone(dev.node_state(env))
-        owned = SimpleNamespace(returncode=0, stdout="running agent-relay-local\n")
-        with patch.object(dev.subprocess, "run", return_value=owned):
-            self.assertEqual(dev.node_state(env), "running")
+
+    def test_pause_failure_is_an_error_not_nothing_to_pause(self):
+        env = {"PATH": "/usr/bin"}
+        failed = SimpleNamespace(returncode=1, stdout="", stderr="")
+        with patch.object(dev, "node_state", return_value="running"), patch.object(dev.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(dev.DevError, "Could not pause"):
+                dev.pause_cluster(env)
+        with patch.object(dev.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout="", stderr="Cannot connect")):
+            with self.assertRaisesRegex(dev.DevError, "Could not inspect"):
+                dev.inspect_node(env)
+        with patch.object(dev.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout="", stderr="Error: No such object: x")):
+            self.assertIsNone(dev.inspect_node(env))
+
+    def test_node_state_requires_this_checkouts_receipt_and_recorded_container(self):
+        env = {"PATH": "/usr/bin", "DOCKER_HOST": "unix:///home/me/.docker/run/docker.sock"}
+        with tempfile.TemporaryDirectory() as directory:
+            receipt, record = Path(directory) / "cluster.json", Path(directory) / "node.json"
+            inspected = SimpleNamespace(returncode=0, stdout=f"abc123 exited {dev.CLUSTER}\n", stderr="")
+            with patch.object(dev, "RECEIPT", receipt), patch.object(dev, "NODE_RECORD", record), \
+                    patch.object(dev.subprocess, "run", return_value=inspected):
+                self.assertIsNone(dev.node_state(env))  # Same name and label, but no receipt: another checkout's.
+                receipt.write_text(json.dumps({"name": dev.CLUSTER, "dockerHost": env["DOCKER_HOST"]}))
+                self.assertIsNone(dev.node_state(env))  # Receipt, but this launcher never recorded the container.
+                dev.record_node(env)
+                self.assertEqual(dev.node_state(env), "exited")
+                self.assertEqual(oct(record.stat().st_mode & 0o777), "0o600")
+                replaced = SimpleNamespace(returncode=0, stdout=f"def456 exited {dev.CLUSTER}\n", stderr="")
+                with patch.object(dev.subprocess, "run", return_value=replaced):
+                    self.assertIsNone(dev.node_state(env))  # Recreated elsewhere under the same name.
+                self.assertIsNone(dev.node_state(dict(env, DOCKER_HOST="unix:///other.sock")))
+                receipt.write_text(json.dumps({"name": dev.CLUSTER, "dockerHost": "unix:///other.sock"}))
+                self.assertIsNone(dev.node_state(env))
+            foreign = SimpleNamespace(returncode=0, stdout="abc123 running some-other-cluster\n", stderr="")
+            with patch.object(dev.subprocess, "run", return_value=foreign):
+                self.assertIsNone(dev.inspect_node(env))
+
+    def test_resume_refuses_a_stopped_node_it_cannot_prove_is_this_checkouts(self):
+        env = {"PATH": "/usr/bin"}
+        with patch.object(dev, "node_state", return_value=None), patch.object(dev, "inspect_node", return_value=("abc", "exited")), \
+                patch.object(dev.subprocess, "run") as run:
+            with self.assertRaisesRegex(dev.DevError, "did not record"):
+                dev.resume_cluster(env)
+            run.assert_not_called()
+        with patch.object(dev, "node_state", return_value=None), patch.object(dev, "inspect_node", return_value=("abc", "running")):
+            self.assertFalse(dev.resume_cluster(env))  # Running: the stack's own ownership check decides.
+
+    def test_cluster_stays_up_while_backend_restoration_runs(self):
+        env = {"PATH": "/usr/bin"}
+        with patch.object(dev, "pause_cluster") as pause, patch.object(dev, "say"):
+            dev.finish_cluster(env, keep_running=False, restored=False)
+            pause.assert_not_called()
+            dev.finish_cluster(env, keep_running=False, restored=True)
+            pause.assert_called_once()
+        with patch.object(dev, "pause_cluster", side_effect=dev.DevError("Could not pause")), patch.object(dev, "say") as say:
+            dev.finish_cluster(env, keep_running=False, restored=True)  # Reported, does not mask the original exit.
+            self.assertIn("Could not pause", say.call_args.args[0])
+
+    def test_close_reports_unfinished_restoration_and_blocks_the_next_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            with patch.object(dev, "STATE", state), patch.object(dev, "RESTORING", state / "restoring.json"), patch.object(dev, "say"):
+                supervisor = dev.Supervisor({})
+                backend = Mock(pid=4242)
+                backend.poll.return_value = None
+                backend.wait.side_effect = dev.subprocess.TimeoutExpired("dev.py", 1800)
+                supervisor.children = [("backends", backend)]
+                self.assertFalse(supervisor.close())
+                backend.terminate.assert_called_once()
+                self.assertEqual(json.loads((state / "restoring.json").read_text()), {"pid": 4242})
+                alive = SimpleNamespace(returncode=0, stdout="python ci/agent-relay/dev/dev.py run\n")
+                with patch.object(dev.subprocess, "run", return_value=alive):
+                    self.assertEqual(dev.restore_in_progress(), 4242)
+                with patch.object(dev.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout="")):
+                    self.assertIsNone(dev.restore_in_progress())
+                self.assertFalse((state / "restoring.json").exists())
+                finished = Mock(pid=4243)
+                finished.poll.return_value = None
+                supervisor = dev.Supervisor({})
+                supervisor.children = [("backends", finished)]
+                self.assertTrue(supervisor.close())
+                self.assertFalse((state / "restoring.json").exists())
+
+    def test_bootstrap_tools_are_not_required_before_their_preparation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bin_dir = Path(directory) / "bin"
+            bin_dir.mkdir()
+            for name in ("docker", "kubectl", "openssl", "git", "npm"):
+                path = bin_dir / name
+                path.write_text("#!/bin/sh\n")
+                path.chmod(0o755)
+            env = {"PATH": str(bin_dir)}
+            with patch.object(dev, "missing_repos", return_value=[]):
+                errors = dev.check_prerequisites(Path(directory), env, desktop=False, bootstrap=True)
+                self.assertFalse(any("kind" in e or "helm" in e for e in errors), errors)
+                errors = dev.check_prerequisites(Path(directory), env, desktop=False, bootstrap=False)
+                self.assertIn("Missing executable: kind", errors)
+                self.assertIn("Missing executable: helm", errors)
+            self.assertEqual(len(dev.missing_bootstrapped(env)), 2)
+
+    def test_desktop_retry_after_a_failed_rebuild_has_no_ui_to_stop(self):
+        supervisor = dev.Supervisor({})
+        supervisor.desktop_process = None
+        dev.stop_desktop_ui(supervisor)  # Previously AttributeError, which stopped every service.
+        ui = Mock()
+        supervisor.desktop_process = ui
+        dev.stop_desktop_ui(supervisor)
+        ui.terminate.assert_called_once()
+        self.assertIsNone(supervisor.desktop_process)
+
+    def test_snapshot_tolerates_a_file_deleted_mid_scan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            kept, gone = repo / "macos/Sources/b.swift", repo / "macos/Sources/a.swift"
+            kept.parent.mkdir(parents=True)
+            kept.write_text("b")
+            # The walk listed a.swift and is_file() saw it; the editor removed it before stat().
+            with patch.object(dev.Path, "rglob", lambda self, pattern: iter([gone, kept])), \
+                    patch.object(dev.Path, "is_file", lambda self: self.name.endswith(".swift")):
+                snapshot = dev.source_snapshot(repo)
+            self.assertEqual([Path(p).name for p in snapshot], ["b.swift"])
+
+    def test_control_patch_drops_native_oidc_settings_it_does_not_own(self):
+        stack = Mock()
+        config = {"port": 3100, "adminEmail": "owner@kind.example", "googleClientId": "id", "googleClientSecret": "secret"}
+        for auth in ("google", "operator"):
+            with self.subTest(auth=auth):
+                stack.reset_mock()
+                dev.configure_control(stack, config, auth)
+                patch_call = next(c for c in stack.k.call_args_list if c.args[:1] == ("patch",))
+                env = json.loads(patch_call.kwargs["data"])["spec"]["template"]["spec"]["containers"][0]["env"]
+                deleted = {e["name"] for e in env if e.get("$patch") == "delete"}
+                self.assertTrue({"SELFHOST_OIDC_CLIENT_SECRET_FILE", "SELFHOST_OIDC_ALLOWED_DOMAINS",
+                                 "SELFHOST_OIDC_SCOPES", "SELFHOST_OIDC_ALLOW_HTTP_ISSUER"} <= deleted)
+                if auth == "operator":
+                    self.assertIn("SELFHOST_OIDC_ISSUER", deleted)
+                else:
+                    self.assertIn("SELFHOST_OIDC_ISSUER", {e["name"] for e in env if "value" in e})
 
     def test_snapshot_notices_deletion_but_ignores_build_cache(self):
         with tempfile.TemporaryDirectory() as directory:

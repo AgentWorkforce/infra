@@ -24,7 +24,9 @@ Updating those checkouts from Git is a separate, deliberate step.
 
 Install Docker Desktop, kubectl, Git, OpenSSL, Python 3.9+, Node 22.12+, npm,
 Rust and a usable Swift/macOS SDK. The local stack bootstrap prepares pinned
-kind and Helm tools under `.kind/tools`. Docker Desktop starts automatically
+kind and Helm tools under `.kind/tools`, so preflight does not require them
+before the first run; `--reuse-containers` skips that preparation and does
+require them. Docker Desktop starts automatically
 when selected and stopped. Other Docker runtimes must already be running.
 With Command Line Tools selected, the launcher uses an installed macOS 26.5 SDK
 when SDKROOT is unset or names the generic macOS SDK alias. Explicit versioned
@@ -61,11 +63,20 @@ exchange, membership, cookies and Desktop approval. The configured adminEmail
 receives local owner access through normal Control bootstrap. Other accounts
 need invitations or a configured autoJoinDomains entry.
 
-After the cluster has created `.kind/local/ca.crt`, run this once interactively.
+After the cluster has created `.kind/local/ca.crt`, run this once interactively,
+and only on an operator-designated disposable fixture host. A general
+workstation must not run it.
 
 ```sh
 make local-trust
 ```
+
+The CA it trusts has no name constraints and its private key is stored in this
+checkout, so anyone holding that key could impersonate any HTTPS site on the
+machine. `local_host_setup.py` checks only for macOS, root and the CA file; this
+restriction is not enforced in code. See the fixture CA restriction in the
+[repository guide](repository-guide.md) and the CA notes in
+[local stack setup](local-development.md).
 
 This requires sudo to install the checkout's development CA in the System
 keychain and map relay, cast, history and files under `kind.agentrelay.com` to
@@ -76,6 +87,11 @@ and cleanup.
 
 Google mode permits Control pods to reach public IPv4 HTTPS for discovery,
 token exchange and signing keys. Other pods retain their stack network policy.
+
+The native stack's own Google sign-in (`make local-google-oidc`, for the
+`relay.kind.agentrelay.com` origin) is separate. While dev.sh runs, its patch
+replaces Control's OIDC settings with this config's, including removing the
+native allowed-domains list; the next native reconcile restores them.
 
 ## Run and iterate
 
@@ -127,6 +143,14 @@ settings and the launchd-managed Dev core are retained, and the next `./dev.sh`
 starts the node again and waits for its API server. Pass `--keep-running` to
 leave the cluster up on exit, and run `./dev.sh --stop` to pause one that was
 left running. Deliberate native-cluster removal uses `make local-down`.
+
+Pause and resume act only on the node this launcher recorded after the stack
+verified the checkout's ownership receipt, on the same Docker endpoint. A
+same-named node from another checkout is never stopped or started; a stopped
+node the launcher did not record fails startup with a `docker start` hint.
+If backend restoration is still running when the launcher gives up waiting, the
+cluster is left running and a new `./dev.sh` or `./dev.sh --stop` refuses to
+proceed until that watcher exits. `--stop` exits nonzero when a pause fails.
 
 ## E2E verification
 

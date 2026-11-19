@@ -30,7 +30,16 @@ REQUIRED = {
     "relayhistory-pipeline": ["docker/services.Dockerfile", "package.json"],
     "relaycast": ["Dockerfile", "package.json", "packages/engine/package.json"],
 }
-NODE = "agent-relay-local-control-plane"  # kind names the single node after the owned cluster.
+CLUSTER = "agent-relay-local"
+NODE = CLUSTER + "-control-plane"  # kind names the single node after the owned cluster.
+# Written by local_stack.py when it creates the cluster; names the Docker endpoint it used.
+RECEIPT = ROOT / ".kind/local/cluster.json"
+# Written by this launcher after the stack proved ownership; binds pause/resume to one container.
+NODE_RECORD = STATE / "node.json"
+# A backend watcher still restoring deployments after this launcher exited.
+RESTORING = STATE / "restoring.json"
+# local_tools.py --prepare installs these under .kind/tools; preflight must not require them first.
+BOOTSTRAPPED = ("kind", "helm")
 PORTS = dict(port=3100, nextPort=3102, dashboardPort=3103, controlPort=33100)
 
 
@@ -127,9 +136,12 @@ def environment():
     return env
 
 
-def check_prerequisites(parent, env, desktop=True):
+def check_prerequisites(parent, env, desktop=True, bootstrap=True):
+    """Tools the launcher cannot prepare itself. With bootstrap, kind and Helm come from local_tools.py."""
     errors = missing_repos(parent)
-    names = ["docker", "kind", "kubectl", "helm", "openssl", "git", "node", "npm"]
+    names = ["docker", "kubectl", "openssl", "git", "node", "npm"]
+    if not bootstrap:
+        names += list(BOOTSTRAPPED)
     if desktop:
         if sys.platform != "darwin":
             errors.append("Desktop hot reload currently requires macOS; use --no-desktop for web/container development.")
@@ -142,6 +154,11 @@ def check_prerequisites(parent, env, desktop=True):
         if tuple(int(v) for v in version.split(".")[:2]) < (22, 12):
             errors.append("Node >=22.12 is required by relay-webapp.")
     return errors
+
+
+def missing_bootstrapped(env):
+    return [f"Missing executable after tool preparation: {name}" for name in BOOTSTRAPPED
+            if not shutil.which(name, path=env["PATH"])]
 
 
 def docker_running(env):
@@ -173,22 +190,69 @@ def ensure_docker(env, timeout=180):
     raise DevError(f"Docker Desktop did not become ready within {timeout}s. Check its window, then rerun dev.sh.")
 
 
-def node_state(env):
-    """running/exited/... for the owned local kind node; None when absent, foreign or Docker is down."""
+def docker_endpoint(env):
+    if env.get("DOCKER_HOST"):
+        return env["DOCKER_HOST"]
+    with suppress(OSError, subprocess.TimeoutExpired):
+        return subprocess.run(["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
+                              capture_output=True, text=True, env=env, timeout=15).stdout.strip()
+    return ""
+
+
+def inspect_node(env):
+    """(container id, status) of the kind node named for this stack; None when absent or another cluster's."""
     try:
-        result = subprocess.run(["docker", "inspect", "--format", '{{.State.Status}} {{index .Config.Labels "io.x-k8s.kind.cluster"}}', NODE],
+        result = subprocess.run(["docker", "inspect", "--format", '{{.Id}} {{.State.Status}} {{index .Config.Labels "io.x-k8s.kind.cluster"}}', NODE],
                                 capture_output=True, text=True, env=env, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
+        raise DevError(f"Could not inspect {NODE}: Docker did not answer.") from None
+    if result.returncode:
+        if "no such object" in (result.stderr or "").lower():
+            return None
+        raise DevError(f"Could not inspect {NODE}: {(result.stderr or '').strip() or 'docker inspect failed'}")
+    parts = result.stdout.split()
+    if len(parts) != 3 or parts[2] != CLUSTER:
         return None
-    status, _, cluster = result.stdout.strip().partition(" ")
-    return status if result.returncode == 0 and cluster == NODE[:-len("-control-plane")] else None
+    return parts[0], parts[1]
+
+
+def record_node(env):
+    """Bind later pause/resume to the container this checkout's stack just proved it owns."""
+    found = inspect_node(env)
+    if found:
+        NODE_RECORD.write_text(json.dumps({"id": found[0], "dockerHost": docker_endpoint(env)}))
+        NODE_RECORD.chmod(0o600)
+
+
+def node_state(env):
+    """running/exited/... for this checkout's kind node; None when absent or not provably this checkout's.
+
+    The name and kind label are shared by every checkout on a Docker daemon, so
+    ownership also needs the stack's receipt for this Docker endpoint and the
+    container identity this launcher recorded after the stack verified it.
+    """
+    found = inspect_node(env)
+    if found is None:
+        return None
+    try:
+        receipt = json.loads(RECEIPT.read_text())
+        record = json.loads(NODE_RECORD.read_text())
+    except (OSError, ValueError):
+        return None
+    host = docker_endpoint(env)
+    if (receipt.get("name") != CLUSTER or receipt.get("dockerHost") != host or
+            record.get("id") != found[0] or record.get("dockerHost") != host):
+        return None
+    return found[1]
 
 
 def pause_cluster(env):
     """Stop the kind node so an idle cluster costs nothing; its data and images stay in the container.
 
     kind's restart policy would bring the node back whenever Docker starts, so
-    it is cleared; resume_cluster starts the node explicitly instead.
+    it is cleared; resume_cluster starts the node explicitly instead. Returns
+    False when there is nothing of this checkout's to pause; raises when a
+    pause was needed and failed.
     """
     state = node_state(env)
     if state is None:
@@ -199,8 +263,7 @@ def pause_cluster(env):
     say("Pausing the local cluster (data retained).")
     result = subprocess.run(["docker", "stop", "--time", "60", NODE], capture_output=True, text=True, env=env)
     if result.returncode:
-        say(f"Could not pause the cluster; stop it yourself with: docker stop {NODE}")
-        return False
+        raise DevError(f"Could not pause the cluster; stop it yourself with: docker stop {NODE}")
     return True
 
 
@@ -212,6 +275,12 @@ def resume_cluster(env, timeout=240):
     """
     state = node_state(env)
     if state is None:
+        found = inspect_node(env)
+        if found and found[1] != "running":
+            # Not provably this checkout's (for example another checkout's, or
+            # paused before this launcher recorded node identities).
+            raise DevError(f"A stopped {NODE} exists that this launcher did not record. If it belongs to this checkout, "
+                           f"start it yourself with: docker start {NODE}; otherwise leave it and use another Docker endpoint.")
         return False
     ready = ["docker", "exec", NODE, "kubectl", "--kubeconfig", "/etc/kubernetes/admin.conf", "get", "--raw", "/readyz"]
     def api_ready():
@@ -267,10 +336,16 @@ def source_snapshot(desktop):
     roots += [desktop / p for p in ("desktop-core/Cargo.toml", "desktop-core/build.rs", "desktop-core/Cargo.lock", "macos/Package.swift")]
     result = {}
     for root in roots:
-        paths = [root] if root.is_file() else root.rglob("*")
+        try:
+            paths = [root] if root.is_file() else list(root.rglob("*"))
+        except FileNotFoundError:
+            continue  # A directory removed mid-walk.
         for path in paths:
             if path.is_file() and not any(p in {".build", "target", ".git", "node_modules", "__pycache__"} for p in path.parts):
-                stat = path.stat()
+                try:
+                    stat = path.stat()
+                except FileNotFoundError:
+                    continue  # Deleted mid-scan: the next scan sees the deletion as a change.
                 result[str(path)] = (stat.st_mtime_ns, stat.st_size)
     return result
 
@@ -319,6 +394,8 @@ class Supervisor:
                 raise DevError(f"{name} exited ({process.returncode}); see {STATE / (name + '.log')}.")
 
     def close(self):
+        """Stop this invocation's processes. Returns False while the backend watcher is still restoring."""
+        restored = True
         if self.desktop_process and self.desktop_process.poll() is None:
             with suppress(ProcessLookupError):
                 self.desktop_process.terminate()  # Exactly the UI process this invocation started.
@@ -335,10 +412,17 @@ class Supervisor:
             try:
                 if name == "backends" and process.poll() is None:
                     say("Waiting for the backend development loop to restore its deployments.")
+                    # Recorded first, so a second interrupt during the wait still leaves the marker.
+                    RESTORING.write_text(json.dumps({"pid": process.pid}))
+                    RESTORING.chmod(0o600)
                 process.wait(timeout=1800 if name == "backends" else 8)
+                if name == "backends":
+                    with suppress(FileNotFoundError):
+                        RESTORING.unlink()
             except subprocess.TimeoutExpired:
                 if name == "backends":
                     say("Backend restoration is still running; inspect backends.log before another startup.")
+                    restored = False
                     continue
                 with suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
@@ -346,6 +430,29 @@ class Supervisor:
         for stream in self.logs:
             stream.close()
         say("Stopped this launcher's web servers, tunnels and UI. Cluster data and Desktop background core are retained.")
+        return restored
+
+
+def restore_in_progress():
+    """The pid of a backend watcher an earlier launcher left restoring deployments, if it still runs."""
+    try:
+        pid = json.loads(RESTORING.read_text())["pid"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    listing = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True)
+    if listing.returncode == 0 and "ci/agent-relay/dev/dev.py" in listing.stdout:
+        return pid
+    with suppress(OSError):
+        RESTORING.unlink()
+    return None
+
+
+def stop_desktop_ui(supervisor):
+    """Stop the Dev UI before a rebuild; after a failed rebuild there is none, and the retry proceeds."""
+    if supervisor.desktop_process is not None:
+        supervisor.desktop_process.terminate()
+        supervisor.desktop_process.wait(timeout=15)
+        supervisor.desktop_process = None
 
 
 def wait_http(url, supervisor, timeout=120):
@@ -383,7 +490,11 @@ def configure_control(stack, config, auth):
         changes.append({"name": name, "valueFrom": {"secretKeyRef": {"name": "local-dev-google", "key": key}}} if auth == "google" else {"name": name, "$patch": "delete"})
     if auth != "google":
         changes.extend({"name": name, "$patch": "delete"} for name in ["SELFHOST_OIDC_ISSUER", "SELFHOST_OIDC_DISPLAY_NAME", "SELFHOST_OIDC_REDIRECT_URL"])
-    changes.append({"name": "SELFHOST_OIDC_CLIENT_SECRET_FILE", "$patch": "delete"})
+    # The chart renders these when the native stack has its own Google client
+    # (make local-google-oidc). This launcher's sign-in is configured only by its
+    # own config: adminEmail plus autoJoinDomains, not the native allowed domains.
+    for name in ("SELFHOST_OIDC_CLIENT_SECRET_FILE", "SELFHOST_OIDC_ALLOWED_DOMAINS", "SELFHOST_OIDC_SCOPES", "SELFHOST_OIDC_ALLOW_HTTP_ISSUER"):
+        changes.append({"name": name, "$patch": "delete"})
     fingerprint = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     patch = {"spec": {"template": {"metadata": {"annotations": {"dev.agentrelay.local/config": fingerprint}},
                                     "spec": {"containers": [{"name": "api", "env": changes}]}}}}
@@ -498,10 +609,23 @@ def main():
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise DevError("A dev.sh is running in this checkout. Stop it with Ctrl-C; it pauses the cluster on exit.") from None
+            pid = restore_in_progress()
+            if pid:
+                raise DevError(f"The backend watcher (pid {pid}) is still restoring deployments; wait for it before pausing. See backends.log.")
+            if not docker_running(env):
+                say("Docker is not running, so the local cluster is not either; nothing to pause.")
+                return 0
             if not pause_cluster(env):
-                say("The local cluster is not running; nothing to pause.")
+                say("This checkout's local cluster is not running; nothing to pause.")
         return 0
-    errors = check_prerequisites(parent, env, not args.no_desktop and not args.proof)
+    errors = check_prerequisites(parent, env, not args.no_desktop and not args.proof, bootstrap=not args.reuse_containers)
+    if args.check and not args.reuse_containers:
+        for name in BOOTSTRAPPED:
+            if not shutil.which(name, path=env["PATH"]):
+                say(f"{name} is not installed yet; dev.sh prepares the pinned version under .kind/tools before using it.")
+    pid = restore_in_progress()
+    if pid:
+        errors.append(f"An earlier backend watcher (pid {pid}) is still restoring deployments. Wait for it to exit; see .kind/dev/backends.log.")
     if not args.no_desktop and not args.proof and sys.platform == "darwin":
         executable = str(parent / "relay-desktop/out/dev/Agent Relay Dev.app/Contents/MacOS/RelayDesktop")
         listing = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True)
@@ -542,7 +666,11 @@ def main():
         supervisor.run("python-deps", [python, "-m", "pip", "install", "--disable-pip-version-check", "-r", ROOT / "ci/agent-relay/kind/requirements.txt"])
         if not args.reuse_containers:
             supervisor.run("local-tools", [python, ROOT / "ci/agent-relay/kind/local_tools.py", "--prepare"])
+            missing = missing_bootstrapped(env)
+            if missing:
+                raise DevError("\n".join(missing))
         supervisor.run("kind-ready" if args.reuse_containers else "kind-up", [python, __file__, "--internal-ready" if args.reuse_containers else "--internal-up"], timeout=2400)
+        record_node(env)  # The stack just verified this checkout's ownership receipt and cluster identity.
         # Use the same guarded Stack class for all credential-bearing local changes.
         supervisor.run("configure-control", [python, __file__, "--internal-configure", str(args.config), args.auth])
         if not args.no_service_watch:
@@ -570,9 +698,10 @@ def main():
         say("Google mode permits outbound public HTTPS from Control for OIDC. Other pods retain the kind egress policy." if args.auth == "google" else "Operator mode selected: Google sign-in is not configured.")
         if not args.no_desktop:
             repo = parent / "relay-desktop"
+            # Before the build: an edit made during or right after it must still trigger a reload.
+            snapshot = source_snapshot(repo)
             app, arch = build_desktop(repo, origin, supervisor)
             launch_desktop(app, origin, supervisor, restart=True)
-            snapshot = source_snapshot(repo)
             say("Desktop launched. Swift/Rust/resource edits rebuild and relaunch the Dev UI; Next and dashboard use HMR. Ctrl-C stops this invocation.")
         else:
             say("Web HMR active. Ctrl-C stops this invocation.")
@@ -588,9 +717,7 @@ def main():
                 continue
             time.sleep(.5)  # Coalesce editor saves; take snapshot before building so later edits are not lost.
             snapshot = source_snapshot(repo)
-            supervisor.desktop_process.terminate()
-            supervisor.desktop_process.wait(timeout=15)
-            supervisor.desktop_process = None
+            stop_desktop_ui(supervisor)
             try:
                 supervisor.run("desktop-reload", ["bash", "scripts/dev-reload.sh", "--app", app, "--arch", arch], cwd=repo)
                 launch_desktop(app, origin, supervisor, restart=True)
@@ -598,15 +725,26 @@ def main():
             except DevError as error:
                 say(str(error) + " Fix the source and save to retry; the UI remains stopped.")
     finally:
-        supervisor.close()
+        restored = supervisor.close()
         try:
-            if args.keep_running:
-                if node_state(env) == "running":
-                    say("Cluster left running (--keep-running). Pause it later with ./dev.sh --stop.")
-            elif pause_cluster(env):
-                say("Cluster paused. ./dev.sh resumes it; --reuse-containers is the fastest restart.")
+            finish_cluster(env, args.keep_running, restored)
         finally:
             lock.close()
+
+
+def finish_cluster(env, keep_running, restored):
+    """Pause on exit unless asked not to, or while the backend watcher still needs the API server."""
+    try:
+        if not restored:
+            say("Cluster left running: the backend watcher is still restoring deployments. "
+                "Run ./dev.sh --stop after it exits; a new dev.sh refuses to start until then.")
+        elif keep_running:
+            if node_state(env) == "running":
+                say("Cluster left running (--keep-running). Pause it later with ./dev.sh --stop.")
+        elif pause_cluster(env):
+            say("Cluster paused. ./dev.sh resumes it; --reuse-containers is the fastest restart.")
+    except DevError as error:
+        say(f"{error} The cluster may still be running.")
 
 
 if __name__ == "__main__":
