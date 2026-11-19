@@ -1,9 +1,8 @@
 # GCP customer setup
 
-For an assisted installation, the customer has three tasks below. Agent Relay
-prepares the configuration, installs the application and verifies it with the
-approved operator. A customer running the application installation themselves
-uses the [operator reference](0-START-HERE.md).
+For assisted setup, the customer has three tasks. Agent Relay completes the
+application installation with the approved operator. For a fully
+customer-operated install, use the [operator reference](0-START-HERE.md).
 
 ## 1. Confirm the inputs
 
@@ -27,7 +26,11 @@ Use the completed inputs and customer-approved state/backend. First apply
 connector is needed, then pass its egress address into the
 [gcp platform root](../../terraform/examples/gcp/README.md). Keep separate state.
 The operator checks NAT/address ownership and enables the default-off VPN root
-only in the reviewed inputs; it creates networking, not the VPN VM/software.
+only in reviewed inputs; it creates no VM or VPN software.
+
+Reserve the Ingress IP with `create_ingress_ip = true` in the VPN root (output
+`vpn_network.ingress.address`), or use the [manual reservation](0-START-HERE.md#6-reserve-the-ip-address-and-point-dns-at-it-dns-owner)
+without that root. The platform root does not reserve it.
 
 In each selected root:
 
