@@ -209,6 +209,8 @@ scripts=(
   "${TEST_DIR}/desktop-feed-provision-test.sh"
   "${SELFHOST_DIR}/rds-setup.sh"
   "${TEST_DIR}/rds-setup-test.sh"
+  "${REPO_ROOT}/docs/gcp-install/first-admin.sh"
+  "${TEST_DIR}/gcp-first-admin-test.sh"
   "${SELFHOST_DIR}/verify-agent-relay.sh"
   "${SELFHOST_DIR}/pre-upgrade-check.sh"
   "${SELFHOST_DIR}/record-restore-drill.sh"
@@ -229,6 +231,7 @@ fi
 "${TEST_BASH}" "${TEST_DIR}/desktop-feed-provision-test.sh"
 "${TEST_BASH}" "${TEST_DIR}/agent-relay-upgrade-test.sh"
 "${TEST_BASH}" "${TEST_DIR}/rds-setup-test.sh"
+"${TEST_BASH}" "${TEST_DIR}/gcp-first-admin-test.sh"
 
 reset_fixtures() {
   rm -rf "${fixtures}" "${gcs}"
