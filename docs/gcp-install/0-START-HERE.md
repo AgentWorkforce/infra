@@ -366,7 +366,7 @@ fill in their placeholders. For a branded desktop app,
 
 ## 10. Create the secrets
 
-Pick **one** of the three ways.
+Pick **one** of the four ways.
 
 **a. Plain `kubectl`:**
 
@@ -397,6 +397,10 @@ done
 **Done when:** five lines that end in `created` (`replaced` on a rerun). Copy `~/.agent-relay-install`
 to your secret store again (step 8 shows how): it now holds the encryption keys.
 
+These Secrets include the database administrator's URL. Before other people
+get access to the cluster, restrict who can read Secrets in this namespace:
+[selfhost-secret-access.md](../selfhost-secret-access.md).
+
 **b. helm-secrets with SOPS** (every secret in one encrypted values file, for
 example encrypted with a Cloud KMS key):
 
@@ -425,9 +429,76 @@ application-default login` on a laptop; Workload Identity or the VM's service
 account in CI) and needs `roles/secretmanager.secretAccessor` on the secrets.
 This stores 19 secrets named `agent-relay--<Secret>--<key>` in Secret Manager;
 `secrets.yaml` holds only `ref+gcpsecrets://...` references. If you run vals
-your own way, `vals eval -f secrets.yaml` resolves the same file. External
-Secrets Operator with a `SecretStore` for Secret Manager works too: create the
-same five Secrets with the same keys.
+your own way, `vals eval -f secrets.yaml` resolves the same file.
+
+**d. External Secrets Operator with Google Secret Manager** (the values live
+in Secret Manager and the cluster syncs them; nothing secret passes through
+Helm).
+
+**Not with this guide's pinned release.** Option d needs the `agent-relay`
+chart 0.7.57 or later. The release this guide installs (chart 0.7.54) has no
+`externalSecrets` support: Helm would ignore the settings without an error,
+create no Secret, and the pods would never start. Use a, b or c with the
+pinned release, and option d from the first release whose chart is 0.7.57 or
+later.
+
+You also need [External Secrets Operator](https://external-secrets.io)
+installed in the cluster with the `external-secrets.io/v1` API. This path is
+covered by render tests; it has been proven on AWS (SSM), not yet on a live
+GKE install.
+
+```sh
+# 1. Put the 19 values in Secret Manager (the same names as c).
+VALS_GCPSM=$GCP_PROJECT_ID bash helm-secrets-prepare.sh && rm -f secrets.yaml
+# 2. A ServiceAccount for ESO to read them as, and its access (Workload Identity, no key).
+kubectl -n $NAMESPACE create serviceaccount agent-relay-external-secrets
+NUMBER=$(gcloud projects describe $GCP_PROJECT_ID --format='value(projectNumber)')
+MEMBER="principal://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/$GCP_PROJECT_ID.svc.id.goog/subject/ns/$NAMESPACE/sa/agent-relay-external-secrets"
+for s in $(gcloud secrets list --project $GCP_PROJECT_ID --filter='name~/agent-relay--' --format='value(name)'); do
+  gcloud secrets add-iam-policy-binding "$s" --project $GCP_PROJECT_ID \
+    --member "$MEMBER" --role roles/secretmanager.secretAccessor >/dev/null
+done
+# 3. Fill in the settings and add them to values.yaml, so every later helm
+#    command in this guide carries them.
+GKE_CLUSTER=<cluster name>
+sed -e "s/__GCP_PROJECT_ID__/$GCP_PROJECT_ID/g" -e "s/__REGION__/$REGION/g" \
+  -e "s/__GKE_CLUSTER__/$GKE_CLUSTER/g" external-secrets-values.yaml | grep -v '^#' >> values.yaml
+grep -n '__[A-Z_]*__' values.yaml; grep -c '^externalSecrets:' values.yaml
+```
+
+**Done when:** the first `grep` prints nothing and the second prints `1`.
+
+The settings must be in **every** `helm upgrade` of this install, which is
+why they go into `values.yaml` and not a separate file: Helm does not keep
+values from the previous command, and an upgrade without them removes the
+five ExternalSecrets and, with them, the five Secrets. After the install
+(step 11):
+
+```sh
+kubectl -n $NAMESPACE get secretstore,externalsecret
+```
+
+shows the store `Valid` and five ExternalSecrets `SecretSynced`. Pods that
+started before their Secret existed wait in `CreateContainerConfigError` and
+start by themselves once it does.
+
+- **`SecretSyncedError` with `PermissionDenied`:** the ServiceAccount has no
+  access to that secret. Run the `for` loop again; it also covers secrets
+  added since.
+- **A value changed in Secret Manager** reaches the Secret within an hour
+  (`refreshInterval`); restart the pods that use it.
+- **After changing the Cloud SQL admin password**, the migration Jobs of the
+  next `helm upgrade` need the new one. Ask for a sync, then wait until both
+  ExternalSecrets report a refresh **later than your change** before you
+  upgrade (the annotation only asks; `Ready` alone does not prove it):
+
+  ```sh
+  kubectl -n $NAMESPACE annotate externalsecret agent-relay-secrets search-indexer-owner force-sync=$(date +%s) --overwrite
+  kubectl -n $NAMESPACE get externalsecret agent-relay-secrets search-indexer-owner \
+    -o custom-columns='NAME:.metadata.name,REFRESHED:.status.refreshTime,STATUS:.status.conditions[0].reason'
+  ```
+- **`helm uninstall` deletes these five Secrets** (ESO owns them). The values
+  stay in Secret Manager.
 
 - **Already ran (a)?** Delete those five Secrets first, so helm can own them.
 - **`could not find default credentials`?** Run `gcloud auth application-default login`,
@@ -511,6 +582,11 @@ curl -s -o /dev/null -w "history %{http_code}\n" "https://history.$DOMAIN/v1/ses
 - **`FailedNotVisible`:** the same: DNS does not point at the load balancer yet.
 - **502 for a few minutes after `Active`:** the load balancer's health checks
   are still converging. Wait 5 minutes.
+
+The load balancer accepts TLS 1.0 and later until it has an SSL policy. To
+require TLS 1.2, add Cloud Armor, or put Cloudflare in front, see
+[3-EDGE-HARDENING.md](3-EDGE-HARDENING.md) (from the first release with chart
+0.7.59; not the release this guide pins).
 
 ## 15. First sign-in, then add users
 
@@ -848,6 +924,49 @@ index isn't ready yet".
 reads (`/turns`, replay, events) are fixed in 2026.11.6 and verified on a GKE
 install. If you uploaded sessions on 2026.11.1 to 2026.11.5, run "Re-stamp
 sessions uploaded before 2026.11.6" below once after upgrading.
+
+## Set `trustedProxies` to 2 (installs made from an earlier copy of this guide)
+
+Earlier copies of `values.yaml` had `relay-control.auth.trustedProxies: 1`.
+The Google load balancer adds two entries to `X-Forwarded-For` (the client's
+address, then its own), so with 1 the API takes the load balancer's address
+as every client's address. Sign-in then works, but all users share one
+per-address rate limit and one password lockout: a few wrong passwords from
+anyone can lock everyone out for a while.
+
+Check what your pods receive:
+
+```sh
+kubectl -n $NAMESPACE logs deploy/relay-webapp -c dashboard --tail 5
+```
+
+The last quoted field of each line is `X-Forwarded-For`. With the load
+balancer alone it is `<your address>, <load balancer address>`: two entries.
+In `values.yaml` set:
+
+```yaml
+relay-control:
+  auth:
+    trustedProxies: 2
+```
+
+and run step 11's `helm upgrade` again.
+
+**A proxy or CDN in front of the load balancer** adds one more entry, so the
+count is one higher. Raise it only once the load balancer refuses requests
+that do not come through the proxy (for example with a Cloud Armor policy
+that admits only the proxy's addresses). Until then keep 2: a caller who
+connects to the load balancer directly can put any address in
+`X-Forwarded-For`, and with the higher count the API would take that forged
+address as the client's.
+
+**Done when:**
+
+```sh
+kubectl -n $NAMESPACE get deploy relay-control -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_TRUSTED_PROXIES")].value}{"\n"}'
+```
+
+prints `2`.
 
 ## Re-stamp sessions uploaded before 2026.11.6 (upgrades only)
 

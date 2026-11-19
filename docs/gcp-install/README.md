@@ -9,10 +9,12 @@ cluster, the GCP counterpart of the AWS EKS guide. Start with
 | `0-START-HERE.md` | Numbered copy-paste steps, each with a "Done when" check |
 | `1-BRING-YOUR-OWN.md` | Specs for creating Cloud SQL, GCS, Memorystore, Pub/Sub, search and certificates yourself instead of Terraform |
 | `2-SERVICE-ACCOUNTS.md` | Workload Identity: every grant the install needs, and who needs which roles |
+| `3-EDGE-HARDENING.md` | Optional: the load balancer's TLS policy, Cloud Armor, and Cloudflare in front |
 | `NOT-QUALIFIED.md` | What 2026.11.16 does not yet qualify on GKE. Read before a production rollout |
 | `REGULATED-PROFILE.md` | Optional: customer-managed encryption keys (Kubernetes Secrets, Cloud SQL, bucket, Pub/Sub, Redis, disks) and Binary Authorization |
 | `images.md` | The release images and how they are mirrored |
 | `values.yaml` | Site values template (placeholders filled in step 9) |
+| `external-secrets-values.yaml` | Optional overlay: the install Secrets from Google Secret Manager through External Secrets Operator (step 10 d) |
 | `cloud-sql-setup.sh` | Database and role setup in Jobs inside the cluster (steps 8 and 13) |
 | `helm-secrets-prepare.sh` | Secrets for helm-secrets with SOPS, or vals with Google Secret Manager (step 10) |
 | `create-workload-identity.sh` | Optional: the Workload Identity grants with gcloud |

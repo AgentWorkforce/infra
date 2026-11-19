@@ -902,6 +902,68 @@ test "$(helm template proof charts/agent-relay "${chief_args[@]}" --set componen
   || { echo "relay-chief is not a suspended CronJob when enabled" >&2; exit 1; }
 rm -f "$chief_values"
 
+# GKE edge hardening: gkeIngress.sslPolicy, securityPolicy and tlsSecretName
+# are off by default (the default render has none of them) and, when set, reach
+# the FrontendConfig, every backend's BackendConfig and the Ingress.
+edge_fail() { echo "gke edge hardening: $*" >&2; exit 1; }
+edge_default=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
+  -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml)
+test "$(yq 'select(.kind == "BackendConfig") | .metadata.name' <<<"$edge_default" | grep -c '^agent-relay-gcp-proof-')" = 4 || edge_fail "default render must keep exactly the api, cast and two history BackendConfigs"
+test -z "$(yq 'select(.kind == "FrontendConfig") | .spec.sslPolicy // ""' <<<"$edge_default")" || edge_fail "default render sets an sslPolicy"
+test -z "$(yq 'select(.kind == "BackendConfig") | .spec.securityPolicy.name // ""' <<<"$edge_default" | sed '/^---$/d;/^$/d')" || edge_fail "default render sets a securityPolicy"
+test -z "$(yq 'select(.kind == "Ingress") | .spec.tls // ""' <<<"$edge_default")" || edge_fail "default render sets spec.tls"
+edge_dashboard='relay-webapp.service.annotations={"cloud.google.com/neg":"{\"ingress\": true}","cloud.google.com/backend-config":"{\"default\": \"agent-relay-gcp-proof-dashboard\"}"}'
+edge_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
+  -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml \
+  --set gkeIngress.sslPolicy=relay-tls --set gkeIngress.securityPolicy=relay-edge --set-json "$edge_dashboard")
+test "$(yq 'select(.kind == "FrontendConfig") | .spec.sslPolicy + " " + (.spec.redirectToHttps.enabled | tostring)' <<<"$edge_out")" = "relay-tls true" \
+  || edge_fail "FrontendConfig must carry sslPolicy and keep the HTTPS redirect"
+# Every BackendConfig carries the policy, and the timeouts and health checks stay.
+test "$(yq 'select(.kind == "BackendConfig") | .metadata.name + "=" + (.spec.securityPolicy.name // "none")' <<<"$edge_out" | sed '/^---$/d;/^$/d' | sort | tr '\n' ' ')" \
+  = "agent-relay-gcp-proof-api=relay-edge agent-relay-gcp-proof-cast=relay-edge agent-relay-gcp-proof-dashboard=relay-edge agent-relay-gcp-proof-edge-deny=relay-edge agent-relay-gcp-proof-history-ingest=relay-edge agent-relay-gcp-proof-history-read=relay-edge " \
+  || edge_fail "securityPolicy must be on the api, cast, dashboard, edge-deny and both history BackendConfigs"
+test "$(yq 'select(.kind == "BackendConfig" and .metadata.name == "agent-relay-gcp-proof-api") | .spec.timeoutSec' <<<"$edge_out")" = 3600 || edge_fail "api BackendConfig lost its timeout"
+test "$(yq 'select(.kind == "BackendConfig" and .metadata.name == "agent-relay-gcp-proof-history-read") | .spec.healthCheck.requestPath' <<<"$edge_out")" = /healthz || edge_fail "history read BackendConfig lost its health check"
+# Every Service the Ingress routes to is bound to a BackendConfig that has the
+# policy: no backend is left outside Cloud Armor.
+edge_backends=$(yq 'select(.kind == "Ingress") | .spec.rules[].http.paths[].backend.service.name' <<<"$edge_out" | sort -u)
+test "$(grep -c . <<<"$edge_backends")" -ge 6 || edge_fail "expected at least six Ingress backends, got: $edge_backends"
+for svc in $edge_backends; do
+  bc=$(SVC="$svc" yq 'select(.kind == "Service" and .metadata.name == strenv(SVC)) | .metadata.annotations["cloud.google.com/backend-config"] // ""' <<<"$edge_out" | yq '.default // ""')
+  [ -n "$bc" ] || edge_fail "Ingress backend Service $svc has no backend-config annotation"
+  test "$(BC="$bc" yq 'select(.kind == "BackendConfig" and .metadata.name == strenv(BC)) | .spec.securityPolicy.name' <<<"$edge_out")" = relay-edge \
+    || edge_fail "Ingress backend Service $svc is bound to $bc, which has no securityPolicy"
+done
+expect_umbrella_failure "gkeIngress.securityPolicy requires relay-webapp.service.annotations[cloud.google.com/backend-config]='{\"default\": \"agent-relay-gcp-proof-dashboard\"}'" \
+  --set gkeIngress.securityPolicy=relay-edge
+expect_umbrella_failure "gkeIngress.securityPolicy must be the name of a Cloud Armor security policy" \
+  --set gkeIngress.securityPolicy=projects/p/global/securityPolicies/relay-edge
+expect_umbrella_failure "gkeIngress.sslPolicy must be the name of a Compute Engine SSL policy" --set gkeIngress.sslPolicy=Relay_TLS
+# tlsSecretName replaces the ManagedCertificate (an edge behind a proxy or CDN).
+tls_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
+  -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml \
+  --set gkeIngress.tlsSecretName=relay-origin-tls --set gkeIngress.managedCertificateName=)
+test -z "$(yq 'select(.kind == "ManagedCertificate") | .metadata.name' <<<"$tls_out")" || edge_fail "tlsSecretName must not render a ManagedCertificate"
+test "$(yq 'select(.kind == "Ingress") | .spec.tls[0].secretName + " " + (.metadata.annotations | has("networking.gke.io/managed-certificates") | tostring) + " " + .metadata.annotations["networking.gke.io/v1beta1.FrontendConfig"]' <<<"$tls_out")" \
+  = "relay-origin-tls false agent-relay-gcp-proof" || edge_fail "tlsSecretName must set spec.tls, drop the managed-certificates annotation and keep the FrontendConfig"
+expect_umbrella_failure "gkeIngress.tlsSecretName must be the name of a kubernetes.io/tls Secret" --set gkeIngress.tlsSecretName=Bad_Name
+expect_umbrella_failure "gkeIngress.managedCertificateName is required" --set gkeIngress.managedCertificateName=
+
+# With the optional actors and files hosts, their backends are covered too:
+# the actors edge BackendConfig takes the policy, and Relayfile needs its own.
+edge_files='relayfile.service.annotations={"cloud.google.com/neg":"{\"ingress\": true}","cloud.google.com/backend-config":"{\"default\": \"agent-relay-gcp-proof-files\"}"}'
+edge_da=$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${da_args[@]}" \
+  --set gkeIngress.securityPolicy=relay-edge --set-json "$edge_dashboard" --set-json "$edge_files")
+test -z "$(yq 'select(.kind == "BackendConfig" and .spec.securityPolicy.name != "relay-edge") | .metadata.name' <<<"$edge_da" | sed '/^---$/d;/^$/d')" \
+  || edge_fail "a BackendConfig in the actors/files overlay has no securityPolicy"
+for bc in agent-relay-gcp-proof-actors-edge agent-relay-gcp-proof-files; do
+  test "$(BC="$bc" yq 'select(.kind == "BackendConfig" and .metadata.name == strenv(BC)) | .spec.securityPolicy.name' <<<"$edge_da")" = relay-edge || edge_fail "$bc has no securityPolicy"
+done
+test "$(yq 'select(.kind == "BackendConfig" and .metadata.name == "agent-relay-gcp-proof-actors-edge") | .spec.timeoutSec' <<<"$edge_da")" = 3600 || edge_fail "actors edge BackendConfig lost its timeout"
+if edge_err=$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${da_args[@]}" \
+  --set gkeIngress.securityPolicy=relay-edge --set-json "$edge_dashboard" 2>&1); then edge_fail "securityPolicy rendered without the relayfile backend-config annotation"; fi
+grep -Fq "gkeIngress.securityPolicy requires relayfile.service.annotations[cloud.google.com/backend-config]" <<<"$edge_err" || edge_fail "unexpected error without the relayfile annotation: $edge_err"
+
 # With single-host mode off, every default (subdomain) render is unchanged.
 ci/agent-relay/subdomain-golden.sh check
 

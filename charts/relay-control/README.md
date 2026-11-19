@@ -177,7 +177,12 @@ address, so the API must know how many proxies append to `X-Forwarded-For`.
 `1` with password sign-in, which is right only when this chart's ingress (or
 the single load balancer in front of it) is the one proxy and direct access to
 the pod and Service is restricted, for example with `networkPolicy`. Set the
-real hop count for any other chain, or `0` when clients connect directly. The
+real hop count for any other chain, or `0` when clients connect directly.
+Count the `X-Forwarded-For` entries the chain appends, not the proxies: a
+Google Cloud external Application Load Balancer (GKE Ingress) appends two (the
+client's address, then its own), so the value there is `2`; with `1` every
+user shares the load balancer's address, and with it one rate limit and
+lockout. The
 API refuses to start with password sign-in and no value. `SELFHOST_SIGNIN_METHODS`,
 `SELFHOST_TRUSTED_PROXIES` and `SELFHOST_SETUP_KEY_FILE` are managed values:
 move any `extraEnv` entries for them to `auth.password`, `auth.trustedProxies`

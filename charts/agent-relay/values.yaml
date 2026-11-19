@@ -130,6 +130,25 @@ gkeIngress:
   staticIpName: agent-relay-ingress
   managedCertificateName: agent-relay
   frontendConfigName: agent-relay
+  # Optional edge hardening. Each names a Google Cloud resource in the
+  # cluster's project that must exist before the upgrade (the chart cannot
+  # create it; terraform/modules/gcp/edge-security does). README: GKE edge
+  # hardening.
+  #
+  # Compute SSL policy for the HTTPS listener. Empty leaves Google's default
+  # policy, which still accepts TLS 1.0 and 1.1; set a policy with
+  # min TLS 1.2 (profile MODERN or RESTRICTED).
+  sslPolicy: ""
+  # Cloud Armor backend security policy, applied to every backend Service
+  # behind the Ingress. Needs the backend-config annotation on the
+  # relay-webapp Service (and relayfile with hosts.files); the render fails
+  # with the exact value when it is missing.
+  securityPolicy: ""
+  # kubernetes.io/tls Secret served instead of the ManagedCertificate (which
+  # is then not rendered). For an edge whose DNS points at a proxy or CDN in
+  # front of the load balancer, where Google cannot issue a managed
+  # certificate. The certificate must cover every host below.
+  tlsSecretName: ""
   hosts:
     root: ""
     api: ""

@@ -227,3 +227,29 @@ variable "relay_control_service_account" {
   type        = string
   default     = "relay-control"
 }
+
+variable "edge_ssl_policy" {
+  description = "Compute SSL policy for the GKE Ingress HTTPS listener, exported as gkeIngress.sslPolicy in chart_values. create = false leaves Google's default policy (TLS 1.0 and later)."
+  type = object({
+    create          = optional(bool, true)
+    profile         = optional(string, "MODERN")
+    min_tls_version = optional(string, "TLS_1_2")
+  })
+  default = {}
+}
+
+variable "edge_security_policy" {
+  description = "Cloud Armor policy for every GKE Ingress backend (modules/gcp/edge-security security_policy: create, waf, rate_limits, source_ip_allowlist, cloudflare, client_ip_header, client_ip_rules). Off unless create = true. It is exported as gkeIngress.securityPolicy in output.edge, not in chart_values, because the chart then also needs the dashboard Service's backend-config annotation."
+  type        = any
+  default     = {}
+}
+
+variable "edge_origin_secret_header" {
+  description = "Shared-secret request header a fronting proxy adds; requests without one of the accepted values (1-3, for rotation) are denied (modules/gcp/edge-security origin_secret_header). Stored in state."
+  type = object({
+    name   = string
+    values = list(string)
+  })
+  default   = null
+  sensitive = true
+}

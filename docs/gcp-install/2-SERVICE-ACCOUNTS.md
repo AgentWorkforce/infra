@@ -97,6 +97,19 @@ The person running 0-START-HERE.md needs, in the project:
 - `roles/secretmanager.secretAccessor` on the Cloud SQL admin password secret
   (`cloud-sql-setup.sh` reads it).
 
+## Who can read the Secrets afterwards
+
+Two of the install's Kubernetes Secrets (`agent-relay-secrets` and
+`search-indexer-owner`) hold the Cloud SQL administrator's URL, which the
+migration and bootstrap Jobs use. Anyone who can read Secrets in the
+namespace, or start a pod there, can use it. `roles/container.developer` and
+`roles/container.admin` on the project grant exactly that, in every
+namespace. Keep those roles to the people who install and upgrade, give
+everyone else `roles/container.clusterViewer` plus a Kubernetes binding to the
+built-in `view` role, and follow
+[selfhost-secret-access.md](../selfhost-secret-access.md) for the example
+Role and RoleBinding and the commands that check who has access.
+
 ## What we need back
 
 Nothing. The pods pick up their access through Workload Identity; the chart
