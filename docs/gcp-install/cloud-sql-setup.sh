@@ -349,9 +349,17 @@ if [ -z "$hoopdb_exists" ]; then
 fi
 owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")" \
   || { echo 'could not inspect the HoopDb owner; refusing' >&2; exit 3; }
+administrator_owns=0
+if [ "$owner" = "$PGUSER" ]; then
+  administrator_owns=1
+elif [ "$owner" = cloudsqlsuperuser ]; then
+  cloudsql_admin_member="$($Q -d postgres -c "select pg_has_role(current_user, 'cloudsqlsuperuser', 'MEMBER')")" \
+    || { echo 'could not inspect Cloud SQL administrator membership; refusing' >&2; exit 3; }
+  [ "$cloudsql_admin_member" = t ] && administrator_owns=1
+fi
 if [ "$owner" = hoopdb_owner ]; then
   echo 'HOOPDB_LAYOUT=dedicated-owner'
-elif [ "$owner" = "$PGUSER" ]; then
+elif [ "$administrator_owns" = 1 ]; then
   pristine="$($Q -d hoopdb -c "
 select 1 where
  to_regnamespace('sessions') is null
@@ -439,8 +447,16 @@ else
     || { echo 'could not inspect the HoopDb owner; refusing' >&2; exit 3; }
   export PGDATABASE=hoopdb
 fi
+administrator_owns=0
+if [ "$owner" = "$PGUSER" ]; then
+  administrator_owns=1
+elif [ "$owner" = cloudsqlsuperuser ]; then
+  cloudsql_admin_member="$($Q -d postgres -c "select pg_has_role(current_user, 'cloudsqlsuperuser', 'MEMBER')")" \
+    || { echo 'could not inspect Cloud SQL administrator membership; refusing' >&2; exit 3; }
+  [ "$cloudsql_admin_member" = t ] && administrator_owns=1
+fi
 existing_dedicated=0
-if [ -n "$hoopdb_exists" ] && [ "$owner" = "$PGUSER" ]; then
+if [ -n "$hoopdb_exists" ] && [ "$administrator_owns" = 1 ]; then
   sessions_schema="$($Q -c "select to_regnamespace('sessions')")" \
     || { echo 'could not inspect the HoopDb sessions schema; refusing' >&2; exit 3; }
   runtime_role="$($Q -c "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" \
@@ -468,7 +484,7 @@ if [ "$owner" = 'hoopdb_owner' ]; then
     echo "dedicated-owner HoopDb exists but saved credential state lacks:$MISSING_STATE_NAMES; refusing before database changes" >&2
     exit 3
   fi
-elif [ "$owner" != "$PGUSER" ]; then
+elif [ "$administrator_owns" != 1 ]; then
   echo "HoopDb owner is neither the Cloud SQL administrator nor hoopdb_owner; refusing" >&2
   exit 3
 fi

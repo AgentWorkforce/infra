@@ -55,6 +55,13 @@ fi
 case "$*" in
   *"select 1 from pg_database where datname='hoopdb'"*) [[ "${MOCK_DB_EXISTS:-1}" == 1 ]] && printf '1\n' ;;
   *"select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"*) printf '%s\n' "${MOCK_DB_OWNER:-hoopdb_owner}" ;;
+  *"select pg_has_role(current_user, 'cloudsqlsuperuser', 'MEMBER')"*)
+    if [[ "${MOCK_CLOUDSQL_ADMIN_MEMBER:-0}" == 1 ]]; then printf 't\n'; else printf 'f\n'; fi
+    ;;
+  *"select 1 from pg_roles where rolname='sessions_pipeline_runtime'"*)
+    if [[ "${MOCK_RUNTIME_ROLE_EXISTS:-0}" == 1 ]]; then printf '1\n'; fi
+    ;;
+  *"select count(*) from pg_auth_members"*) printf '0\n' ;;
   *"select 1 where"*) [[ "${MOCK_PRISTINE:-0}" == 1 ]] && printf '1\n' ;;
   *"-c select 1"*) printf '1\n' ;;
   *)
@@ -311,12 +318,53 @@ probe="$CAPTURE/probe.sh"
 probe_out="$(PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloud-admin MOCK_PRISTINE=1 sh "$probe")" \
   || fail "pristine Cloud SQL probe failed"
 [[ "$probe_out" == HOOPDB_LAYOUT=pristine-admin ]] || fail "pristine Cloud SQL probe classified as: $probe_out"
+probe_out="$(PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloudsqlsuperuser \
+  MOCK_CLOUDSQL_ADMIN_MEMBER=1 MOCK_PRISTINE=1 sh "$probe")" \
+  || fail "Cloud SQL member-owned probe failed"
+[[ "$probe_out" == HOOPDB_LAYOUT=pristine-admin ]] \
+  || fail "Cloud SQL member-owned probe classified as: $probe_out"
+pass "Cloud SQL probe accepts cloudsqlsuperuser ownership for an administrator member"
+probe_out="$(PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloudsqlsuperuser \
+  MOCK_CLOUDSQL_ADMIN_MEMBER=0 MOCK_PRISTINE=1 sh "$probe")" \
+  || fail "Cloud SQL non-member probe did not return a refusal classification"
+[[ "$probe_out" == HOOPDB_LAYOUT=unknown-owner ]] \
+  || fail "Cloud SQL non-member probe classified as: $probe_out"
+pass "Cloud SQL probe refuses cloudsqlsuperuser ownership for a non-member"
 if PGUSER=cloud-admin MOCK_PSQL_FAIL_DATABASE=1 sh "$probe" >"$ROOT/probe-fail.log" 2>&1; then
   fail "failed Cloud SQL pg_database query took a layout path"
 fi
 grep -q 'could not inspect the HoopDb database' "$ROOT/probe-fail.log" \
   || fail "failed Cloud SQL pg_database query had no clear refusal"
 pass "Cloud SQL classifier executes the pristine and query-failure branches fail closed"
+
+: >"$SQL_LOG"
+env PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloudsqlsuperuser \
+  MOCK_CLOUDSQL_ADMIN_MEMBER=1 MISSING_STATE_NAMES='' ACTIVATION_RETRY=0 \
+  control_owner="$(cat "$STATE/passwords/control_owner")" \
+  control_api_runtime="$(cat "$STATE/passwords/control_api_runtime")" \
+  hoopdb_owner="$(cat "$STATE/passwords/hoopdb_owner")" \
+  sessions_pipeline_runtime="$(cat "$STATE/passwords/sessions_pipeline_runtime")" \
+  search_consumer_runtime="$(cat "$STATE/passwords/search_consumer_runtime")" \
+  relaycast_owner="$(cat "$STATE/passwords/relaycast_owner")" \
+  relaycast_runtime="$(cat "$STATE/passwords/relaycast_runtime")" \
+  sh "$CAPTURE/run.sh" >"$ROOT/job-member.log" 2>&1 \
+  || fail "Cloud SQL setup Job refused cloudsqlsuperuser ownership for an administrator member: $(tail -n 5 "$ROOT/job-member.log")"
+grep -Fq 'ALTER DATABASE hoopdb OWNER TO hoopdb_owner' "$SQL_LOG" \
+  || fail "Cloud SQL member-owned setup did not reach the dedicated-owner transaction"
+pass "Cloud SQL setup Job accepts cloudsqlsuperuser ownership for an administrator member"
+
+: >"$SQL_LOG"
+if env PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloudsqlsuperuser \
+    MOCK_CLOUDSQL_ADMIN_MEMBER=0 MISSING_STATE_NAMES='' ACTIVATION_RETRY=0 \
+    sh "$CAPTURE/run.sh" >"$ROOT/job-non-member.log" 2>&1; then
+  fail "Cloud SQL setup Job accepted cloudsqlsuperuser ownership for a non-member"
+fi
+grep -Fq 'HoopDb owner is neither the Cloud SQL administrator nor hoopdb_owner' "$ROOT/job-non-member.log" \
+  || fail "Cloud SQL non-member setup refusal was unclear"
+if grep -Fq 'stdin ' "$SQL_LOG"; then
+  fail "Cloud SQL non-member setup reached mutating SQL"
+fi
+pass "Cloud SQL setup Job refuses cloudsqlsuperuser ownership for a non-member"
 
 printf 'fresh activation in progress\n' >"$STATE/.pending-hoopdb-activation"
 : >"$LOG"
