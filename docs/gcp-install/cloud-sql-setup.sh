@@ -166,6 +166,7 @@ run_job() {
   # owner before it uses any newly generated credential value.
   printf '%s' "$missing_state_names" >"$secret_dir/MISSING_STATE_NAMES"
   printf '%s' "${ACTIVATION_RETRY:-0}" >"$secret_dir/ACTIVATION_RETRY"
+  printf '%s' "${ACTIVATION_RESUME:-0}" >"$secret_dir/ACTIVATION_RESUME"
   for p in "$@"; do cp "$PW_DIR/$p" "$secret_dir/$p"; done
 
   kubectl -n "$NS" delete job "$name" --ignore-not-found >/dev/null
@@ -374,12 +375,13 @@ else
 fi
 EOS
   run_job agent-relay-cloud-sql-probe "$WORK/probe.sh" ""
-  local probed_layout
+  local probed_layout activation_resume=0
   probed_layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-cloud-sql-probe.log" | tail -n 1)"
   if [[ ( "$probed_layout" == legacy-admin || "$probed_layout" == pristine-admin ) && -s "$PENDING_ACTIVATION_FILE" ]]; then
     [[ "$(<"$PENDING_ACTIVATION_FILE")" == "$ACTIVATION_TARGET" ]] \
       || die "the pending activation marker belongs to a different Cloud SQL target; refusing before database changes"
     probed_layout=fresh-dedicated
+    activation_resume=1
     log "resuming an interrupted fresh activation"
   fi
   if [[ "$probed_layout" == pristine-admin ]]; then
@@ -466,8 +468,16 @@ existing_dedicated=0
 if [ -n "$hoopdb_exists" ] && [ "$administrator_owns" = 1 ]; then
   sessions_schema="$($Q -c "select to_regnamespace('sessions')")" \
     || { echo 'could not inspect the HoopDb sessions schema; refusing' >&2; exit 3; }
-  hoopdb_role="$($Q -c "select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker') limit 1")" \
-    || { echo 'could not inspect the HoopDb role graph; refusing' >&2; exit 3; }
+  if [ "${ACTIVATION_RESUME:-0}" = 1 ]; then
+    # cloudsql_migration_roles.sql creates the search Worker role before the
+    # ownership transaction. On a marker-proven retry that role alone is not
+    # legacy evidence; every role below is created inside the transaction.
+    hoopdb_role="$($Q -c "select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime') limit 1")" \
+      || { echo 'could not inspect the HoopDb role graph; refusing' >&2; exit 3; }
+  else
+    hoopdb_role="$($Q -c "select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker') limit 1")" \
+      || { echo 'could not inspect the HoopDb role graph; refusing' >&2; exit 3; }
+  fi
   if [ -n "$sessions_schema" ] || [ -n "$hoopdb_role" ]; then
     echo 'HOOPDB_LAYOUT=legacy-admin'
     exit 0
@@ -591,7 +601,8 @@ else
   echo 'HOOPDB_LAYOUT=fresh-dedicated'
 fi
 EOS
-  ACTIVATION_RETRY="$activation_retry" run_job agent-relay-cloud-sql-pre "$WORK/run.sh" "$missing_for_job" \
+  ACTIVATION_RETRY="$activation_retry" ACTIVATION_RESUME="$activation_resume" \
+    run_job agent-relay-cloud-sql-pre "$WORK/run.sh" "$missing_for_job" \
     control_owner control_api_runtime "$OWNER" sessions_pipeline_runtime \
     search_consumer_runtime relaycast_owner relaycast_runtime
   local layout

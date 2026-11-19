@@ -279,6 +279,15 @@ MOCK_LAYOUT=dedicated-owner bash "${RDS_SETUP}" pre >/dev/null
 [[ ! -e "${STATE_DIR}/.pending-hoopdb-activation" ]] || fail "dedicated-owner rerun retained its activation marker"
 pass "RDS marker never converts legacy and is cleared after committed ownership"
 
+printf 'old-preview-marker\n' >"${STATE_DIR}/.pending-hoopdb-activation"
+if MOCK_LAYOUT=fresh-dedicated bash "${RDS_SETUP}" pre >"$TEST_ROOT/old-marker.log" 2>&1; then
+  fail "old-format RDS activation marker was accepted"
+fi
+grep -q 'unreleased preview wrote an old-format marker' "$TEST_ROOT/old-marker.log" \
+  || fail "old-format RDS activation marker refusal omitted recovery guidance"
+rm -f "${STATE_DIR}/.pending-hoopdb-activation"
+pass "old-format RDS activation marker refusal explains safe recovery"
+
 : >"${COMMAND_LOG}"
 set +e
 pg15_output="$(MOCK_LAYOUT=fresh-legacy bash "${RDS_SETUP}" pre 2>&1)"
@@ -374,6 +383,8 @@ grep -q 'patch secret search-indexer-owner --type=merge --patch-file' "$COMMAND_
 : >"${COMMAND_LOG}"
 remove_rollback_output="$(env -u SERVICES_IMAGE bash "$RDS_SETUP" remove-rollback-admin-keys 2>&1)"
 [[ "$remove_rollback_output" == *"rollback administrator keys removed"* ]] || fail "rollback-key removal did not finish"
+[[ "$remove_rollback_output" == *"only after the rollback revision that reads these keys has been replaced or removed"* ]] \
+  || fail "rollback-key removal omitted the active-revision warning"
 grep -q 'patch secret agent-relay-secrets --type=json --patch-file' "$COMMAND_LOG" \
   || fail "rollback-key removal did not remove the migration key"
 grep -q 'patch secret search-indexer-owner --type=json --patch-file' "$COMMAND_LOG" \

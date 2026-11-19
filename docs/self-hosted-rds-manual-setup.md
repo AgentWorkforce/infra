@@ -554,11 +554,13 @@ fi
 
 Recreate `hoopdb-admin-jobs` only if the selected revision already references
 it. The values overlay above is only for Jobs rendered separately; it cannot
-change a saved Helm revision. After rollback Jobs and workloads finish, remove
-the two restored long-lived keys with the cleanup loop above and delete
-`hoopdb-admin-jobs` again. For ESO-managed Secrets, make the temporary restore
-and removal through the target revision's ExternalSecrets and backing store;
-never patch the generated Secrets.
+change a saved Helm revision. Keep the restored long-lived keys while that
+rollback revision is active. Only after it has been replaced or removed,
+remove the two keys with the cleanup loop above and delete
+`hoopdb-admin-jobs` again; finishing its initial Jobs alone is not sufficient.
+For ESO-managed Secrets, make the temporary restore and removal through the
+target revision's ExternalSecrets and backing store; never patch the generated
+Secrets.
 Long-running pods do not use this Secret and are unaffected by its creation or
 deletion. The database stays administrator-owned; verify without assuming its
 name with `psql -X -A -t -d "$HOOPDB_DATABASE" -c 'select

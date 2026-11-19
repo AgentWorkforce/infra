@@ -386,6 +386,7 @@ do_remove-rollback-admin-keys() {
   require_target_match
   [[ -s "$LAYOUT_FILE" && "$(<"$LAYOUT_FILE")" == legacy-admin ]] \
     || die "remove-rollback-admin-keys is only for an existing administrator-owned install; run '$0 pre' first"
+  log "WARNING: this command does not inspect the active Helm revision; use it only after the rollback revision that reads these keys has been replaced or removed"
   local secret key patch mapping_rc
   for secret in agent-relay-secrets search-indexer-owner; do
     if [[ "$secret" == agent-relay-secrets ]]; then key=HOOPDB_MIGRATION_URL; else key=RELAYHISTORY_PIPELINE_CONSUMER_SECRET; fi
@@ -429,7 +430,7 @@ do_pre() {
   selected_target >"$current_target"
   if [[ -s "$PENDING_ACTIVATION_FILE" ]]; then
     cmp -s "$current_target" "$PENDING_ACTIVATION_FILE" \
-      || die "pending activation state belongs to a different Kubernetes context, namespace, region, or RDS host; refusing"
+      || die "pending activation state belongs to a different target; if an unreleased preview wrote an old-format marker, first confirm no agent-relay-rds-pre Job is running, remove only $PENDING_ACTIVATION_FILE, and rerun '$0 pre'"
   fi
 
   local p

@@ -65,8 +65,11 @@ case "$*" in
   *"select 1 from pg_roles where rolname='sessions_pipeline_runtime'"*)
     if [[ "${MOCK_RUNTIME_ROLE_EXISTS:-0}" == 1 ]]; then printf '1\n'; fi
     ;;
+  *"select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime') limit 1"*)
+    if [[ "${MOCK_TXN_ROLE_EXISTS:-0}" == 1 ]]; then printf '1\n'; fi
+    ;;
   *"select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker') limit 1"*)
-    if [[ "${MOCK_HOOPDB_ROLE_EXISTS:-0}" == 1 ]]; then printf '1\n'; fi
+    if [[ "${MOCK_HOOPDB_ROLE_EXISTS:-0}" == 1 || "${MOCK_TXN_ROLE_EXISTS:-0}" == 1 || "${MOCK_SEARCH_WORKER_ROLE_EXISTS:-0}" == 1 ]]; then printf '1\n'; fi
     ;;
   *"select count(*) from pg_auth_members"*) printf '0\n' ;;
   *"select 1 where"*) [[ "${MOCK_PRISTINE:-0}" == 1 ]] && printf '1\n' ;;
@@ -111,6 +114,8 @@ for argument in "$@"; do
       source_path="${argument#--from-file=}"
       if [[ -d "$source_path" && -f "$source_path/MISSING_STATE_NAMES" ]]; then
         cp "$source_path/MISSING_STATE_NAMES" "$MOCK_CAPTURE/MISSING_STATE_NAMES"
+        cp "$source_path/ACTIVATION_RETRY" "$MOCK_CAPTURE/ACTIVATION_RETRY"
+        cp "$source_path/ACTIVATION_RESUME" "$MOCK_CAPTURE/ACTIVATION_RESUME"
       fi
       ;;
   esac
@@ -244,6 +249,8 @@ fi
 grep -F 'CREATE ROLE agent_relay_hoopdb_role_creator' "$SCRIPT" >/dev/null || fail "disposable owner/runtime role executor is missing"
 grep -F 'DROP ROLE agent_relay_hoopdb_role_creator' "$SCRIPT" >/dev/null || fail "disposable role executor is not removed"
 [[ -s "$CAPTURE/job-agent-relay-cloud-sql-pre.json" ]] || fail "pre Job manifest was not submitted"
+[[ "$(cat "$CAPTURE/ACTIVATION_RESUME")" == 0 ]] \
+  || fail "initial fresh activation incorrectly passed the resume classifier flag"
 jq -e '.spec.template.spec.automountServiceAccountToken == false and
   any(.spec.template.spec.volumes[]; .name == "ca") and
   .spec.template.spec.initContainers[0].image == env.SERVICES_IMAGE' \
@@ -406,14 +413,66 @@ grep -Eq 'ALTER ROLE control_owner|CREATE ROLE agent_relay_hoopdb_role_creator|A
   && fail "partial HoopDb role graph reached mutating SQL"
 pass "Cloud SQL setup Job refuses a partial legacy role graph before writes"
 
+: >"$SQL_LOG"
+job_out="$(env PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloud-admin \
+  MOCK_SEARCH_WORKER_ROLE_EXISTS=1 MISSING_STATE_NAMES='' ACTIVATION_RETRY=0 ACTIVATION_RESUME=1 \
+  control_owner="$(cat "$STATE/passwords/control_owner")" \
+  control_api_runtime="$(cat "$STATE/passwords/control_api_runtime")" \
+  hoopdb_owner="$(cat "$STATE/passwords/hoopdb_owner")" \
+  sessions_pipeline_runtime="$(cat "$STATE/passwords/sessions_pipeline_runtime")" \
+  search_consumer_runtime="$(cat "$STATE/passwords/search_consumer_runtime")" \
+  relaycast_owner="$(cat "$STATE/passwords/relaycast_owner")" \
+  relaycast_runtime="$(cat "$STATE/passwords/relaycast_runtime")" \
+  sh "$CAPTURE/run.sh")" || fail "marker-proven retry with only the pre-transaction search Worker role did not proceed"
+[[ "$job_out" == *'HOOPDB_LAYOUT=fresh-dedicated'* ]] \
+  || fail "marker-proven search-Worker-only retry did not finish the fresh layout"
+grep -Fq 'ALTER DATABASE hoopdb OWNER TO hoopdb_owner' "$SQL_LOG" \
+  || fail "marker-proven search-Worker-only retry did not reach the ownership transaction"
+pass "Cloud SQL resume ignores only the search Worker role created before the ownership transaction"
+
+: >"$SQL_LOG"
+job_out="$(env PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloud-admin \
+  MOCK_TXN_ROLE_EXISTS=1 MISSING_STATE_NAMES='' ACTIVATION_RETRY=0 ACTIVATION_RESUME=1 \
+  sh "$CAPTURE/run.sh")" || fail "marker-proven retry with a transaction role did not take the legacy path"
+[[ "$job_out" == *'HOOPDB_LAYOUT=legacy-admin'* ]] \
+  || fail "marker-proven retry ignored a role created inside the ownership transaction"
+grep -Eq 'ALTER ROLE control_owner|CREATE ROLE agent_relay_hoopdb_role_creator|ALTER DATABASE hoopdb' "$SQL_LOG" \
+  && fail "marker-proven retry with a transaction role reached mutating SQL"
+pass "Cloud SQL resume still treats ownership-transaction roles as legacy evidence"
+
+: >"$SQL_LOG"
+job_out="$(env PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloud-admin \
+  MOCK_SEARCH_WORKER_ROLE_EXISTS=1 MISSING_STATE_NAMES='' ACTIVATION_RETRY=0 ACTIVATION_RESUME=0 \
+  sh "$CAPTURE/run.sh")" || fail "unmarked search-Worker-only database did not take the legacy path"
+[[ "$job_out" == *'HOOPDB_LAYOUT=legacy-admin'* ]] \
+  || fail "unmarked search-Worker-only database was not classified legacy-admin"
+grep -Eq 'ALTER ROLE control_owner|CREATE ROLE agent_relay_hoopdb_role_creator|ALTER DATABASE hoopdb' "$SQL_LOG" \
+  && fail "unmarked search-Worker-only database reached mutating SQL"
+pass "Cloud SQL does not relax search Worker evidence without a matched activation marker"
+
 printf '%s\n' "$ACTIVATION_TARGET_VALUE" >"$STATE/.pending-hoopdb-activation"
 : >"$LOG"
 MOCK_LAYOUT=pristine-admin MOCK_PRE_LAYOUT=fresh-dedicated "$TEST_BASH" "$SCRIPT" pre >/dev/null \
   || fail "a marked pristine Cloud SQL activation could not resume"
 grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/null \
   || fail "marked pristine Cloud SQL activation did not resume the setup Job"
+[[ "$(cat "$CAPTURE/ACTIVATION_RESUME")" == 1 ]] \
+  || fail "matched Cloud SQL activation marker did not pass the resume classifier flag"
 [[ ! -e "$STATE/.pending-hoopdb-activation" ]] || fail "marked pristine Cloud SQL retry retained its pending marker"
 pass "Cloud SQL resumes a marked pristine activation without a second approval flag"
+
+# cloudsql_migration_roles.sql creates the search Worker role before the owner
+# transaction. The host therefore sees legacy evidence after an interruption,
+# but only a target-matched marker may relax that one Job-side signal.
+printf '%s\n' "$ACTIVATION_TARGET_VALUE" >"$STATE/.pending-hoopdb-activation"
+: >"$LOG"
+MOCK_LAYOUT=legacy-admin MOCK_PRE_LAYOUT=fresh-dedicated "$TEST_BASH" "$SCRIPT" pre >/dev/null \
+  || fail "a marked pre-transaction Cloud SQL activation could not resume"
+[[ "$(cat "$CAPTURE/ACTIVATION_RESUME")" == 1 ]] \
+  || fail "legacy probe plus matched marker did not pass the resume classifier flag"
+[[ ! -e "$STATE/.pending-hoopdb-activation" ]] \
+  || fail "successful pre-transaction Cloud SQL retry retained its activation marker"
+pass "Cloud SQL host passes resume only after matching legacy evidence to the target marker"
 
 printf 'cloudsql:example:other-instance:other.example:hoopdb\n' >"$STATE/.pending-hoopdb-activation"
 if MOCK_LAYOUT=pristine-admin "$TEST_BASH" "$SCRIPT" pre >"$ROOT/pre-wrong-target.log" 2>&1; then
