@@ -41,8 +41,8 @@
 {{- $streamingOn := $streaming.enabled -}}
 {{- if not (or (kindIs "invalid" $streamingOn) (kindIs "bool" $streamingOn)) }}{{ fail "searchIndexer.streaming.enabled must be null, true or false" }}{{ end -}}
 {{- if and (kindIs "bool" $streamingOn) (not $streamingOn) (or $streaming.maxReadBytes $streaming.maxReadEvents) }}{{ fail "searchIndexer.streaming.maxReadBytes and maxReadEvents have no effect with searchIndexer.streaming.enabled=false; unset them" }}{{ end -}}
+{{- if not (or (kindIs "invalid" $c.stagedReconcile) (kindIs "map" $c.stagedReconcile)) }}{{ fail "searchIndexer.stagedReconcile must be a map" }}{{ end -}}
 {{- $stagedCfg := $c.stagedReconcile | default dict -}}
-{{- if not (kindIs "map" $stagedCfg) }}{{ fail "searchIndexer.stagedReconcile must be a map" }}{{ end -}}
 {{- $stagedOn := $stagedCfg.enabled -}}
 {{- if not (or (kindIs "invalid" $stagedOn) (kindIs "bool" $stagedOn)) }}{{ fail "searchIndexer.stagedReconcile.enabled must be null, true or false" }}{{ end -}}
 {{- if and (eq $stagedOn true) (eq $streamingOn false) }}{{ fail "searchIndexer.stagedReconcile.enabled=true needs streaming on; it cannot be combined with searchIndexer.streaming.enabled=false (the consumer refuses to start)" }}{{ end -}}

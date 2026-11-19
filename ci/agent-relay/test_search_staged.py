@@ -35,6 +35,8 @@ class SearchStaged(unittest.TestCase):
         for values, message in (
             ({'stagedReconcile': {'enabled': 'true'}}, 'stagedReconcile.enabled must be null, true or false'),
             ({'stagedReconcile': True}, 'stagedReconcile must be a map'),
+            ({'stagedReconcile': False}, 'stagedReconcile must be a map'),
+            ({'stagedReconcile': ''}, 'stagedReconcile must be a map'),
             ({'streaming': {'enabled': False}, 'stagedReconcile': {'enabled': True}}, 'needs streaming on'),
         ):
             with self.subTest(values=values):
