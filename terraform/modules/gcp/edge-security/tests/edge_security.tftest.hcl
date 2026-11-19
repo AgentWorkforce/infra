@@ -705,3 +705,73 @@ run "connecting_address_group_denies_other_sources_first" {
     error_message = "A connection whose address is outside the proxy's address group is denied before any client rule."
   }
 }
+
+# Address groups (Cloud Armor Enterprise): a vendor's whole list is one
+# subexpression, so the rule needs one admitting rule and its deny.
+run "address_group_keeps_a_long_vendor_list_in_one_rule" {
+  command = apply
+  variables {
+    max_subexpressions = 10
+    max_advanced_rules = 20
+    security_policy = {
+      create                    = true
+      cloudflare                = { enabled = true }
+      connecting_address_groups = ["relay-cloudflare"]
+      rate_limits               = []
+      client_ip_rules = [
+        {
+          name           = "vendors"
+          hosts          = ["history.relay.example.com"]
+          path_prefixes  = ["/v1/delivery"]
+          address_groups = ["relay-vendor-a", "relay-vendor-b"]
+          cidrs          = ["203.0.113.0/24"]
+          rate_limit     = { count = 600, interval_sec = 60 }
+        },
+        { name = "staff", path_prefixes = ["/"], cidrs = ["203.0.113.0/24"], unthrottled = true },
+      ]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+
+  assert {
+    condition     = google_compute_security_policy_rule.client_ip["vendors-allow-0"].match[0].expr[0].expression == "request.headers['host'].lower().matches('^(?:history\\\\.relay\\\\.example\\\\.com)(?::[0-9]+)?$') && request.path.matches('^(?:/v1/delivery)(?:/|$)') && (evaluateAddressGroup('relay-vendor-a', origin.user_ip) || evaluateAddressGroup('relay-vendor-b', origin.user_ip) || inIpRange(origin.user_ip, '203.0.113.0/24'))"
+    error_message = "Each address group is one subexpression, evaluated against the client address, ahead of the plain ranges."
+  }
+  assert {
+    condition     = length([for k, r in google_compute_security_policy_rule.client_ip : k if startswith(k, "vendors-")]) == 2 && output.rule_counts.advanced == 8
+    error_message = "One admitting rule and one deny for the vendors, whatever the groups hold: 8 advanced rules in all (secret header, connecting check, two WAF, vendors 2, staff 2)."
+  }
+}
+
+run "address_group_only_rule_is_valid" {
+  command = apply
+  variables {
+    security_policy = {
+      create             = true
+      cloudflare         = { enabled = true }
+      secret_header_only = true
+      client_ip_rules    = [{ name = "vendors", path_prefixes = ["/v1/delivery"], address_groups = ["relay-vendor-a"], unthrottled = true }]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+  assert {
+    condition     = google_compute_security_policy_rule.client_ip["vendors-allow-0"].match[0].expr[0].expression == "request.path.matches('^(?:/v1/delivery)(?:/|$)') && (evaluateAddressGroup('relay-vendor-a', origin.user_ip))"
+    error_message = "A rule may list only address groups."
+  }
+}
+
+run "rule_without_clients_refused" {
+  command = plan
+  variables {
+    security_policy = { create = true, cloudflare = { enabled = true }, secret_header_only = true, client_ip_rules = [{ name = "vendors", path_prefixes = ["/v1/delivery"], unthrottled = true }] }
+  }
+  expect_failures = [var.security_policy]
+}
+
+run "address_group_path_instead_of_name_refused" {
+  command = plan
+  variables {
+    security_policy = { create = true, cloudflare = { enabled = true }, secret_header_only = true, client_ip_rules = [{ name = "vendors", path_prefixes = ["/v1/delivery"], address_groups = ["projects/p/locations/global/addressGroups/relay-vendor-a"], unthrottled = true }] }
+  }
+  expect_failures = [var.security_policy]
+}
