@@ -64,6 +64,7 @@ the NAT gateway about $0.045 per hour plus $0.045 per GB processed.
 | [aws_route.private_default](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route) | resource |
 | [aws_route_table.private](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route_table) | resource |
 | [aws_route_table_association.private](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route_table_association) | resource |
+| [aws_secretsmanager_secret.copy_urls](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
 | [aws_secretsmanager_secret.db_owner](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
 | [aws_security_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
 | [aws_subnet.private](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/subnet) | resource |
@@ -86,6 +87,7 @@ the NAT gateway about $0.045 per hour plus $0.045 per GB processed.
 | vpc\_id | VPC that gets the private subnet and the NAT gateway. | `string` | n/a | yes |
 | ami\_ssm\_parameter | SSM public parameter that resolves to the AMI. | `string` | `"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"` | no |
 | availability\_zone | AZ of the private subnet; the instance type must be offered there. | `string` | `"us-east-1a"` | no |
+| copy\_urls\_secret\_name | Secrets Manager name of the Cloud copy connection URLs. Created empty; written out of band and read on the runner. | `string` | `"neon-exit/cloud/copy-urls"` | no |
 | db\_owner\_secret\_name | Secrets Manager name of the target database owner credential. Created empty; the value is written out of band by whoever holds it. | `string` | `"neon-exit/relayhistory-legacy/postgres-owner"` | no |
 | instance\_type | Instance type with local NVMe for the dump. | `string` | `"m6id.4xlarge"` | no |
 | name | Name prefix for every resource. | `string` | `"neon-exit-runner"` | no |
@@ -98,12 +100,14 @@ the NAT gateway about $0.045 per hour plus $0.045 per GB processed.
 
 | Name | Description |
 | ---- | ----------- |
+| copy\_urls\_secret\_arn | Secrets Manager ARN of the empty Cloud copy URLs secret. |
+| copy\_urls\_secret\_name | Secrets Manager name of the Cloud copy URLs secret. |
 | db\_owner\_secret\_arn | Secrets Manager ARN of the empty target credential. |
 | db\_owner\_secret\_name | Secrets Manager name of the target credential. |
 | instance\_id | Runner instance id (target of ssm start-session). |
 | nat\_gateway\_id | Id of the NAT gateway that gives the private subnet outbound access. |
 | private\_subnet\_id | Id of the private subnet the runner instance launches in. |
-| runner\_role\_arn | Instance role: SSM core plus read of the target secret. |
+| runner\_role\_arn | Instance role: SSM core plus read of the two exit secrets. |
 | security\_group\_id | Id of the runner security group (no ingress; HTTPS egress only). |
 | ssm\_session\_command | Shell on the runner for a principal allowed ssm:StartSession on it. |
 <!-- END_TF_DOCS -->
