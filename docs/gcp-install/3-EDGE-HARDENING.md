@@ -262,6 +262,18 @@ Cloudflare can reach it.
    not come from Cloudflare's network is refused before any of these rules.
    Terraform refuses `client_ip_rules` without it.
 
+   After applying it, wait until it is enforced before you rely on it: a new
+   rule took almost 4 minutes to reach every backend when measured, and until
+   then a direct request with the header was still admitted. Repeat the loop
+   from section 2 with the header added
+   (`-H "x-origin-auth: <value>"`), from a machine that is not behind
+   Cloudflare, until all six lines end in `403`.
+
+   One gap this cannot close: another Cloudflare customer who learned your
+   secret header could send requests through their own Cloudflare zone, which
+   arrive from the same network. Keep the header value secret, rotate it if
+   it may have leaked (item 3), and treat it like a password.
+
    The first rule that matches a request's path decides it: its listed
    clients are admitted, everyone else gets 403. The last rule closes every
    other path. A request that a rule admits is not checked by any later
