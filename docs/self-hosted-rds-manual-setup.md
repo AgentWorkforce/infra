@@ -280,7 +280,8 @@ Then finish the search bootstrap as the install guide says.
 
 ## Phase 3: when RDS rotates the admin password
 
-`HOOPDB_MIGRATION_URL` and `search-indexer-owner` carry the admin password.
+`HOOPDB_MIGRATION_URL` and `search-indexer-owner` carry the admin password
+(restrict who can read them: [selfhost-secret-access.md](selfhost-secret-access.md)).
 After RDS rotates it (every 7 days by default for a managed master password),
 update both values before the next `helm upgrade`. No database change is
 needed. If the values come from SSM through External Secrets Operator, force a
