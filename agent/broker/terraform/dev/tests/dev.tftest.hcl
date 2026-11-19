@@ -110,7 +110,8 @@ run "matches_the_broker_allowlist" {
   assert {
     condition = anytrue([
       for c in jsondecode(file("${path.module}/../../allowlist.json")).workspaceAuto.capabilities :
-      c.accounts == [var.dev_account_id] && c.regions == [var.region] && length(c.grants) == 1 && c.grants[0].actions == ["eks:DescribeCluster"] && c.grants[0].eksClusters == [var.cluster_name] && !contains(keys(c), "readOnlyRules")
+      # try(): Terraform 1.11 evaluates both sides of &&, and other capabilities' grants have no eksClusters.
+      try(c.accounts == [var.dev_account_id] && c.regions == [var.region] && length(c.grants) == 1 && c.grants[0].actions == ["eks:DescribeCluster"] && c.grants[0].eksClusters == [var.cluster_name] && !contains(keys(c), "readOnlyRules"), false)
     ])
     error_message = "the workspaceAuto capability names this account, region, cluster and the one action"
   }
