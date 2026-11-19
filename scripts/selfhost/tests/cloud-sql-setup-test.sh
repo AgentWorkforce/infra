@@ -24,7 +24,13 @@ cat >"$BIN/gcloud" <<'MOCK'
 #!/usr/bin/env bash
 printf 'gcloud %s\n' "$*" >>"$MOCK_LOG"
 case " $* " in
-  *" secrets versions access "*) printf '%s' 'admin-password' ;;
+  *" secrets versions access "*)
+    case "${MOCK_ADMIN_SECRET_MODE:-valid}" in
+      fail) exit 1 ;;
+      empty) exit 0 ;;
+      valid) printf '%s' 'admin-password' ;;
+    esac
+    ;;
   *" sql ssl server-ca-certs list "*) printf '[{"cert":"-----BEGIN CERTIFICATE-----\\nMOCK\\n-----END CERTIFICATE-----\\n"}]\n' ;;
   *" sql instances describe "*) printf '{"dnsNames":[{"connectionType":"PRIVATE_SERVICES_ACCESS","name":"db.example.sql-psa.goog."}]}\n' ;;
   *) exit 1 ;;
@@ -40,9 +46,13 @@ MOCK
 cat >"$BIN/psql" <<'MOCK'
 #!/usr/bin/env bash
 printf 'psql %s\n' "$*" >>"$MOCK_SQL_LOG"
+if [[ "${MOCK_PSQL_FAIL_DATABASE:-0}" == 1 && "$*" == *"select 1 from pg_database where datname='hoopdb'"* ]]; then
+  exit 1
+fi
 case "$*" in
-  *"select 1 from pg_database where datname='hoopdb'"*) printf '1\n' ;;
-  *"select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"*) printf 'hoopdb_owner\n' ;;
+  *"select 1 from pg_database where datname='hoopdb'"*) [[ "${MOCK_DB_EXISTS:-1}" == 1 ]] && printf '1\n' ;;
+  *"select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"*) printf '%s\n' "${MOCK_DB_OWNER:-hoopdb_owner}" ;;
+  *"select 1 where"*) [[ "${MOCK_PRISTINE:-0}" == 1 ]] && printf '1\n' ;;
   *)
     payload="$(cat)"
     printf 'stdin %s\n' "$payload" >>"$MOCK_SQL_LOG"
@@ -75,7 +85,10 @@ set -euo pipefail
 printf 'kubectl %s\n' "$*" >>"$MOCK_LOG"
 for argument in "$@"; do
   case "$argument" in
-    --from-file=run.sh=*) cp "${argument#--from-file=run.sh=}" "$MOCK_CAPTURE/run.sh" ;;
+    --from-file=run.sh=*)
+      cp "${argument#--from-file=run.sh=}" "$MOCK_CAPTURE/run.sh"
+      case " $* " in *" agent-relay-cloud-sql-probe-run "*) cp "${argument#--from-file=run.sh=}" "$MOCK_CAPTURE/probe.sh" ;; esac
+      ;;
     --from-file=*)
       source_path="${argument#--from-file=}"
       if [[ -d "$source_path" && -f "$source_path/MISSING_STATE_NAMES" ]]; then
@@ -97,8 +110,21 @@ case " $* " in
     ;;
   *" create secret generic "*) ;;
   *" get secret hoopdb-admin-jobs -o name "*) printf 'secret/hoopdb-admin-jobs\n' ;;
-  *" get secret agent-relay-secrets -o json "*) printf '{"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' ;;
-  *" get secret search-indexer-owner -o json "*) printf '{"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' ;;
+  *" get secret agent-relay-secrets -o json "*|*" get secret search-indexer-owner -o json "*)
+    case "${MOCK_SECRET_READ_MODE:-ok}" in
+      notfound) echo 'Error from server (NotFound): secrets not found' >&2; exit 1 ;;
+      error) echo 'transport is unavailable' >&2; exit 1 ;;
+    esac
+    name=agent-relay-secrets; key=HOOPDB_MIGRATION_URL
+    [[ " $* " == *" search-indexer-owner "* ]] && { name=search-indexer-owner; key=RELAYHISTORY_PIPELINE_CONSUMER_SECRET; }
+    if [[ "${MOCK_EXTERNAL_SECRET_MODE:-none}" == owner ]]; then
+      printf '{"metadata":{"ownerReferences":[{"kind":"ExternalSecret","name":"%s"}]},"data":{"%s":"b2xk"}}\n' "$name" "$key"
+    elif [[ "${MOCK_EXTERNAL_SECRET_MODE:-none}" == label ]]; then
+      printf '{"metadata":{"labels":{"reconcile.external-secrets.io/managed":"true"}},"data":{"%s":"b2xk"}}\n' "$key"
+    else
+      printf '{"metadata":{},"data":{"%s":"b2xk"}}\n' "$key"
+    fi
+    ;;
   *" patch secret "*) ;;
   *" get namespace "*) ;;
   *" create namespace "*) ;;
@@ -146,6 +172,20 @@ export CLOUD_SQL_ADMIN_SECRET_ID=agent-relay-pg-admin
 export SERVICES_IMAGE=ghcr.io/agentworkforce/sessions-pipeline@sha256:dc95d94202c49573749f99cc548638ed185f782dc3b88691f551d7f1f700f769
 export STATE_DIR="$STATE"
 export JOB_TIMEOUT_SECONDS=5
+
+for mode in fail empty; do
+  bad_state="$ROOT/admin-$mode"
+  : >"$LOG"
+  if MOCK_ADMIN_SECRET_MODE="$mode" STATE_DIR="$bad_state" "$TEST_BASH" "$SCRIPT" pre >"$ROOT/admin-$mode.log" 2>&1; then
+    fail "$mode Cloud SQL administrator Secret was accepted"
+  fi
+  grep -Eq 'could not read|password is empty' "$ROOT/admin-$mode.log" \
+    || fail "$mode Cloud SQL administrator Secret refusal was unclear"
+  grep -q '^kubectl' "$LOG" && fail "$mode Cloud SQL administrator Secret reached a cluster write"
+  [[ ! -e "$bad_state/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" ]] \
+    || fail "$mode Cloud SQL administrator Secret wrote an owner URL"
+done
+pass "failed and empty Cloud SQL administrator Secret reads stop before cluster or credential writes"
 
 "$TEST_BASH" "$SCRIPT" pre >/dev/null
 grep -F 'ALTER DATABASE relaycast OWNER TO CURRENT_USER' "$SCRIPT" >/dev/null || fail "Relaycast database owner boundary is missing"
@@ -195,7 +235,7 @@ if MOCK_LAYOUT=dedicated-owner \
     "$TEST_BASH" "$SCRIPT" pre >"$ROOT/pre-dedicated-missing.log" 2>&1; then
   fail "dedicated-owner rerun accepted missing saved credential state"
 fi
-grep -F 'STATE_DIR lacked saved passwords for: relaycast_runtime' "$ROOT/pre-dedicated-missing.log" >/dev/null \
+grep -F 'STATE_DIR lacked trusted saved passwords for: relaycast_runtime' "$ROOT/pre-dedicated-missing.log" >/dev/null \
   || fail "missing saved credential state diagnostic is absent"
 [[ ! -e "$CAPTURE/job-agent-relay-cloud-sql-pre.json" ]] \
   || fail "dedicated-owner missing-state refusal started the mutating setup Job"
@@ -222,24 +262,31 @@ grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/nu
   || fail "resumed activation did not finish the setup prerequisites"
 pass "post-commit interruption reuses the committed password files"
 
-# Terraform may pre-create an empty hoopdb. It is eligible for fresh activation
-# only when the operator explicitly identifies this as the reviewed first
-# install; otherwise the administrator-owned database fails safe as legacy.
+# Terraform may pre-create an empty hoopdb. The catalog proof, not a wrapper
+# flag, distinguishes it from an existing administrator-owned install.
 : >"$LOG"
-MOCK_LAYOUT=pristine-admin "$TEST_BASH" "$SCRIPT" pre >/dev/null
-if grep -Fq 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG"; then
-  fail "unapproved pristine Cloud SQL database started the mutating setup Job"
-fi
-[[ "$(cat "$STATE/hoopdb-layout")" == legacy-admin ]] || fail "unapproved pristine Cloud SQL database did not fail safe"
-: >"$LOG"
-ALLOW_PRISTINE_HOOPDB_ACTIVATION=true MOCK_LAYOUT=pristine-admin MOCK_PRE_LAYOUT=fresh-dedicated \
+MOCK_LAYOUT=pristine-admin MOCK_PRE_LAYOUT=fresh-dedicated \
   "$TEST_BASH" "$SCRIPT" pre >/dev/null
 grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/null \
-  || fail "approved pristine Cloud SQL database did not start activation"
-[[ "$(cat "$STATE/hoopdb-layout")" == dedicated-owner ]] || fail "approved pristine Cloud SQL database did not become dedicated-owner"
-grep -F 'not exists (select 1 from pg_default_acl)' "$SCRIPT" >/dev/null \
-  || fail "Cloud SQL pristine probe does not reject existing default privileges"
-pass "Cloud SQL activates a provider-created pristine HoopDb only with explicit first-install approval"
+  || fail "pristine Cloud SQL database did not start activation"
+[[ "$(cat "$STATE/hoopdb-layout")" == dedicated-owner ]] || fail "pristine Cloud SQL database did not become dedicated-owner"
+grep -F "to_regnamespace('sessions') is null" "$SCRIPT" >/dev/null \
+  || fail "Cloud SQL pristine probe does not reject an existing sessions schema"
+grep -F "rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker')" "$SCRIPT" >/dev/null \
+  || fail "Cloud SQL pristine probe does not reject an existing HoopDb role"
+pass "Cloud SQL activates a classifier-proven pristine provider-created HoopDb"
+
+probe="$CAPTURE/probe.sh"
+[[ -s "$probe" ]] || fail "Cloud SQL classifier probe was not captured"
+probe_out="$(PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloud-admin MOCK_PRISTINE=1 sh "$probe")" \
+  || fail "pristine Cloud SQL probe failed"
+[[ "$probe_out" == HOOPDB_LAYOUT=pristine-admin ]] || fail "pristine Cloud SQL probe classified as: $probe_out"
+if PGUSER=cloud-admin MOCK_PSQL_FAIL_DATABASE=1 sh "$probe" >"$ROOT/probe-fail.log" 2>&1; then
+  fail "failed Cloud SQL pg_database query took a layout path"
+fi
+grep -q 'could not inspect the HoopDb database' "$ROOT/probe-fail.log" \
+  || fail "failed Cloud SQL pg_database query had no clear refusal"
+pass "Cloud SQL classifier executes the pristine and query-failure branches fail closed"
 
 printf 'fresh activation in progress\n' >"$STATE/.pending-hoopdb-activation"
 : >"$LOG"
@@ -249,6 +296,22 @@ grep -F 'create secret generic agent-relay-cloud-sql-pre-secret' "$LOG" >/dev/nu
   || fail "marked pristine Cloud SQL activation did not resume the setup Job"
 [[ ! -e "$STATE/.pending-hoopdb-activation" ]] || fail "marked pristine Cloud SQL retry retained its pending marker"
 pass "Cloud SQL resumes a marked pristine activation without a second approval flag"
+
+printf 'hoopdb_owner\n' >"$STATE/.pending-hoopdb-passwords"
+printf 'fresh activation in progress\n' >"$STATE/.pending-hoopdb-activation"
+rm -f "$STATE/passwords/hoopdb_owner" "$CAPTURE/job-agent-relay-cloud-sql-pre.json"
+: >"$LOG"
+if MOCK_LAYOUT=dedicated-owner "$TEST_BASH" "$SCRIPT" pre >"$ROOT/pre-marked-missing.log" 2>&1; then
+  fail "marked Cloud SQL retry regenerated a missing live password"
+fi
+grep -F 'interrupted activation lacks saved passwords for: hoopdb_owner' "$ROOT/pre-marked-missing.log" >/dev/null \
+  || fail "marked Cloud SQL missing-password refusal was unclear"
+[[ ! -e "$STATE/passwords/hoopdb_owner" ]] || fail "marked Cloud SQL refusal retained its generated replacement"
+[[ -e "$STATE/.pending-hoopdb-activation" ]] || fail "marked Cloud SQL refusal discarded recovery state"
+[[ ! -e "$CAPTURE/job-agent-relay-cloud-sql-pre.json" ]] || fail "marked Cloud SQL refusal started the mutating Job"
+printf '%048d' 0 >"$STATE/passwords/hoopdb_owner"; chmod 600 "$STATE/passwords/hoopdb_owner"
+rm -f "$STATE/.pending-hoopdb-activation" "$STATE/.pending-hoopdb-passwords"
+pass "marked Cloud SQL retry refuses an absent committed password before writes"
 
 : >"$LOG"
 MOCK_LAYOUT=legacy-admin "$TEST_BASH" "$SCRIPT" pre >/dev/null
@@ -262,6 +325,28 @@ before_migration=$(grep -n 'patch secret agent-relay-secrets' "$LOG" | head -1 |
 before_search=$(grep -n 'patch secret search-indexer-owner' "$LOG" | head -1 | cut -d: -f1)
 [[ -n "$before_migration" && -n "$before_search" ]] || fail "post-success cleanup did not remove both live administrator keys"
 pass "legacy keys remain through Helm and are removed only by post-success cleanup"
+
+: >"$LOG"
+MOCK_SECRET_READ_MODE=notfound "$TEST_BASH" "$SCRIPT" remove-legacy-secret-keys >/dev/null \
+  || fail "NotFound Secret was not treated as already absent"
+grep -Fq 'patch secret' "$LOG" && fail "NotFound cleanup attempted a patch"
+if MOCK_SECRET_READ_MODE=error "$TEST_BASH" "$SCRIPT" remove-legacy-secret-keys >"$ROOT/remove-api-error.log" 2>&1; then
+  fail "Secret read API error was treated as absence"
+fi
+grep -F 'could not read Secret agent-relay-secrets' "$ROOT/remove-api-error.log" >/dev/null \
+  || fail "Secret read API error refusal was unclear"
+for managed in owner label; do
+  : >"$LOG"
+  if MOCK_EXTERNAL_SECRET_MODE="$managed" "$TEST_BASH" "$SCRIPT" remove-legacy-secret-keys >"$ROOT/remove-external-$managed.log" 2>&1; then
+    fail "$managed-managed External Secret was patched"
+  fi
+  grep -F 'HOOPDB_MIGRATION_URL mapping' "$ROOT/remove-external-$managed.log" >/dev/null \
+    || fail "$managed-managed External Secret refusal did not name the mapping"
+  grep -F 'backing-store value' "$ROOT/remove-external-$managed.log" >/dev/null \
+    || fail "$managed-managed External Secret refusal did not name the store action"
+  grep -Fq 'patch secret' "$LOG" && fail "$managed-managed External Secret reached a patch"
+done
+pass "legacy cleanup distinguishes NotFound, API errors and External Secrets ownership"
 
 # Terraform's chart_values pin sha256(server_ca_cert): the PEM with exactly one
 # trailing newline. The bundle written for the ConfigMap must be those bytes.

@@ -446,6 +446,38 @@ grep -q 'kubectl .*patch secret agent-relay-secrets' "$root/log" || fail "partia
 grep -q 'kubectl .*patch secret search-indexer-owner' "$root/log" || fail "partial cleanup did not attempt the second old key"
 pass "partial legacy-key cleanup retains the temporary credential and suppresses rollback"
 
+# ESO-owned Secrets must be changed at the ExternalSecret and backing store,
+# never patched behind the controller's back. Both supported ownership signals
+# fail as cleanup-only errors and retain the temporary credential.
+for managed in owner label; do
+  make_state; setup_mocks "$root/rel-ok" ok
+  mkdir -p "$root/secrets/agent-relay"
+  if [ "$managed" = owner ]; then
+    printf '{"metadata":{"ownerReferences":[{"kind":"ExternalSecret","name":"agent-relay-secrets"}]},"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' \
+      >"$root/secrets/agent-relay/agent-relay-secrets.json"
+  else
+    printf '{"metadata":{"labels":{"reconcile.external-secrets.io/managed":"true"}},"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' \
+      >"$root/secrets/agent-relay/agent-relay-secrets.json"
+  fi
+  printf '{"metadata":{},"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' \
+    >"$root/secrets/agent-relay/search-indexer-owner.json"
+  set +e
+  out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
+    --apply --db-instance prod-db --yes 2>&1)
+  external_rc=$?
+  set -e
+  [[ "$external_rc" != 0 ]] || fail "$managed-managed External Secret cleanup reported success"
+  grep -q 'HOOPDB_MIGRATION_URL mapping from its ExternalSecret' <<<"$out" \
+    || fail "$managed-managed cleanup did not name the ExternalSecret mapping: $out"
+  grep -q 'delete the backing-store value' <<<"$out" \
+    || fail "$managed-managed cleanup did not name the backing-store action: $out"
+  grep -q 'kubectl .*patch secret agent-relay-secrets' "$root/log" \
+    && fail "$managed-managed External Secret was patched"
+  grep -q '^rds-setup delete-admin-jobs' "$root/log" \
+    && fail "$managed-managed cleanup deleted the retained temporary credential"
+done
+pass "legacy cleanup refuses owner-referenced and labelled External Secrets"
+
 # 21. eks-native legacy upgrade with --rds-setup prepares the temporary Secret; without it, never
 make_state; setup_mocks "$root/rel-ok" ok
 out=$(run_rds "${args[@]}" --rds-setup --apply --db-instance prod-db --yes 2>&1) || fail "eks-native --rds-setup upgrade failed: $out"

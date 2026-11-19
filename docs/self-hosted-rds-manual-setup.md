@@ -432,12 +432,29 @@ old long-lived keys, then delete the temporary credential and local staging
 directory. A failed upgrade skips this block, retains the old keys for the
 previous revision, and deletes only `hoopdb-admin-jobs`.
 
+If either long-lived Secret is owned by an `ExternalSecret` or has the
+`reconcile.external-secrets.io/managed` label, do not run a Kubernetes patch.
+The loop below stops and names the key: remove that mapping from the
+ExternalSecret and delete its backing-store value, wait for reconciliation,
+then retry cleanup. Keep `hoopdb-admin-jobs` until this succeeds.
+
 ```bash
 for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
             search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
   secret="${pair%%:*}"; key="${pair#*:}"
-  if ! kubectl -n agent-relay get secret "$secret" -o json >"$ADMIN_JOB_DIR/$secret.json"; then
+  if ! kubectl -n agent-relay get secret "$secret" -o json \
+      >"$ADMIN_JOB_DIR/$secret.json" 2>"$ADMIN_JOB_DIR/$secret.err"; then
+    if grep -qi 'not[[:space:]]*found' "$ADMIN_JOB_DIR/$secret.err"; then
+      continue
+    fi
     echo "could not read $secret; leave hoopdb-admin-jobs in place and retry cleanup" >&2
+    exit 1
+  fi
+  if jq -e '
+      any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
+      ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' \
+      "$ADMIN_JOB_DIR/$secret.json" >/dev/null; then
+    echo "$secret is managed by External Secrets: remove the $key mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, and retry; leave hoopdb-admin-jobs in place" >&2
     exit 1
   fi
   if jq -e --arg k "$key" '.data[$k] != null' "$ADMIN_JOB_DIR/$secret.json" >/dev/null; then

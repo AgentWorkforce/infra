@@ -33,9 +33,6 @@
 #   NAMESPACE                   default agent-relay
 #   HELM_RELEASE                default agent-relay
 #   STATE_DIR                   default $HOME/.agent-relay-install (mode 0700)
-#   ALLOW_PRISTINE_HOOPDB_ACTIVATION
-#                               default false; set true only on a reviewed first
-#                               install whose provider already created empty hoopdb
 #
 # The Terraform example uses GOOGLE_MANAGED_CAS_CA and private Cloud DNS. This
 # script requires the certificate DNS name and verifies it with verify-full.
@@ -69,9 +66,6 @@ ADMIN_JOBS_SECRET=hoopdb-admin-jobs
 OWNER=hoopdb_owner
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
 SQL_DIR=/app/supabase/bootstrap
-ALLOW_PRISTINE_HOOPDB_ACTIVATION="${ALLOW_PRISTINE_HOOPDB_ACTIVATION:-false}"
-[[ "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == false || "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == true ]] \
-  || { echo "ALLOW_PRISTINE_HOOPDB_ACTIVATION must be true or false" >&2; exit 2; }
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 die() { log "ERROR: $*" >&2; exit 1; }
@@ -222,7 +216,8 @@ admin_url() {
 }
 
 write_legacy_admin_files() {
-  local owner; owner="$(admin_url hoopdb)"
+  local owner
+  owner="$(admin_url hoopdb)" || die "could not build the Cloud SQL administrator URL"
   write_file "$ADMIN_JOBS_SECRET" HOOPDB_MIGRATION_URL < <(printf '%s' "$owner")
   write_file "$ADMIN_JOBS_SECRET" RELAYHISTORY_PIPELINE_CONSUMER_SECRET < <(json_url hoopdb_url "$owner")
   rm -f "$FILES/agent-relay-secrets/HOOPDB_MIGRATION_URL" \
@@ -249,7 +244,7 @@ write_layout_values() {
 }
 
 remove_legacy_secret_keys() {
-  local pair secret key secret_json secret_error key_present
+  local pair secret key secret_json secret_error key_present externally_managed
   for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
               search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
     secret="${pair%%:*}"; key="${pair#*:}"
@@ -257,6 +252,13 @@ remove_legacy_secret_keys() {
     if ! kubectl -n "$NS" get secret "$secret" -o json >"$secret_json" 2>"$secret_error"; then
       grep -qi 'not[[:space:]]*found' "$secret_error" && continue
       die "could not read Secret $secret while removing legacy administrator keys"
+    fi
+    externally_managed="$(jq -r '
+      any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
+      ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json")" \
+      || die "could not parse Secret $secret while checking its owner"
+    if [[ "$externally_managed" == true ]]; then
+      die "Secret $secret is managed by External Secrets: remove the $key mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, then rerun cleanup; $ADMIN_JOBS_SECRET was retained"
     fi
     key_present="$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$secret_json")" \
       || die "could not parse Secret $secret while removing legacy administrator keys"
@@ -286,6 +288,10 @@ write_credential_files() {
 }
 
 do_pre() {
+  local admin_probe
+  admin_probe="$(admin_password)" || die "could not read the Cloud SQL administrator password"
+  [[ -n "$admin_probe" ]] || die "the Cloud SQL administrator password is empty"
+  unset admin_probe
   kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
   ensure_ca
 
@@ -296,21 +302,21 @@ do_pre() {
   cat >"$WORK/probe.sh" <<'EOS'
 set -eu
 Q="psql -X -A -t -v ON_ERROR_STOP=1"
-if [ -z "$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")" ]; then
+hoopdb_exists="$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")" \
+  || { echo 'could not inspect the HoopDb database; refusing' >&2; exit 3; }
+if [ -z "$hoopdb_exists" ]; then
   echo 'HOOPDB_LAYOUT=fresh-dedicated'; exit 0
 fi
-owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
+owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")" \
+  || { echo 'could not inspect the HoopDb owner; refusing' >&2; exit 3; }
 if [ "$owner" = hoopdb_owner ]; then
   echo 'HOOPDB_LAYOUT=dedicated-owner'
 elif [ "$owner" = "$PGUSER" ]; then
   pristine="$($Q -d hoopdb -c "
 select 1 where
- not exists (select 1 from pg_namespace where nspname not in ('pg_catalog','information_schema','public') and nspname !~ '^pg_toast')
- and not exists (select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public')
- and not exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public')
- and not exists (select 1 from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname='public')
- and not exists (select 1 from pg_default_acl)
- and not exists (select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker'))")"
+ to_regnamespace('sessions') is null
+ and not exists (select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker'))")" \
+    || { echo 'could not inspect whether HoopDb is pristine; refusing' >&2; exit 3; }
   if [ -n "$pristine" ]; then echo 'HOOPDB_LAYOUT=pristine-admin'; else echo 'HOOPDB_LAYOUT=legacy-admin'; fi
 else
   echo 'HOOPDB_LAYOUT=unknown-owner'
@@ -324,13 +330,8 @@ EOS
     log "resuming an interrupted fresh activation"
   fi
   if [[ "$probed_layout" == pristine-admin ]]; then
-    if [[ "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == true ]]; then
-      probed_layout=fresh-dedicated
-      log "activating the explicitly approved pristine administrator-owned HoopDb"
-    else
-      probed_layout=legacy-admin
-      log "pristine administrator-owned HoopDb detected; set ALLOW_PRISTINE_HOOPDB_ACTIVATION=true only for a reviewed first install"
-    fi
+    probed_layout=fresh-dedicated
+    log "pristine administrator-owned HoopDb detected; activating the fresh dedicated-owner layout"
   fi
   case "$probed_layout" in
     legacy-admin)
@@ -345,26 +346,35 @@ EOS
     *) die "HoopDb owner is neither the Cloud SQL administrator nor hoopdb_owner; refusing" ;;
   esac
 
-  local p pending_passwords="" missing_passwords=""
+  local p pending_passwords="" pending_candidates="" missing_passwords="" generated_passwords="" untrusted_passwords=""
   [[ ! -s "$PENDING_PASSWORDS_FILE" ]] || pending_passwords="$(<"$PENDING_PASSWORDS_FILE")"
   for p in control_owner control_api_runtime "$OWNER" sessions_pipeline_runtime relaycast_owner relaycast_runtime \
            bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
-    if [[ ! -s "$PW_DIR/$p" || " $pending_passwords " == *" $p "* ]]; then missing_passwords+=" $p"; fi
+    if [[ ! -s "$PW_DIR/$p" ]]; then
+      missing_passwords+=" $p"; generated_passwords+=" $p"
+    elif [[ " $pending_passwords " == *" $p "* ]]; then
+      pending_candidates+=" $p"
+    fi
     password_for "$p"
   done
-  if [[ -n "$missing_passwords" ]]; then
-    printf '%s\n' "${missing_passwords# }" >"$PENDING_PASSWORDS_FILE"; chmod 600 "$PENDING_PASSWORDS_FILE"
+  if [[ -s "$PENDING_ACTIVATION_FILE" && -n "$missing_passwords" ]]; then
+    for p in $generated_passwords; do rm -f "$PW_DIR/$p"; done
+    die "an interrupted activation lacks saved passwords for:${missing_passwords}; generated replacements were removed and the database and Secrets were left unchanged"
   fi
-  if [[ "$probed_layout" == dedicated-owner && -n "$missing_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
-    for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
+  untrusted_passwords="$missing_passwords$pending_candidates"
+  if [[ -n "$untrusted_passwords" ]]; then
+    printf '%s\n' "${untrusted_passwords# }" >"$PENDING_PASSWORDS_FILE"; chmod 600 "$PENDING_PASSWORDS_FILE"
+  fi
+  if [[ "$probed_layout" == dedicated-owner && -n "$untrusted_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
+    for p in $generated_passwords; do rm -f "$PW_DIR/$p"; done
     rm -f "$PENDING_PASSWORDS_FILE"
-    die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
+    die "dedicated-owner HoopDb exists but STATE_DIR lacked trusted saved passwords for:${untrusted_passwords}; database and Secrets were left unchanged"
   fi
   if [[ "$probed_layout" == fresh-dedicated && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
     printf 'fresh activation in progress\n' >"$PENDING_ACTIVATION_FILE"
     chmod 600 "$PENDING_ACTIVATION_FILE"
   fi
-  local missing_for_job="$missing_passwords"
+  local missing_for_job="$untrusted_passwords"
   if [[ "$probed_layout" == dedicated-owner && -s "$PENDING_ACTIVATION_FILE" ]]; then
     missing_for_job=""
   fi
@@ -374,14 +384,18 @@ set -eu
 P="psql -X -q -v ON_ERROR_STOP=1"
 Q="psql -X -A -t -v ON_ERROR_STOP=1"
 
-hoopdb_exists="$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")"
+hoopdb_exists="$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")" \
+  || { echo 'could not inspect the HoopDb database; refusing' >&2; exit 3; }
 if [ -z "$hoopdb_exists" ]; then
-  if [ -n "$($Q -d postgres -c "select 1 from pg_roles where rolname='session_directory_search_worker'")" ]; then
+  search_worker_exists="$($Q -d postgres -c "select 1 from pg_roles where rolname='session_directory_search_worker'")" \
+    || { echo 'could not inspect the search Worker role; refusing' >&2; exit 3; }
+  if [ -n "$search_worker_exists" ]; then
     echo "this Cloud SQL instance already belongs to another HoopDb install" >&2; exit 3
   fi
   owner="$PGUSER"
 else
-  owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
+  owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")" \
+    || { echo 'could not inspect the HoopDb owner; refusing' >&2; exit 3; }
   export PGDATABASE=hoopdb
 fi
 existing_dedicated=0
@@ -489,7 +503,8 @@ select count(*) from pg_auth_members m
 join pg_roles granted on granted.oid=m.roleid
 join pg_roles member on member.oid=m.member
 where granted.rolname in (select name from protected)
-   or member.rolname in (select name from protected)")"
+   or member.rolname in (select name from protected)")" \
+  || { echo 'could not inspect protected role memberships; refusing' >&2; exit 3; }
 echo "protected role membership edges: $protected_edges"
 [ "$protected_edges" = 0 ] || { echo 'protected HoopDb roles have membership edges; refusing' >&2; exit 3; }
 $Q -c "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
@@ -573,10 +588,14 @@ $P -c 'GRANT CONNECT ON DATABASE hoopdb TO bulls96_session_ingest'
 $P -f /sql/session_ingest_role_verify.sql
 $P -f /sql/session_ingest_verify.sql
 echo "ingest role ok"
-if [ -z "$($Q -c "select 1 from pg_roles where rolname='search_consumer_runtime'")" ]; then
+search_role_exists="$($Q -c "select 1 from pg_roles where rolname='search_consumer_runtime'")" \
+  || { echo 'could not inspect search_consumer_runtime; refusing' >&2; exit 3; }
+if [ -z "$search_role_exists" ]; then
   echo "search_consumer_runtime missing: migrations have not completed" >&2; exit 3
 fi
-if [ "$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")" = hoopdb_owner ]; then
+database_owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")" \
+  || { echo 'could not inspect the HoopDb owner; refusing' >&2; exit 3; }
+if [ "$database_owner" = hoopdb_owner ]; then
   $Q -c "select 1 from pg_roles where rolname='search_consumer_runtime' and rolcanlogin and not rolsuper and not rolcreaterole and not rolcreatedb" | grep -qx 1 \
     || { echo 'dedicated search consumer role has drifted' >&2; exit 3; }
 else

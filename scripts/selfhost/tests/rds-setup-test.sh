@@ -31,7 +31,11 @@ cat >"${MOCK_BIN}/aws" <<'MOCK'
 printf 'aws' >>"${MOCK_COMMAND_LOG}"
 printf ' %s' "$@" >>"${MOCK_COMMAND_LOG}"
 printf '\n' >>"${MOCK_COMMAND_LOG}"
-printf '{"username":"dbadmin","password":"admin-secret-material"}\n'
+case "${MOCK_ADMIN_SECRET_MODE:-valid}" in
+  fail) exit 1 ;;
+  empty) printf '{}\n' ;;
+  valid) printf '{"username":"dbadmin","password":"admin-secret-material"}\n' ;;
+esac
 MOCK
 
 cat >"${MOCK_BIN}/curl" <<'MOCK'
@@ -65,7 +69,10 @@ printf ' %s' "$@" >>"${MOCK_COMMAND_LOG}"
 printf '\n' >>"${MOCK_COMMAND_LOG}"
 for argument in "$@"; do
   case "$argument" in
-    --from-file=run.sh=*) cp "${argument#--from-file=run.sh=}" "$MOCK_CAPTURE_DIR/run.sh" ;;
+    --from-file=run.sh=*)
+      cp "${argument#--from-file=run.sh=}" "$MOCK_CAPTURE_DIR/run.sh"
+      case " $* " in *" agent-relay-rds-layout-probe-run "*) cp "${argument#--from-file=run.sh=}" "$MOCK_CAPTURE_DIR/probe.sh" ;; esac
+      ;;
     --from-file=session-erase-search.sql=*) cp "${argument#--from-file=session-erase-search.sql=}" "$MOCK_CAPTURE_DIR/erase.sql" ;;
   esac
 done
@@ -81,6 +88,25 @@ case " $* " in
   *" logs job/"*) printf 'fixture job completed\n'; exit 0 ;;
 esac
 exit 0
+MOCK
+
+cat >"${MOCK_BIN}/psql" <<'MOCK'
+#!/usr/bin/env bash
+query=""
+previous=""
+for argument in "$@"; do
+  if [[ "$previous" == -c ]]; then query="$argument"; fi
+  previous="$argument"
+done
+case "$query" in
+  *"server_version_num"*) printf '%s\n' "${MOCK_SERVER_VERSION:-170000}" ;;
+  *"select 1 from pg_database where datname='hoopdb'"*)
+    [[ "${MOCK_PSQL_FAIL_DATABASE:-0}" == 0 ]] || exit 1
+    [[ "${MOCK_DB_EXISTS:-1}" == 1 ]] && printf '1\n'
+    ;;
+  *"pg_get_userbyid(datdba)"*) printf '%s\n' "${MOCK_DB_OWNER:-dbadmin}" ;;
+  *"select 1 where"*) [[ "${MOCK_PRISTINE:-0}" == 1 ]] && printf '1\n' ;;
+esac
 MOCK
 
 chmod +x "${MOCK_BIN}"/*
@@ -111,6 +137,20 @@ set -e
 [[ "${mutable_rc}" != 0 ]] || fail "mutable services image was accepted"
 [[ "${mutable_output}" == *"must be pinned by digest"* ]] || fail "mutable image error was unclear"
 pass "mutable services image is rejected"
+
+for mode in fail empty; do
+  bad_state="${TEST_ROOT}/admin-$mode"
+  : >"${COMMAND_LOG}"
+  if MOCK_ADMIN_SECRET_MODE="$mode" STATE_DIR="$bad_state" bash "$RDS_SETUP" pre >"${TEST_ROOT}/admin-$mode.log" 2>&1; then
+    fail "$mode RDS administrator Secret was accepted"
+  fi
+  grep -Eq 'could not read|non-empty username and password' "${TEST_ROOT}/admin-$mode.log" \
+    || fail "$mode RDS administrator Secret refusal was unclear"
+  grep -q '^kubectl' "$COMMAND_LOG" && fail "$mode RDS administrator Secret reached a cluster write"
+  [[ ! -e "$bad_state/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL" ]] \
+    || fail "$mode RDS administrator Secret wrote an owner URL"
+done
+pass "failed and empty RDS administrator Secret reads stop before cluster or credential writes"
 
 pre_output="$(bash "${RDS_SETUP}" pre 2>&1)"
 [[ "${pre_output}" == *"pre done"* ]] || fail "pre mode did not finish"
@@ -167,41 +207,53 @@ MOCK_LAYOUT=dedicated-owner bash "${RDS_SETUP}" pre >/dev/null
 grep -q 'agent-relay-rds-layout-probe' "${COMMAND_LOG}" || fail "dedicated-owner rerun skipped classification"
 pass "dedicated-owner pre rerun leaves the database and role graph unchanged"
 
-# A provider-created empty database needs an explicit first-install assertion.
-# The in-cluster probe proves it has no user objects or HoopDb roles before the
-# wrapper accepts that assertion; without it, the conservative legacy path wins.
+# A provider-created database is a fresh install only after the probe proves
+# it has neither the sessions schema nor any HoopDb role.
 : >"${COMMAND_LOG}"
 MOCK_LAYOUT=pristine-admin bash "${RDS_SETUP}" pre >/dev/null
-! grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "unapproved pristine database was activated"
-[[ "$(<"${STATE_DIR}/hoopdb-layout")" == legacy-admin ]] || fail "unapproved pristine database did not fail safe"
-: >"${COMMAND_LOG}"
-ALLOW_PRISTINE_HOOPDB_ACTIVATION=true MOCK_LAYOUT=pristine-admin bash "${RDS_SETUP}" pre >/dev/null
-grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "approved pristine database was not activated"
-[[ "$(<"${STATE_DIR}/hoopdb-layout")" == dedicated-owner ]] || fail "approved pristine database did not become dedicated-owner"
-grep -q "not exists (select 1 from pg_default_acl)" "${RDS_SETUP}" \
-  || fail "pristine probe does not reject existing default privileges"
-pass "RDS activates a provider-created pristine HoopDb only with explicit first-install approval"
+grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "pristine provider-created database was not activated"
+[[ "$(<"${STATE_DIR}/hoopdb-layout")" == dedicated-owner ]] || fail "pristine database did not become dedicated-owner"
+grep -q "to_regnamespace('sessions') is null" "${RDS_SETUP}" \
+  || fail "pristine probe does not reject an existing sessions schema"
+grep -q "rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker')" "${RDS_SETUP}" \
+  || fail "pristine probe does not reject an existing HoopDb role"
+pass "RDS activates a classifier-proven pristine provider-created HoopDb"
 
-# An administrator-owned database is legacy unless this exact STATE_DIR says
-# a fresh activation was already in progress. That durable marker makes a
-# crash after CREATE DATABASE retryable without converting an unrelated
-# existing database.
+probe="$MOCK_CAPTURE_DIR/probe.sh"
+[[ -s "$probe" ]] || fail "RDS classifier probe was not captured"
+probe_out="$(PGUSER=dbadmin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=dbadmin MOCK_PRISTINE=1 sh "$probe")" \
+  || fail "pristine RDS probe failed"
+[[ "$probe_out" == HOOPDB_LAYOUT=pristine-admin ]] || fail "pristine RDS probe classified as: $probe_out"
+probe_out="$(PGUSER=dbadmin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=third_party MOCK_PRISTINE=0 sh "$probe")" \
+  || fail "third-party RDS probe failed"
+[[ "$probe_out" == HOOPDB_LAYOUT=unknown-owner ]] || fail "third-party RDS owner classified as: $probe_out"
+: >"${COMMAND_LOG}"
+if MOCK_LAYOUT=unknown-owner bash "$RDS_SETUP" pre >"$TEST_ROOT/unknown-owner.log" 2>&1; then
+  fail "third-party RDS owner was accepted by the wrapper"
+fi
+grep -q 'owned by neither the RDS administrator nor hoopdb_owner' "$TEST_ROOT/unknown-owner.log" \
+  || fail "third-party RDS owner refusal was unclear"
+! grep -q 'agent-relay-rds-pre-run' "$COMMAND_LOG" || fail "third-party RDS owner reached the mutating Job"
+if PGUSER=dbadmin MOCK_PSQL_FAIL_DATABASE=1 sh "$probe" >"$TEST_ROOT/probe-fail.log" 2>&1; then
+  fail "failed RDS pg_database query took a layout path"
+fi
+grep -q 'could not inspect the HoopDb database' "$TEST_ROOT/probe-fail.log" \
+  || fail "failed RDS pg_database query had no clear refusal"
+pass "RDS classifier executes pristine, third-party-owner and query-failure branches fail closed"
+
+# The RDS owner handoff is one transaction. A marker cannot convert an
+# administrator-owned non-pristine database; dedicated-owner convergence
+# removes a marker left after the commit.
 printf 'fresh activation in progress\n' >"${STATE_DIR}/.pending-hoopdb-activation"
 : >"${COMMAND_LOG}"
 MOCK_LAYOUT=legacy-admin bash "${RDS_SETUP}" pre >/dev/null
-grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "interrupted fresh activation did not resume"
-[[ ! -e "${STATE_DIR}/.pending-hoopdb-activation" ]] || fail "successful activation retained its pending marker"
+! grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "marker converted a legacy RDS database"
+[[ ! -e "${STATE_DIR}/.pending-hoopdb-activation" ]] || fail "legacy classification retained a stale pending marker"
 printf 'fresh activation in progress\n' >"${STATE_DIR}/.pending-hoopdb-activation"
 : >"${COMMAND_LOG}"
-MOCK_LAYOUT=pristine-admin bash "${RDS_SETUP}" pre >/dev/null
-grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "marked pristine activation did not resume"
-[[ ! -e "${STATE_DIR}/.pending-hoopdb-activation" ]] || fail "marked pristine retry retained its pending marker"
-: >"${COMMAND_LOG}"
-MOCK_LAYOUT=legacy-admin bash "${RDS_SETUP}" pre >/dev/null
-! grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "existing administrator-owned database was converted"
-[[ "$(<"${STATE_DIR}/hoopdb-layout")" == legacy-admin ]] || fail "administrator-owned database was not marked legacy"
 MOCK_LAYOUT=dedicated-owner bash "${RDS_SETUP}" pre >/dev/null
-pass "RDS classifier resumes marked legacy and pristine fresh activations"
+[[ ! -e "${STATE_DIR}/.pending-hoopdb-activation" ]] || fail "dedicated-owner rerun retained its activation marker"
+pass "RDS marker never converts legacy and is cleared after committed ownership"
 
 : >"${COMMAND_LOG}"
 set +e

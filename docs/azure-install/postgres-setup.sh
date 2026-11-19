@@ -217,7 +217,7 @@ write_layout_values() {
 }
 
 remove_legacy_secret_keys() {
-  local pair secret key secret_json secret_error key_present
+  local pair secret key secret_json secret_error key_present externally_managed
   for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
               search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
     secret="${pair%%:*}"; key="${pair#*:}"
@@ -225,6 +225,13 @@ remove_legacy_secret_keys() {
     if ! kubectl -n "$NS" get secret "$secret" -o json >"$secret_json" 2>"$secret_error"; then
       grep -qi 'not[[:space:]]*found' "$secret_error" && continue
       die "could not read Secret $secret while removing legacy administrator keys"
+    fi
+    externally_managed="$(jq -r '
+      any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
+      ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json")" \
+      || die "could not parse Secret $secret while checking its owner"
+    if [[ "$externally_managed" == true ]]; then
+      die "Secret $secret is managed by External Secrets: remove the $key mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, then rerun cleanup; $ADMIN_JOBS_SECRET was retained"
     fi
     key_present="$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$secret_json")" \
       || die "could not parse Secret $secret while removing legacy administrator keys"
@@ -261,14 +268,23 @@ do_pre() {
   ensure_ca
   fetch_sql
 
-  local p pending_passwords="" missing_passwords=""
+  local p pending_passwords="" pending_candidates="" missing_passwords="" generated_passwords="" untrusted_passwords=""
   [[ ! -s "$PENDING_PASSWORDS_FILE" ]] || pending_passwords="$(<"$PENDING_PASSWORDS_FILE")"
   for p in control_owner control_api_runtime "$OWNER" "$RUNTIME" bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
-    if [[ ! -s "$PW_DIR/$p" || " $pending_passwords " == *" $p "* ]]; then missing_passwords+=" $p"; fi
+    if [[ ! -s "$PW_DIR/$p" ]]; then
+      missing_passwords+=" $p"; generated_passwords+=" $p"
+    elif [[ " $pending_passwords " == *" $p "* ]]; then
+      pending_candidates+=" $p"
+    fi
     password_for "$p"
   done
-  if [[ -n "$missing_passwords" ]]; then
-    printf '%s\n' "${missing_passwords# }" >"$PENDING_PASSWORDS_FILE"; chmod 600 "$PENDING_PASSWORDS_FILE"
+  if [[ -s "$PENDING_ACTIVATION_FILE" && -n "$missing_passwords" ]]; then
+    for p in $generated_passwords; do rm -f "$PW_DIR/$p"; done
+    die "an interrupted activation lacks saved passwords for:${missing_passwords}; generated replacements were removed and the database and Secrets were left unchanged"
+  fi
+  untrusted_passwords="$missing_passwords$pending_candidates"
+  if [[ -n "$untrusted_passwords" ]]; then
+    printf '%s\n' "${untrusted_passwords# }" >"$PENDING_PASSWORDS_FILE"; chmod 600 "$PENDING_PASSWORDS_FILE"
   fi
 
   local db_owner legacy_schema legacy_runtime existing_dedicated=false
@@ -277,7 +293,7 @@ do_pre() {
      { legacy_schema="$(query_su hoopdb "select to_regnamespace('sessions')")" || die "could not inspect the HoopDb sessions schema";
        legacy_runtime="$(query_su hoopdb "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" || die "could not inspect the HoopDb runtime role";
        [[ -n "$legacy_schema" || -n "$legacy_runtime" ]]; }; then
-    for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
+    for p in $generated_passwords; do rm -f "$PW_DIR/$p"; done
     rm -f "$PENDING_PASSWORDS_FILE" "$PENDING_ACTIVATION_FILE"
     printf '%s\n' legacy-admin >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
     write_legacy_admin_files; write_layout_values legacy-admin
@@ -291,10 +307,10 @@ do_pre() {
     # failed, the generated files are the live credentials and must be reused.
     # An ordinary dedicated-owner rerun has no marker, so a newly generated
     # replacement for a missing saved password still fails closed.
-    if [[ -n "$missing_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
-      for p in $missing_passwords; do rm -f "$PW_DIR/$p"; done
+    if [[ -n "$untrusted_passwords" && ! -s "$PENDING_ACTIVATION_FILE" ]]; then
+      for p in $generated_passwords; do rm -f "$PW_DIR/$p"; done
       rm -f "$PENDING_PASSWORDS_FILE"
-      die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
+      die "dedicated-owner HoopDb exists but STATE_DIR lacked trusted saved passwords for:${untrusted_passwords}; database and Secrets were left unchanged"
     fi
     existing_dedicated=true
   fi

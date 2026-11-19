@@ -50,9 +50,9 @@ scripts/selfhost/rds-setup.sh pre
 
 Normally `pre` creates `hoopdb`. If the reviewed first-install Terraform
 configuration made literal `hoopdb` the provider-created initial database, run
-the first command with `ALLOW_PRISTINE_HOOPDB_ACTIVATION=true`. The script
-proves the database is pristine before activation. Omit this flag on later
-runs; it is not an ownership-transfer switch.
+the first command normally. The script proves the database has neither the
+`sessions` schema nor HoopDb roles before activation; this classification is
+not an ownership-transfer switch.
 
 Merge the generated `secret-files/` entries with the other release-packet
 secrets, then create the named Kubernetes Secrets before installing the chart.

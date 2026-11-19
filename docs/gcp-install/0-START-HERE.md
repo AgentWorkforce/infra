@@ -302,14 +302,13 @@ and `unset` with the values from 1-BRING-YOUR-OWN.md.
 ## 8. Set up the databases
 
 ```sh
-ALLOW_PRISTINE_HOOPDB_ACTIVATION=true bash cloud-sql-setup.sh pre
+bash cloud-sql-setup.sh pre
 ```
 
-The first-install flag is required because Terraform pre-creates an otherwise
-empty `hoopdb`. The script proves that database has no user schemas, objects,
-default privileges or HoopDb roles before it activates it. Omit the flag on
-later setup and upgrade runs; a non-pristine administrator-owned database is
-always treated as a legacy install and is never converted in place.
+Terraform pre-creates an otherwise empty `hoopdb`. The script proves that
+database has no `sessions` schema or HoopDb roles before it activates it. On
+later setup and upgrade runs, an administrator-owned database with either kind
+of state is always treated as a legacy install and is never converted in place.
 
 It creates the namespace, the `cloud-sql-ca` ConfigMap, the three databases
 and their roles (in a Job inside the cluster), and writes every database
@@ -468,7 +467,10 @@ covered by render tests; it has been proven on AWS (SSM), not yet on a live
 GKE install.
 
 ```sh
-# 1. Put the 19 values in Secret Manager (the same names as c).
+# 1. Put the 19 generated values in Secret Manager (the same names as c).
+#    Run cloud-sql-setup.sh pre first: on a fresh install its two HoopDb owner
+#    files contain hoopdb_owner URLs. The Cloud SQL administrator URL is never
+#    copied into Secret Manager or an ExternalSecret.
 VALS_GCPSM=$GCP_PROJECT_ID bash helm-secrets-prepare.sh && rm -f secrets.yaml
 # 2. A ServiceAccount for ESO to read them as, and its access (Workload Identity, no key).
 kubectl -n $NAMESPACE create serviceaccount agent-relay-external-secrets
@@ -507,16 +509,23 @@ start by themselves once it does.
   added since.
 - **A value changed in Secret Manager** reaches the Secret within an hour
   (`refreshInterval`); restart the pods that use it.
-- **After changing the Cloud SQL admin password**, the migration Jobs of the
-  next `helm upgrade` need the new one. Ask for a sync, then wait until both
-  ExternalSecrets report a refresh **later than your change** before you
-  upgrade (the annotation only asks; `Ready` alone does not prove it):
+- **After rotating `hoopdb_owner`**, update both generated owner URL values in
+  Secret Manager. Ask for a sync, then wait until both ExternalSecrets report
+  a refresh **later than your change** before you upgrade (the annotation only
+  asks; `Ready` alone does not prove it):
 
   ```sh
   kubectl -n $NAMESPACE annotate externalsecret agent-relay-secrets search-indexer-owner force-sync=$(date +%s) --overwrite
   kubectl -n $NAMESPACE get externalsecret agent-relay-secrets search-indexer-owner \
     -o custom-columns='NAME:.metadata.name,REFRESHED:.status.refreshTime,STATUS:.status.conditions[0].reason'
   ```
+- **Existing administrator-owned install:** the first upgrade uses the
+  temporary `hoopdb-admin-jobs` Secret. To remove the old long-lived keys from
+  ESO-managed Secrets, delete the `HOOPDB_MIGRATION_URL` and
+  `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` mappings from their ExternalSecrets
+  and delete those two values from Secret Manager. Wait for reconciliation;
+  do not patch the generated Kubernetes Secrets. Delete `hoopdb-admin-jobs`
+  only after the upgrade Jobs, Deployments, and this store-side cleanup succeed.
 - **`helm uninstall` deletes these five Secrets** (ESO owns them). The values
   stay in Secret Manager.
 

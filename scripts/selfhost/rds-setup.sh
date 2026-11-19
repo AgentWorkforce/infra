@@ -29,9 +29,6 @@
 #   KUBE_CONTEXT           kubectl context; empty uses the current context
 #   RELEASE                required in post mode; exact Helm release name
 #   MIGRATION_JOB          required in post mode; current rendered migrate Job
-#   ALLOW_PRISTINE_HOOPDB_ACTIVATION
-#                         default false; set true only on a reviewed first
-#                         install whose provider already created empty hoopdb
 #   PROVISION_ERASE_SEARCH_LOGIN  default 0; 1 activates the optional Postgres
 #                         eraser login after search bootstrap (not an erase flag)
 #
@@ -64,10 +61,7 @@ JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-600}"
 SQL_DIR=/app/supabase/bootstrap
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 KUBE_CONTEXT="${KUBE_CONTEXT:-}"
-ALLOW_PRISTINE_HOOPDB_ACTIVATION="${ALLOW_PRISTINE_HOOPDB_ACTIVATION:-false}"
 PROVISION_ERASE_SEARCH_LOGIN="${PROVISION_ERASE_SEARCH_LOGIN:-0}"
-[[ "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == false || "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == true ]] \
-  || { echo "ALLOW_PRISTINE_HOOPDB_ACTIVATION must be true or false" >&2; exit 2; }
 [[ "$PROVISION_ERASE_SEARCH_LOGIN" == 0 || "$PROVISION_ERASE_SEARCH_LOGIN" == 1 ]] || { echo "PROVISION_ERASE_SEARCH_LOGIN must be 0 or 1" >&2; exit 2; }
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
@@ -113,6 +107,18 @@ admin_json() {
     --secret-id "$RDS_ADMIN_SECRET_ARN" --query SecretString --output text
 }
 
+load_admin_json() {
+  if ! admin_json >"$WORK/admin.json"; then
+    rm -f "$WORK/admin.json"
+    die "could not read the RDS administrator Secret"
+  fi
+  if ! jq -e 'type == "object" and (.username | type == "string" and length > 0) and (.password | type == "string" and length > 0)' \
+      "$WORK/admin.json" >/dev/null; then
+    rm -f "$WORK/admin.json"
+    die "the RDS administrator Secret must contain non-empty username and password strings"
+  fi
+}
+
 # run_job NAME SCRIPT [password-name ...]: runs SCRIPT as the RDS admin in a Job
 # that has the SQL files from the services image at /sql and the RDS CA at /ca.
 run_job() {
@@ -124,7 +130,7 @@ run_job() {
     printf '%s' hoopdb_owner >"$secret_dir/PGUSER"
     cp "$PW_DIR/hoopdb_owner" "$secret_dir/PGPASSWORD"
   else
-    admin_json > "$WORK/admin.json"
+    load_admin_json
     jq -jr .username "$WORK/admin.json" > "$secret_dir/PGUSER"
     jq -jr .password "$WORK/admin.json" > "$secret_dir/PGPASSWORD"
     rm -f "$WORK/admin.json"
@@ -196,7 +202,7 @@ json_url() { # key url
 }
 
 admin_url() { # database
-  admin_json > "$WORK/admin.json"
+  load_admin_json
   local user pass
   user="$(jq -jr '.username | @uri' "$WORK/admin.json")"
   pass="$(jq -jr '.password | @uri' "$WORK/admin.json")"
@@ -227,7 +233,8 @@ write_credential_files() {
 # A legacy HoopDb migration owner is the RDS admin, whose password RDS rotates.
 # These files feed only the short-lived hoopdb-admin-jobs Secret.
 write_admin_files() {
-  local owner; owner="$(admin_url hoopdb)"
+  local owner
+  owner="$(admin_url hoopdb)" || die "could not build the RDS administrator URL"
   write_file "$ADMIN_JOBS_SECRET" HOOPDB_MIGRATION_URL < <(printf '%s' "$owner")
   write_file "$ADMIN_JOBS_SECRET" RELAYHISTORY_PIPELINE_CONSUMER_SECRET < <(json_url hoopdb_url "$owner")
   rm -f "$FILES/agent-relay-secrets/HOOPDB_MIGRATION_URL" \
@@ -292,6 +299,8 @@ ensure_ca() {
 }
 
 do_pre() {
+  load_admin_json
+  rm -f "$WORK/admin.json"
   kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
   ensure_ca
 
@@ -304,23 +313,27 @@ do_pre() {
   cat >"$WORK/probe.sh" <<'EOS'
 set -eu
 Q="psql -X -A -t -v ON_ERROR_STOP=1"
-version="$($Q -d postgres -c "select current_setting('server_version_num')::integer")"
-if [ -z "$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")" ]; then
+version="$($Q -d postgres -c "select current_setting('server_version_num')::integer")" \
+  || { echo 'could not read the PostgreSQL server version; refusing' >&2; exit 3; }
+hoopdb_exists="$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")" \
+  || { echo 'could not inspect the HoopDb database; refusing' >&2; exit 3; }
+if [ -z "$hoopdb_exists" ]; then
   if [ "$version" -ge 160000 ]; then echo 'HOOPDB_LAYOUT=fresh-dedicated'; else echo 'HOOPDB_LAYOUT=fresh-legacy'; fi
   exit 0
 fi
-owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
+owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")" \
+  || { echo 'could not inspect the HoopDb owner; refusing' >&2; exit 3; }
 if [ "$owner" = hoopdb_owner ]; then
   echo 'HOOPDB_LAYOUT=dedicated-owner'; exit 0
 fi
+if [ "$owner" != "$PGUSER" ]; then
+  echo 'HOOPDB_LAYOUT=unknown-owner'; exit 0
+fi
 pristine="$($Q -d hoopdb -c "
 select 1 where
- not exists (select 1 from pg_namespace where nspname not in ('pg_catalog','information_schema','public') and nspname !~ '^pg_toast')
- and not exists (select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public')
- and not exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public')
- and not exists (select 1 from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname='public')
- and not exists (select 1 from pg_default_acl)
- and not exists (select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker'))")"
+ to_regnamespace('sessions') is null
+ and not exists (select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker'))")" \
+  || { echo 'could not inspect whether HoopDb is pristine; refusing' >&2; exit 3; }
 if [ -n "$pristine" ]; then
   echo 'HOOPDB_LAYOUT=pristine-admin'; exit 0
 fi
@@ -329,21 +342,13 @@ EOS
   run_job agent-relay-rds-layout-probe "$WORK/probe.sh"
   local layout
   layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-rds-layout-probe.log" | tail -n 1)"
-  if [[ ( "$layout" == legacy-admin || "$layout" == pristine-admin ) && -s "$PENDING_ACTIVATION_FILE" ]]; then
-    layout=fresh-dedicated
-    log "resuming an interrupted fresh activation"
-  fi
   if [[ "$layout" == pristine-admin ]]; then
-    if [[ "$ALLOW_PRISTINE_HOOPDB_ACTIVATION" == true ]]; then
-      layout=fresh-dedicated
-      log "activating the explicitly approved pristine administrator-owned HoopDb"
-    else
-      layout=legacy-admin
-      log "pristine administrator-owned HoopDb detected; set ALLOW_PRISTINE_HOOPDB_ACTIVATION=true only for a reviewed first install"
-    fi
+    layout=fresh-dedicated
+    log "pristine administrator-owned HoopDb detected; activating the fresh dedicated-owner layout"
   fi
   case "$layout" in
     legacy-admin)
+      rm -f "$PENDING_ACTIVATION_FILE"
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
       write_admin_files; write_layout_values "$layout"
       log "existing administrator-owned HoopDb detected; database and roles were left unchanged"
@@ -355,6 +360,7 @@ EOS
       for p in "${password_roles[@]}"; do [[ -s "$PW_DIR/$p" ]] || missing_passwords+=" $p"; done
       [[ -z "$missing_passwords" ]] \
         || die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_passwords}; database and Secrets were left unchanged"
+      rm -f "$PENDING_ACTIVATION_FILE"
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
       write_credential_files; write_owner_files; write_layout_values "$layout"
       log "dedicated-owner HoopDb already active; database and roles were left unchanged"
@@ -367,6 +373,7 @@ EOS
     fresh-legacy)
       die "PostgreSQL 16 or later is required for a fresh dedicated-owner install; no database or role was changed. Existing PostgreSQL 15 installs stay on the legacy temporary-Secret path."
       ;;
+    unknown-owner) die "HoopDb is owned by neither the RDS administrator nor hoopdb_owner; refusing" ;;
     *) die "layout probe returned no recognised result; database was left unchanged" ;;
   esac
 
@@ -379,8 +386,11 @@ P="psql -X -q -v ON_ERROR_STOP=1"
 Q="psql -X -A -t -v ON_ERROR_STOP=1"
 
 # One HoopDb per RDS instance: this role is server-wide.
-if [ -z "$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")" ] && \
-   [ -n "$($Q -d postgres -c "select 1 from pg_roles where rolname='session_directory_search_worker'")" ]; then
+hoopdb_exists="$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")" \
+  || { echo 'could not inspect the HoopDb database; refusing' >&2; exit 3; }
+search_worker_exists="$($Q -d postgres -c "select 1 from pg_roles where rolname='session_directory_search_worker'")" \
+  || { echo 'could not inspect the search Worker role; refusing' >&2; exit 3; }
+if [ -z "$hoopdb_exists" ] && [ -n "$search_worker_exists" ]; then
   echo "this RDS instance already belongs to another HoopDb install; use a separate instance" >&2
   exit 3
 fi
@@ -533,7 +543,8 @@ select count(*) from pg_auth_members m
 join pg_roles granted on granted.oid=m.roleid
 join pg_roles member on member.oid=m.member
 where granted.rolname in (select name from protected)
-   or member.rolname in (select name from protected)")"
+   or member.rolname in (select name from protected)")" \
+  || { echo 'could not inspect protected role memberships; refusing' >&2; exit 3; }
 echo "protected role membership edges: $protected_edges"
 [ "$protected_edges" = 0 ] || { echo 'protected HoopDb roles have membership edges; refusing' >&2; exit 3; }
 $Q -c "select 'hoopdb owner: '||pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"
@@ -596,7 +607,9 @@ P="psql -X -q -v ON_ERROR_STOP=1"
 Q="psql -X -A -t -v ON_ERROR_STOP=1"
 
 if [ "$hoopdb_layout" = dedicated-owner ]; then
-  if [ -z "$($Q -c "select 1 from pg_roles where rolname='bulls96_read_api'")" ]; then
+  read_role_exists="$($Q -c "select 1 from pg_roles where rolname='bulls96_read_api'")" \
+    || { echo 'could not inspect bulls96_read_api; refusing' >&2; exit 3; }
+  if [ -z "$read_role_exists" ]; then
     echo 'bulls96_read_api does not exist: run rds-setup.sh pre first' >&2; exit 3
   fi
   sed '/^ALTER ROLE bulls96_read_api /d' /sql/session_read_api_role.sql > /tmp/session_read_api_role.sql
@@ -615,7 +628,9 @@ $P -f /sql/session_read_api_role_verify.sql
 echo "read API role ok"
 
 if [ "$hoopdb_layout" = dedicated-owner ]; then
-  if [ -z "$($Q -c "select 1 from pg_roles where rolname='bulls96_session_ingest'")" ]; then
+  ingest_role_exists="$($Q -c "select 1 from pg_roles where rolname='bulls96_session_ingest'")" \
+    || { echo 'could not inspect bulls96_session_ingest; refusing' >&2; exit 3; }
+  if [ -z "$ingest_role_exists" ]; then
     echo 'bulls96_session_ingest does not exist: run rds-setup.sh pre first' >&2; exit 3
   fi
   sed '/^ALTER ROLE bulls96_session_ingest /d' /sql/session_ingest_role.sql > /tmp/session_ingest_role.sql
@@ -634,7 +649,9 @@ $P -f /sql/session_ingest_role_verify.sql
 $P -f /sql/session_ingest_verify.sql
 echo "ingest role ok"
 
-if [ -z "$($Q -c "select 1 from pg_roles where rolname='search_consumer_runtime'")" ]; then
+search_role_exists="$($Q -c "select 1 from pg_roles where rolname='search_consumer_runtime'")" \
+  || { echo 'could not inspect search_consumer_runtime; refusing' >&2; exit 3; }
+if [ -z "$search_role_exists" ]; then
   echo "search_consumer_runtime does not exist: the migrations have not created it" >&2
   exit 3
 fi

@@ -529,12 +529,18 @@ Notes:
   `helm uninstall` deletes it. For Secrets created by hand before switching,
   set `creationPolicy: Merge` on those entries or delete the Secrets first.
 - A rotated parameter updates the Secret within `refreshInterval`; running pods
-  see it only after a restart (`kubectl rollout restart`). The HoopDb
-  migration URL uses the RDS admin login, so after RDS rotates the admin
-  password: update the parameter, force a sync
+  see it only after a restart (`kubectl rollout restart`). Fresh installs store
+  the dedicated `hoopdb_owner` URL, never the RDS administrator URL. Rotate
+  `hoopdb_owner` as the provider administrator, update both owner URL
+  parameters (`HOOPDB_MIGRATION_URL` and
+  `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`), force a sync
   (`kubectl annotate externalsecret agent-relay-secrets -n <namespace> force-sync=$(date +%s) --overwrite`),
   confirm the ExternalSecret's `status.refreshTime` is later than the update
   (`Ready=True` alone does not prove it), and only then run `helm upgrade`.
+- Existing administrator-owned installs use `hoopdb-admin-jobs` temporarily.
+  When removing their old long-lived keys, never patch an ESO-owned Secret.
+  Remove each key's mapping from the ExternalSecret and delete its backing-store
+  value, wait for reconciliation, and then delete `hoopdb-admin-jobs`.
 - The `rds-ca` ConfigMap is not a Secret; create it as before.
 
 ## Single-host mode

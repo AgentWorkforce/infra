@@ -218,11 +218,11 @@ scripts/selfhost/rds-setup.sh pre
 ```
 
 The standard environment creates `relaycontrol` as the initial RDS database,
-so `pre` creates `hoopdb` itself. If a reviewed new environment instead chose
-literal `hoopdb` as the provider-created initial database, run the first `pre`
-with `ALLOW_PRISTINE_HOOPDB_ACTIVATION=true`. The script first proves that it
-has no user schemas, objects, default privileges or HoopDb roles. Never set the
-flag to convert an existing installation; later runs omit it.
+so `pre` creates `hoopdb` itself. If a new environment instead chose literal
+`hoopdb` as the provider-created initial database, the script first proves
+that it has no `sessions` schema or HoopDb roles and then treats it as fresh.
+An administrator-owned database with either kind of state is classified as an
+existing legacy installation and is not converted.
 
 The command creates the `rds-ca` ConfigMap and mode-restricted Secret input
 files under `$STATE_DIR/secret-files`. It prints neither database passwords nor

@@ -605,13 +605,21 @@ prepare_legacy_admin_jobs() {
     || { say "   hoopdb-admin-jobs is absent; refusing before Helm changes anything"; false; }
 }
 remove_legacy_long_lived_keys() {
-  local pair s k secret_json secret_error key_present
+  local pair s k secret_json secret_error key_present externally_managed
   for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
     s=${pair%%:*}; k=${pair#*:}
     secret_json="$work/$s.json"; secret_error="$work/$s.err"
     if ! "${kube[@]}" get secret "$s" -o json >"$secret_json" 2>"$secret_error"; then
       grep -qi 'not[[:space:]]*found' "$secret_error" && continue
       say "   could not read Secret $s while removing legacy administrator keys"
+      return 1
+    fi
+    externally_managed=$(jq -r '
+      any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
+      ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json") \
+      || { say "   could not parse Secret $s while checking its owner"; return 1; }
+    if [ "$externally_managed" = true ]; then
+      say "   Secret $s is managed by External Secrets: remove the $k mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, then rerun this upgrade; hoopdb-admin-jobs was retained"
       return 1
     fi
     key_present=$(jq -r --arg k "$k" 'if .data[$k] == null then "no" else "yes" end' "$secret_json") \

@@ -4,15 +4,36 @@ Applies to every Kubernetes install (GKE, EKS, AKS).
 
 ## Why this matters
 
-Two long-lived Secrets hold the dedicated `hoopdb_owner` URL for HoopDb, the
-sessions database. That login is not a provider administrator, superuser, role
-creator or database creator, but it owns the HoopDb database and its objects:
+On a fresh install, two long-lived Secrets hold the dedicated `hoopdb_owner`
+URL for HoopDb, the sessions database. On an existing administrator-owned
+install, that statement becomes true only after the first successful upgrade
+through the temporary-Secret flow; until then the old keys may still contain
+the provider administrator URL. The dedicated login is not a provider
+administrator, superuser, role creator or database creator, but it owns the
+HoopDb database and its objects:
 
 | Secret | Key | Read by |
 | --- | --- | --- |
 | `agent-relay-secrets` | `HOOPDB_MIGRATION_URL` | The HoopDb migration Job (`<release>-worker-migrate`) on install and upgrade, and the one-off operator Jobs in the install guide |
 | `search-indexer-owner` | `RELAYHISTORY_PIPELINE_CONSUMER_SECRET` | The search indexer bootstrap Job and the output facts bootstrap Job |
 | `hoopdb-admin-jobs` (existing administrator-owned installs only, temporary) | Both keys above | Migration/bootstrap and guide Jobs while an operator has explicitly prepared the Secret |
+
+Check the two old administrator keys immediately after that first successful
+upgrade. Both commands must exit zero:
+
+```bash
+kubectl -n agent-relay get secret agent-relay-secrets -o json \
+  | jq -e '.data.HOOPDB_MIGRATION_URL == null'
+kubectl -n agent-relay get secret search-indexer-owner -o json \
+  | jq -e '.data.RELAYHISTORY_PIPELINE_CONSUMER_SECRET == null'
+```
+
+If either Secret is owned by an `ExternalSecret` (or carries the
+`reconcile.external-secrets.io/managed` label), do not patch it. Remove the
+named key from the ExternalSecret mapping and its backing-store value, wait
+for reconciliation, and repeat the checks. The setup and upgrade helpers
+refuse to patch an ESO-managed Secret and retain `hoopdb-admin-jobs` until the
+operator completes those store-side changes.
 
 No long-running pod reads either key: the services use their own least-privilege
 logins. But `agent-relay-secrets` also holds keys the running services do
@@ -197,9 +218,21 @@ Turn on audit logging for Secret reads so an unexpected one is visible:
   encryption with a Cloud KMS key on GKE, envelope encryption with a KMS key
   on EKS. It protects etcd and its backups, not the
   Kubernetes API, so it does not replace the steps above.
-- Rotate database credentials after the people who held them change. On fresh
-  installs the setup state and both long-lived keys must keep the same
-  `hoopdb_owner` password. On an existing administrator-owned install, rotate
+- Rotate database credentials after the people who held them change. There is
+  no `hoopdb_owner` rotation helper today. For a dedicated-owner install:
+  generate a new private password file; as the provider administrator run
+  `ALTER ROLE hoopdb_owner PASSWORD ...` with the password supplied on SQL
+  stdin (never argv); replace
+  `$STATE_DIR/passwords/hoopdb_owner`; rerun the platform setup script's `pre`
+  mode to regenerate its two local owner URL files; then update
+  `agent-relay-secrets/HOOPDB_MIGRATION_URL` and
+  `search-indexer-owner/RELAYHISTORY_PIPELINE_CONSUMER_SECRET` from those
+  files. If ESO owns either Secret, update its backing-store values instead
+  and wait for both ExternalSecrets to refresh. Verify a one-off migration
+  connection before deleting the old password. The ownership-transfer and
+  rotation helper remains follow-up work under
+  [#480](https://github.com/AgentWorkforce/infra/issues/480).
+  On an existing administrator-owned install, rotate
   the provider administrator normally, then rerun the platform setup helper's
   `pre`/`prepare-admin-jobs` flow immediately before the next upgrade; it
   creates `hoopdb-admin-jobs` from the current credential and removes it after
