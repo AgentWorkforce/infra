@@ -104,7 +104,7 @@ async function pend(broker: Broker, req: CredentialRequest, from = WORKER) {
 
 const withDelegate = (over: Partial<DelegatedApprover>): Allowlist => ({ ...allowlist, delegatedApprovers: [{ ...allowlist.delegatedApprovers![0]!, ...over }] });
 
-test("the shipped delegation: neon-exit-lead-2, pinned by agent id, six requesters, one literal instance, expiring 2026-11-21", () => {
+test("the shipped delegation: neon-exit-lead-2, pinned by agent id, six requesters, one literal instance, expiring 2026-11-23", () => {
   // Pinned to neon-exit-lead-2's Relaycast agent_id (read from cast.agentrelay.com with the broker's
   // observer token, 2026-11-17; its address is neon-exit-lead-2@sf-mac-mini-desktop).
   assert.deepEqual(delegationConfigProblems(shipped), []);
@@ -114,7 +114,7 @@ test("the shipped delegation: neon-exit-lead-2, pinned by agent id, six requeste
   const [d, ...rest] = shipped.delegatedApprovers!;
   assert.equal(rest.length, 0);
   assert.equal(d!.agent, DELEGATE);
-  assert.equal(d!.expiresAt, "2026-11-21T00:00:00Z");
+  assert.equal(d!.expiresAt, "2026-11-23T00:00:00Z");
   assert.equal(d!.grantedBy, "khaliq-gant");
   assert.deepEqual(d!.requesters, ["legacy-copy", "cloud-db-rehearsal", "cloud-db-driver", "cloud-db-driver-sites", "turns-gates", "sessions-edges"]);
   assert.ok(!d!.requesters.some((r) => r.startsWith("neonexit-")), "reviewers and validators are never requesters");
@@ -185,10 +185,10 @@ test("happy path: a worker's request naming the delegate goes to it; its own DM 
   const { broker, calls, audit } = setup();
   const { r, text } = await pend(broker, secretsReq());
   assert.equal(r.approver, DELEGATE, "the reply says who to send the approval prompt to");
-  assert.match(r.approvalPrompt!, /as a delegate of khaliq-gant until 2026-11-21T00:00:00Z/);
+  assert.match(r.approvalPrompt!, /as a delegate of khaliq-gant until 2026-11-23T00:00:00Z/);
   const ok = await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER);
   assert.equal(ok.outcome, "issued", ok.reasons.join("; "));
-  assert.match(ok.reasons.join("; "), /approved by neon-exit-lead-2 \(delegated by khaliq-gant, capability neon-exit, until 2026-11-21T00:00:00Z\)/);
+  assert.match(ok.reasons.join("; "), /approved by neon-exit-lead-2 \(delegated by khaliq-gant, capability neon-exit, until 2026-11-23T00:00:00Z\)/);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.sessionName, WORKER, "the credentials are the requester's, not the delegate's");
   const approved = audit().find((l) => l.kind === "approved")!;
@@ -196,7 +196,7 @@ test("happy path: a worker's request naming the delegate goes to it; its own DM 
   assert.equal(approved.policyDigest, r.policyDigest);
   assert.equal(approved.approver!.name, DELEGATE);
   assert.equal(approved.relayMessageId, "1000002");
-  assert.deepEqual(approved.delegation, { delegate: DELEGATE, capability: "neon-exit", grants: ["neon-exit-secrets"], expiresAt: "2026-11-21T00:00:00Z" });
+  assert.deepEqual(approved.delegation, { delegate: DELEGATE, capability: "neon-exit", grants: ["neon-exit-secrets"], expiresAt: "2026-11-23T00:00:00Z" });
 });
 
 test("happy path, SSM: only on instances tagged project=neon-exit, enforced by a deny in the session policy", async () => {
@@ -237,11 +237,11 @@ test("a mixed request (secret write plus SSM session) delegates: each service's 
 });
 
 test("an expired delegate is refused, and so is a delegation set to run past 30 days", async () => {
-  const late = setup(allowlist, new Date("2026-11-21T00:00:00Z"));
+  const late = setup(allowlist, new Date("2026-11-23T00:00:00Z"));
   const { text } = await pend(late.broker, secretsReq());
   const r = await late.broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER);
   assert.equal(r.outcome, "error");
-  assert.match(r.reasons[0]!, /delegation expired at 2026-11-21T00:00:00Z/);
+  assert.match(r.reasons[0]!, /delegation expired at 2026-11-23T00:00:00Z/);
   assert.equal(late.calls.length, 0);
   assert.equal(late.audit().at(-1)!.kind, "approval-rejected");
 
