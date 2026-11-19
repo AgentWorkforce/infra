@@ -274,7 +274,10 @@ class LauncherTests(unittest.TestCase):
 
                 self.assertTrue(finished(0, ["watching", "restore_complete"]))
                 self.assertFalse(marker.exists())
-                for returncode, events in ((1, ["restore_incomplete"]), (0, ["watching"]), (1, ["restore_complete"])):
+                # The watcher restores in finally and re-raises what stopped it: exit 1 after a full restore.
+                self.assertTrue(finished(1, ["watching", "refused", "restore_complete"]))
+                self.assertFalse(marker.exists())
+                for returncode, events in ((1, ["restore_incomplete"]), (0, ["watching"]), (None, [])):
                     with self.subTest(returncode=returncode, events=events):
                         self.assertFalse(finished(returncode, events))
                         self.assertTrue(json.loads(marker.read_text())["failed"])

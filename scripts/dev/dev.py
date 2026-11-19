@@ -390,19 +390,24 @@ class Supervisor:
         return process
 
     def backends_restored(self, process):
-        """Only a clean exit whose own log reports restore_complete counts as restored."""
-        if process.returncode != 0:
-            return False
+        """The watcher's own restore result for this run, not its exit status.
+
+        ci/agent-relay/dev/dev.py restores in a finally block and then re-raises
+        whatever stopped it (for example protected_source_changed), so exit 1 can
+        follow a complete restore. Its last restore event in this run decides.
+        """
+        result = None
         try:
             with (STATE / "backends.log").open() as stream:
                 stream.seek(self.backend_log_offset or 0)
                 for line in stream:
                     with suppress(ValueError, AttributeError):
-                        if json.loads(line).get("stage") == "restore_complete":
-                            return True
+                        stage = json.loads(line).get("stage")
+                        if stage in {"restore_complete", "restore_incomplete"}:
+                            result = stage
         except OSError:
             pass
-        return False
+        return result == "restore_complete"
 
     def check(self):
         for name, process in self.children:
