@@ -12,8 +12,10 @@ BIN="$ROOT/bin"
 STATE="$ROOT/state"
 LOG="$ROOT/commands.log"
 CAPTURE="$ROOT/capture"
+SQL_LOG="$ROOT/sql.log"
 mkdir -p "$BIN" "$CAPTURE"
 : >"$LOG"
+: >"$SQL_LOG"
 
 fail() { printf 'not ok - cloud-sql-setup: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok - cloud-sql-setup: %s\n' "$*"; }
@@ -33,6 +35,19 @@ cat >"$BIN/openssl" <<'MOCK'
 #!/usr/bin/env bash
 [[ "$1" == rand && "$2" == -hex ]] || exit 1
 printf '%048d' 0
+MOCK
+
+cat >"$BIN/psql" <<'MOCK'
+#!/usr/bin/env bash
+printf 'psql %s\n' "$*" >>"$MOCK_SQL_LOG"
+case "$*" in
+  *"select 1 from pg_database where datname='hoopdb'"*) printf '1\n' ;;
+  *"select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"*) printf 'hoopdb_owner\n' ;;
+  *)
+    payload="$(cat)"
+    printf 'stdin %s\n' "$payload" >>"$MOCK_SQL_LOG"
+    ;;
+esac
 MOCK
 
 cat >"$BIN/helm" <<'MOCK'
@@ -59,7 +74,15 @@ cat >"$BIN/kubectl" <<'MOCK'
 set -euo pipefail
 printf 'kubectl %s\n' "$*" >>"$MOCK_LOG"
 for argument in "$@"; do
-  case "$argument" in --from-file=run.sh=*) cp "${argument#--from-file=run.sh=}" "$MOCK_CAPTURE/run.sh" ;; esac
+  case "$argument" in
+    --from-file=run.sh=*) cp "${argument#--from-file=run.sh=}" "$MOCK_CAPTURE/run.sh" ;;
+    --from-file=*)
+      source_path="${argument#--from-file=}"
+      if [[ -d "$source_path" && -f "$source_path/MISSING_STATE_NAMES" ]]; then
+        cp "$source_path/MISSING_STATE_NAMES" "$MOCK_CAPTURE/MISSING_STATE_NAMES"
+      fi
+      ;;
+  esac
 done
 case " $* " in
   *" create configmap "*" --dry-run=client "*)
@@ -80,7 +103,13 @@ case " $* " in
   *" get namespace "*) ;;
   *" create namespace "*) ;;
   *" delete "*) ;;
-  *" logs job/agent-relay-cloud-sql-pre"*) printf 'setup output without credentials\nHOOPDB_LAYOUT=%s\n' "${MOCK_LAYOUT:-fresh-dedicated}" ;;
+  *" logs job/agent-relay-cloud-sql-pre"*)
+    if [[ "${MOCK_DEDICATED_MISSING:-false}" == true ]]; then
+      printf 'setup output without credentials\nHOOPDB_STATE=dedicated-owner-missing\n'
+    else
+      printf 'setup output without credentials\nHOOPDB_LAYOUT=%s\n' "${MOCK_LAYOUT:-fresh-dedicated}"
+    fi
+    ;;
   *" logs job/"*) printf 'setup output without credentials\n' ;;
   *" get job agent-relay-worker-migrate-current -o json "*)
     if [[ "${MOCK_MIGRATION_STATUS:-complete}" == failed ]]; then
@@ -103,6 +132,7 @@ chmod +x "$BIN"/*
 export PATH="$BIN:$PATH"
 export MOCK_LOG="$LOG"
 export MOCK_CAPTURE="$CAPTURE"
+export MOCK_SQL_LOG="$SQL_LOG"
 export GCP_PROJECT_ID=example
 export CLOUD_SQL_INSTANCE=agent-relay-pg
 export CLOUD_SQL_HOST=db.example.sql-psa.goog.
@@ -151,6 +181,43 @@ grep -F 'for f in session_directory_search_worker session_token_verifier session
 grep -F 'protected role membership edges:' "$CAPTURE/run.sh" >/dev/null \
   || fail "dedicated rerun omits the protected-role membership census"
 pass "dedicated-owner pre rerun finishes an interrupted pre and reuses saved passwords"
+
+secret_hashes_before="$(find "$STATE/secret-files" -type f -print0 | sort -z | xargs -0 sha256sum)"
+rm "$STATE/passwords/relaycast_runtime"
+: >"$LOG"
+if MOCK_DEDICATED_MISSING=true MOCK_SETUP_JOB_FAILED=true MOCK_LAYOUT=dedicated-owner \
+    "$TEST_BASH" "$SCRIPT" pre >"$ROOT/pre-dedicated-missing.log" 2>&1; then
+  fail "dedicated-owner rerun accepted missing saved credential state"
+fi
+grep -F 'STATE_DIR lacked saved passwords for: relaycast_runtime' "$ROOT/pre-dedicated-missing.log" >/dev/null \
+  || fail "missing saved credential state diagnostic is absent"
+[[ "$(cat "$CAPTURE/MISSING_STATE_NAMES")" == " relaycast_runtime" ]] \
+  || fail "setup Job did not receive only the missing credential name"
+missing_exit_line="$(grep -n "HOOPDB_STATE=dedicated-owner-missing" "$CAPTURE/run.sh" | head -1 | cut -d: -f1)"
+first_write_line="$(grep -n '^for db in relaycontrol hoopdb relaycast; do' "$CAPTURE/run.sh" | head -1 | cut -d: -f1)"
+[[ -n "$missing_exit_line" && -n "$first_write_line" && "$missing_exit_line" -lt "$first_write_line" ]] \
+  || fail "missing-state refusal does not precede CREATE, ALTER ROLE and GRANT statements"
+: >"$SQL_LOG"
+if PGUSER=cloud-admin MISSING_STATE_NAMES=' relaycast_runtime' sh "$CAPTURE/run.sh" \
+    >"$ROOT/pre-dedicated-missing-job.log" 2>&1; then
+  fail "generated setup Job accepted missing saved credential state"
+fi
+grep -F 'saved credential state lacks: relaycast_runtime; refusing before database changes' \
+  "$ROOT/pre-dedicated-missing-job.log" >/dev/null \
+  || fail "generated setup Job lacks the early refusal diagnostic"
+if grep -Eq 'ALTER[[:space:]]+ROLE.*PASSWORD|CREATE|GRANT' "$SQL_LOG"; then
+  fail "missing-state setup Job executed ALTER ROLE PASSWORD, CREATE or GRANT"
+fi
+[[ ! -e "$STATE/passwords/relaycast_runtime" ]] \
+  || fail "dedicated-owner refusal retained the newly generated password"
+[[ "$(find "$STATE/secret-files" -type f -print0 | sort -z | xargs -0 sha256sum)" == "$secret_hashes_before" ]] \
+  || fail "dedicated-owner refusal rewrote a long-lived Secret file"
+if grep -Fq 'patch secret ' "$LOG"; then
+  fail "dedicated-owner refusal patched a live Kubernetes Secret"
+fi
+password_for_repair="$STATE/passwords/relaycast_runtime"
+printf '%048d' 0 >"$password_for_repair"; chmod 600 "$password_for_repair"
+pass "dedicated-owner rerun refuses missing saved state before database or Secret writes"
 
 : >"$LOG"
 MOCK_LAYOUT=legacy-admin "$TEST_BASH" "$SCRIPT" pre >/dev/null

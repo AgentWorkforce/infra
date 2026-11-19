@@ -41,6 +41,10 @@ membership_line="$(line_of 'protected role membership edges:')"
 credentials_line="$(last_line_of 'write_credential_files')"
 [[ -n "$membership_line" && -n "$credentials_line" && "$membership_line" -lt "$credentials_line" ]] \
   || fail "credentials can be written before membership verification"
+missing_state_line="$(line_of 'dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords')"
+first_control_write_line="$(line_of '# Control: its own database.')"
+[[ -n "$missing_state_line" && -n "$first_control_write_line" && "$missing_state_line" -lt "$first_control_write_line" ]] \
+  || fail "missing dedicated-owner credential state can reach an ALTER ROLE, CREATE or GRANT"
 pass "dedicated-owner rerun resumes after an interrupted owner transaction"
 
 prepare_body="$(awk '/^do_prepare-admin-jobs\(\)/{capture=1} capture{print} capture && /^}$/{exit}' "$SCRIPT")"

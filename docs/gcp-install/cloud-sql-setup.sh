@@ -141,14 +141,17 @@ ensure_ca() {
   log "cloud-sql-ca ConfigMap applied; sha256 $(cat "$STATE_DIR/cloud-sql-ca.sha256")"
 }
 
-# run_job NAME SCRIPT [password-name ...]
+# run_job NAME SCRIPT MISSING_STATE_NAMES [password-name ...]
 run_job() {
-  local name="$1" script="$2"; shift 2
+  local name="$1" script="$2" missing_state_names="$3"; shift 3
   JOB_SECRET="$name-secret"
   local secret_dir="$WORK/$name-secret" p
   mkdir -p "$secret_dir"
   printf '%s' "$CLOUD_SQL_ADMIN_USER" >"$secret_dir/PGUSER"
   admin_password >"$secret_dir/PGPASSWORD"
+  # Names only: the in-cluster classifier must refuse an existing dedicated
+  # owner before it uses any newly generated credential value.
+  printf '%s' "$missing_state_names" >"$secret_dir/MISSING_STATE_NAMES"
   for p in "$@"; do cp "$PW_DIR/$p" "$secret_dir/$p"; done
 
   kubectl -n "$NS" delete job "$name" --ignore-not-found >/dev/null
@@ -186,7 +189,14 @@ run_job() {
   kubectl -n "$NS" delete secret "$JOB_SECRET" --ignore-not-found >/dev/null
   JOB_SECRET=""
   kubectl -n "$NS" delete configmap "$name-run" --ignore-not-found >/dev/null
-  [[ "$ok" == 1 ]] || die "job $name did not succeed (inspect the retained Job)"
+  if [[ "$ok" != 1 ]]; then
+    if [[ "$name" == agent-relay-cloud-sql-pre ]] && \
+       grep -qx 'HOOPDB_STATE=dedicated-owner-missing' "$WORK/$name.log"; then
+      for p in $missing_state_names; do rm -f "$PW_DIR/$p"; done
+      die "dedicated-owner HoopDb exists but STATE_DIR lacked saved passwords for:${missing_state_names}; database and Secrets were left unchanged"
+    fi
+    die "job $name did not succeed (inspect the retained Job)"
+  fi
   log "job $name succeeded"
 }
 
@@ -268,29 +278,39 @@ set -eu
 P="psql -X -q -v ON_ERROR_STOP=1"
 Q="psql -X -A -t -v ON_ERROR_STOP=1"
 
-if [ -z "$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")" ] && \
-   [ -n "$($Q -d postgres -c "select 1 from pg_roles where rolname='session_directory_search_worker'")" ]; then
-  echo "this Cloud SQL instance already belongs to another HoopDb install" >&2; exit 3
+hoopdb_exists="$($Q -d postgres -c "select 1 from pg_database where datname='hoopdb'")"
+if [ -z "$hoopdb_exists" ]; then
+  if [ -n "$($Q -d postgres -c "select 1 from pg_roles where rolname='session_directory_search_worker'")" ]; then
+    echo "this Cloud SQL instance already belongs to another HoopDb install" >&2; exit 3
+  fi
+  owner="$PGUSER"
+else
+  owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
+  export PGDATABASE=hoopdb
 fi
-for db in relaycontrol hoopdb relaycast; do
-  printf '%s\n' "SELECT 'CREATE DATABASE $db' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname='$db') \\gexec" | $P -d postgres
-done
-echo "databases ready"
-
-export PGDATABASE=hoopdb
-owner="$($Q -d postgres -c "select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'")"
 existing_dedicated=0
-if [ "$owner" = "$PGUSER" ] && { [ -n "$($Q -c "select to_regnamespace('sessions')")" ] || [ -n "$($Q -c "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" ]; }; then
+if [ -n "$hoopdb_exists" ] && [ "$owner" = "$PGUSER" ] && \
+   { [ -n "$($Q -c "select to_regnamespace('sessions')")" ] || [ -n "$($Q -c "select 1 from pg_roles where rolname='sessions_pipeline_runtime'")" ]; }; then
   echo 'HOOPDB_LAYOUT=legacy-admin'
   exit 0
 fi
 if [ "$owner" = 'hoopdb_owner' ]; then
   existing_dedicated=1
+  if [ -n "$MISSING_STATE_NAMES" ]; then
+    echo 'HOOPDB_STATE=dedicated-owner-missing'
+    echo "dedicated-owner HoopDb exists but saved credential state lacks:$MISSING_STATE_NAMES; refusing before database changes" >&2
+    exit 3
+  fi
 elif [ "$owner" != "$PGUSER" ]; then
   echo "HoopDb owner is neither the Cloud SQL administrator nor hoopdb_owner; refusing" >&2
   exit 3
 fi
 unset PGDATABASE
+
+for db in relaycontrol hoopdb relaycast; do
+  printf '%s\n' "SELECT 'CREATE DATABASE $db' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname='$db') \\gexec" | $P -d postgres
+done
+echo "databases ready"
 
 $P -d relaycontrol -v p1="$control_owner" -v p2="$control_api_runtime" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN', r) FROM unnest(ARRAY['control_owner','control_api_runtime']) r WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=r) \gexec
@@ -379,8 +399,9 @@ else
   echo 'HOOPDB_LAYOUT=fresh-dedicated'
 fi
 EOS
-  run_job agent-relay-cloud-sql-pre "$WORK/run.sh" control_owner control_api_runtime "$OWNER" \
-    sessions_pipeline_runtime search_consumer_runtime relaycast_owner relaycast_runtime
+  run_job agent-relay-cloud-sql-pre "$WORK/run.sh" "$missing_passwords" \
+    control_owner control_api_runtime "$OWNER" sessions_pipeline_runtime \
+    search_consumer_runtime relaycast_owner relaycast_runtime
   local layout
   layout="$(sed -n 's/^HOOPDB_LAYOUT=//p' "$WORK/agent-relay-cloud-sql-pre.log" | tail -n 1)"
   case "$layout" in
@@ -462,7 +483,8 @@ for role in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
   PGUSER="$role" PGPASSWORD="$secret" $Q -c "select 'login ok: '||session_user||' tls='||(select ssl from pg_stat_ssl where pid=pg_backend_pid())"
 done
 EOS
-  run_job agent-relay-cloud-sql-post "$WORK/run.sh" bulls96_read_api bulls96_session_ingest search_consumer_runtime
+  run_job agent-relay-cloud-sql-post "$WORK/run.sh" "" \
+    bulls96_read_api bulls96_session_ingest search_consumer_runtime
   log "post done; restart the read API, ingest edge and search indexer"
 }
 
