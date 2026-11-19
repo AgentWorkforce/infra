@@ -253,6 +253,9 @@ remove_legacy_secret_keys() {
       grep -qi 'not[[:space:]]*found' "$secret_error" && continue
       die "could not read Secret $secret while removing legacy administrator keys"
     fi
+    key_present="$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$secret_json")" \
+      || die "could not parse Secret $secret while removing legacy administrator keys"
+    [[ "$key_present" == no ]] && continue
     externally_managed="$(jq -r '
       any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
       ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json")" \
@@ -260,13 +263,9 @@ remove_legacy_secret_keys() {
     if [[ "$externally_managed" == true ]]; then
       die "Secret $secret is managed by External Secrets: remove the $key mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, then rerun cleanup; $ADMIN_JOBS_SECRET was retained"
     fi
-    key_present="$(jq -r --arg key "$key" 'if .data[$key] == null then "no" else "yes" end' "$secret_json")" \
-      || die "could not parse Secret $secret while removing legacy administrator keys"
-    if [[ "$key_present" == yes ]]; then
-      kubectl -n "$NS" patch secret "$secret" --type=merge \
-        -p "{\"data\":{\"$key\":null}}" >/dev/null
-      log "removed legacy administrator key $secret/$key"
-    fi
+    kubectl -n "$NS" patch secret "$secret" --type=merge \
+      -p "{\"data\":{\"$key\":null}}" >/dev/null
+    log "removed legacy administrator key $secret/$key"
   done
 }
 

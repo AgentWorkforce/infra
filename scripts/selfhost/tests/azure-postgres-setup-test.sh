@@ -84,7 +84,11 @@ grep -Fq 'has("reconcile.external-secrets.io/managed")' "$SCRIPT" \
   || fail "Azure cleanup does not detect the ESO managed label"
 grep -Fq 'remove the $key mapping from its ExternalSecret and delete the backing-store value' "$SCRIPT" \
   || fail "Azure cleanup does not name the ESO mapping and store actions"
-pass "Azure cleanup refuses to patch External Secrets managed keys"
+key_check_line="$(line_of 'key_present="$(jq -r --arg key "$key"')"
+external_check_line="$(line_of 'externally_managed="$(jq -r')"
+[[ -n "$key_check_line" && -n "$external_check_line" && "$key_check_line" -lt "$external_check_line" ]] \
+  || fail "Azure cleanup checks ESO ownership before seeing that the mapped key is already absent"
+pass "Azure cleanup refuses managed keys but accepts an already-absent ESO key"
 
 finalize_guard="$(line_of '[[ -s "$LAYOUT_FILE" ]] || die "missing HoopDb layout marker: run')"
 finalize_read="$(line_of 'layout="$(<"$LAYOUT_FILE")"')"

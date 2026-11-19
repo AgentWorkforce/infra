@@ -215,10 +215,17 @@ index_census_cleanup() {
   census_name=""
 }
 admin_jobs_cleanup() {
+  local cleanup_command
   $admin_jobs_created || return 0
-  env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir" \
-    "$here/rds-setup.sh" delete-admin-jobs >/dev/null 2>&1 || true
+  if ! env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir" \
+      "$here/rds-setup.sh" delete-admin-jobs >/dev/null 2>&1; then
+    printf -v cleanup_command 'NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q delete-admin-jobs' \
+      "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+    say "WARNING: could not delete hoopdb-admin-jobs; the administrator credential may still be live. Remove it with:"
+    say "  $cleanup_command"
+  fi
   admin_jobs_created=false
+  return 0
 }
 trap 'index_census_cleanup; admin_jobs_cleanup; rm -rf "$work"' EXIT
 trap 'exit 130' INT
@@ -575,7 +582,7 @@ rollback_hint() {
       rollback_helm="helm -n $(printf '%q' "$namespace")"
       [ -z "$context" ] || rollback_helm+=" --kube-context $(printf '%q' "$context")"
       rollback_helm+=" rollback $(printf '%q' "$release") $(printf '%q' "$current_rev") --wait --wait-for-jobs --timeout 15m"
-      say "   the failed run deleted its temporary administrator Job Secret. Roll back in this order:"
+      say "   the failed run asked its exit handler to delete the temporary administrator Job Secret; a WARNING after this block means manual cleanup is still required. Roll back in this order:"
       say "     $rollback_prepare"
       say "     $rollback_helm"
       say "     $rollback_delete"
@@ -614,6 +621,9 @@ remove_legacy_long_lived_keys() {
       say "   could not read Secret $s while removing legacy administrator keys"
       return 1
     fi
+    key_present=$(jq -r --arg k "$k" 'if .data[$k] == null then "no" else "yes" end' "$secret_json") \
+      || { say "   could not parse Secret $s while removing legacy administrator keys"; return 1; }
+    [ "$key_present" = no ] && continue
     externally_managed=$(jq -r '
       any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
       ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json") \
@@ -622,18 +632,14 @@ remove_legacy_long_lived_keys() {
       say "   Secret $s is managed by External Secrets: remove the $k mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, then rerun this upgrade; hoopdb-admin-jobs was retained"
       return 1
     fi
-    key_present=$(jq -r --arg k "$k" 'if .data[$k] == null then "no" else "yes" end' "$secret_json") \
-      || { say "   could not parse Secret $s while removing legacy administrator keys"; return 1; }
-    if [ "$key_present" = yes ]; then
-      ( umask 077; jq -n --arg path "/data/$k" '[{"op":"remove","path":$path}]' >"$work/remove-key.json" )
-      if ! "${kube[@]}" patch secret "$s" --type json --patch-file "$work/remove-key.json" >/dev/null; then
-        rm -f "$work/remove-key.json"
-        say "   could not remove legacy administrator key $s/$k"
-        return 1
-      fi
+    ( umask 077; jq -n --arg path "/data/$k" '[{"op":"remove","path":$path}]' >"$work/remove-key.json" )
+    if ! "${kube[@]}" patch secret "$s" --type json --patch-file "$work/remove-key.json" >/dev/null; then
       rm -f "$work/remove-key.json"
-      say "   removed legacy administrator key $s/$k"
+      say "   could not remove legacy administrator key $s/$k"
+      return 1
     fi
+    rm -f "$work/remove-key.json"
+    say "   removed legacy administrator key $s/$k"
   done
 }
 # wait_jobs NAME...: poll each Job until it completes; a Job that fails (its

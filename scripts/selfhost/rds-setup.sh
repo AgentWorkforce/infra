@@ -335,7 +335,8 @@ select 1 where
  and not exists (select 1 from pg_roles where rolname in ('hoopdb_owner','sessions_pipeline_runtime','search_consumer_runtime','session_directory_search_worker'))")" \
   || { echo 'could not inspect whether HoopDb is pristine; refusing' >&2; exit 3; }
 if [ -n "$pristine" ]; then
-  echo 'HOOPDB_LAYOUT=pristine-admin'; exit 0
+  if [ "$version" -ge 160000 ]; then echo 'HOOPDB_LAYOUT=pristine-admin'; else echo 'HOOPDB_LAYOUT=fresh-legacy'; fi
+  exit 0
 fi
 echo 'HOOPDB_LAYOUT=legacy-admin'
 EOS

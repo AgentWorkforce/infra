@@ -117,7 +117,11 @@ case " $* " in
     esac
     name=agent-relay-secrets; key=HOOPDB_MIGRATION_URL
     [[ " $* " == *" search-indexer-owner "* ]] && { name=search-indexer-owner; key=RELAYHISTORY_PIPELINE_CONSUMER_SECRET; }
-    if [[ "${MOCK_EXTERNAL_SECRET_MODE:-none}" == owner ]]; then
+    if [[ "${MOCK_SECRET_KEY_ABSENT:-0}" == 1 && "${MOCK_EXTERNAL_SECRET_MODE:-none}" == owner ]]; then
+      printf '{"metadata":{"ownerReferences":[{"kind":"ExternalSecret","name":"%s"}]},"data":{}}\n' "$name"
+    elif [[ "${MOCK_SECRET_KEY_ABSENT:-0}" == 1 && "${MOCK_EXTERNAL_SECRET_MODE:-none}" == label ]]; then
+      printf '{"metadata":{"labels":{"reconcile.external-secrets.io/managed":"true"}},"data":{}}\n'
+    elif [[ "${MOCK_EXTERNAL_SECRET_MODE:-none}" == owner ]]; then
       printf '{"metadata":{"ownerReferences":[{"kind":"ExternalSecret","name":"%s"}]},"data":{"%s":"b2xk"}}\n' "$name" "$key"
     elif [[ "${MOCK_EXTERNAL_SECRET_MODE:-none}" == label ]]; then
       printf '{"metadata":{"labels":{"reconcile.external-secrets.io/managed":"true"}},"data":{"%s":"b2xk"}}\n' "$key"
@@ -345,8 +349,13 @@ for managed in owner label; do
   grep -F 'backing-store value' "$ROOT/remove-external-$managed.log" >/dev/null \
     || fail "$managed-managed External Secret refusal did not name the store action"
   grep -Fq 'patch secret' "$LOG" && fail "$managed-managed External Secret reached a patch"
+  : >"$LOG"
+  MOCK_EXTERNAL_SECRET_MODE="$managed" MOCK_SECRET_KEY_ABSENT=1 \
+    "$TEST_BASH" "$SCRIPT" remove-legacy-secret-keys >/dev/null \
+    || fail "$managed-managed cleanup did not finish after the mapped key disappeared"
+  grep -Fq 'patch secret' "$LOG" && fail "$managed-managed absent key reached a patch"
 done
-pass "legacy cleanup distinguishes NotFound, API errors and External Secrets ownership"
+pass "legacy cleanup distinguishes NotFound, API errors and External Secrets key ownership"
 
 # Terraform's chart_values pin sha256(server_ca_cert): the PEM with exactly one
 # trailing newline. The bundle written for the ConfigMap must be those bytes.

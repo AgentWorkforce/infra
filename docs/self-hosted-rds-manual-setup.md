@@ -450,19 +450,29 @@ for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL \
     echo "could not read $secret; leave hoopdb-admin-jobs in place and retry cleanup" >&2
     exit 1
   fi
-  if jq -e '
+  if ! key_present=$(jq -r --arg k "$key" 'if .data[$k] == null then "no" else "yes" end' \
+      "$ADMIN_JOB_DIR/$secret.json"); then
+    echo "could not parse $secret; leave hoopdb-admin-jobs in place and retry cleanup" >&2
+    exit 1
+  fi
+  if [ "$key_present" = no ]; then
+    continue
+  fi
+  if ! externally_managed=$(jq -r '
       any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
       ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' \
-      "$ADMIN_JOB_DIR/$secret.json" >/dev/null; then
+      "$ADMIN_JOB_DIR/$secret.json"); then
+    echo "could not parse $secret ownership; leave hoopdb-admin-jobs in place and retry cleanup" >&2
+    exit 1
+  fi
+  if [ "$externally_managed" = true ]; then
     echo "$secret is managed by External Secrets: remove the $key mapping from its ExternalSecret and delete the backing-store value, wait for reconciliation, and retry; leave hoopdb-admin-jobs in place" >&2
     exit 1
   fi
-  if jq -e --arg k "$key" '.data[$k] != null' "$ADMIN_JOB_DIR/$secret.json" >/dev/null; then
-    if ! kubectl -n agent-relay patch secret "$secret" --type=json \
-      -p="[{\"op\":\"remove\",\"path\":\"/data/$key\"}]"; then
-      echo "could not remove $key from $secret; leave hoopdb-admin-jobs and $ADMIN_JOB_DIR in place and retry cleanup" >&2
-      exit 1
-    fi
+  if ! kubectl -n agent-relay patch secret "$secret" --type=json \
+    -p="[{\"op\":\"remove\",\"path\":\"/data/$key\"}]"; then
+    echo "could not remove $key from $secret; leave hoopdb-admin-jobs and $ADMIN_JOB_DIR in place and retry cleanup" >&2
+    exit 1
   fi
 done
 kubectl -n agent-relay delete secret hoopdb-admin-jobs

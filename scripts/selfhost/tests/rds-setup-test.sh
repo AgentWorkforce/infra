@@ -224,6 +224,10 @@ probe="$MOCK_CAPTURE_DIR/probe.sh"
 probe_out="$(PGUSER=dbadmin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=dbadmin MOCK_PRISTINE=1 sh "$probe")" \
   || fail "pristine RDS probe failed"
 [[ "$probe_out" == HOOPDB_LAYOUT=pristine-admin ]] || fail "pristine RDS probe classified as: $probe_out"
+probe_out="$(PGUSER=dbadmin MOCK_SERVER_VERSION=150000 MOCK_DB_EXISTS=1 MOCK_DB_OWNER=dbadmin MOCK_PRISTINE=1 sh "$probe")" \
+  || fail "PostgreSQL 15 pristine RDS probe failed"
+[[ "$probe_out" == HOOPDB_LAYOUT=fresh-legacy ]] \
+  || fail "PostgreSQL 15 pristine RDS database bypassed the version refusal: $probe_out"
 probe_out="$(PGUSER=dbadmin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=third_party MOCK_PRISTINE=0 sh "$probe")" \
   || fail "third-party RDS probe failed"
 [[ "$probe_out" == HOOPDB_LAYOUT=unknown-owner ]] || fail "third-party RDS owner classified as: $probe_out"

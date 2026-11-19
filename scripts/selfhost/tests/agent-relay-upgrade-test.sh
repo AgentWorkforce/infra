@@ -31,6 +31,10 @@ if [ "\$1" = refresh-admin ]; then
   printf 'postgresql://admin:rotated-admin-pw@db/hoopdb' > "\$STATE_DIR/secret-files/hoopdb-admin-jobs/HOOPDB_MIGRATION_URL"
   printf '{"hoopdb_url":"postgresql://admin:rotated-admin-pw@db/hoopdb"}' > "\$STATE_DIR/secret-files/hoopdb-admin-jobs/RELAYHISTORY_PIPELINE_CONSUMER_SECRET"
 fi
+if [ "\$1" = delete-admin-jobs ] && [ "\${MOCK_DELETE_ADMIN_JOBS_FAIL:-0}" = 1 ]; then
+  echo 'mock delete-admin-jobs failure' >&2
+  exit 1
+fi
 EOF
 chmod +x "$root/selfhost/"*.sh
 
@@ -423,6 +427,22 @@ grep -q '^rds-setup delete-admin-jobs' "$root/log" \
   || fail "later failed upgrade did not clean up its temporary Secret"
 pass "later legacy rollback guidance recreates the temporary Secret through rollback Jobs"
 
+# A failed exit cleanup must preserve the original upgrade error while warning
+# that the administrator credential may still be live and printing remediation.
+make_state; setup_mocks "$root/rel-ok" ok; write_helm "exit 1"
+mkdir -p "$root/secrets/agent-relay"
+printf '{"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' >"$root/secrets/agent-relay/agent-relay-secrets.json"
+printf '{"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' >"$root/secrets/agent-relay/search-indexer-owner.json"
+export MOCK_DELETE_ADMIN_JOBS_FAIL=1
+out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
+  --apply --db-instance prod-db --yes 2>&1) && fail "failed upgrade with failed credential cleanup reported success"
+unset MOCK_DELETE_ADMIN_JOBS_FAIL
+grep -q 'UPGRADE FAILED' <<<"$out" || fail "credential cleanup failure replaced the original upgrade error: $out"
+grep -q 'WARNING: could not delete hoopdb-admin-jobs' <<<"$out" \
+  || fail "failed temporary-credential cleanup was silent: $out"
+grep -q 'delete-admin-jobs' <<<"$out" || fail "failed cleanup did not print the removal command: $out"
+pass "failed temporary-credential cleanup warns without replacing the upgrade failure"
+
 # 20b. a post-deploy partial key-cleanup failure is not reported as a
 # deployment failure: retain the temporary credential and do not suggest an
 # unsafe rollback after one old key may already have been removed.
@@ -476,7 +496,24 @@ for managed in owner label; do
   grep -q '^rds-setup delete-admin-jobs' "$root/log" \
     && fail "$managed-managed cleanup deleted the retained temporary credential"
 done
-pass "legacy cleanup refuses owner-referenced and labelled External Secrets"
+for managed in owner label; do
+  make_state; setup_mocks "$root/rel-ok" ok
+  mkdir -p "$root/secrets/agent-relay"
+  if [ "$managed" = owner ]; then
+    metadata='"ownerReferences":[{"kind":"ExternalSecret","name":"owner"}]'
+  else
+    metadata='"labels":{"reconcile.external-secrets.io/managed":"true"}'
+  fi
+  printf '{"metadata":{%s},"data":{}}\n' "$metadata" >"$root/secrets/agent-relay/agent-relay-secrets.json"
+  printf '{"metadata":{%s},"data":{}}\n' "$metadata" >"$root/secrets/agent-relay/search-indexer-owner.json"
+  out=$(run_rds --version 2026.11.1 --registry "$REG" --profile eks-rds-native --values "$vals" \
+    --apply --db-instance prod-db --yes 2>&1) \
+    || fail "$managed-managed cleanup did not finish after the mapped keys disappeared: $out"
+  grep -q 'kubectl .*patch secret' "$root/log" && fail "$managed-managed absent keys reached a patch"
+  grep -q '^rds-setup delete-admin-jobs' "$root/log" \
+    || fail "$managed-managed completed cleanup retained the temporary credential"
+done
+pass "legacy cleanup refuses managed keys and finishes after ESO removes them"
 
 # 21. eks-native legacy upgrade with --rds-setup prepares the temporary Secret; without it, never
 make_state; setup_mocks "$root/rel-ok" ok
