@@ -156,7 +156,8 @@ image from relaycontrol #13 or later.
   so the bootstrap admin can sign in once with the setup key (24 hours, single
   use) and set a password, then hand out temporary passwords to members.
   `relay-control.auth.trustedProxies` (default `1` with password sign-in)
-  must equal the number of proxies in front of the API. Both need a
+  must equal the number of `X-Forwarded-For` entries the proxies in front of
+  the API append: `2` behind the GKE Ingress, whose load balancer appends two. Both need a
   relay-control image from source `bd1c9a03` or later. See the
   [relay-control chart](https://github.com/AgentWorkforce/infra/blob/main/charts/relay-control/README.md#first-admin-without-smtp-or-sso-the-setup-key).
 
