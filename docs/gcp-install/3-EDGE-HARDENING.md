@@ -283,12 +283,25 @@ gcloud compute backend-services list --format='value(securityPolicy)' | grep -c 
    annotation) in `values.yaml` and run step 11's `helm upgrade`.
 4. Set `edge_security_policy = { create = false }` and `terraform apply`.
 
-**TLS policy.** Clear `gkeIngress.sslPolicy` (write `managed-values.json`
-again after `edge_ssl_policy = { create = false }`, or override it in
-`values.yaml`), run `helm upgrade`, wait until
-`gcloud compute target-https-proxies list --format='value(sslPolicy)'` no
-longer shows it, then `terraform apply`. The load balancer goes back to
-Google's default policy.
+**TLS policy.** The name reaches the chart from `managed-values.json`, which
+only changes after a Terraform apply, and Terraform cannot delete a policy
+that is still attached. So detach it through `values.yaml` first:
+
+1. Add `sslPolicy: ""` under `gkeIngress:` in `values.yaml` (it is read after
+   `managed-values.json`, so it wins) and run step 11's `helm upgrade`.
+2. Wait until the load balancer no longer uses the policy:
+
+   ```sh
+   gcloud compute target-https-proxies list --format='table(name,sslPolicy.basename())'
+   ```
+
+   If the policy is still listed after 10 minutes, clear it on that proxy:
+   `gcloud compute target-https-proxies update <proxy name> --clear-ssl-policy`.
+3. Set `edge_ssl_policy = { create = false }`, run `terraform apply`, and
+   write `managed-values.json` again (step 4). The line added in 1 can then
+   be removed.
+
+The load balancer goes back to Google's default policy, which accepts TLS 1.0.
 
 The detach behaviour is from Google's documentation and has not been run on a
 live install here.
