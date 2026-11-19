@@ -461,3 +461,50 @@ run "default_is_ten_subexpressions" {
     error_message = "Path plus nine ranges per throttle rule."
   }
 }
+
+# A list longer than the old cap (294 ranges, 99 rules per list): 300 ranges
+# at three per rule is 100 admitting rules. Its rules must stay in one band,
+# in order, ahead of the next client rule.
+run "long_list_keeps_its_band_and_order" {
+  command = apply
+  variables {
+    security_policy = {
+      create      = true
+      cloudflare  = { enabled = true }
+      rate_limits = []
+      client_ip_rules = [
+        {
+          name          = "vendors"
+          hosts         = ["history.relay.example.com"]
+          path_prefixes = ["/v1/delivery"]
+          cidrs         = [for i in range(300) : "10.${floor(i / 256)}.${i % 256}.0/24"]
+          unthrottled   = true
+        },
+        {
+          name          = "staff"
+          path_prefixes = ["/"]
+          cidrs         = ["203.0.113.0/24"]
+          unthrottled   = true
+        },
+      ]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+
+  assert {
+    condition     = length([for k, r in google_compute_security_policy_rule.client_ip : k if startswith(k, "vendors-allow-")]) == 100
+    error_message = "300 ranges at three per rule are 100 admitting rules."
+  }
+  assert {
+    condition     = length(distinct([for r in google_compute_security_policy_rule.client_ip : r.priority])) == length(google_compute_security_policy_rule.client_ip)
+    error_message = "No two client rules share a priority."
+  }
+  assert {
+    condition     = max([for k, r in google_compute_security_policy_rule.client_ip : r.priority if startswith(k, "vendors-allow-")]...) < google_compute_security_policy_rule.client_ip["vendors-deny"].priority && google_compute_security_policy_rule.client_ip["vendors-deny"].priority < google_compute_security_policy_rule.client_ip["staff-allow-0"].priority && google_compute_security_policy_rule.client_ip["staff-allow-0"].priority < google_compute_security_policy_rule.client_ip["staff-deny"].priority
+    error_message = "Every admitting rule precedes its deny, and the deny precedes the next client rule."
+  }
+  assert {
+    condition     = max([for r in google_compute_security_policy_rule.client_ip : r.priority]...) < min([for r in google_compute_security_policy_rule.allowlist : r.priority]...) && output.rule_counts.advanced == 106
+    error_message = "Client rules stay ahead of the allowlist, and the count is reported (100 + 2 denies + 1 staff allow + secret header + 2 WAF)."
+  }
+}
