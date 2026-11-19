@@ -24,6 +24,8 @@ locals {
 
   waf_groups = local.sp.waf.enabled ? chunklist(local.sp.waf.rules, 5) : []
 
+  # A backslash in path_regex is doubled: the pattern sits inside a quoted
+  # string of the expression, whose own reader consumes one level of escaping.
   # One throttle rule per rate limit, or one per allowlist group when the
   # edge is locked: a throttle rule admits conforming requests, so it must
   # itself require an allowed connecting address.
@@ -31,7 +33,7 @@ locals {
     for j, group in(local.locked ? local.allow_groups : [[]]) : "${r.name}-${j}" => {
       priority   = 3000 + i * 100 + j
       limit      = r
-      expression = join(" && ", compact(["request.path.matches('${r.path_regex}')", length(group) > 0 ? "(${join(" || ", [for c in group : "inIpRange(origin.ip, '${c}')"])})" : ""]))
+      expression = join(" && ", compact(["request.path.matches('${replace(r.path_regex, "\\", "\\\\")}')", length(group) > 0 ? "(${join(" || ", [for c in group : "inIpRange(origin.ip, '${c}')"])})" : ""]))
     }
   }]...)
 

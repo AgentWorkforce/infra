@@ -316,3 +316,20 @@ run "catch_all_client_rule_refuses_dead_rate_limits" {
   }
   expect_failures = [google_compute_security_policy.this]
 }
+
+# A regex escape in path_regex survives the expression's string literal.
+run "rate_limit_regex_with_an_escape" {
+  command = apply
+  variables {
+    security_policy = {
+      create      = true
+      waf         = { enabled = false }
+      rate_limits = [{ name = "v1", path_regex = "^/v1\\.0/", count = 10, interval_sec = 60 }]
+    }
+  }
+
+  assert {
+    condition     = google_compute_security_policy_rule.rate_limit["v1-0"].match[0].expr[0].expression == "request.path.matches('^/v1\\\\.0/')"
+    error_message = "The backslash is doubled inside the quoted expression string."
+  }
+}
