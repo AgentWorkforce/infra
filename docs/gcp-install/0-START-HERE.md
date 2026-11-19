@@ -364,7 +364,7 @@ fill in their placeholders. For a branded desktop app,
 
 ## 10. Create the secrets
 
-Pick **one** of the three ways.
+Pick **one** of the four ways.
 
 **a. Plain `kubectl`:**
 
@@ -427,9 +427,76 @@ application-default login` on a laptop; Workload Identity or the VM's service
 account in CI) and needs `roles/secretmanager.secretAccessor` on the secrets.
 This stores 19 secrets named `agent-relay--<Secret>--<key>` in Secret Manager;
 `secrets.yaml` holds only `ref+gcpsecrets://...` references. If you run vals
-your own way, `vals eval -f secrets.yaml` resolves the same file. External
-Secrets Operator with a `SecretStore` for Secret Manager works too: create the
-same five Secrets with the same keys.
+your own way, `vals eval -f secrets.yaml` resolves the same file.
+
+**d. External Secrets Operator with Google Secret Manager** (the values live
+in Secret Manager and the cluster syncs them; nothing secret passes through
+Helm).
+
+**Not with this guide's pinned release.** Option d needs the `agent-relay`
+chart 0.7.57 or later. The release this guide installs (chart 0.7.54) has no
+`externalSecrets` support: Helm would ignore the settings without an error,
+create no Secret, and the pods would never start. Use a, b or c with the
+pinned release, and option d from the first release whose chart is 0.7.57 or
+later.
+
+You also need [External Secrets Operator](https://external-secrets.io)
+installed in the cluster with the `external-secrets.io/v1` API. This path is
+covered by render tests; it has been proven on AWS (SSM), not yet on a live
+GKE install.
+
+```sh
+# 1. Put the 19 values in Secret Manager (the same names as c).
+VALS_GCPSM=$GCP_PROJECT_ID bash helm-secrets-prepare.sh && rm -f secrets.yaml
+# 2. A ServiceAccount for ESO to read them as, and its access (Workload Identity, no key).
+kubectl -n $NAMESPACE create serviceaccount agent-relay-external-secrets
+NUMBER=$(gcloud projects describe $GCP_PROJECT_ID --format='value(projectNumber)')
+MEMBER="principal://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/$GCP_PROJECT_ID.svc.id.goog/subject/ns/$NAMESPACE/sa/agent-relay-external-secrets"
+for s in $(gcloud secrets list --project $GCP_PROJECT_ID --filter='name~/agent-relay--' --format='value(name)'); do
+  gcloud secrets add-iam-policy-binding "$s" --project $GCP_PROJECT_ID \
+    --member "$MEMBER" --role roles/secretmanager.secretAccessor >/dev/null
+done
+# 3. Fill in the settings and add them to values.yaml, so every later helm
+#    command in this guide carries them.
+GKE_CLUSTER=<cluster name>
+sed -e "s/__GCP_PROJECT_ID__/$GCP_PROJECT_ID/g" -e "s/__REGION__/$REGION/g" \
+  -e "s/__GKE_CLUSTER__/$GKE_CLUSTER/g" external-secrets-values.yaml | grep -v '^#' >> values.yaml
+grep -n '__[A-Z_]*__' values.yaml; grep -c '^externalSecrets:' values.yaml
+```
+
+**Done when:** the first `grep` prints nothing and the second prints `1`.
+
+The settings must be in **every** `helm upgrade` of this install, which is
+why they go into `values.yaml` and not a separate file: Helm does not keep
+values from the previous command, and an upgrade without them removes the
+five ExternalSecrets and, with them, the five Secrets. After the install
+(step 11):
+
+```sh
+kubectl -n $NAMESPACE get secretstore,externalsecret
+```
+
+shows the store `Valid` and five ExternalSecrets `SecretSynced`. Pods that
+started before their Secret existed wait in `CreateContainerConfigError` and
+start by themselves once it does.
+
+- **`SecretSyncedError` with `PermissionDenied`:** the ServiceAccount has no
+  access to that secret. Run the `for` loop again; it also covers secrets
+  added since.
+- **A value changed in Secret Manager** reaches the Secret within an hour
+  (`refreshInterval`); restart the pods that use it.
+- **After changing the Cloud SQL admin password**, the migration Jobs of the
+  next `helm upgrade` need the new one. Ask for a sync, then wait until both
+  ExternalSecrets report a refresh **later than your change** before you
+  upgrade (the annotation only asks; `Ready` alone does not prove it):
+
+  ```sh
+  kubectl -n $NAMESPACE annotate externalsecret agent-relay-secrets search-indexer-owner force-sync=$(date +%s) --overwrite
+  kubectl -n $NAMESPACE get externalsecret agent-relay-secrets search-indexer-owner \
+    -o custom-columns='NAME:.metadata.name,REFRESHED:.status.refreshTime,STATUS:.status.conditions[0].reason'
+  ```
+- **`helm uninstall` deletes these five Secrets** (ESO owns them). The values
+  stay in Secret Manager.
 
 - **Already ran (a)?** Delete those five Secrets first, so helm can own them.
 - **`could not find default credentials`?** Run `gcloud auth application-default login`,

@@ -420,8 +420,52 @@ parameter name, or a full ESO `remoteRef` map (`key`, `property`, `version`,
 path (`find: {path: /agent-relay/x/, name: {regexp: ".*"}}`; the SSM provider
 needs the `name` or `tags` matcher).
 
+#### Google Secret Manager on GKE
+
+The same block works with the `gcpsm` provider. ESO authenticates as a
+Kubernetes ServiceAccount through GKE Workload Identity, so there is no
+service account key:
+
+```yaml
+externalSecrets:
+  enabled: true
+  store:
+    create: true
+    provider:
+      gcpsm:
+        projectID: my-project
+        auth:
+          workloadIdentity:
+            clusterProjectID: my-project
+            clusterLocation: us-central1
+            clusterName: my-cluster
+            serviceAccountRef:
+              name: agent-relay-external-secrets   # a ServiceAccount in the release namespace
+  secrets:
+    agent-relay-secrets:
+      data:
+        database-url: agent-relay--agent-relay-secrets--database-url   # the Secret Manager secret's name
+        HOOPDB_URL: { key: agent-relay--agent-relay-secrets--HOOPDB_URL, version: latest }
+        # ...one line per key of the Secret
+```
+
+Grant that ServiceAccount's Workload Identity principal
+(`principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<project>.svc.id.goog/subject/ns/<namespace>/sa/agent-relay-external-secrets`)
+`roles/secretmanager.secretAccessor` on each secret. A `data` value is the
+secret's name, or a `remoteRef` map (`key`, `version`, and `property` for one
+field of a JSON secret). Secret Manager names cannot contain `/`. With
+regional secrets or CMEK, add `location: <region>` under `gcpsm`.
+[`docs/gcp-install/external-secrets-values.yaml`](https://github.com/AgentWorkforce/infra/blob/main/docs/gcp-install/external-secrets-values.yaml)
+maps all five install Secrets, and step 10 d of the GKE guide has the
+commands. The render is tested against the ESO schemas; it has not yet been
+proven on a live GKE cluster.
+
 Notes:
 
+- Keep `externalSecrets` in a values file that every `helm upgrade` of the
+  release uses. Helm does not carry values over from the previous command, so
+  an upgrade without the block removes the ExternalSecrets, and ESO then
+  deletes the Secrets it owns (`creationPolicy: Owner`).
 - Pods that start before ESO writes their Secret wait in
   `CreateContainerConfigError` and start once it exists. Check
   `kubectl get externalsecret -n <namespace>` reports every entry `Ready`.
