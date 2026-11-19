@@ -1,32 +1,59 @@
-# Agent Relay on Google Cloud (GKE): install guide
+# GCP customer setup
 
-Customer-neutral install guide for **agent-relay-2026.11.16** on an existing GKE
-cluster, the GCP counterpart of the AWS EKS guide. Start with
-**0-START-HERE.md**.
+For an assisted installation, the customer has three tasks below. Agent Relay
+prepares the configuration, installs the application and verifies it with the
+approved operator. A customer running the application installation themselves
+uses the [operator reference](0-START-HERE.md).
 
-For a customer-managed corporate VPN connector, see the optional
-[VPN network profile](../vpn-networking.md). Review its NAT and ingress-address
-ownership notes before running the numbered guide; the connector is distinct
-from the foundation's Serverless VPC Access connector.
+## 1. Confirm the inputs
 
-| File | What it is |
-|---|---|
-| `0-START-HERE.md` | Numbered copy-paste steps, each with a "Done when" check |
-| `1-BRING-YOUR-OWN.md` | Specs for creating Cloud SQL, GCS, Memorystore, Pub/Sub, search and certificates yourself instead of Terraform |
-| `2-SERVICE-ACCOUNTS.md` | Workload Identity: every grant the install needs, and who needs which roles |
-| `3-EDGE-HARDENING.md` | Optional: the load balancer's TLS policy, Cloud Armor, and Cloudflare in front |
-| `EDGE-DESKTOP-CONFIG.md` | Optional: prepare consistent edge, Desktop and signed-feed configuration |
-| `NOT-QUALIFIED.md` | What 2026.11.16 does not yet qualify on GKE. Read before a production rollout |
-| `REGULATED-PROFILE.md` | Optional: customer-managed encryption keys (Kubernetes Secrets, Cloud SQL, bucket, Pub/Sub, Redis, disks) and Binary Authorization |
-| `images.md` | The release images and how they are mirrored |
-| `values.yaml` | Site values template (placeholders filled in step 9) |
-| `external-secrets-values.yaml` | Optional overlay: the install Secrets from Google Secret Manager through External Secrets Operator (step 10 d) |
-| `cloud-sql-setup.sh` | Database and role setup in Jobs inside the cluster (steps 8 and 13) |
-| `helm-secrets-prepare.sh` | Secrets for helm-secrets with SOPS, or vals with Google Secret Manager (step 10) |
-| `create-workload-identity.sh` | Optional: the Workload Identity grants with gcloud |
-| `managed-values-byo.sh` | Bring-your-own: builds `managed-values.json` from your resources |
-| `add-user.sh` | Add users with temporary passwords, without SMTP (step 15) |
-| `workspace-ids.sh` | List workspace IDs and names, for titles and summaries (step 16) |
+Confirm the GCP project ID/number, region, GKE cluster/VPC, non-overlapping
+network/VPN ranges, four hostnames (website, API, Relaycast, History), DNS owner,
+TLS choice, first administrator and required labels. Agent Relay prepares the
+Terraform inputs, Helm values and production Desktop identity for your review.
+Private keys and origin-header values stay in your approved secret path.
 
-`cloud-sql-setup.sh` is the repository's `scripts/selfhost/cloud-sql-setup.sh`
-including the fix in AgentWorkforce/infra#276. Keep the two in sync.
+**Cluster prerequisite:** the platform root uses existing GKE with Workload
+Identity and enforced NetworkPolicies, and a VPC with Private Services Access.
+If absent, the approved operator must provision them first. The
+[foundation Terraform root](../../terraform/examples/gcp-foundation/README.md)
+is still held/source only; the current [cluster setup procedure](0-START-HERE.md#starting-from-an-empty-project)
+is manual. This guide does not claim a complete one-command installer.
+
+## 2. Review and apply Terraform
+
+Use the completed inputs and customer-approved state/backend. First apply
+[gcp-vpn-network](../../terraform/examples/gcp-vpn-network/README.md) if a VPN
+connector is needed, then pass its egress address into the
+[gcp platform root](../../terraform/examples/gcp/README.md). Keep separate state.
+The operator checks NAT/address ownership and enables the default-off VPN root
+only in the reviewed inputs; it creates networking, not the VPN VM/software.
+
+In each selected root:
+
+```sh
+terraform init
+terraform plan -out=install.tfplan
+# Review target, changes and costs; apply only the approved saved plan.
+terraform apply install.tfplan
+```
+
+From the platform root, pass the non-secret output to the application operator:
+`terraform output -json chart_values > managed-values.json`.
+
+## 3. Configure DNS and hand over to the application operator
+
+Point the four names at the reserved Ingress IP. For Cloudflare, configure
+proxied DNS, Full (strict), Origin CA TLS and the origin header using the
+[Cloudflare instructions](3-EDGE-HARDENING.md#3-cloudflare-in-front).
+
+Agent Relay completes database bootstrap, Helm, first-admin setup, Desktop
+builds/feed and application checks under the agreed access and release approvals.
+The [edge preparer](EDGE-DESKTOP-CONFIG.md) keeps the URLs consistent. Keep MCP
+connectors on the API host when that is the host in the vendor allowlist.
+
+Handover requires sign-in, session upload, MCP, the agreed VPN/origin denials
+and Desktop download/update checks. Terraform success alone is not acceptance.
+Review [qualification limits](NOT-QUALIFIED.md) and the selected release's
+evidence before production. [Detailed operator procedures](FILES.md), optional
+features, upgrades and recovery are separate from these customer tasks.

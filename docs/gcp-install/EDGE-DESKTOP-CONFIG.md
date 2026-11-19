@@ -1,5 +1,9 @@
 # Prepare edge and Desktop feed configuration
 
+This is an operator guide. For the customer-facing sequence, use
+[GCP customer setup](README.md); the operator prepares these overlays from the
+confirmed inputs.
+
 `scripts/selfhost/prepare-gcp-edge.py` prepares consistent public origins,
 Desktop links and signed-feed inputs for the external GKE install. It writes
 local JSON files accepted by Helm. It performs no cloud calls, deployment,
