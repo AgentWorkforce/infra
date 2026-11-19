@@ -1,18 +1,29 @@
 # Disposable GCP and Azure VPN network proof
 
 Execution packet for the default-off connector-network modules. **Unexecuted:
-this packet is not a live qualification receipt.** The infra operator allocates
-new targets through the approved workflow; never reuse a customer or shared
-proof stack. Pin the module source at commit 399c2435, or a later reviewed
+this packet is not a live qualification receipt.** The infra operator admits
+the target and creates new fixture networks through the approved workflow;
+never reuse a customer or active proof stack. A company-owned GCP project
+with billing already linked can host isolated fixtures. Pin the module source
+at commit 399c2435, or a later reviewed
 commit, and record the exact source and provider-lock hashes.
 
 ## Admission and resource plan
 
-The operator supplies a new GCP project ID and immutable number in us-central1,
+The operator supplies a GCP project ID and immutable number in us-central1,
 and a new Azure resource group in the approved subscription in eastus. Check
 those identities before every operation. An existing local CLI default is not
 admission. No credential transfer or new caller IAM binding is needed when the
 infra owner executes on its operator host.
+
+The GCP project may be new or an existing company-owned project. In an existing
+project, create new custom-mode connector and peer VPCs, with uniquely named
+run-owned subnets, VMs, firewall rules, routers and addresses. Keep these VPCs
+disconnected from existing networks. Record a before/after inventory proving
+existing resources are unchanged. Review the saved fixture and module plans
+against that ownership boundary; list any required project-wide permission or
+configuration changes separately rather than bundling them into this run.
+Creating a new project is an isolation option, not a module prerequisite.
 
 Proposed execution window: two hours per cloud, with an operator-reviewed cost
 estimate and a proposed USD 10 ceiling per cloud before provisioning. This is
@@ -159,12 +170,16 @@ Before teardown, show the exact cleanup plan and obtain the required operator
 confirmation. Stop guests and remove test-client credentials; delete fixture
 VMs/disks/NICs and temporary management rules/peering first. Then destroy the
 owned module state, including NAT/static addresses and optional GCP ingress IP.
-Finally delete only the newly allocated proof project/resource group through
-the target owner's workflow. Never delete a shared project/group, default
-signing resources or a NetworkWatcher resource group.
+For a reused GCP project, finish by deleting only the run-owned fixture VPCs
+after their dependent resources are gone; retain the project and its existing
+resources. Delete a newly allocated Azure resource group, or a GCP project
+created exclusively for this proof, through the target owner's workflow.
+Never delete a shared project/group, default signing
+resources or a NetworkWatcher resource group.
 
 Verify zero owned residual VMs, disks, NICs, subnets, NAT gateways, public
-addresses and firewall rules using native APIs as well as Terraform state.
+addresses, firewall rules and fixture VPCs/VNets using native APIs as well as
+Terraform state.
 Record the deletion result and any retained resource with owner, reason and
 expiry. Destroy local test private keys and temporary client profiles after
 the receipt is stored; retain only their public fingerprints.
