@@ -12,6 +12,39 @@ The diagnostic performs reads only. It does not repair roles, activate logins,
 run migrations, restart workloads, delete failed Jobs, change Secrets or apply
 infrastructure. Run it before changing the failed state.
 
+## Quick start: no flags
+
+Put the script in the folder that holds your `rds-ca.pem`, your filled-in
+values file (any `*values*.yaml`) and your Secret YAMLs (in that folder or
+`./secrets`), then run:
+
+```bash
+python3 diagnose-install.py
+```
+
+It prints what it detected, then the checks, then **Likely problems (fix top
+to bottom)**, and writes `install-diagnostic-<time>.json` in the same folder.
+Detection order:
+
+- **Kube context:** the current context. If the cluster is unreachable (for
+  example on the database VPN), cluster checks are UNKNOWN and the run continues.
+- **Credentials:** the deployed Secrets when the cluster is reachable; otherwise
+  `~/.agent-relay-install/secret-files`; otherwise Secret YAMLs here or in `./secrets`.
+- **Database CA:** `rds-ca.pem`, `database-ca.pem`, `global-bundle.pem` or
+  `*-bundle.pem` here, then `~/.agent-relay-install/rds-ca.pem`.
+- **Database names:** taken from the URLs; pass `--*-database` only to assert them.
+
+If something is not found, the run ends with **Missing files - how to fix**:
+which file, where it looked, and the command to fix it (for a missing CA, the
+download URL with your region taken from the RDS hostname).
+
+The values file is linted for mistakes seen in real installs: example
+placeholders left in (with line numbers), an OpenSearch endpoint without
+`https://`, and an RDS CA `caSha256` that is the example value or does not
+match your local `rds-ca.pem`. Pass `--values FILE` to pick a file, or
+`--values` with no file to skip the lint. Every flag below still works and
+overrides detection.
+
 ## One run with both networks available
 
 Use the kube context and database names from the private installation handoff:
@@ -27,7 +60,7 @@ python3 scripts/support/diagnose-install.py \
   --output ./install-diagnostic.json
 ```
 
-`--context` is mandatory for cluster access; no current-context fallback is used.
+`--context` defaults to the current kube context; the run prints which one it used.
 Database name arguments are optional but recommended: without them, the script
 checks that URLs agree within each service group and differ across groups, but
 cannot tell that all URLs in a group consistently name the wrong database.
@@ -70,6 +103,27 @@ python3 scripts/support/diagnose-install.py \
   --ca-file "$PWD/database-ca.pem" \
   --output ./install-diagnostic-database.json
 ```
+
+If you set up the database by hand and have no `secret-files` directory, point
+the diagnostic at the Secret manifests you filled in from `examples/aws/secrets/`
+instead (files or a directory; YAML with `stringData`/`data`, or
+`kubectl get secret -o json` output):
+
+```bash
+python3 scripts/support/diagnose-install.py \
+  --scope database \
+  --secret-manifests ./secrets \
+  --control-database "$DB_CONTROL" \
+  --cast-database "$DB_CAST" \
+  --hoop-database "$DB_HOOP" \
+  --ca-file "$PWD/database-ca.pem" \
+  --output ./install-diagnostic-database.json
+```
+
+Only `kind: Secret` documents are read; other documents are skipped. A warning
+is printed for manifest files readable by other users. Like local files, a
+manifest proves only that copy: if it differs from what was applied, rerun
+against the cluster.
 
 This mode needs no Kubernetes access. Each input is a file named
 `SECRET_NAME/KEY_NAME` containing that key's value, with mode `0600` (or stricter).
