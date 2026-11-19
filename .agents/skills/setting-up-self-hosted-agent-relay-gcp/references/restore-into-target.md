@@ -1,8 +1,8 @@
 # Restore into a target
 
 
-`--no-hooks` does not stop migrations: the RelayHistory, control-plane API and
-Sessions Pipeline migration Jobs, and the Sessions Pipeline locker init Job, are plain Jobs, not
+`--no-hooks` does not stop migrations: the control-plane API and Sessions
+Pipeline migration Jobs, and the Sessions Pipeline locker init Job, are plain Jobs, not
 Helm hooks. Installing the chart over restored data would run them against
 it. For a restore (isolated drill or recovery), first create a non-secret
 restore overlay in the operator's configuration location, and pass it last:
@@ -13,9 +13,6 @@ operator's configuration location and export its path as
 
 ```yaml
 # restore-overlay.yaml: no migration, init or backup Jobs during a restore.
-relayhistory:
-  migrations:
-    enabled: false
 relay-control:
   migrations:
     enabled: false

@@ -1,14 +1,20 @@
 # agent-relay
 
-Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
+Public chart names and existing-release compatibility: [Control/Webapp rename](https://github.com/AgentWorkforce/infra/blob/main/docs/control-webapp-chart-rename.md).
 
 Umbrella chart for the self-hosted messaging and Sessions proof:
 
-- Relaycast and RelayAuth
-- Sessions Pipeline
-- Relay History
-- self-host control-plane API
+- Relaycast (RelayAuth is optional, only for
+  `relaycast.credentials.authority=relayauth`)
+- Sessions Pipeline, including native History: the Sessions read API and
+  ingest edge on the `history` host
+- self-host control-plane API (relay-control, native History backend)
 - static dashboard
+
+The standalone RelayHistory component was removed in 0.7.0: setting
+`components.relayhistory: true` or a non-empty `relayhistory:` values block
+fails the render (see `docs/self-hosted-no-relayauth.md`);
+`components.relayhistory: false` is accepted and ignored.
 
 Relayflows is an optional add-on (`components.relayflows`, off by default;
 see `docs/self-hosted-relayflows.md`). Relayfile (`components.relayfile`) and
@@ -28,12 +34,13 @@ deployment. It is derived from the proof configuration but uses only
 Artifact Registry placeholders. It contains Secret names and keys, never
 Secret values.
 
-New installs also apply `values-gcp-native.yaml`. That overlay removes
-RelayAuth and standalone RelayHistory, selects relay-control's native History
-backend, and lets the umbrella GKE Ingress split the history host between the
-Sessions read API and ingest edge. A final site values file enables and
-configures `sessionReadApi`, `ingestEdge`, and the PostgreSQL `searchIndexer`;
-`ci/gcp-native-values.yaml` is a render-only example of that shape.
+History is native: relay-control's native History backend, with the umbrella
+GKE Ingress splitting the history host between the Sessions read API and
+ingest edge, and a PostgreSQL `searchIndexer`. RelayAuth is off. Replace the
+`REQUIRED OVERRIDE` placeholders under `sessionReadApi`, `ingestEdge` and
+`searchIndexer` in a site values file; `ci/gcp-native-values.yaml` is a
+render-only example of that shape. `values-gcp-native.yaml` is now an empty
+compatibility overlay: commands that still name it render identically.
 
 The customer GCP and EKS profiles are release phase 1 for the ruleset-10
 scrubber migration: they set `global.scrubEngine.readerMaxRuleset: "10"` on
@@ -56,11 +63,10 @@ before installing. The required value overrides are:
 | `global.imageRegistry` | Artifact Registry hostname for the selected region, such as `us-central1-docker.pkg.dev`. |
 | `global.tenant.orgId` | Stable customer organization ID. Do not change it after data has been written. |
 | `gkeIngress.name`, `staticIpName`, `managedCertificateName`, `frontendConfigName` | Customer-selected names. `staticIpName` must name a reserved global external IPv4 address; the chart creates the other resources. |
+| `gkeIngress.sslPolicy` | Recommended. Name of a Compute SSL policy with a TLS 1.2 minimum; see [GKE edge hardening](#gke-edge-hardening). |
 | `gkeIngress.hosts.{root,api,cast,history}` | Four customer-controlled public DNS names whose A records point at the reserved address. |
 | `relaycast.image.{repository,digest}` | Customer-accessible Relaycast image mirror and its real immutable digest. |
-| `relayauth.image.{repository,digest}` | Customer-accessible RelayAuth image mirror and its real immutable digest. |
 | `sessions-pipeline.worker.image.{repository,digest}` and `sessions-pipeline.alleyoop.image.{repository,digest}` | Repository path under `global.imageRegistry` and the same immutable Sessions services digest. |
-| `relayhistory.image.{repository,digest}` | Customer-accessible Relay History image mirror and its real immutable digest. |
 | `relay-control.image.{repository,digest}` | Customer-accessible control API image mirror and its real immutable digest. |
 | `relay-webapp.image.{repository,digest}` | Customer-accessible dashboard image mirror and its real immutable digest. |
 | All `existingSecret` values set to `example-agent-relay-secrets` | Name of a pre-created Secret in the release namespace. Update every occurrence if separate Secrets are used. |
@@ -68,11 +74,12 @@ before installing. The required value overrides are:
 | `sessions-pipeline.{worker,alleyoop}.locker.region` | Region of that bucket. Both values must match. |
 | `sessions-pipeline.worker.extraEnv` (shared with `alleyoop.extraEnv` through a YAML anchor) | Cloud SQL connection name, Memorystore host/port/server CA bundle, and Pub/Sub topic and subscription. `locker.provider=gcs` arms the Sessions services' GCS data-path readiness check, which requires them; the chart refuses to render without them. |
 | `relaycast.baseUrl` | `https://` plus `gkeIngress.hosts.cast`. |
-| `relayhistory.relayauth.historyOrigin` | `https://` plus `gkeIngress.hosts.history`. |
-| `sessions-pipeline.alleyoop.auth.historyOrigin` | Same origin as `relayhistory.relayauth.historyOrigin` (the History assertion audience couriers use). The umbrella refuses to render when the two differ. |
+| `sessions-pipeline.sessionReadApi.origin`, `sessions-pipeline.ingestEdge.origin`, `sessions-pipeline.alleyoop.auth.historyOrigin` | `https://` plus `gkeIngress.hosts.history`. |
+| `sessions-pipeline.sessionReadApi.postgresCa.sha256`, `ingestEdge.postgres.caSha256`, `searchIndexer` CA SHA-256 | The same lowercase SHA-256 of the Cloud SQL server CA bundle. |
+| `sessions-pipeline.ingestEdge.relaycontrol.url` | The Control Service FQDN in the release namespace. |
 | `relay-control.publicUrl` | `https://` plus `gkeIngress.hosts.api`. |
 | `relay-control.services.relaycastPublicUrl` | Same origin as `relaycast.baseUrl`. |
-| `relay-control.services.relayhistoryPublicUrl` | Same origin as `relayhistory.relayauth.historyOrigin`. |
+| `relay-control.services.sessionReadApiPublicUrl`, `relay-control.introspection.audiences` | Same origin as `sessions-pipeline.sessionReadApi.origin`. |
 | `relay-webapp.runtime.publicUrl` | `https://` plus `gkeIngress.hosts.root`. |
 | `relay-control.service.backendConfig` | `<gkeIngress.name>-api` (the name truncated to 59 characters first). The umbrella renders that BackendConfig and refuses any other value. |
 | `relaycast.service.backendConfig` | `<gkeIngress.name>-cast` (the name truncated to 58 characters first), for the Relaycast WebSocket backend timeout. |
@@ -81,24 +88,30 @@ The referenced Secret must provide these keys:
 
 - Relaycast: `relaycast-internal-secret` (at least 32 characters) and
   `relaycast-workspace-bootstrap-secret`
-- RelayAuth: `relayauth-internal-secret`,
-  `relayauth-signing-key.pem`, and `relayauth-bootstrap-api-key`
 - Sessions: `HOOPDB_URL`, `HOOPDB_MIGRATION_URL`, and
   `SUMMARY_MASTER_KEYS`
-- Relay History: `DATABASE_URL` and `DATABASE_MIGRATIONS_URL`
 - control API: `database-url`, `database-migrations-url`,
-  `relayauth-api-key`, `selfhost-bootstrap-token`, and
-  `selfhost-encryption-key`
+  `selfhost-bootstrap-token`, `selfhost-encryption-key`,
+  `relaycontrol-introspect-secret`, and `session-read-api-secret` (also the
+  read API's self-issued internal secret)
+- RelayAuth (only with `components.relayauth=true`): `relayauth-internal-secret`,
+  `relayauth-signing-key.pem`, `relayauth-bootstrap-api-key`, and the control
+  API's `relayauth-api-key`
 - RelayAuth-issued relaycast credentials (optional, model B):
   `relaycast-credential-keyring` and `relaycast-relayauth-token`
+
 - Sign-in (optional; see "First boot and sign-in" below): `oidc-client-secret`
   for OIDC, `microsoft-client-secret` for Microsoft sign-in,
   `smtp-password` for SMTP with a username, and an operator-generated
   `selfhost-setup-key` (`openssl rand -hex 32`) for the one-time first-admin
   setup key. The bootstrap reads the existing `relaycast-internal-secret` key.
 
-`relayauth-api-key` and `relayauth-bootstrap-api-key` must contain the same
-value. `selfhost-bootstrap-token` must be at least 32 bytes.
+The read API, ingest edge and search indexer read their database settings from
+their own Secrets (`agent-relay-read-api`, `agent-relay-ingest-edge-runtime`,
+`search-indexer-runtime`, `search-indexer-owner` in `values-gcp.yaml`).
+
+With RelayAuth on, `relayauth-api-key` and `relayauth-bootstrap-api-key` must
+contain the same value. `selfhost-bootstrap-token` must be at least 32 bytes.
 `selfhost-encryption-key` must encode exactly 32 bytes as either 64 hexadecimal
 characters or base64.
 
@@ -143,9 +156,10 @@ image from relaycontrol #13 or later.
   so the bootstrap admin can sign in once with the setup key (24 hours, single
   use) and set a password, then hand out temporary passwords to members.
   `relay-control.auth.trustedProxies` (default `1` with password sign-in)
-  must equal the number of proxies in front of the API. Both need a
+  must equal the number of `X-Forwarded-For` entries the proxies in front of
+  the API append: `2` behind the GKE Ingress, whose load balancer appends two. Both need a
   relay-control image from source `bd1c9a03` or later. See the
-  [relay-control chart](../relay-control/README.md#first-admin-without-smtp-or-sso-the-setup-key).
+  [relay-control chart](https://github.com/AgentWorkforce/infra/blob/main/charts/relay-control/README.md#first-admin-without-smtp-or-sso-the-setup-key).
 
 The admin signs in at `https://<root host>/login`. Owners and admins then
 invite teammates from Settings → Members. Invite links are single use and
@@ -170,14 +184,11 @@ no enrollment Secret; model and provider credentials reach the flow through
 `relayflows.extraEnv`/`extraEnvFrom`.
 
 The template assumes external Cloud SQL and GCS rather than in-cluster
-Postgres and MinIO. For the supported native History profile, provision
-separate Sessions and control API databases; install the Sessions database
-extensions and migrations required by the Sessions Pipeline; and make each
-runtime URL use the least-privilege role named in the values
-(`sessions_pipeline_runtime` or `control_api_runtime`). Migration URLs must use
-the corresponding migration-owner roles. The legacy profile additionally
-needs a standalone Relay History database and migration ledger; its Sessions
-runtime role remains `sessions_runtime`.
+Postgres and MinIO. Provision separate Sessions and control API databases;
+install the Sessions database extensions and migrations required by the
+Sessions Pipeline; and make each runtime URL use the least-privilege role named
+in the values (`sessions_pipeline_runtime` or `control_api_runtime`). Migration
+URLs must use the corresponding migration-owner roles.
 
 Sessions objects use the services' native GCS adapter
 (`locker.provider=gcs`, `LOCKER_PROVIDER=gcs`) with an empty endpoint, which
@@ -208,45 +219,132 @@ Render the template before supplying any credentials:
 helm lint . -f values-gcp.yaml
 helm template agent-relay . -n agent-relay -f values-gcp.yaml >/dev/null
 
-helm lint . -f values-gcp.yaml -f values-gcp-native.yaml -f <site-values.yaml>
+helm lint . -f values-gcp.yaml -f <site-values.yaml>
 helm template agent-relay . -n agent-relay -f values-gcp.yaml \
-  -f values-gcp-native.yaml -f <site-values.yaml> >/dev/null
+  -f <site-values.yaml> >/dev/null
 
 # Fresh empty database only: start every reader and writer on the qualified
 # wasm-bindgen contract in the same install.
 helm template agent-relay . -n agent-relay -f values-gcp.yaml \
-  -f values-gcp-native.yaml -f <site-values.yaml> \
-  -f values-scrub-wasm-bindgen.yaml >/dev/null
+  -f <site-values.yaml> -f values-scrub-wasm-bindgen.yaml >/dev/null
 ```
 
-`values-gcp-proof.yaml` is the portable, all-components customer shape.
-`values-gcp-proof-live.yaml` is a separate overlay for the existing proof
-cluster; it reuses RelayAuth in the `relayauth` namespace, disables the
-already-running Sessions Pipeline, and inherits the portable profile's
-restricted GKE NetworkPolicies.
+`values-gcp-proof.yaml` is the portable customer proof shape, with native
+History. `values-gcp-proof-live.yaml` is a legacy-name overlay on top of it
+(the `relay-cloud-api`/`relay-dashboard` object names and proof-registry
+images of the original GCP proof release, which is being retired) and the base
+of the durable-actors, Relayfile and flows proof overlays.
 
 One umbrella GKE Ingress reserves a global static address
 (`gkeIngress.staticIpName`), uses one Google ManagedCertificate for all
 four hosts, and enables HTTP-to-HTTPS redirect through a FrontendConfig.
 For a base domain `relay.example.com`:
 
-- `relay.example.com`: `/cloud/api` and `/login` to the control API,
-  then `/` to the dashboard
+- `relay.example.com`: `/cloud/api`, `/login` and `/relay-node` to the
+  control API, then `/` to the dashboard. `/relay-node/v1/*` (Desktop node
+  enrolment and the `GET /relay-node/v1/ws` node WebSocket) is served only at
+  the root path, never under `/cloud`, and Desktop calls it on this sign-in
+  origin.
 - `api.relay.example.com`: the same control-plane API Service
 - `cast.relay.example.com`: Relaycast
-- `history.relay.example.com`: Relay History
+- `history.relay.example.com`: native History (ingest edge for upload
+  paths, Sessions read API for read paths)
 
 Leaf ingresses are disabled and each ClusterIP backend uses a GKE standalone
 NEG. Sensitive Relaycast paths still route to an endpoint-less deny Service.
+
+## GKE edge hardening
+
+Three optional `gkeIngress` values, each empty by default. Each names
+something the chart cannot create, which must exist before the upgrade;
+[`terraform/modules/gcp/edge-security`](https://github.com/AgentWorkforce/infra/blob/main/terraform/modules/gcp/edge-security)
+creates the two policies. The operator steps and checks are in
+[`docs/gcp-install/3-EDGE-HARDENING.md`](https://github.com/AgentWorkforce/infra/blob/main/docs/gcp-install/3-EDGE-HARDENING.md).
+
+| Value | Effect |
+| --- | --- |
+| `gkeIngress.sslPolicy` | Compute SSL policy for the HTTPS listener (`FrontendConfig.spec.sslPolicy`). Without it Google's default policy applies, which still accepts TLS 1.0 and 1.1. Use a policy with `min_tls_version = TLS_1_2`. |
+| `gkeIngress.securityPolicy` | Cloud Armor backend security policy, set as `spec.securityPolicy.name` on the BackendConfig of **every** backend behind the Ingress. |
+| `gkeIngress.tlsSecretName` | A `kubernetes.io/tls` Secret served instead of the ManagedCertificate (which is then not rendered). For an edge whose DNS points at a proxy or CDN, where Google cannot issue a managed certificate. The certificate must cover every host. |
+
+The chart leaves `sslPolicy` empty by default because a name that does not
+exist in the project stops the Ingress from syncing. `terraform/examples/gcp`
+creates the policy and exports it in `chart_values`, so an install made from
+the GKE guide has it set.
+
+With `securityPolicy`, the api, cast, history, actors and relaygate
+BackendConfigs gain the policy, and the chart renders policy-only BackendConfigs
+for the backends that had none: `<gkeIngress.name>-dashboard`,
+`<gkeIngress.name>-edge-deny` and, with `gkeIngress.hosts.files`,
+`<gkeIngress.name>-files`. The dashboard and Relayfile Services belong to child
+charts, so bind them in values (the render fails with the exact value
+otherwise):
+
+```yaml
+gkeIngress:
+  sslPolicy: agent-relay-tls
+  securityPolicy: agent-relay-edge
+relay-webapp:
+  service:
+    annotations:
+      cloud.google.com/neg: '{"ingress": true}'
+      cloud.google.com/backend-config: '{"default": "agent-relay-dashboard"}'
+```
+
+Behind a proxy that fronts the load balancer (Cloudflare), also raise
+`relay-control.auth.trustedProxies` by one (the Google load balancer alone
+needs 2; the guide shows how to check).
+
+## Internal-only GKE edge
+
+For an install that must not be reachable from the internet, set
+`gkeIngress.mode: internal` (start from `values-gcp-internal.yaml`). GKE then
+creates a regional **internal** Application Load Balancer: a private address,
+HTTPS only, reachable from the VPC and from the networks routed to it (VPN,
+Interconnect). It is the GKE counterpart of an internal-scheme ALB on EKS.
+Hosts, routes, backends and timeouts are the same as on the external edge.
+
+| | External (default) | Internal |
+| --- | --- | --- |
+| Ingress class | `gce` | `gce-internal` |
+| `gkeIngress.staticIpName` | a global external address | a **regional internal** address |
+| Certificate | ManagedCertificate, or `tlsSecretName` | `tlsSecretName`, or `internal.preSharedCerts` (regional self-managed certificates). A Google-managed certificate is not possible |
+| HTTP | redirected to HTTPS | closed (`allow-http: "false"`) |
+| `sslPolicy`, `securityPolicy` | optional | refused: GKE Ingress supports neither FrontendConfig nor Cloud Armor on an internal load balancer |
+| Sources the pods see | Google front ends | the VPC's **proxy-only subnet** |
+
+Before the install, the VPC needs a proxy-only subnet in the cluster's region,
+a reserved regional internal address, and a firewall rule from that subnet to
+the nodes;
+[`terraform/modules/gcp/internal-edge`](https://github.com/AgentWorkforce/infra/blob/main/terraform/modules/gcp/internal-edge)
+creates the three. Then:
+
+- `gkeIngress.internal.proxyOnlySubnetCidr` is the subnet's range, and every
+  backend's `networkPolicy` must allow it next to the two health-check ranges.
+  The render fails, naming the backend, when one does not.
+  `values-gcp-internal.yaml` restates all five lists.
+- DNS: A records for every host, pointing at the private address, in a zone
+  your VPN clients resolve (a private zone, or your corporate DNS). The public
+  URLs in the values stay `https://<host>`.
+- Certificate: with `tlsSecretName`, cert-manager with a DNS-01 challenge
+  issues and renews a publicly trusted certificate without the hosts being
+  reachable from the internet. If the DNS zone is in another Google Cloud
+  project, grant cert-manager's Workload Identity `roles/dns.admin` on that
+  zone's project. A private CA works if every desktop, CLI and agent trusts it.
+- Agents and desktops outside the VPN cannot upload sessions or connect. Plan
+  for that before choosing this mode.
+- Pass the overlay on every `helm upgrade`, or merge it into your site values.
+  An upgrade without it renders the external edge again.
+
+Rendered and tested in CI; not yet proven on a live cluster.
 
 ## Customer-neutral EKS with RDS native History
 
 `values-eks-rds-native.yaml` is the reusable EKS overlay for the supported
 native History stack: Amazon RDS, S3 through EKS Pod Identity, OpenSearch, the
-session read API, ingest edge and search indexer. It replaces the former
-operator-side composition of `values-eks-native.yaml` plus the leaf
+session read API, ingest edge and search indexer. It replaces the former leaf
 `sessions-pipeline/profiles/aws-rds-native.yaml` file. Apply it after the base
-EKS values and before a private site overlay:
+EKS values (already native) and before a private site overlay:
 
 ```sh
 helm template agent-relay charts/agent-relay \
@@ -271,15 +369,12 @@ but it must retain their digests. This profile renders no Secret; create the
 named Secrets and the immutable `rds-ca` ConfigMap separately.
 
 The chart leaves EKS ingress objects external. Publish dashboard, Control,
-Relaycast, native reads and native ingest through the supplied ALB generator;
-do not leave its legacy History backend set because this profile renders no
-standalone RelayHistory Service:
+Relaycast, native reads and native ingest through the supplied ALB generator
+(ingest routes are on by default):
 
 ```sh
 export EKS_ALB_DOMAIN=relay.example.com
 export EKS_ALB_CERT_ARN=arn:aws:acm:<region>:<account>:certificate/<id>
-export EKS_ALB_INGEST=true
-unset EKS_ALB_HISTORY_LEGACY_SERVICE
 scripts/selfhost/eks-alb-ingress.sh agent-relay-<environment> | kubectl apply -f -
 ```
 
@@ -305,7 +400,7 @@ Run `scripts/selfhost/rds-setup.sh pre` before Helm and `post` only after the
 Sessions migration Job succeeds. On a populated database, build the two
 coordination-reader partial indexes concurrently before the migration; a fresh
 database builds them directly. The exact SQL and verification steps are in
-[`docs/self-hosted-session-read-api.md`](../../docs/self-hosted-session-read-api.md).
+[`docs/self-hosted-session-read-api.md`](https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-session-read-api.md).
 After each workspace has sessions, run the output-facts bootstrap with a new
 `searchIndexer.outputFacts.bootstrap.runId`; the reusable overlay deliberately
 leaves that one-shot Job off.
@@ -325,6 +420,110 @@ be Ready, then apply `values-scrub-wasm-bindgen.yaml` in a second Helm revision.
 A fresh install with an empty Sessions database may include that strict overlay
 in its first revision.
 
+### Secrets from AWS SSM Parameter Store (or another external store)
+
+By default the chart renders no Secret and you create the named Secrets
+yourself. If they live in AWS SSM Parameter Store, AWS Secrets Manager or any
+other [External Secrets Operator](https://external-secrets.io) provider, set
+`externalSecrets` instead. The chart then renders one ExternalSecret per
+Secret. ESO creates each Kubernetes Secret under the name the components already
+read, so nothing else in your values changes.
+
+Prerequisites: ESO (with the `external-secrets.io/v1` CRDs) installed in the
+cluster, and IAM for its controller (Pod Identity or IRSA) that can read the
+parameters: `ssm:GetParameter`, `ssm:GetParameters` and
+`ssm:GetParametersByPath` on the parameter paths, plus `kms:Decrypt` on the key
+for SecureString parameters.
+
+```yaml
+externalSecrets:
+  enabled: true
+  store:
+    create: true      # or leave false and set secretStoreRef.name to an existing (Cluster)SecretStore
+    provider: { aws: { service: ParameterStore, region: us-east-1 } }
+  secrets:
+    agent-relay-secrets:
+      data:
+        database-url: /agent-relay/relaycontrol/runtime-url
+        database-migrations-url: /agent-relay/relaycontrol/owner-url
+        HOOPDB_URL: /agent-relay/hoopdb/runtime-url
+        # ...one line per key of the Secret
+    agent-relay-ingest-edge-runtime:
+      data:
+        database-url: /agent-relay/hoopdb/ingest-url
+        introspect-secret: /agent-relay/relaycontrol-introspect-secret
+```
+
+Map every Secret and key your install's Secrets table lists. A value that a
+component reads as JSON (`RELAYHISTORY_READ_API_SECRET`,
+`RELAYHISTORY_PIPELINE_CONSUMER_SECRET`) is stored as that JSON in the
+parameter, or built with an entry's `template`. Each `data` value is a
+parameter name, or a full ESO `remoteRef` map (`key`, `property`, `version`,
+...). An entry can also use ESO's `dataFrom` to load every parameter under a
+path (`find: {path: /agent-relay/x/, name: {regexp: ".*"}}`; the SSM provider
+needs the `name` or `tags` matcher).
+
+#### Google Secret Manager on GKE
+
+The same block works with the `gcpsm` provider. ESO authenticates as a
+Kubernetes ServiceAccount through GKE Workload Identity, so there is no
+service account key:
+
+```yaml
+externalSecrets:
+  enabled: true
+  store:
+    create: true
+    provider:
+      gcpsm:
+        projectID: my-project
+        auth:
+          workloadIdentity:
+            clusterProjectID: my-project
+            clusterLocation: us-central1
+            clusterName: my-cluster
+            serviceAccountRef:
+              name: agent-relay-external-secrets   # a ServiceAccount in the release namespace
+  secrets:
+    agent-relay-secrets:
+      data:
+        database-url: agent-relay--agent-relay-secrets--database-url   # the Secret Manager secret's name
+        HOOPDB_URL: { key: agent-relay--agent-relay-secrets--HOOPDB_URL, version: latest }
+        # ...one line per key of the Secret
+```
+
+Grant that ServiceAccount's Workload Identity principal
+(`principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<project>.svc.id.goog/subject/ns/<namespace>/sa/agent-relay-external-secrets`)
+`roles/secretmanager.secretAccessor` on each secret. A `data` value is the
+secret's name, or a `remoteRef` map (`key`, `version`, and `property` for one
+field of a JSON secret). Secret Manager names cannot contain `/`. With
+regional secrets or CMEK, add `location: <region>` under `gcpsm`.
+[`docs/gcp-install/external-secrets-values.yaml`](https://github.com/AgentWorkforce/infra/blob/main/docs/gcp-install/external-secrets-values.yaml)
+maps all five install Secrets, and step 10 d of the GKE guide has the
+commands. The render is tested against the ESO schemas; it has not yet been
+proven on a live GKE cluster.
+
+Notes:
+
+- Keep `externalSecrets` in a values file that every `helm upgrade` of the
+  release uses. Helm does not carry values over from the previous command, so
+  an upgrade without the block removes the ExternalSecrets, and ESO then
+  deletes the Secrets it owns (`creationPolicy: Owner`).
+- Pods that start before ESO writes their Secret wait in
+  `CreateContainerConfigError` and start once it exists. Check
+  `kubectl get externalsecret -n <namespace>` reports every entry `Ready`.
+- `creationPolicy: Owner` (the default) means the release owns each Secret and
+  `helm uninstall` deletes it. For Secrets created by hand before switching,
+  set `creationPolicy: Merge` on those entries or delete the Secrets first.
+- A rotated parameter updates the Secret within `refreshInterval`; running pods
+  see it only after a restart (`kubectl rollout restart`). The HoopDb
+  migration URL uses the RDS admin login, so after RDS rotates the admin
+  password: update the parameter, force a sync
+  (`kubectl annotate externalsecret agent-relay-secrets -n <namespace> force-sync=$(date +%s) --overwrite`),
+  confirm the ExternalSecret's `status.refreshTime` is later than the update
+  (`Ready=True` alone does not prove it), and only then run `helm upgrade`.
+- The `rds-ca` ConfigMap is not a Secret; create it as before.
+
 ## Single-host mode
 
 The per-service hosts above are the default. Single-host mode is opt-in: set
@@ -338,8 +537,8 @@ helm template agent-relay . -n agent-relay -f values-gcp.yaml -f values-single-h
 
 For `global.singleHost.host: relay.example.com`:
 
-- `relay.example.com`: `/cloud/api`, `/login` and `/api` to the control API,
-  then `/` to the dashboard. `/api` carries the flows worker endpoints and the
+- `relay.example.com`: `/cloud/api`, `/login`, `/relay-node` and `/api` to
+  the control API, then `/` to the dashboard. `/api` carries the flows worker endpoints and the
   integrations OAuth callback, which relaycontrol hands out as
   `<publicUrl>/api/v1/...`; it is not routed in the default mode, where the
   api host serves them.
@@ -356,12 +555,13 @@ them is set to something else. `gkeIngress.hosts.root`
 must be empty (or equal the host) and `gkeIngress.hosts.api` must be empty.
 `relay-control.dashboardUrl` can stay empty: its default, `publicUrl + "/"`,
 is the dashboard in this mode. Without the GKE Ingress, enable the
-`relay-webapp` leaf Ingress: it routes the same four paths on the derived
+`relay-webapp` leaf Ingress: it routes the same five paths on the derived
 host. `relay-control.ingress.enabled` must stay `false`.
 
-The api BackendConfig (flows worker queue SSE timeout) still binds the
-relay-control Service, so it covers `/cloud/api` and `/api` on the single
-host; the cast BackendConfig (WebSocket timeout) and the edge-deny routes on the
+The api BackendConfig (flows worker queue SSE and relay-node WebSocket
+timeout, `gkeIngress.backends.api.timeoutSec`, default 3600) still binds the
+relay-control Service, so it covers `/cloud/api`, `/relay-node` and `/api` on
+the single host; the cast BackendConfig (WebSocket timeout) and the edge-deny routes on the
 cast host are unchanged. With `global.singleHost.host` empty, every default
 render is byte-identical to the previous release apart from the
 `helm.sh/chart` labels; `ci/agent-relay/subdomain-golden.sh` checks it in CI
@@ -372,17 +572,18 @@ and `ci/agent-relay/subdomain-golden.sh diff origin/main` shows any change.
 | Service | Under a path prefix on the single host | Why |
 | --- | --- | --- |
 | relay-webapp | Works as is, at `/` | Assets are built for `/`; it calls only same-origin `/cloud/api`. |
-| relaycontrol (relay-control) | Works as is, at `/cloud/api`, `/login`, `/api` | It serves those paths natively (`/cloud/api/v1/*` aliases `/api/v1/*`), so nothing is stripped. `publicUrl` is the single host. `/internal` is not routed. |
+| relaycontrol (relay-control) | Works as is, at `/cloud/api`, `/login`, `/relay-node`, `/api` | It serves those paths natively (`/cloud/api/v1/*` aliases `/api/v1/*`; `/relay-node/v1/*` has no `/cloud` alias), so nothing is stripped. `publicUrl` is the single host. `/internal` is not routed. |
 | Relaycast | Needs an app change; stays on its own host | The relaycast-self-host entrypoint refuses a `--base-url` with a path. The TypeScript SDK joins with `new URL('/v1/...', base)`, which drops `/cast`. relaycontrol (`RELAYCAST_PUBLIC_URL`) and Desktop (`validated_base_url`, which silently falls back to `cast.agentrelay.com`) refuse a path-prefixed URL. The A2A, inbound-hook and relayfile-inbound URLs are built from the request origin. Prefix stripping alone fixes none of these. |
-| Relay History | Needs an app change; stays on its own host | The server would work behind prefix stripping, but `relayhistoryPublicUrl` is both the History assertion audience (a bare origin) and the base URL relaycontrol hands clients, and relaycontrol and Desktop refuse a path. |
+| History (read API and ingest edge) | Needs an app change; stays on its own host | The History origin (`sessionReadApiPublicUrl`) is a bare-origin token audience and the base URL relaycontrol hands clients, and relaycontrol and Desktop refuse a path. |
 | Relayfile | Needs an app change; stays on its own host | The server and actors gateway would work behind prefix stripping, but the mount and `listen` clients build WebSocket URLs by replacing the path, which drops `/files`. |
 | durable-actors | Needs an app change; stays on its own host | The control plane refuses a `publicUrl` with a path and issues actor sockets at `<origin>/v1/socket`; the SDK refuses a base path. |
 
 The chart enforces the last four rows: in single-host mode `gkeIngress.hosts.cast`
 and `history` are still required, and rendering fails when `relaycast.baseUrl`,
-`relayhistory.relayauth.historyOrigin`, `relay-control.services.*PublicUrl`,
-`sessions-pipeline.alleyoop.auth.historyOrigin`, `durable-actors.publicUrl` or
-a Relaycast, Relay History or Relayfile leaf ingress host uses the single host.
+`relay-control.services.*PublicUrl`,
+`sessions-pipeline.alleyoop.auth.historyOrigin`,
+`sessions-pipeline.{sessionReadApi,ingestEdge}.origin`, `durable-actors.publicUrl` or
+a Relaycast or Relayfile leaf ingress host uses the single host.
 
 GCE Ingress cannot rewrite paths. GKE Gateway API (`HTTPRoute` with a
 `URLRewrite` `ReplacePrefixMatch` filter) can, but it would mean replacing the
@@ -401,10 +602,6 @@ all required immutable digests are present. The live proof
   (relay-webapp `53d484b`, the self-host build served at `/`)
 - selfhost API: `sha256:99670d253b88c27499f6c4cca6ac1265ed97978ed7a9d5eaaeecd65de9e052dc`
   (relaycontrol `17bdc78`)
-- experimental RelayHistory: `sha256:f36ae1671bdcd88a2b8b2df62c8edecb1381237d9f968747b39298959ad33563`
-  (relayhistory-cloud `3cb76752`, branch `proof/erasure-turns-on-4b5839f`, the
-  erasure-fix proof build whose 0074 arms the write hold; the CI render
-  fixture keeps `sha256:8fbda9bd89dd33994b6b3331fb403c38a25f04e6742050bd717e99661f3544ba`)
 
 `values-gcp-proof-durable-actors.yaml` pins the relaycast actors gateway
 `sha256:026e8c1b1e78b2946c53871e8e5701e0cac9b6121c2b4124cd376ceece33cb45` and
@@ -421,29 +618,14 @@ the CI render fixture's dashboard digest (`ci/gcp-proof-values.yaml`) and the
 published `ghcr.io/agentworkforce/relay-control` digest, not the live pins; a
 proof pin never makes an image customer-ready.
 
-The RelayHistory image is an experimental proof build, not a released or
-supported artifact.
-
-When a RelayHistory upgrade arms a write hold (the two-step
-`relayhistory.migrations.allowWriteHold` + `drainForWriteHold` upgrade in
-`charts/relayhistory/README.md`) and `values-gcp-proof-flows.yaml` is applied,
-do not pass `--wait-for-jobs` on step 1: the Relayflows smoke Job runs once per
-Helm revision and probes History, which has no pods during step 1, so the Job
-fails and Helm marks the revision failed although the migration succeeded.
-Wait on the migrate Job by name instead; step 2's smoke Job passes. If step 1
-did end as a failed revision, step 2 diffs against the last deployed revision,
-which never had the drain Role, so Helm leaves the `relayhistory-drain-wait`
-Role and RoleBinding behind: delete both after step 2.
-
 The live overlay expects an existing Secret (the portable example names it
 `example-agent-relay-secrets`) in the release namespace with these keys
 (values are never stored in this repository):
 
 - Relaycast: `relaycast-internal-secret`,
   `relaycast-workspace-bootstrap-secret`
-- RelayHistory: `DATABASE_URL`, `DATABASE_MIGRATIONS_URL`
 - selfhost-api: `database-url`, `database-migrations-url`,
-  `relayauth-api-key`, `selfhost-bootstrap-token`,
+  `selfhost-bootstrap-token`,
   `selfhost-encryption-key`, `selfhost-internal-token` (the live overlay sets
   `relay-control.secretKeys.internalToken`, which enables `/internal/v1`;
   the api host denies `/internal` at the edge)
@@ -470,17 +652,14 @@ It also needs the Secrets `actors-credentials` (`postgres-url`,
 `relaycast-durable-actors-invoke` (`durable-actors-invoke-key`, equal to
 `invoke-api-key`); see docs/self-hosted-durable-actors.md ("GCP provisioning").
 
-`relayauth-api-key` must equal the existing RelayAuth bootstrap API key.
 `selfhost-bootstrap-token` must be at least 32 bytes.
 `selfhost-encryption-key` must encode exactly 32 bytes as 64 hex characters or
 base64. Runtime database URLs should use least-privilege roles; migration URLs
 must use the corresponding migration-owner roles.
 
-The portable all-components shape additionally needs
-`relayauth-internal-secret`, `relayauth-signing-key.pem`,
-`relayauth-bootstrap-api-key`, `HOOPDB_URL`, `HOOPDB_MIGRATION_URL`, and
-`SUMMARY_MASTER_KEYS` in that Secret. `relayauth-api-key` and
-`relayauth-bootstrap-api-key` must contain the same API-key value.
+The portable shape additionally needs `HOOPDB_URL`, `HOOPDB_MIGRATION_URL`,
+`SUMMARY_MASTER_KEYS` and the native History keys named in
+`values-gcp-proof.yaml` in that Secret.
 
 ```sh
 helm dependency build charts/sessions-pipeline
@@ -493,7 +672,6 @@ helm install agent-relay charts/agent-relay -n agent-relay \
 
 The proof uses single-writer/single-replica components and makes no HA claim.
 Cloud SQL networking and database/user provisioning remain operator work.
-RelayHistory must use its own database and migration ledger; do not point it at
-the Sessions Pipeline `hoopdb` database. The headless API supports both `/api/v1` and
+The headless API supports both `/api/v1` and
 Desktop/Dashboard `/cloud/api/v1` routes, including secure browser login,
 workspace-scoped session search, and replay.

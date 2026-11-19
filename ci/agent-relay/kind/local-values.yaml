@@ -3,7 +3,7 @@
 # local-up generates fresh tenant IDs, credentials and TLS without operator input.
 telemetry-collector:
   image:
-    # AA Control 0.5.16 includes the reviewed brief and Relaycast event catalog.
+    # customer Control 0.5.16 includes the reviewed brief and Relaycast event catalog.
     repository: ghcr.io/agentworkforce/relay-control
     digest: sha256:0b9c5a077b49b31178cc669e7c1d532f39e64c840087ca41636bb84a6c62631c
     sourceRevision: 83a57d382e00cfcd8a10a477d1ccfc06c6959c01

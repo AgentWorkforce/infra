@@ -75,7 +75,19 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 /run/secrets/relaycast
 {{- end }}
 
+{{- define "relaycast.gateOnly" -}}
+{{- if dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict) }}true{{ end -}}
+{{- end }}
+
+{{- /* The relaygate Service public routes point at under gate-only. */ -}}
+{{- define "relaycast.gateService" -}}
+{{- dig "relaygate" "gateOnly" "serviceName" "" (.Values.global | default dict) | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
 {{- define "relaycast.validate" -}}
+{{- if include "relaycast.gateOnly" . }}
+{{- if not .Values.networkPolicy.enabled }}{{ fail "relaycast: global.relaygate.gateOnly.enabled requires networkPolicy.enabled=true; without it every pod can bypass relaygate" }}{{ end }}
+{{- end }}
 {{- if ne (int .Values.replicaCount) 1 }}
 {{- fail "replicaCount must be 1: Relaycast self-host stores SQLite and uploaded files on one persistent volume, and the postgres backend keeps realtime, presence and rate limits in-process (runtime.backend=durable-actors scales runtime.durableActors.gateway.replicaCount instead)" }}
 {{- end }}
@@ -188,7 +200,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and (not .Values.ingress.tls) (not .Values.ingress.externalTls) }}
 {{- fail "ingress.enabled=true requires ingress.tls (or ingress.externalTls=true when a load balancer in front of the controller terminates TLS)" }}
 {{- end }}
-{{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.ingressFrom) }}
+{{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.ingressFrom) (not (include "relaycast.gateOnly" .)) }}
 {{- fail "ingress with networkPolicy requires networkPolicy.ingressFrom (the ingress controller's namespace or pods)" }}
 {{- end }}
 {{- end }}
@@ -205,4 +217,84 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- fail (printf "%s is managed by structured chart values and must not appear in extraEnv" .name) }}
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{/*
+NODE_OPTIONS for containers that start node directly (command: node), which
+skips the image entrypoint's heap sizing (relaycast#668): V8's old space at 75 %
+of resources.limits.memory instead of Node's default of about half. Nothing is
+emitted without a parseable limit below 1 TiB. When extraEnv sets NODE_OPTIONS
+the operator's value wins: containers that already render extraEnv get
+nothing here, and the migration Jobs (which do not) get the operator's entry
+through relaycast.nodeHeapEnvStandalone.
+*/}}
+{{- define "relaycast.nodeHeapEnvStandalone" -}}
+{{- $mine := "" -}}
+{{- range .Values.extraEnv }}{{ if eq (toString .name) "NODE_OPTIONS" }}{{ $mine = toJson . }}{{ end }}{{ end -}}
+{{- if $mine -}}
+- {{ $mine }}
+{{- else -}}
+{{- include "relaycast.nodeHeapEnv" . -}}
+{{- end }}
+{{- end }}
+
+{{- define "relaycast.nodeHeapEnv" -}}
+{{- $mem := toString (dig "limits" "memory" "" (.Values.resources | default dict)) -}}
+{{- $mib := 0 -}}
+{{- if regexMatch "^[0-9]+Gi$" $mem }}{{ $mib = mul (atoi (trimSuffix "Gi" $mem)) 1024 }}
+{{- else if regexMatch "^[0-9]+Mi$" $mem }}{{ $mib = atoi (trimSuffix "Mi" $mem) }}
+{{- else if regexMatch "^[0-9]+G$" $mem }}{{ $mib = div (mul (atoi (trimSuffix "G" $mem)) 1000000000) 1048576 }}
+{{- else if regexMatch "^[0-9]+M$" $mem }}{{ $mib = div (mul (atoi (trimSuffix "M" $mem)) 1000000) 1048576 }}
+{{- else if regexMatch "^[0-9]+$" $mem }}{{ $mib = div (atoi $mem) 1048576 }}
+{{- end -}}
+{{- $heap := div (mul $mib 3) 4 -}}
+{{- $operator := false -}}
+{{- range .Values.extraEnv }}{{ if eq (toString .name) "NODE_OPTIONS" }}{{ $operator = true }}{{ end }}{{ end -}}
+{{- if and (ge (int64 $heap) 64) (le (int64 $heap) 1048576) (not $operator) -}}
+- name: NODE_OPTIONS
+  value: {{ printf "--max-old-space-size=%d" (int64 $heap) | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
+A probe with the image's split health endpoints (relaycast#667) when
+healthProbes is "split": /health/live for startup and liveness, /health/ready
+for readiness. "legacy" keeps the probe exactly as configured. A probe without
+httpGet is never changed.
+*/}}
+{{- define "relaycast.probe" -}}
+{{- if not (has (toString .root.Values.healthProbes) (list "legacy" "split")) }}{{ fail (printf "healthProbes must be legacy or split, got %q" (toString .root.Values.healthProbes)) }}{{ end -}}
+{{- $p := deepCopy .probe -}}
+{{- if and (eq (toString .root.Values.healthProbes) "split") (hasKey $p "httpGet") }}
+{{- $get := deepCopy $p.httpGet -}}
+{{- $_ := set $get "path" .path -}}
+{{- $_ := set $p "httpGet" $get -}}
+{{- end -}}
+{{- toYaml $p -}}
+{{- end }}
+
+{{/*
+Pod securityContext plus the TCP keepalive sysctls for the PostgreSQL backend,
+so a half-open connection to a failed-over primary is detected in about 15 s
+(relaycast docs/self-host-postgres.md). Both are namespaced safe sysctls from
+Kubernetes 1.29; earlier clusters and other backends get the context as is.
+Sysctls already set in podSecurityContext are kept.
+*/}}
+{{- define "relaycast.podSecurityContext" -}}
+{{- $psc := deepCopy (.Values.podSecurityContext | default dict) -}}
+{{- $ka := .Values.runtime.postgres.tcpKeepalive | default dict -}}
+{{- if and (include "relaycast.postgres.enabled" .) $ka.enabled }}
+{{- $iv := toString $ka.intervalSeconds -}}{{- $pr := toString $ka.probes -}}
+{{- if or (not (regexMatch "^[0-9]+$" $iv)) (lt (atoi $iv) 1) (gt (atoi $iv) 32767) }}{{ fail (printf "runtime.postgres.tcpKeepalive.intervalSeconds must be an integer from 1 to 32767, got %q" $iv) }}{{ end -}}
+{{- if or (not (regexMatch "^[0-9]+$" $pr)) (lt (atoi $pr) 1) (gt (atoi $pr) 127) }}{{ fail (printf "runtime.postgres.tcpKeepalive.probes must be an integer from 1 to 127, got %q" $pr) }}{{ end -}}
+{{- end -}}
+{{- if and (include "relaycast.postgres.enabled" .) $ka.enabled (semverCompare ">=1.29-0" .Capabilities.KubeVersion.Version) }}
+{{- $have := list -}}
+{{- range ($psc.sysctls | default list) }}{{ $have = append $have (toString .name) }}{{ end -}}
+{{- $add := list -}}
+{{- if not (has "net.ipv4.tcp_keepalive_intvl" $have) }}{{ $add = append $add (dict "name" "net.ipv4.tcp_keepalive_intvl" "value" (toString $ka.intervalSeconds)) }}{{ end -}}
+{{- if not (has "net.ipv4.tcp_keepalive_probes" $have) }}{{ $add = append $add (dict "name" "net.ipv4.tcp_keepalive_probes" "value" (toString $ka.probes)) }}{{ end -}}
+{{- $_ := set $psc "sysctls" (concat ($psc.sysctls | default list) $add) -}}
+{{- end -}}
+{{- toYaml $psc -}}
 {{- end }}

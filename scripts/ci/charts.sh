@@ -34,6 +34,15 @@ render() { # chart valuesfile [extra helm args]
   helm template ci "charts/$chart" --namespace ci --no-hooks --include-crds "${args[@]}" "$@"
 }
 
+# relay-control refuses (and crash-loops on) a service URL with a path,
+# credentials, query or fragment (relay-control src/config.ts serviceUrl).
+# Every such env it is rendered with must be a bare http(s) origin.
+check_control_origins() { # label rendered-manifests
+  local bad
+  bad=$(yq 'select(.kind == "Deployment" and (.spec.template.spec.containers[0].env // [] | map(.name) | contains(["RELAYCAST_URL"]))) | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_PUBLIC_URL" or .name == "RELAYCAST_URL" or .name == "RELAYCAST_PUBLIC_URL" or .name == "RELAYHISTORY_URL" or .name == "SESSION_READ_API_URL" or .name == "SESSION_READ_API_PUBLIC_URL" or .name == "SESSION_ERASE_API_URL" or .name == "SELFHOST_RELAYGATE_PUBLIC_URL" or .name == "SELFHOST_RELAYGATE_ADMIN_URL" or .name == "SELFHOST_CUSTOMER_SUPPORT_URL") | select(has("value") and .value != "") | select(.value | test("^https?://[^/?#@]+/?$") | not) | .name + "=" + .value' <<<"$2" | sed '/^---$/d;/^$/d')
+  [ -z "$bad" ] || err "$1: relay-control URL env must be a bare origin (Control refuses a path): $bad"
+}
+
 expect_render_failure() { # chart valuesfile label expected-error [extra helm args]
   local chart=$1 v=$2 label=$3 expected=$4 output; shift 4
   echo "--- static: $chart (reject $label)"
@@ -81,6 +90,12 @@ add_repos() { # Chart.yaml
 
 for chart in "${charts[@]}"; do
   [ -f "charts/$chart/Chart.yaml" ] || { err "$chart: no Chart.yaml"; continue; }
+  # README.md ships inside the packaged chart (helm show readme, OCI, Artifact
+  # Hub), where repo-relative links point nowhere. Link with absolute URLs.
+  if [ "$mode" = static ] && [ -f "charts/$chart/README.md" ] &&
+     grep -nE '\]\((\.\.?/|[A-Za-z0-9_-]+\.md)' "charts/$chart/README.md"; then
+    err "$chart: README.md has relative links; use https://github.com/AgentWorkforce/infra/blob/main/..."
+  fi
   if [ -f "charts/$chart/Chart.lock" ] || grep -q '^dependencies:' "charts/$chart/Chart.yaml"; then
     # Helm does not recursively vendor dependencies of a file:// dependency.
     # Build the sessions umbrella first so agent-relay always contains its
@@ -114,6 +129,7 @@ for chart in "${charts[@]}"; do
         fi
         helm lint --strict "charts/$chart" "${args[@]}" >/dev/null || { helm lint --strict "charts/$chart" "${args[@]}"; err "$label: helm lint --strict failed"; continue; }
         out=$(render "$chart" "$v") || { err "$label: render failed"; continue; }
+        case $chart in relay-control|agent-relay) check_control_origins "$label" "$out" ;; esac
         if [[ "$v" == *numeric-extra-env-values.yaml ]]; then
           count_quoted_env() {
             local name=$1 value=$2
@@ -209,6 +225,57 @@ for chart in "${charts[@]}"; do
   done
   if [ "$mode" = static ]; then
     case $chart in
+      slack-relay)
+        # repos: the GitHub token reaches only the repo-sync sidecar; the host
+        # mounts /repos read-only and its agents get only Read/Glob/Grep on it.
+        v=charts/slack-relay/ci/repos-values.yaml
+        repos_out=$(render "$chart" "$v") || { err "$chart: repos render failed"; continue; }
+        repos_out=$(yq 'select(.kind == "StatefulSet")' <<<"$repos_out")
+        sts='.'
+        [ "$(yq "[.spec.template.spec.containers[] | select(.env | any_c(.name == \"GITHUB_TOKEN\")) | .name] | join(\",\")" <<<"$repos_out")" = repo-sync ] \
+          || err "$chart: GITHUB_TOKEN must be in the repo-sync container only"
+        [ "$(yq "$sts | .spec.template.spec.containers[] | select(.name == \"host\") | .volumeMounts[] | select(.name == \"repos\") | .readOnly" <<<"$repos_out")" = true ] \
+          || err "$chart: the host must mount /repos read-only"
+        [ "$(yq "$sts | .spec.template.spec.containers[] | select(.name == \"host\") | .env[] | select(.name == \"AGENT_ALLOWED_TOOLS\") | .value" <<<"$repos_out")" = 'Read(./**) Glob(./**) Grep(./**) mcp__relaycast Read(//repos/**) Glob(//repos/**) Grep(//repos/**)' ] \
+          || err "$chart: repos must add exactly Read/Glob/Grep on //repos/** to the agents' tools"
+        [ "$(yq "$sts | .spec.template.spec.containers[] | select(.name == \"repo-sync\") | .env[] | select(.name == \"REPOS_LIST\") | .value" <<<"$repos_out")" = $'example-org/api\nexample-org/web release/2026' ] \
+          || err "$chart: REPOS_LIST must list each repo with its ref"
+        ! grep -q 'repo-sync\|/repos' <<<"$(render "$chart" charts/slack-relay/ci/default-values.yaml)" \
+          || err "$chart: repos off must render no sidecar or mount"
+        expect_render_failure "$chart" "$v" "repos without a token" "repos.enabled needs repos.app.privateKey.name" --set repos.token.name=
+        # An empty list syncs every repo the token can read, via the API.
+        all_out=$(render "$chart" "$v" --set-json 'repos.list=[]' | yq 'select(.kind == "StatefulSet") | .spec.template.spec.containers[] | select(.name == "repo-sync") | .env[] | select(.name == "REPOS_LIST" or .name == "REPOS_API_URL") | .name + "=" + .value')
+        [ "$all_out" = $'REPOS_API_URL=https://api.github.com\nREPOS_LIST=' ] || err "$chart: an empty repos.list must render an empty REPOS_LIST and the github.com API: $all_out"
+        expect_render_failure "$chart" "$v" "repo path traversal" "must be owner/name" --set-json 'repos.list=["../etc"]'
+        expect_render_failure "$chart" "$v" "repo listed twice" "more than once" --set-json 'repos.list=["a/b",{"repo":"A/b","ref":"dev"}]'
+        expect_render_failure "$chart" "$v" "repo option-like ref" "must be a branch, tag or commit" --set-json 'repos.list=[{"repo":"a/b","ref":"--upload-pack=x"}]'
+        expect_render_failure "$chart" "$v" "repos host with credentials" "repos.host must be a host name or base URL" --set repos.host=https://user:pw@ghe.example.com
+        expect_render_failure "$chart" "$v" "repos zero refresh" "repos.refreshMinutes must be a whole number" --set repos.refreshMinutes=0
+        ghe_out=$(render "$chart" "$v" --set repos.host=https://ghe.example.com/)
+        grep -q 'value: "https://ghe.example.com"' <<<"$ghe_out" || err "$chart: a GHE base URL must render as REPOS_BASE_URL"
+        grep -q 'value: "https://ghe.example.com/api/v3"' <<<"$ghe_out" || err "$chart: a GHE host must list repos through <base>/api/v3"
+        # repos.app: the GitHub App's private key is a Secret volume only the
+        # repo-sync sidecar mounts; no container gets GITHUB_TOKEN from a Secret.
+        av=charts/slack-relay/ci/repos-app-values.yaml
+        app_out=$(render "$chart" "$av" | yq 'select(.kind == "StatefulSet") | .spec.template.spec') || { err "$chart: repos app render failed"; continue; }
+        [ "$(yq '[.containers[] | select(.volumeMounts | any_c(.name == "repo-sync-app-key")) | .name] | join(",")' <<<"$app_out")" = repo-sync ] \
+          || err "$chart: only repo-sync may mount the GitHub App private key"
+        [ "$(yq '.volumes[] | select(.name == "repo-sync-app-key") | .secret.secretName + "/" + .secret.items[0].key' <<<"$app_out")" = slack-relay-github-app/private-key ] \
+          || err "$chart: the app key volume must come from repos.app.privateKey"
+        [ "$(yq '[.containers[] | .env[]? | select(.name == "GITHUB_TOKEN")] | length' <<<"$app_out")" = 0 ] \
+          || err "$chart: app mode must not render GITHUB_TOKEN"
+        [ "$(yq '.containers[] | select(.name == "repo-sync") | .env[] | select(.name == "REPOS_AUTH" or .name == "GITHUB_APP_ID" or .name == "GITHUB_APP_INSTALLATION_ID") | .name + "=" + (.value // (.valueFrom.secretKeyRef.name + ":" + .valueFrom.secretKeyRef.key))' <<<"$app_out")" = $'REPOS_AUTH=app\nGITHUB_APP_ID=slack-relay-github-app:app-id\nGITHUB_APP_INSTALLATION_ID=slack-relay-github-app:installation-id' ] \
+          || err "$chart: app mode must read the app and installation IDs from the helper's Secret by default"
+        ids_out=$(render "$chart" "$av" --set repos.app.appId=1234567 --set repos.app.installationId=98765432 | yq 'select(.kind == "StatefulSet") | .spec.template.spec.containers[] | select(.name == "repo-sync") | .env[] | select(.name == "GITHUB_APP_ID" or .name == "GITHUB_APP_INSTALLATION_ID") | .value')
+        [ "$ids_out" = $'1234567\n98765432' ] || err "$chart: numeric app and installation IDs must render as integers: $ids_out"
+        expect_render_failure "$chart" "$av" "repos with both app and token" "not both" --set repos.token.name=slack-relay-github
+        expect_render_failure "$chart" "$av" "repos app bad installation id" "installationId must be a number" --set repos.app.installationId=abc
+        expect_render_failure "$chart" "$av" "repos app bad app id" "appId must be the GitHub App" --set repos.app.appId=not-an-id
+        expect_render_failure "$chart" "$av" "repos app fractional installation id" "installationId must be a number" --set-json repos.app.installationId=42.9
+        expect_render_failure "$chart" "$av" "repos app fractional app id" "appId must be the GitHub App" --set-json repos.app.appId=1234567.5
+        render "$chart" "$v" | yq 'select(.kind == "ConfigMap") | .data | keys | sort | join(",")' | grep -qx 'github-app.mts,repo-list.mts,repo-sync.sh' \
+          || err "$chart: the repo-sync ConfigMap must carry repo-sync.sh, repo-list.mts and github-app.mts"
+        ;;
       sessions-pipeline-worker)
         v=charts/sessions-pipeline-worker/ci/pod-identity-values.yaml
         check_postgres_ca "$chart" "$v"
@@ -258,7 +325,7 @@ for chart in "${charts[@]}"; do
         for origin in https://history.example.com/x https://history.example.com:99999 https://history.example.com:8a https://user@history.example.com 'https://history..example.com' https://-history.example.com ftp://history.example.com; do
           expect_render_failure "$chart" "$v" "history origin $origin" "auth.historyOrigin must be a bare origin" --set "auth.historyOrigin=$origin"
         done
-        for origin in https://history.gcp-proof.agentrelay.com http://relayhistory.relayhistory.svc:8080; do
+        for origin in https://history.gcp-proof.agentrelay.com http://history.agent-relay.svc:8080; do
           render "$chart" "$v" --set "auth.historyOrigin=$origin" >/dev/null || err "$chart: valid auth.historyOrigin $origin rejected"
         done
         ;;
@@ -374,6 +441,13 @@ for chart in "${charts[@]}"; do
           || err "$chart: the actors gateway allows public workspace create"
         ! yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$out" | grep -q . \
           || err "$chart: the actors gateway with an object file store renders a PVC"
+        [ "$(yq 'select(.kind == "PodDisruptionBudget") | .spec.maxUnavailable' <<<"$out" | sed '/^$/d')" = 1 ] \
+          || err "$chart: the multi-replica actors gateway must render a maxUnavailable=1 PDB"
+        [ "$(yq 'select(.kind == "PodDisruptionBudget") | .spec.selector.matchLabels["app.kubernetes.io/name"]' <<<"$out" | sed '/^$/d')" = relaycast ] \
+          || err "$chart: the actors gateway PDB selector must match the gateway"
+        spread=$(render "$chart" "$v" --set runtime.durableActors.gateway.topologySpread.enabled=true)
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels["app.kubernetes.io/name"]' <<<"$spread" | sed '/^$/d')" = relaycast ] \
+          || err "$chart: generated gateway topology spread must match the release labels"
         # Keyed creates: the workspace bootstrap secret and proof policy (relaycast #622).
         expect_render_failure "$chart" "$v" "actors proof without bootstrap secret" "bootstrapProofRequired=true with runtime.backend=durable-actors requires secretKeys.workspaceBootstrapSecret" --set bootstrapProofRequired=true
         expect_render_failure "$chart" "$v" "actors proof not a bool" "bootstrapProofRequired must be true or false" --set-string bootstrapProofRequired=yes --set secretKeys.workspaceBootstrapSecret=wbs
@@ -412,6 +486,70 @@ for chart in "${charts[@]}"; do
           [ "$(gw_env "$c" RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED .value)" = true ] \
             || err "$chart: devRuntime $c must render RELAYCAST_WORKSPACE_BOOTSTRAP_PROOF_REQUIRED=true"
         done
+        # Postgres -> durable-actors migration steps (docs/relaycast-postgres-to-actors-migration.md).
+        mig=(--set migration.enabled=true --set migration.runId=run-ci-0001)
+        pg=charts/relaycast/ci/postgres-values.yaml
+        s3=charts/relaycast/ci/durable-actors-s3-values.yaml
+        expect_render_failure "$chart" "$pg" "migration step on the wrong backend" "migration.step=import runs after the cutover" "${mig[@]}" --set migration.step=import
+        expect_render_failure "$chart" "$s3" "export after the cutover" "migration.step=export runs on the PostgreSQL release" "${mig[@]}" --set migration.step=export
+        expect_render_failure "$chart" "$pg" "unknown migration step" "migration.step must be preflight, export, files, import, verify or open" "${mig[@]}" --set migration.step=copy
+        expect_render_failure "$chart" "$pg" "short migration run id" "migration.runId must be 8-64 URL-safe characters" --set migration.enabled=true --set migration.runId=x --set migration.step=export
+        expect_render_failure "$chart" "$pg" "non-numeric arSince" "migration.arSince must be epoch seconds" "${mig[@]}" --set migration.step=preflight --set migration.arSince=yesterday
+        expect_render_failure "$chart" "$pg" "preflight without arSince" "migration.arSince must be epoch seconds" "${mig[@]}" --set migration.step=preflight
+        expect_render_failure "$chart" "$pg" "preflight on a ReadWriteOncePod claim" "cannot share a ReadWriteOncePod" "${mig[@]}" --set migration.step=preflight --set migration.arSince=1 --set persistence.accessMode=ReadWriteOncePod
+        out=$(render "$chart" "$pg" "${mig[@]}" --set migration.step=preflight --set migration.arSince=1 --set migration.allowLegacy=true)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-preflight")'
+        [ "$(yq "$mj | .spec.template.spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey" <<<"$out" | sed '/^$/d')" = kubernetes.io/hostname ] \
+          || err "$chart: the online preflight must run on the Relaycast pod's node (ReadWriteOnce claim)"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].args | join(\" \")" <<<"$out" | sed '/^$/d')" = "migration-preflight --file-dir /data/relaycast-files --ar-since 1 --export-dir /data --allow-legacy" ] \
+          || err "$chart: migration preflight must check legacy credentials, files and export capacity"
+        [ "$(yq "$mj | .spec.template.spec.volumes[] | select(.name == \"secrets\") | .secret.items[].path" <<<"$out" | sed '/^$/d')" = database-runtime-url ] \
+          || err "$chart: migration preflight must mount only the runtime database URL"
+        ! yq 'select(.kind == "Job") | .metadata.name' <<<"$(render "$chart" "$pg")" | grep -q migration \
+          || err "$chart: migration Jobs must not render unless migration.enabled"
+        out=$(render "$chart" "$pg" "${mig[@]}" --set migration.step=export)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-export")'
+        [ "$(yq "$mj | .spec.template.spec.containers[0].args | join(\" \")" <<<"$out" | sed '/^$/d')" = "export-for-actors --out /data/migration/run-ci-0001 --run-id run-ci-0001" ] \
+          || err "$chart: migration export must write to the data claim under the run id"
+        [ "$(yq "$mj | [.spec.template.spec.volumes[] | select(.name == \"secrets\") | .secret.items[].path] | join(\",\")" <<<"$out" | sed '/^$/d')" = database-runtime-url,internal-secret ] \
+          || err "$chart: migration export must mount only the runtime database URL and the internal secret (block sealing)"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].env[] | select(.name == \"RELAYCAST_DATABASE_CA_FILE\") | .value" <<<"$out" | sed '/^$/d')" = /etc/postgres-ca/ca.crt ] \
+          || err "$chart: migration export must verify the database against the CA"
+        out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=files)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-files")'
+        [ "$(yq "$mj | [.spec.template.spec.containers[0].env[].name] | join(\",\")" <<<"$out" | sed '/^$/d')" = "RELAYCAST_FILE_STORE,RELAYCAST_S3_BUCKET,RELAYCAST_S3_REGION,RELAYCAST_S3_PREFIX,RELAYCAST_S3_FORCE_PATH_STYLE,NODE_OPTIONS,RELAYCAST_INTERNAL_SECRET_FILE" ] \
+          || err "$chart: migration files must get the gateway's file store settings and no secrets"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].env[] | select(.name == \"NODE_OPTIONS\") | .value" <<<"$out" | sed '/^$/d')" = --max-old-space-size=768 ] \
+          || err "$chart: migration Jobs must size the heap from the memory limit"
+        out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=files --set-json 'extraEnv=[{"name":"NODE_OPTIONS","value":"--max-old-space-size=300"}]')
+        [ "$(yq "$mj | [.spec.template.spec.containers[0].env[] | select(.name == \"NODE_OPTIONS\") | .value] | join(\",\")" <<<"$out" | sed '/^$/d')" = --max-old-space-size=300 ] \
+          || err "$chart: an operator NODE_OPTIONS must reach the migration Jobs, once"
+        [ "$(yq "$mj | .spec.template.spec.containers[0].volumeMounts[] | select(.name == \"data\") | .readOnly" <<<"$out" | sed '/^$/d')" = true ] \
+          || err "$chart: migration files must read the old files read-only"
+        ! yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$(render "$chart" "$s3")" | grep -q . \
+          || err "$chart: durable-actors with s3 files must not render a data claim by default"
+        [ "$(yq 'select(.kind == "PersistentVolumeClaim") | .metadata.name' <<<"$(render "$chart" "$s3" --set persistence.retainForMigration=true)" | sed '/^$/d')" = ci-relaycast-data ] \
+          || err "$chart: persistence.retainForMigration must keep the previous backend's data claim"
+        gwout=$(render "$chart" "$s3" --set runtime.durableActors.socketOrigin=controlPlane)
+        cp_url=$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DURABLE_ACTORS_CONTROL_PLANE_URL") | .value' <<<"$gwout" | sed '/^$/d')
+        [ -n "$cp_url" ] && [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DURABLE_ACTORS_SOCKET_ORIGIN") | .value' <<<"$gwout" | sed '/^$/d')" = "$cp_url" ] \
+          || err "$chart: socketOrigin=controlPlane must dial the in-cluster control plane"
+        ! yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[].name' <<<"$(render "$chart" "$s3")" | grep -qx DURABLE_ACTORS_SOCKET_ORIGIN \
+          || err "$chart: no socket origin unless runtime.durableActors.socketOrigin is set"
+        out=$(render "$chart" "$s3" "${mig[@]}" --set migration.step=import)
+        mj='select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration-import")'
+        [ "$(yq "$mj | .spec.template.spec.containers[0].args[-1]" <<<"$out" | sed '/^$/d')" = "http://ci-relaycast.ci.svc:8787" ] \
+          || err "$chart: migration import must reach the gateway Service"
+        # Gate-only: the leaf Ingress sends only relaygate's routes to the
+        # relaygate Service and denies the rest; the policy ignores ingressFrom.
+        v=charts/relaycast/ci/default-values.yaml
+        gate=(--set global.relaygate.gateOnly.enabled=true --set ingress.enabled=true --set 'ingress.hosts={relay.example.com}' --set ingress.externalTls=true --set 'networkPolicy.ingressFrom[0].podSelector.matchLabels.app=ingress')
+        out=$(render "$chart" "$v" "${gate[@]}") || err "$chart: gate-only did not render"
+        [ "$(yq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + ">" + .backend.service.name] | join(" ")' <<<"$out" | sed '/^---$/d;/^$/d')" = "/v1/register>ci-relaygate /v1/check>ci-relaygate /v1/whoami>ci-relaygate /v1/agent>ci-relaygate /v1/agent/node-token>ci-relaygate /v1/node/ws>ci-relaygate /v1/search>ci-relaygate /v1/inbox>ci-relaygate /v1/agents>ci-relaygate /v1/channels>ci-relaygate /v1/messages>ci-relaygate /v1/dm>ci-relaygate /v1/streams>ci-relaygate /v1/deliveries>ci-relaygate />ci-relaycast-deny" ] \
+          || err "$chart: gate-only Ingress must route only relaygate's paths to relaygate"
+        [ "$(yq 'select(.kind == "NetworkPolicy") | [.spec.ingress[0].from[].podSelector.matchLabels["app.kubernetes.io/name"]] | join(" ")' <<<"$out" | sed '/^---$/d;/^$/d')" = "relaygate relaycast-migration relay-control relayauth" ] \
+          || err "$chart: gate-only policy must admit relaygate, the migration Job and networkPolicy.gateOnlyFrom only"
+        expect_render_failure "$chart" "$v" "gate-only without a policy" "requires networkPolicy.enabled=true" "${gate[@]}" --set networkPolicy.enabled=false
         ;;
       relayfile)
         v=charts/relayfile/ci/durable-actors-values.yaml
@@ -501,6 +639,14 @@ for chart in "${charts[@]}"; do
         [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.items[0].key' <<<"$logo")" = "logo.png" ] \
           || err "$chart: existingConfigMap without key must serve logo.png"
         expect_render_failure "$chart" "$v" "unknown logo setting" "global.branding.logo.url is not a setting" --set global.branding.logo.url=https://x.example/logo.svg
+        # Co-branding: dashboardKey serves a second PNG from the same ConfigMap.
+        logo=$(render "$chart" "$v" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.key=mark.png --set global.branding.logo.dashboardKey=cobrand.png)
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | [.configMap.items[].path] | join(" ")' <<<"$logo" | grep -v '^---$' | grep .)" = "mark.png cobrand.png" ] \
+          || err "$chart: dashboardKey must project a second file beside key"
+        kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$logo" >/dev/null || err "$chart: co-brand logo render failed kubeconform"
+        expect_render_failure "$chart" "$v" "dashboardKey without a ConfigMap" "global.branding.logo.dashboardKey names a key in existingConfigMap" --set global.branding.logo.dashboardKey=cobrand.png
+        expect_render_failure "$chart" "$v" "dashboardKey type" "global.branding.logo.dashboardKey must be a file name" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.dashboardKey=cobrand.svg
+        expect_render_failure "$chart" "$v" "dashboardKey equal to key" "dashboardKey must differ from key" --set global.branding.logo.existingConfigMap=relay-brand --set global.branding.logo.dashboardKey=logo.png
         ;;
       relay-control)
         v=charts/relay-control/ci/default-values.yaml
@@ -662,48 +808,6 @@ for chart in "${charts[@]}"; do
         [ -n "$(render "$chart" "$v" --set dashboardUrl=https://gcp-proof.agentrelay.com/ --set auth.oidc.issuer=http://dex:5556/dex --set auth.oidc.clientId=x --set secretKeys.oidcClientSecret=oidc-client-secret --set auth.oidc.allowHttpIssuer=true)" ] \
           || err "$chart: allowHttpIssuer=true must accept an in-cluster http issuer"
         ;;
-      relayhistory)
-        v=charts/relayhistory/ci/default-values.yaml
-        check_postgres_ca "$chart" "$v"
-        expect_render_failure "$chart" "$v" "postgresCa extraConfig override" "NODE_EXTRA_CA_CERTS is managed by structured chart values" --set postgresCa.enabled=true --set postgresCa.configMap=ca-bundle --set extraConfig.NODE_EXTRA_CA_CERTS=/x
-        expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
-        expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
-        expect_render_failure "$chart" "$v" "missing database Secret" "database.existingSecret is required" --set database.existingSecret=
-        expect_render_failure "$chart" "$v" "missing origin" "relayauth.historyOrigin must be an HTTPS origin" --set relayauth.historyOrigin=
-        expect_render_failure "$chart" "$v" "plaintext origin" "relayauth.historyOrigin must be an HTTPS origin" --set relayauth.historyOrigin=http://history.example.com
-        expect_render_failure "$chart" "$v" "ingress without TLS" "ingress.enabled=true requires ingress.tls" --set-json 'ingress.tls=[]'
-        expect_render_failure "$chart" "$v" "drain without write hold" "migrations.drainForWriteHold requires migrations.allowWriteHold=true" --set migrations.drainForWriteHold=true
-        expect_render_failure "$chart" "$v" "drain without migrations" "migrations.drainForWriteHold requires migrations.enabled=true" --set migrations.drainForWriteHold=true --set migrations.allowWriteHold=true --set migrations.enabled=false
-        expect_render_failure "$chart" "$v" "replicaCount 0" "set migrations.drainForWriteHold=true instead" --set replicaCount=0
-        # Write-hold step 1 drains History to zero replicas and runs the Job with the hold;
-        # default and step 2 keep one replica and no hold.
-        wh=$(helm template ci "charts/$chart" -n ci --no-hooks -f "$v" --set migrations.allowWriteHold=true --set migrations.drainForWriteHold=true) \
-          || err "$chart: write-hold step 1 failed to render"
-        [ "$(yq 'select(.kind == "Deployment") | .spec.replicas' <<<"$wh")" = 0 ] || err "$chart: drainForWriteHold did not render replicas 0"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].env[] | select(.name == "ALLOW_WRITE_HOLD") | .value' <<<"$wh")" = yes ] \
-          || err "$chart: write-hold step 1 Job does not take the write hold"
-        # The Job must not start migrating while a History pod still terminates:
-        # an init container polls the API for this release's History pods.
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.initContainers[0].name' <<<"$wh")" = wait-for-history-drain ] \
-          || err "$chart: write-hold step 1 Job does not wait for History to drain"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.initContainers[0].env[] | select(.name == "HISTORY_SELECTOR") | .value' <<<"$wh")" = "app.kubernetes.io/name=relayhistory,app.kubernetes.io/instance=ci,app.kubernetes.io/component=history" ] \
-          || err "$chart: drain wait selector is not release-scoped"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].volumeMounts[].name' <<<"$wh" | grep -c drain-wait-token || true)" = 0 ] \
-          || err "$chart: the migrate container must not mount the drain-wait token"
-        [ "$(yq 'select(.kind == "Role") | .rules[0].verbs | join(",")' <<<"$wh")" = list ] \
-          || err "$chart: drain-wait Role must only list pods"
-        expect_render_failure "$chart" "$v" "drain without API egress" "requires migrations.drainWaitApiServerEgress" --set migrations.drainForWriteHold=true --set migrations.allowWriteHold=true --set networkPolicy.allowAllEgress=false --set-json 'networkPolicy.additionalEgress=[{"to":[{"ipBlock":{"cidr":"10.0.0.5/32"}}]}]'
-        expect_render_failure "$chart" "$v" "fractional drain wait" "migrations.drainWaitSeconds must be a positive integer" --set migrations.drainWaitSeconds=1.5
-        expect_render_failure "$chart" "$v" "drain wait over the Job deadline" "migrations.drainWaitSeconds must be below migrations.activeDeadlineSeconds" --set migrations.drainForWriteHold=true --set migrations.allowWriteHold=true --set migrations.drainWaitSeconds=3600
-        expect_render_failure "$chart" "$v" "drain wait on the default ServiceAccount" "requires serviceAccount.name" --set migrations.drainForWriteHold=true --set migrations.allowWriteHold=true --set serviceAccount.create=false
-        [ "$(helm template ci "charts/$chart" -n ci --no-hooks -f "$v" --set migrations.allowWriteHold=true --set migrations.drainForWriteHold=true --set networkPolicy.allowAllEgress=false --set-json 'networkPolicy.additionalEgress=[{"to":[{"ipBlock":{"cidr":"10.0.0.5/32"}}]}]' --set-json 'migrations.drainWaitApiServerEgress=[{"ipBlock":{"cidr":"10.0.0.1/32"}}]' --set migrations.drainWaitApiServerPort=6443 | yq 'select(.kind == "NetworkPolicy" and (.metadata.name | test("migration$"))) | .spec.egress[-1].ports[0].port')" = 6443 ] \
-          || err "$chart: drainWaitApiServerPort is not rendered in the migration policy"
-        dflt=$(helm template ci "charts/$chart" -n ci --no-hooks -f "$v") || err "$chart: default render failed"
-        [ "$(yq 'select(.kind == "Role") | .metadata.name' <<<"$dflt")" = "" ] || err "$chart: default render must not grant pod list"
-        [ "$(yq 'select(.kind == "Deployment") | .spec.replicas' <<<"$dflt")" = 1 ] || err "$chart: default render is not one replica"
-        [ "$(yq 'select(.kind == "Job") | .spec.template.spec.containers[0].env[] | select(.name == "ALLOW_WRITE_HOLD") | .value' <<<"$dflt")" = no ] \
-          || err "$chart: default Job takes a write hold"
-        ;;
       relaychief-control)
         v=charts/relaychief-control/ci/default-values.yaml
         check_postgres_ca "$chart" "$v"
@@ -853,9 +957,175 @@ for chart in "${charts[@]}"; do
             || err "$chart: $name must come from the existing Secret"
         done
         ;;
+      durable-actors)
+        # Local patch 12 (UPSTREAM.md): postgresCa appends the Postgres server CA to the
+        # image's system roots (init container postgres-ca-bundle, volume postgres-ca)
+        # and points SSL_CERT_FILE at it in the control plane and the pool manager.
+        v=charts/durable-actors/ci/eks-values.yaml
+        off=$(render "$chart" "$v")
+        ! grep -Eq 'postgres-ca|SSL_CERT_FILE|initContainers' <<<"$off" || err "$chart: postgresCa off must render nothing"
+        for src in "configMap=rds-ca" "secret=rds-ca-secret"; do
+          on=$(render "$chart" "$v" --set postgresCa.enabled=true --set "postgresCa.$src" --set postgresCa.key=global-bundle.pem) || { err "$chart: postgresCa $src did not render"; continue; }
+          [ "$(yq 'select(.kind == "Deployment") | .metadata.name' <<<"$on" | grep -v '^---$' | sort | tr '\n' ' ')" = "ci-durable-actors ci-durable-actors-pool-manager " ] \
+            || err "$chart: expected the control-plane and pool-manager Deployments"
+          if [ "${src%%=*}" = configMap ]; then
+            source='.configMap.name == "rds-ca" and (.configMap.items | length) == 1 and .configMap.items[0].key == "global-bundle.pem" and .configMap.items[0].path == "ca.crt"'
+          else
+            source='.secret.secretName == "rds-ca-secret" and .secret.defaultMode == 0444 and (.secret.items | length) == 1 and .secret.items[0].key == "global-bundle.pem" and .secret.items[0].path == "ca.crt"'
+          fi
+          ok='([.spec.template.spec.volumes[] | select(.name == "postgres-ca-source" and '"$source"')] | length) == 1'
+          ok+=' and ([.spec.template.spec.volumes[] | select(.name == "postgres-ca" and .emptyDir.medium == "Memory")] | length) == 1'
+          ok+=' and ([.spec.template.spec.initContainers[] | select(.name == "postgres-ca-bundle" and (.command[-1] | contains("/etc/ssl/certs/ca-certificates.crt")) and (.command[-1] | contains("/etc/postgres-ca-source/ca.crt")) and .securityContext.readOnlyRootFilesystem == true)] | length) == 1'
+          ok+=' and .spec.template.spec.initContainers[0].image == .spec.template.spec.containers[0].image'
+          ok+=' and ([.spec.template.spec.containers[0].volumeMounts[] | select(.name == "postgres-ca" and .mountPath == "/etc/postgres-ca" and .readOnly == true)] | length) == 1'
+          ok+=' and ([.spec.template.spec.containers[0].volumeMounts[] | select(.name == "postgres-ca-source")] | length) == 0'
+          ok+=' and ([.spec.template.spec.containers[0].env[] | select(.name == "SSL_CERT_FILE" and .value == "/etc/postgres-ca/ca.crt")] | length) == 1'
+          missing=$(yq "select(.kind == \"Deployment\") | select(($ok) | not) | .metadata.name" <<<"$on" | grep -v '^---$' || true)
+          [ -z "$missing" ] || err "$chart: postgresCa $src did not reach: $missing"
+          kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$on" >/dev/null || err "$chart: postgresCa $src failed kubeconform"
+        done
+        expect_render_failure "$chart" "$v" "postgresCa without a source" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true
+        expect_render_failure "$chart" "$v" "postgresCa with both sources" "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" --set postgresCa.enabled=true --set postgresCa.configMap=a --set postgresCa.secret=b
+        expect_render_failure "$chart" "$v" "postgresCa source while disabled" "postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true" --set postgresCa.configMap=rds-ca
+        expect_render_failure "$chart" "$v" "postgresCa non-boolean enabled" "/postgresCa/enabled" --set-string postgresCa.enabled=true
+        expect_render_failure "$chart" "$v" "postgresCa bad name" "/postgresCa/configMap" --set postgresCa.enabled=true --set postgresCa.configMap=Bad_Name
+        expect_render_failure "$chart" "$v" "postgresCa bad key" "/postgresCa/key" --set postgresCa.enabled=true --set postgresCa.configMap=rds-ca --set postgresCa.key=../x
+        resilient=$(render "$chart" "$v" --set podDisruptionBudget.enabled=true --set podDisruptionBudget.maxUnavailable=0 --set topologySpread.enabled=true)
+        [ "$(yq 'select(.kind == "PodDisruptionBudget") | .spec.maxUnavailable' <<<"$resilient" | sed '/^$/d')" = 0 ] \
+          || err "$chart: singleton control-plane PDB must preserve maxUnavailable=0"
+        missing=$(yq 'select(.kind == "Deployment") | select((.spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels["app.kubernetes.io/name"] == .metadata.name) | not) | .metadata.name' <<<"$resilient" | grep -v '^---$' || true)
+        [ -z "$missing" ] || err "$chart: generated topology spread does not select its Deployment: $missing"
+        ;;
+      relaygate)
+        v=charts/relaygate/ci/sessions-values.yaml
+        out=$(render "$chart" "$v")
+        env_value() { yq "select(.kind == \"Deployment\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$out" | sed '/^---$/d;/^$/d'; }
+        [ "$(env_value SESSIONS_URL)" = https://history.example.com ] || err "$chart: SESSIONS_URL not rendered"
+        [ "$(env_value SESSIONS_UPLOAD_URL)" = http://session-ingest-api:8080 ] || err "$chart: SESSIONS_UPLOAD_URL not rendered"
+        [ "$(env_value SESSIONS_READ_URL)" = http://session-read-api:8080 ] || err "$chart: SESSIONS_READ_URL not rendered"
+        [ "$(env_value SESSIONS_HOSTS)" = history.example.com,history.internal.example.com ] || err "$chart: SESSIONS_HOSTS not comma-joined"
+        grep -A1 -F -- '- name: SESSIONS_TOKEN' <<<"$out" | grep -Fq 'name: relaygate-sessions' || err "$chart: named sessionsToken not rendered"
+        out=$(render "$chart" charts/relaygate/ci/proxy-values.yaml)
+        ! grep -Eq 'name: SESSIONS_(TOKEN|UPLOAD_URL|READ_URL|HOSTS)$' <<<"$out" || err "$chart: unset Sessions settings rendered"
+        expect_render_failure "$chart" "$v" "split upstream without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
+        expect_render_failure "$chart" "$v" "sessionsHosts without split upstreams" "proxy.sessionsHosts needs proxy.sessionsUploadUrl and proxy.sessionsReadUrl" --set proxy.sessionsReadUrl=
+        expect_render_failure "$chart" "$v" "sessionsHosts loop" "requests would loop back to relaygate" --set proxy.sessionsReadUrl=https://History.example.com:443
+        v=charts/relaygate/ci/control-values.yaml
+        out=$(render "$chart" "$v")
+        [ "$(env_value RELAYCONTROL_INTROSPECT_URL)" = http://relay-control:8080/internal/v1/auth/introspect ] || err "$chart: RELAYCONTROL_INTROSPECT_URL not rendered"
+        [ "$(env_value SESSION_INGEST_AUDIENCE)" = https://history.example.com ] || err "$chart: SESSION_INGEST_AUDIENCE not rendered"
+        [ "$(env_value SESSIONS_CORS_ORIGINS)" = https://app.example.com,https://history.example.com ] || err "$chart: SESSIONS_CORS_ORIGINS not comma-joined"
+        grep -A1 -F -- '- name: RELAYCONTROL_INTROSPECT_SECRET' <<<"$out" | grep -Fq 'name: relaygate-control' || err "$chart: introspect secret not rendered"
+        grep -A1 -F -- '- name: SESSIONS_INTERNAL_SECRET' <<<"$out" | grep -Fq 'name: relaygate-sessions-internal' || err "$chart: sessions internal secret not rendered"
+        pol=$(yq 'select(.kind == "ConfigMap") | .data["policy.json"]' <<<"$out" | sed '/^---$/d')
+        [ "$(jq -c '[.controlPrincipals[] | [.match.orgIds, .match.roles, .gid]]' <<<"$pol")" = '[[["org_example"],["owner","admin"],22],[["org_example"],null,11]]' ] \
+          || err "$chart: policy.controlPrincipals rules not rendered as given"
+        [ "$(jq -c '.sessionAggregates.gids' <<<"$pol")" = '[22]' ] || err "$chart: policy.sessionAggregates.gids not rendered as given"
+        out=$(render "$chart" charts/relaygate/ci/proxy-values.yaml)
+        ! grep -Eq 'name: (RELAYCONTROL_INTROSPECT_URL|SESSION_INGEST_AUDIENCE|SESSIONS_CORS_ORIGINS|SESSIONS_INTERNAL_SECRET)$' <<<"$out" || err "$chart: unset Control settings rendered"
+        [ "$(yq 'select(.kind == "ConfigMap") | .data["policy.json"] | from_json | .controlPrincipals | length' <<<"$out" | sed '/^---$/d;/^$/d')" = 0 ] \
+          || err "$chart: default policy must not grant Control principals"
+        # inboxDefaults: the default mirrors the local- inbox rule; an override whose groups lack a gid it names drops
+        # that entry (Helm merges the policy map, so the default would otherwise make the policy fail to load).
+        inbox_defaults() { render "$chart" charts/relaygate/ci/proxy-values.yaml "$@" | yq 'select(.kind == "ConfigMap") | .data["policy.json"]' | sed '/^---$/d' | jq -c '.inboxDefaults'; }
+        [ "$(inbox_defaults)" = '[{"acl":[{"gid":22,"perm":"r"}],"gid":11,"mode":"660"}]' ] || err "$chart: default inboxDefaults must mirror the local- inbox rule"
+        [ "$(inbox_defaults --set-json 'policy.groups=[{"gid":22,"name":"pit"}]')" = '[]' ] || err "$chart: inboxDefaults for an undefined gid must not render"
+        [ "$(inbox_defaults --set-json 'policy.groups=[{"gid":11,"name":"local"}]')" = '[]' ] || err "$chart: inboxDefaults with an ACL on an undefined gid must not render"
+        [ "$(inbox_defaults --set-json 'policy.inboxDefaults=[]')" = '[]' ] || err "$chart: inboxDefaults: [] must opt out"
+        # An operator's own entry naming an undefined gid fails closed rather than falling back to relaygate's 660.
+        expect_render_failure "$chart" charts/relaygate/ci/proxy-values.yaml "inboxDefaults ACL names an undefined gid" "policy.inboxDefaults entry for gid 11 names gid(s) 44" --set-json 'policy.inboxDefaults=[{"gid":11,"mode":"600","acl":[{"gid":44,"perm":"r"}]}]'
+        expect_render_failure "$chart" charts/relaygate/ci/proxy-values.yaml "inboxDefaults for an undefined gid" "policy.inboxDefaults entry for gid 33 names gid(s) 33" --set-json 'policy.inboxDefaults=[{"gid":33,"mode":"600"}]'
+        expect_render_failure "$chart" charts/relaygate/ci/proxy-values.yaml "explicit copy of the default inboxDefaults without gid 22" "policy.inboxDefaults entry for gid 11 names gid(s) 22" --set-json 'policy.groups=[{"gid":11,"name":"local"}]' --set-json 'policy.inboxDefaults=[{"gid":11,"mode":"660","acl":[{"gid":22,"perm":"r"}]}]'
+        [ "$(inbox_defaults --set-json 'policy.inboxDefaults=[{"gid":11,"mode":"600","acl":[{"gid":22,"perm":"r"}]}]')" = '[{"acl":[{"gid":22,"perm":"r"}],"gid":11,"mode":"600"}]' ] || err "$chart: an operator inboxDefaults entry must render as given"
+        expect_render_failure "$chart" "$v" "Sessions CORS/internal secret without sessionsUrl" "need proxy.sessionsUrl" --set proxy.sessionsUrl=
+        # Control principals alone (desktop enrolment): no Sessions proxy needed.
+        out=$(render "$chart" "$v" --set proxy.sessionsUrl= --set-json 'proxy.sessionsCorsOrigins=[]' --set secrets.sessionsInternalSecret.name=)
+        [ "$(env_value RELAYCONTROL_INTROSPECT_URL)" = http://relay-control:8080/internal/v1/auth/introspect ] || err "$chart: introspection must render without the Sessions proxy"
+        ! grep -Eq 'name: SESSIONS_URL$' <<<"$out" || err "$chart: SESSIONS_URL rendered with proxy.sessionsUrl empty"
+        expect_render_failure "$chart" "$v" "introspect without audience" "control.introspectUrl needs control.sessionIngestAudience" --set control.sessionIngestAudience=
+        expect_render_failure "$chart" "$v" "audience without introspectUrl" "need control.introspectUrl" --set control.introspectUrl= --set secrets.relaycontrolIntrospectSecret.name=
+        expect_render_failure "$chart" "$v" "introspect secret without introspectUrl" "need control.introspectUrl" --set control.introspectUrl= --set control.sessionIngestAudience=
+        expect_render_failure "$chart" "$v" "introspect without secret" "control.introspectUrl needs control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret.name" --set secrets.relaycontrolIntrospectSecret.name=
+        # Gate-only (global.relaygate.gateOnly.enabled): refuses to render with
+        # a proxy, sessionsHosts or the Control mapping missing, or a renamed Service.
+        gate=(-f charts/relaygate/ci/proxy-values.yaml --set proxy.sessionsUploadUrl=http://session-ingest-api:8080 --set proxy.sessionsReadUrl=http://session-read-api:8080 --set 'proxy.sessionsHosts={history.example.com}' --set control.introspectUrl=http://relay-control:8080/internal/v1/auth/introspect --set control.sessionIngestAudience=https://history.example.com --set secrets.relaycontrolIntrospectSecret.name=control-introspect --set global.relaygate.gateOnly.enabled=true --set global.relaygate.gateOnly.sessionsPort=8081)
+        render "$chart" "$v" "${gate[@]}" >/dev/null || err "$chart: gate-only did not render"
+        expect_render_failure "$chart" "$v" "gate-only without the Relaycast proxy" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" "${gate[@]}" --set proxy.relaycastUrl=
+        expect_render_failure "$chart" "$v" "gate-only without sessionsHosts" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" "${gate[@]}" --set proxy.sessionsHosts=null
+        expect_render_failure "$chart" "$v" "gate-only without the Control mapping" "global.relaygate.gateOnly.enabled needs control.introspectUrl" "${gate[@]}" --set control.introspectUrl= --set control.sessionIngestAudience= --set secrets.relaycontrolIntrospectSecret.name=
+        expect_render_failure "$chart" "$v" "gate-only with a renamed Service" "set global.relaygate.gateOnly.serviceName" "${gate[@]}" --set fullnameOverride=gate
+        expect_render_failure "$chart" "$v" "gate-only without the sessions port" "needs global.relaygate.gateOnly.sessionsPort" "${gate[@]}" --set global.relaygate.gateOnly.sessionsPort=0
+        # The main listener always binds 8080 (PORT); service.port only remaps the Service.
+        expect_render_failure "$chart" "$v" "gate-only sessions port on the main listener behind a remapped Service" "not 8080, the main listener" "${gate[@]}" --set service.port=80 --set global.relaygate.gateOnly.servicePort=80 --set global.relaygate.gateOnly.sessionsPort=8080
+        render "$chart" "$v" "${gate[@]}" --set service.port=8081 --set global.relaygate.gateOnly.servicePort=8081 --set global.relaygate.gateOnly.sessionsPort=8081 >/dev/null \
+          || err "$chart: a Service port equal to the sessions port is fine (the main listener is 8080)"
+        expect_render_failure "$chart" "$v" "gate-only with no listener peers" "an empty peer list would admit every source" "${gate[@]}" --set sessionsListener.controlFrom=null
+        expect_render_failure "$chart" "$v" "gate-only with an empty listener peer" "must be NetworkPolicy peers with selectors" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{}]'
+        expect_render_failure "$chart" "$v" "gate-only with an unlabelled listener peer" "must name the relay-control pods by label" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{"podSelector":{}}]'
+        expect_render_failure "$chart" "$v" "gate-only with an all-namespaces listener peer" "must name the relay-control pods by label" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{"namespaceSelector":{}}]'
+        expect_render_failure "$chart" "$v" "gate-only with an ipBlock listener peer" "never an ipBlock" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{"ipBlock":{"cidr":"0.0.0.0/0"}}]'
+
+        render "$chart" "$v" "${gate[@]}" --set fullnameOverride=gate --set global.relaygate.gateOnly.serviceName=gate >/dev/null || err "$chart: gate-only with a matching serviceName must render"
+        ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
-        expect_render_failure "$chart" "$v" "missing History image" "image.digest is required" --set relayhistory.image.digest=
+        # externalSecrets (ESO, e.g. AWS SSM): off renders nothing; on renders
+        # one ExternalSecret per target Secret, plus a namespaced SecretStore
+        # when store.create, and refuses an incomplete configuration.
+        ! render "$chart" "$v" | yq '.kind' | grep -qE '^(ExternalSecret|SecretStore)$' || err "$chart: externalSecrets off must render no ExternalSecret or SecretStore"
+        es=(--set externalSecrets.enabled=true --set externalSecrets.store.create=true --set externalSecrets.store.provider.aws.service=ParameterStore --set externalSecrets.store.provider.aws.region=us-east-1
+          --set externalSecrets.secrets.agent-relay-secrets.data.database-url=/agent-relay/relaycontrol/runtime-url
+          --set externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_URL.key=/agent-relay/hoopdb --set externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_URL.property=url
+          --set externalSecrets.secrets.search-indexer-runtime.creationPolicy=Merge --set-json 'externalSecrets.secrets.search-indexer-runtime.dataFrom=[{"find":{"path":"/agent-relay/search-indexer/","name":{"regexp":".*"}}}]')
+        out=$(render "$chart" "$v" "${es[@]}") || err "$chart: externalSecrets on did not render"
+        [ "$(yq 'select(.kind == "ExternalSecret") | .metadata.name + ":" + .spec.target.name + ":" + .spec.secretStoreRef.kind + "/" + .spec.secretStoreRef.name + ":" + .spec.target.creationPolicy' <<<"$out" | sed '/^---$/d' | tr '\n' ' ')" = "agent-relay-secrets:agent-relay-secrets:SecretStore/ci-external-secrets:Owner search-indexer-runtime:search-indexer-runtime:SecretStore/ci-external-secrets:Merge " ] \
+          || err "$chart: each externalSecrets entry must target the Secret of its name through the chart SecretStore"
+        [ "$(yq 'select(.kind == "SecretStore") | .metadata.name + " " + .spec.provider.aws.service' <<<"$out" | sed '/^---$/d')" = "ci-external-secrets ParameterStore" ] || err "$chart: store.create must render the SecretStore with store.provider"
+        [ "$(yq 'select(.kind == "ExternalSecret" and .metadata.name == "agent-relay-secrets") | .spec.data[] | .secretKey + "=" + .remoteRef.key + "#" + (.remoteRef.property // "")' <<<"$out" | tr '\n' ' ')" = "HOOPDB_URL=/agent-relay/hoopdb#url database-url=/agent-relay/relaycontrol/runtime-url# " ] \
+          || err "$chart: externalSecrets data must map a string to remoteRef.key and pass a remoteRef map through"
+        # ESO CRD schemas pinned to a CRDs-catalog commit, so invalid
+        # ExternalSecret/SecretStore fields fail here instead of being skipped.
+        eso_schemas='https://raw.githubusercontent.com/datreeio/CRDs-catalog/784ec895547a36e548e6810b41f27baade3a0890/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+        es_only=$(yq 'select(.kind == "ExternalSecret" or .kind == "SecretStore")' <<<"$out")
+        [ "$(yq '.kind' <<<"$es_only" | grep -cE '^(ExternalSecret|SecretStore)$')" = 3 ] || err "$chart: externalSecrets must render two ExternalSecrets and one SecretStore"
+        kubeconform -strict -summary -schema-location "$eso_schemas" -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$es_only" >/dev/null || { kubeconform -strict -summary -schema-location "$eso_schemas" <<<"$es_only"; err "$chart: externalSecrets failed kubeconform against the ESO schemas"; }
+        # Google Secret Manager through GKE Workload Identity: the overlay the GKE
+        # guide ships (docs/gcp-install/external-secrets-values.yaml) renders a
+        # gcpsm SecretStore and one ExternalSecret per install Secret, all valid
+        # against the ESO schemas, and maps every key step 10 creates.
+        gsm=docs/gcp-install/external-secrets-values.yaml
+        out=$(sed -e 's/__GCP_PROJECT_ID__/ci-project/g' -e 's/__REGION__/us-central1/g' -e 's/__GKE_CLUSTER__/ci-cluster/g' "$gsm" | render "$chart" "$v" -f -) || err "$chart: $gsm did not render"
+        [ "$(yq 'select(.kind == "SecretStore") | .spec.provider.gcpsm | .projectID + " " + .auth.workloadIdentity.clusterLocation + " " + .auth.workloadIdentity.clusterName + " " + .auth.workloadIdentity.clusterProjectID + " " + .auth.workloadIdentity.serviceAccountRef.name' <<<"$out" | sed '/^---$/d')" = "ci-project us-central1 ci-cluster ci-project agent-relay-external-secrets" ] \
+          || err "$chart: $gsm must render a gcpsm SecretStore that authenticates with Workload Identity as a ServiceAccount"
+        ! yq 'select(.kind == "SecretStore") | .spec.provider.gcpsm.auth | keys | .[]' <<<"$out" | grep -qx secretRef || err "$chart: $gsm must not use a service account key (auth.secretRef)"
+        [ "$(yq 'select(.kind == "ExternalSecret") | .metadata.name + "=" + (.spec.data | length | tostring) + ":" + .spec.secretStoreRef.kind' <<<"$out" | sed '/^---$/d' | sort | tr '\n' ' ')" = "agent-relay-ingest-edge-runtime=2:SecretStore agent-relay-read-api=1:SecretStore agent-relay-secrets=14:SecretStore search-indexer-owner=1:SecretStore search-indexer-runtime=1:SecretStore " ] \
+          || err "$chart: $gsm must map the five install Secrets (19 keys) through the chart SecretStore"
+        [ -z "$(yq 'select(.kind == "ExternalSecret") | .metadata.name as $n | .spec.data[] | select(.remoteRef.key != "agent-relay--" + $n + "--" + .secretKey) | .secretKey' <<<"$out" | sed '/^---$/d;/^$/d')" ] \
+          || err "$chart: $gsm must read each key from the Secret Manager secret agent-relay--<Secret>--<key> (helm-secrets-prepare.sh names)"
+        gsm_only=$(yq 'select(.kind == "ExternalSecret" or .kind == "SecretStore")' <<<"$out")
+        kubeconform -strict -summary -schema-location "$eso_schemas" -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$gsm_only" >/dev/null || { kubeconform -strict -summary -schema-location "$eso_schemas" <<<"$gsm_only"; err "$chart: $gsm failed kubeconform against the ESO schemas"; }
+        # The chart README's gcpsm example (a remoteRef map with version) validates too.
+        out=$(render "$chart" "$v" --set externalSecrets.enabled=true --set externalSecrets.store.create=true --set externalSecrets.store.provider.gcpsm.projectID=ci-project \
+          --set externalSecrets.store.provider.gcpsm.auth.workloadIdentity.serviceAccountRef.name=agent-relay-external-secrets \
+          --set externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_URL.key=agent-relay--agent-relay-secrets--HOOPDB_URL --set externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_URL.version=latest) || err "$chart: gcpsm remoteRef map did not render"
+        kubeconform -strict -summary -schema-location "$eso_schemas" -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$(yq 'select(.kind == "ExternalSecret" or .kind == "SecretStore")' <<<"$out")" >/dev/null || err "$chart: gcpsm remoteRef map failed kubeconform against the ESO schemas"
+        [ "$(yq 'select(.kind == "ExternalSecret") | .spec.data[0].remoteRef.version' <<<"$out")" = latest ] || err "$chart: gcpsm remoteRef version must pass through"
+        [ "$(render "$chart" "$v" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=aws-ssm --set externalSecrets.secrets.x.data.k=/p | yq 'select(.kind == "ExternalSecret") | .spec.secretStoreRef.kind + "/" + .spec.secretStoreRef.name')" = ClusterSecretStore/aws-ssm ] \
+          || err "$chart: an existing secretStoreRef must be used as given"
+        expect_render_failure "$chart" "$v" "externalSecrets without a store" "requires externalSecrets.secretStoreRef.name" --set externalSecrets.enabled=true --set externalSecrets.secrets.x.data.k=/p
+        expect_render_failure "$chart" "$v" "externalSecrets store.create without a provider" "requires externalSecrets.store.provider" --set externalSecrets.enabled=true --set externalSecrets.store.create=true --set externalSecrets.secrets.x.data.k=/p
+        expect_render_failure "$chart" "$v" "externalSecrets with no secrets" "at least one entry in externalSecrets.secrets" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s
+        expect_render_failure "$chart" "$v" "externalSecrets entry with no data" "needs data (Secret key -> remote key) or dataFrom" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s --set externalSecrets.secrets.x.creationPolicy=Owner
+        expect_render_failure "$chart" "$v" "externalSecrets bad Secret name" "must be a DNS-1123 subdomain" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s --set externalSecrets.secrets.Bad_Name.data.k=/p
+        expect_render_failure "$chart" "$v" "externalSecrets bad data key" "is not a valid Secret data key" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s --set 'externalSecrets.secrets.x.data.a/b=/p'
+        expect_render_failure "$chart" "$v" "externalSecrets remoteRef without key" "must be a remote key string or a remoteRef map with key" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s --set externalSecrets.secrets.x.data.k.property=url
+        expect_render_failure "$chart" "$v" "externalSecrets bad creationPolicy" "creationPolicy must be Owner, Merge, Orphan or None" --set externalSecrets.enabled=true --set externalSecrets.secretStoreRef.name=s --set externalSecrets.secrets.x.data.k=/p --set externalSecrets.creationPolicy=Adopt
+        # The standalone RelayHistory component was removed; values that would
+        # have deployed it must fail instead of silently dropping History.
+        expect_render_failure "$chart" "$v" "removed relayhistory component" "components.relayhistory was removed" --set components.relayhistory=true
+        expect_render_failure "$chart" "$v" "removed relayhistory values" "the relayhistory values block was removed" --set relayhistory.image.digest=sha256:8fbda9bd89dd33994b6b3331fb403c38a25f04e6742050bd717e99661f3544ba
+        render "$chart" "$v" --set components.relayhistory=false >/dev/null || err "$chart: components.relayhistory=false must still render (ignored)"
+        expect_render_failure "$chart" "$v" "legacy Control History backend behind gkeIngress" "relay-control.services.relayhistoryBackend must be native" --set relay-control.services.relayhistoryBackend=legacy --set relay-control.services.relayhistoryUrl=http://history:8080 --set relay-control.services.relayhistoryPublicUrl=https://history.gcp-proof.agentrelay.com --set relay-control.services.sessionReadApiMcpReads=false
         expect_render_failure "$chart" "$v" "missing API image" "image.digest is required" --set relay-control.image.digest=
         expect_render_failure "$chart" "$v" "missing dashboard image" "image.digest is required" --set relay-webapp.image.digest=
         expect_render_failure "$chart" "$v" "dashboardUrl off the root host" "relay-control.dashboardUrl must be on the dashboard host" --set relay-control.dashboardUrl=https://elsewhere.agentrelay.com/
@@ -867,9 +1137,134 @@ for chart in "${charts[@]}"; do
           || err "$chart: global.branding.logo must set relay-control's SELFHOST_LOGIN_LOGO_URL on the dashboard origin"
         [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | .configMap.name' <<<"$logo")" = "$(yq 'select(.kind == "ConfigMap" and (.data | has("logo.svg"))) | .metadata.name' <<<"$logo")" ] \
           || err "$chart: global.branding.logo must mount the chart's logo ConfigMap into relay-webapp"
+        # values-branding-example.yaml (co-branding) renders: the sign-in page
+        # links the customer mark, relay-webapp serves both PNGs, and the
+        # dashboard profile points at the combined logo.
+        cobrand=$(render "$chart" charts/agent-relay/ci/single-host-values.yaml -f charts/agent-relay/values-branding-example.yaml) || err "$chart: values-branding-example.yaml did not render"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "SELFHOST_LOGIN_LOGO_URL") | .value' <<<"$cobrand")" = https://relay.gcp-proof.agentrelay.com/brand/mark.png ] \
+          || err "$chart: the co-brand example must link the sign-in mark on the dashboard origin"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "brand") | [.configMap.items[].path] | join(" ")' <<<"$cobrand" | grep -v '^---$' | grep .)" = "mark.png cobrand.png" ] \
+          || err "$chart: the co-brand example must serve mark.png and cobrand.png"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "DASHBOARD_CUSTOMER_PROFILE") | .value' <<<"$cobrand" | jq -r '.logo + " " + (.productName // "unset")')" = "/brand/cobrand.png unset" ] \
+          || err "$chart: the co-brand example must keep the Agent Relay name and use the combined logo"
         expect_render_failure "$chart" charts/agent-relay/ci/single-host-values.yaml "hosted logo without the dashboard" "components.webapp=false" --set gkeIngress.enabled=false --set components.webapp=false --set-string 'global.branding.logo.svg=<svg/>'
         render "$chart" charts/agent-relay/ci/single-host-values.yaml --set gkeIngress.enabled=false --set components.webapp=false --set-string 'global.branding.logo.svg=<svg/>' --set relay-control.login.logoUrl=https://cdn.example.com/logo.svg >/dev/null \
           || err "$chart: components.webapp=false with relay-control.login.logoUrl must render"
+        # Gate-only (ci/gate-only-values.yaml): the cast and history hosts reach
+        # relaygate on exactly the routes it serves; Relaycast, the reader and
+        # the ingest edge admit only relaygate (plus Relaycast's direct
+        # server-side callers); Control reads Sessions through relaygate.
+        g=charts/agent-relay/ci/gate-only-values.yaml
+        out=$(render "$chart" "$g") || err "$chart: gate-only did not render"
+        routes() { yq "select(.kind == \"Ingress\") | .spec.rules[] | select(.host == \"$1\") | .http.paths[] | .path + \" \" + .pathType + \" \" + .backend.service.name" <<<"$out" | sed '/^---$/d;/^$/d' | tr '\n' ';'; }
+        gate=agent-relay-gcp-proof-gate deny=agent-relay-gcp-proof-cast-edge-deny
+        want=""; for p in /v1/register /v1/check /v1/whoami /v1/agent /v1/agent/node-token /v1/node/ws /v1/search /v1/inbox; do want+="$p Exact $gate;"; done
+        for p in /v1/agents /v1/channels /v1/messages /v1/dm /v1/streams /v1/deliveries; do want+="$p Prefix $gate;"; done
+        [ "$(routes cast.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only cast routes: $(routes cast.gcp-proof.agentrelay.com)"
+        want="/v1/sessions Prefix $gate;"; for p in /v1/events /v1/ingest /v1/delivery/batches /v1/delivery/limits /v1/auth/token/refresh /v1/onboarding/heartbeat; do want+="$p Exact $gate;"; done
+        [ "$(routes history.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only history routes: $(routes history.gcp-proof.agentrelay.com)"
+        # Desktop on a gate-only install uses the sign-in origin as control_url
+        # and opens GET /relay-node/v1/ws there; relay-control serves the
+        # relay-node routes only at the root path, so the root host must send
+        # /relay-node to relay-control, not the dashboard.
+        [ "$(routes gcp-proof.agentrelay.com)" = "/cloud/api Prefix relay-control;/login Prefix relay-control;/relay-node Prefix relay-control;/ Prefix relay-webapp;" ] \
+          || err "$chart: gate-only root routes must send /relay-node to relay-control: $(routes gcp-proof.agentrelay.com)"
+        [ "$(yq "select(.kind == \"Service\" and .metadata.name == \"$gate\") | .spec.selector[\"app.kubernetes.io/name\"] + \" \" + .metadata.annotations[\"cloud.google.com/backend-config\"]" <<<"$out" | sed '/^---$/d;/^$/d')" = "relaygate {\"default\": \"$gate\"}" ] || err "$chart: gate edge Service must select relaygate with its BackendConfig"
+        [ "$(yq "select(.kind == \"BackendConfig\" and .metadata.name == \"$gate\") | .spec.healthCheck.requestPath + \" \" + (.spec.timeoutSec | tostring)" <<<"$out" | sed '/^---$/d;/^$/d')" = "/healthz 3600" ] || err "$chart: gate edge BackendConfig must check /healthz with the cast timeout"
+        peers() { yq "select(.kind == \"NetworkPolicy\" and .metadata.name == \"$1\") | [.spec.ingress[].from[] | (.podSelector.matchLabels[\"app.kubernetes.io/name\"] // .ipBlock.cidr // \"any\")] | join(\" \")" <<<"$out" | sed '/^---$/d;/^$/d'; }
+        [ "$(peers relaycast)" = "relaygate relaycast-migration relay-control relayauth" ] || err "$chart: gate-only relaycast peers: $(peers relaycast)"
+        [ "$(peers agent-relay-read-api)" = relaygate ] || err "$chart: gate-only reader peers: $(peers agent-relay-read-api)"
+        [ "$(peers agent-relay-ingest-edge)" = relaygate ] || err "$chart: gate-only ingest peers: $(peers agent-relay-ingest-edge)"
+        [[ " $(peers relay-control) " == *" relaygate "* ]] || err "$chart: gate-only Control must admit relaygate (introspection)"
+        check_control_origins "$chart (gate-only)" "$out"
+        [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") | .spec.template.spec.containers[0].env[] | select(.name == "SESSION_READ_API_URL") | .value' <<<"$out")" = http://ci-relaygate-sessions.ci.svc.cluster.local:8081 ] \
+          || err "$chart: gate-only SESSION_READ_API_URL must be relaygate's internal Sessions listener origin"
+        # relaygate's internal Sessions listener: SESSIONS_PORT and its port,
+        # a ClusterIP Service on it that no Ingress, HTTPRoute or NEG uses, and a
+        # policy that admits only relay-control to it.
+        [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "ci-relaygate") | .spec.template.spec.containers[0] | ([.env[] | select(.name == "SESSIONS_PORT") | .value] | join(",")) + " " + ([.ports[] | select(.name == "sessions") | .containerPort | tostring] | join(","))' <<<"$out" | sed '/^---$/d;/^ *$/d')" = "8081 8081" ] \
+          || err "$chart: gate-only relaygate must render SESSIONS_PORT=8081 and containerPort 8081"
+        [ "$(yq 'select(.kind == "Service" and .metadata.name == "ci-relaygate-sessions") | .spec.type + " " + ([.spec.ports[] | (.port | tostring) + ">" + .targetPort] | join(",")) + " " + (.metadata.annotations["cloud.google.com/neg"] // "no-neg")' <<<"$out" | sed '/^---$/d;/^$/d')" = "ClusterIP 8081>sessions no-neg" ] \
+          || err "$chart: gate-only sessions Service must be a ClusterIP on 8081 with no NEG"
+        ! yq 'select(.kind == "Ingress" or .kind == "HTTPRoute") | .. | select(. == "ci-relaygate-sessions" or . == 8081)' <<<"$out" | grep -q . || err "$chart: no Ingress or HTTPRoute may reach relaygate's internal Sessions listener"
+        ! yq 'select(.kind == "Service" and .metadata.annotations["cloud.google.com/neg"] != null and .spec.selector["app.kubernetes.io/name"] == "relaygate") | .spec.ports[] | select(.port == 8081 or .targetPort == "sessions" or .targetPort == 8081) | .port' <<<"$out" | grep -q . || err "$chart: no NEG Service may expose relaygate's internal Sessions listener"
+        [ "$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "ci-relaygate") | [.spec.ingress[] | ((.ports[0].port | tostring) + ":" + ([(.from // [])[] | .podSelector.matchLabels["app.kubernetes.io/name"]] | join("+") | sub("^$"; "any")))] | join(" ")' <<<"$out" | sed '/^---$/d;/^$/d')" = "http:any sessions:relay-control" ] \
+          || err "$chart: gate-only relaygate policy must admit only relay-control to the sessions port"
+        ctl_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"relay-control\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$2" | sed '/^---$/d;/^$/d'; }
+        [ "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$out")" = https://cast.gcp-proof.agentrelay.com ] && [ "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$out")" = "$(ctl_env RELAYCAST_PUBLIC_URL "$out")" ] \
+          || err "$chart: gate-only SELFHOST_RELAYGATE_PUBLIC_URL must be the cast host, equal to RELAYCAST_PUBLIC_URL"
+        [ -z "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$(render "$chart" "$v")")" ] || err "$chart: SELFHOST_RELAYGATE_PUBLIC_URL must be unset without gate-only"
+        grep -A1 -F -- '- name: SESSIONS_INTERNAL_SECRET' <<<"$out" | grep -Fq 'name: agent-relay-gcp-proof, key: session-read-api-secret' || err "$chart: gate-only SESSIONS_INTERNAL_SECRET must be the reader's internal secret"
+        [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "ci-relaygate") | .spec.template.spec.containers[0].env[] | select(.name == "SESSIONS_CORS_ORIGINS") | .value' <<<"$out")" = "$(yq 'select(.kind == "Deployment" and .metadata.name == "agent-relay-read-api") | .spec.template.spec.containers[0].env[] | select(.name == "READ_API_CORS_ALLOWED_ORIGINS") | .value' <<<"$out")" ] \
+          || err "$chart: gate-only SESSIONS_CORS_ORIGINS must equal the reader's READ_API_CORS_ALLOWED_ORIGINS"
+        kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$out" >/dev/null || err "$chart: gate-only failed kubeconform"
+        # Off (the default and an explicit false) renders exactly what it did.
+        [ "$(render "$chart" "$v")" = "$(render "$chart" "$v" --set global.relaygate.gateOnly.enabled=false)" ] || err "$chart: gate-only=false must render the default"
+        ! yq 'select(.kind == "NetworkPolicy" or .kind == "Ingress") | .. | select(. == "relaygate" or . == "agent-relay-gcp-proof-gate")' <<<"$(render "$chart" "$v")" | grep -q . || err "$chart: the default render must not route to or admit relaygate"
+        expect_render_failure "$chart" "$g" "gate-only without relaygate" "requires components.relaygate" --set components.relaygate=false
+        # Control-owned policy (global.relaygate.controlPolicy): step 1 gives
+        # relay-control relaygate's admin origin and the shared Secrets while
+        # relaygate keeps its ConfigMap (to import); step 2 makes relaygate pull
+        # the signed policy from relay-control and drops the file.
+        cp=(--set global.relaygate.controlPolicy.enabled=true --set global.relaygate.controlPolicy.adminToken.name=relaygate-admin --set global.relaygate.controlPolicy.policySecret.name=relaygate-policy --set global.relaygate.controlPolicy.controlServiceName=relay-control)
+        gate_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"$1\") | .spec.template.spec.containers[0].env[] | select(.name == \"$2\") | (.value // (.valueFrom.secretKeyRef.name + \"/\" + .valueFrom.secretKeyRef.key))" <<<"$3" | sed '/^---$/d;/^ *$/d'; }
+        cp1=$(render "$chart" "$g" "${cp[@]}") || err "$chart: control policy step 1 did not render"
+        check_control_origins "$chart (control policy)" "$cp1"
+        [ "$(gate_env relay-control SELFHOST_RELAYGATE_ADMIN_URL "$cp1")" = http://ci-relaygate.ci.svc.cluster.local:8080 ] || err "$chart: SELFHOST_RELAYGATE_ADMIN_URL must be relaygate's in-cluster origin"
+        [ "$(gate_env relay-control SELFHOST_RELAYGATE_ADMIN_TOKEN "$cp1")" = relaygate-admin/token ] && [ "$(gate_env ci-relaygate RELAYGATE_ADMIN_TOKEN "$cp1")" = relaygate-admin/token ] \
+          || err "$chart: relay-control and relaygate must share the admin token Secret"
+        [ "$(gate_env relay-control SELFHOST_RELAYGATE_POLICY_SECRET "$cp1")" = relaygate-policy/secret ] || err "$chart: SELFHOST_RELAYGATE_POLICY_SECRET must come from controlPolicy.policySecret"
+        [ "$(gate_env ci-relaygate RELAYGATE_POLICY "$cp1")" = /policy/policy.json ] && yq 'select(.kind == "ConfigMap" and .metadata.name == "ci-relaygate-policy") | .metadata.name' <<<"$cp1" | grep -q . \
+          || err "$chart: control policy step 1 must keep relaygate's policy file and ConfigMap (the import source)"
+        [ -z "$(gate_env ci-relaygate RELAYCONTROL_POLICY_URL "$cp1")" ] || err "$chart: relaygate must not pull before controlPolicy.pull"
+        cp2=$(render "$chart" "$g" "${cp[@]}" --set global.relaygate.controlPolicy.pull=true) || err "$chart: control policy step 2 did not render"
+        render "$chart" "$g" "${cp[@]}" --set global.relaygate.controlPolicy.pull=true --set relaygate.policy.controlPrincipals=null >/dev/null \
+          || err "$chart: a pulling relaygate must not need inline policy rules (the policy is in relay-control)"
+        check_control_origins "$chart (control policy pull)" "$cp2"
+        [ "$(gate_env ci-relaygate RELAYCONTROL_POLICY_URL "$cp2")" = http://relay-control.ci.svc.cluster.local:80/internal/v1/relaygate/policy ] || err "$chart: RELAYCONTROL_POLICY_URL must be relay-control's internal policy route"
+        [ "$(gate_env ci-relaygate RELAYCONTROL_POLICY_SECRET "$cp2")" = "$(gate_env relay-control SELFHOST_RELAYGATE_POLICY_SECRET "$cp2")" ] || err "$chart: relaygate and relay-control must share the policy secret"
+        [ -z "$(gate_env ci-relaygate RELAYGATE_POLICY "$cp2")" ] || err "$chart: a pulling relaygate must not render RELAYGATE_POLICY"
+        ! yq 'select(.kind == "ConfigMap" and .metadata.name == "ci-relaygate-policy") | .metadata.name' <<<"$cp2" | grep -q . || err "$chart: a pulling relaygate must not render the policy ConfigMap"
+        ! yq 'select(.kind == "Deployment" and .metadata.name == "ci-relaygate") | .spec.template.spec.volumes[] | select(.name == "policy") | .name' <<<"$cp2" | grep -q . || err "$chart: a pulling relaygate must not mount a policy volume"
+        # Network paths: relaygate -> relay-control (Control admits relaygate) and
+        # relay-control -> relaygate's admin API (relaygate's main port is open).
+        [[ " $(out=$cp2 peers relay-control) " == *" relaygate "* ]] || err "$chart: relay-control must admit relaygate (policy pulls)"
+        [ "$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "ci-relaygate") | [.spec.ingress[] | select(.ports[0].port == "http") | (.from // [] | length)] | join(",")' <<<"$cp2" | sed '/^---$/d;/^ *$/d')" = 0 ] \
+          || err "$chart: relaygate's main port (the admin API) must admit relay-control"
+        expect_render_failure "$chart" "$v" "control policy without gate-only" "global.relaygate.gateOnly.enabled" --set components.relaygate=true --set relaygate.image.digest=sha256:c66696c51384707c2429a45405c9b2d9c4a3bf729dc5d93b2a8bd96b760e3719 "${cp[@]}"
+        expect_render_failure "$chart" "$g" "control policy without the shared Secrets" "needs controlPolicy.adminToken and controlPolicy.policySecret" "${cp[@]}" --set global.relaygate.controlPolicy.policySecret.name=
+        expect_render_failure "$chart" "$g" "control policy pull without enabled" "controlPolicy.pull needs controlPolicy.enabled" --set global.relaygate.controlPolicy.pull=true
+        expect_render_failure "$chart" "$g" "control policy with the wrong Control Service" "controlServiceName must be the relay-control Service relay-control" "${cp[@]}" --set global.relaygate.controlPolicy.controlServiceName=
+        expect_render_failure "$chart" "$g" "control policy with the wrong Control port" "controlServicePort must equal relay-control.service.port" "${cp[@]}" --set global.relaygate.controlPolicy.controlServicePort=8080
+        expect_render_failure "$chart" "$g" "control policy secret reused as the introspection secret" "must be a different secret from the introspection secret" "${cp[@]}" --set global.relaygate.controlPolicy.policySecret.name=agent-relay-gcp-proof --set global.relaygate.controlPolicy.policySecret.key=relaycontrol-introspect-secret
+        expect_render_failure "$chart" "$g" "control policy with a second admin token" "RELAYGATE_ADMIN_TOKEN comes from controlPolicy.adminToken" "${cp[@]}" --set relaygate.secrets.adminToken.name=other-admin
+        expect_render_failure "$chart" "$g" "gate-only with a renamed Control" "relaygate.sessionsListener.controlFrom must select relay-control's pods" --set relay-control.nameOverride=relay-cloud-api
+        render "$chart" "$g" --set relay-control.nameOverride=relay-cloud-api --set-json 'relaygate.sessionsListener.controlFrom=[{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"relay-cloud-api"}}}]' --set-json 'relaycast.networkPolicy.gateOnlyFrom=[{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"relay-cloud-api"}}}]' >/dev/null \
+          || err "$chart: gate-only with a renamed Control and matching peers must render"
+        render "$chart" "$g" --set-json 'relaygate.sessionsListener.controlFrom=[{"podSelector":{"matchExpressions":[{"key":"app.kubernetes.io/name","operator":"In","values":["relay-control"]}]}}]' >/dev/null \
+          || err "$chart: gate-only peers selecting Control by matchExpressions must render"
+        expect_render_failure "$chart" "$g" "gate-only without the sessions port" "needs global.relaygate.gateOnly.sessionsPort" --set global.relaygate.gateOnly.sessionsPort=0
+        expect_render_failure "$chart" "$g" "gate-only sessions port on the main port" "needs global.relaygate.gateOnly.sessionsPort" --set global.relaygate.gateOnly.sessionsPort=8080
+        expect_render_failure "$chart" "$g" "gate-only with relaycastPublicUrl off the cast host" "requires relay-control.services.relaycastPublicUrl=https://cast.gcp-proof.agentrelay.com" --set relay-control.services.relaycastPublicUrl=https://relay.gcp-proof.agentrelay.com
+        expect_render_failure "$chart" "$g" "gate-only Relaycast upstream on the public host" "relaygate.proxy.relaycastUrl to be the relaycast Service" --set relaygate.proxy.relaycastUrl=https://cast.gcp-proof.agentrelay.com
+        expect_render_failure "$chart" "$g" "gate-only reader upstream not the reader Service" "relaygate.proxy.sessionsReadUrl to be the Sessions reader Service" --set relaygate.proxy.sessionsReadUrl=http://other-read
+        expect_render_failure "$chart" "$g" "gate-only upload upstream not the ingest Service" "relaygate.proxy.sessionsUploadUrl to be the ingest edge Service" --set relaygate.proxy.sessionsUploadUrl=http://agent-relay-read-api
+        expect_render_failure "$chart" "$g" "gate-only reader upstream on the history host" "requests would loop back to relaygate" --set relaygate.proxy.sessionsReadUrl=https://history.gcp-proof.agentrelay.com
+        expect_render_failure "$chart" "$g" "gate-only without the history host in sessionsHosts" "sessionsHosts must include history.gcp-proof.agentrelay.com" --set 'relaygate.proxy.sessionsHosts={other.example.com}'
+        expect_render_failure "$chart" "$g" "gate-only without sessionsHosts" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" --set relaygate.proxy.sessionsHosts=null
+        expect_render_failure "$chart" "$g" "gate-only without the Relaycast proxy" "global.relaygate.gateOnly.enabled needs proxy.relaycastUrl" --set relaygate.proxy.relaycastUrl=
+        expect_render_failure "$chart" "$g" "gate-only introspecting elsewhere" "relaygate.control.introspectUrl=http://relay-control.ci.svc.cluster.local/internal/v1/auth/introspect" --set relaygate.control.introspectUrl=http://other.ci.svc.cluster.local/internal/v1/auth/introspect
+        expect_render_failure "$chart" "$g" "gate-only CORS drift" "relaygate.proxy.sessionsCorsOrigins must equal" --set 'relaygate.proxy.sessionsCorsOrigins={https://other.agentrelay.com}'
+        expect_render_failure "$chart" "$g" "gate-only without CORS origins" "relaygate.proxy.sessionsCorsOrigins must equal" --set relaygate.proxy.sessionsCorsOrigins=null
+        expect_render_failure "$chart" "$g" "gate-only another reader internal secret" "relaygate.secrets.sessionsInternalSecret must be the read API's internal secret" --set relaygate.secrets.sessionsInternalSecret.key=other
+        expect_render_failure "$chart" "$g" "gate-only without controlPrincipals rules" "requires relaygate.policy.controlPrincipals" --set relaygate.policy.controlPrincipals=null
+        expect_render_failure "$chart" "$g" "gate-only wrong ingest audience" "control.sessionIngestAudience must be the ingest origin" --set relaygate.control.sessionIngestAudience=https://other.agentrelay.com
+        expect_render_failure "$chart" "$g" "gate-only another introspection Secret" "must be the ingest edge's Control introspection secret" --set relaygate.secrets.relaycontrolIntrospectSecret.name=other
+        expect_render_failure "$chart" "$g" "gate-only audience Control does not accept" "introspection.audiences must include" --set 'relay-control.introspection.audiences={https://api.gcp-proof.agentrelay.com}'
+        expect_render_failure "$chart" "$g" "gate-only without a Relaycast policy" "relaycast: global.relaygate.gateOnly.enabled requires networkPolicy.enabled=true" --set relaycast.networkPolicy.enabled=false
+        expect_render_failure "$chart" "$g" "gate-only without a reader policy" "session-read-api: global.relaygate.gateOnly.enabled requires networkPolicy.enabled=true" --set sessions-pipeline.sessionReadApi.networkPolicy.enabled=false
+        expect_render_failure "$chart" "$g" "gate-only without an ingest policy" "requires ingestEdge.networkPolicy.enabled=true" --set sessions-pipeline.ingestEdge.networkPolicy.enabled=false
+        expect_render_failure "$chart" "$g" "gate-only with a renamed relaygate" "global.relaygate.gateOnly.serviceName" --set relaygate.fullnameOverride=gate
         expect_render_failure "$chart" "$v" "ar_ authority without relayauth" "relaycast.credentials.authority=relayauth requires components.relayauth=true" --set components.relayauth=false --set relaycast.credentials.format=ar --set relaycast.credentials.authority=relayauth --set relaycast.credentials.relayauth.url=http://relayauth:8787 --set relaycast.secretKeys.relayauthToken=relaycast-relayauth-token
         ;;
     esac

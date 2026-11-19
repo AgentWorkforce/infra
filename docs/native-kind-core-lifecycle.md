@@ -1,10 +1,13 @@
 # Explicit native kind core lifecycle
 
-The native core installer is separate from legacy `kind-up`. Selecting native
-workloads in the legacy command still refuses before Docker, readiness or SQL
-changes. The native entry point uses the independent session reader and Control's
-native backend; it needs no RelayAuth server, standalone History server, OpenAI
-key or license. Optional products remain off.
+The native core installer and `make local-up` are the only kind install paths.
+The legacy single-phase `make kind-up` (and `kind-render`, `kind-proof`,
+`kind-reconcile-names`) ran the standalone RelayHistory server, which was
+removed; those targets now refuse before any state, Docker or cluster access.
+`make kind-down` still deletes an owned legacy cluster. The native entry point
+uses the independent session reader and Control's native backend; it needs no
+RelayAuth server, standalone History server, OpenAI key or license. Optional
+products remain off.
 
 This source has offline phase/refusal and real Helm composition tests. A successful
 render is not fresh-cluster, repeat-up, Desktop upload or dashboard acceptance.

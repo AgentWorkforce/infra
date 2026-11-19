@@ -29,11 +29,11 @@ def fixture():
 def umbrella_fixture():
     values = yaml.safe_load((ROOT / "charts/agent-relay/values-kind-core.yaml").read_text())
     values["localKind"]["enabled"] = False
-    values["components"].update({"webapp": False, "relaycast": False, "relayauth": False, "relayhistory": False})
+    values["components"].update({"webapp": False, "relaycast": False, "relayauth": False})
     values["sessions-pipeline"] = fixture()
-    values["relayhistory"]["ingress"]["enabled"] = False
     api = values["relay-control"]
-    api["services"].update({"relayauthEnabled": False, "relayhistoryUrl": "http://routing-test-read-api.ci.svc.cluster.local", "relayhistoryPublicUrl": ORIGIN, "relayhistoryReadApiUrl": ORIGIN, "relayhistoryReadApiEvents": True})
+    # Managed mode: Control's legacy History client pointed at the native reader.
+    api["services"].update({"relayhistoryBackend": "legacy", "relayauthEnabled": False, "relayhistoryUrl": "http://routing-test-read-api.ci.svc.cluster.local", "relayhistoryPublicUrl": ORIGIN, "relayhistoryReadApiUrl": ORIGIN, "relayhistoryReadApiEvents": True})
     api.setdefault("secretKeys", {}).update(introspectSecret="control-introspection")
     api["introspection"] = {"audiences": [ORIGIN]}
     return values
@@ -112,6 +112,44 @@ class NativeRouting(unittest.TestCase):
                     self.assertEqual(exact[0]["pathType"], "Exact")
                     self.assertEqual(exact[0]["backend"]["service"]["port"], {"number": 80})
 
+    def test_gate_only_routes_only_what_relaygate_serves_and_admits_only_relaygate(self):
+        gate = {"global": {"relaygate": {"gateOnly": {"enabled": True}}},
+                "ingestEdge": {"networkPolicy": {"enabled": True, "ingressFrom": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}},
+                "sessionReadApi": {"networkPolicy": {"enabled": True, "controlFrom": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "relay-control"}}}],
+                                                     "publicFrom": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}}}
+        docs = self.render(gate)
+        paths = self.ingress(docs)["spec"]["rules"][0]["http"]["paths"]
+        self.assertEqual([(p["path"], p["pathType"]) for p in paths], [
+            ("/v1/sessions", "Prefix"), ("/v1/events", "Exact"), ("/v1/ingest", "Exact"), ("/v1/delivery/batches", "Exact"),
+            ("/v1/delivery/limits", "Exact"), ("/v1/auth/token/refresh", "Exact"), ("/v1/onboarding/heartbeat", "Exact")])
+        self.assertEqual({p["backend"]["service"]["name"] for p in paths}, {"routing-test-relaygate"})
+        self.assertEqual({p["backend"]["service"]["port"]["number"] for p in paths}, {8080})
+        relaygate = [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "relaygate", "app.kubernetes.io/instance": "routing-test"}}}]
+        for name in ("routing-test-read-api", "routing-test-ingest-edge"):
+            policy = next(d for d in docs if d["kind"] == "NetworkPolicy" and d["metadata"]["name"] == name)
+            self.assertEqual([rule["from"] for rule in policy["spec"]["ingress"]], [relaygate], name)
+        # The escape hatch keeps Control's direct rule on the reader.
+        docs = self.render({**gate, "sessionReadApi": {**gate["sessionReadApi"], "networkPolicy": {**gate["sessionReadApi"]["networkPolicy"], "gateOnlyControlDirect": True}}})
+        policy = next(d for d in docs if d["kind"] == "NetworkPolicy" and d["metadata"]["name"] == "routing-test-read-api")
+        self.assertEqual(len(policy["spec"]["ingress"]), 2)
+        docs = self.render({**gate, "global": {"relaygate": {"gateOnly": {"enabled": True, "serviceName": "gate", "servicePort": 9000}}}})
+        self.assertEqual({(p["backend"]["service"]["name"], p["backend"]["service"]["port"]["number"]) for p in self.ingress(docs)["spec"]["rules"][0]["http"]["paths"]}, {("gate", 9000)})
+        # Gate-only ignores controlFrom, so it may be empty, unless the escape hatch keeps its rule.
+        empty = {**gate, "sessionReadApi": {"networkPolicy": {"enabled": True, "controlFrom": [], "publicFrom": []}}}
+        values = fixture(); merge(values, empty); values["sessionReadApi"]["networkPolicy"]["controlFrom"] = []
+        with tempfile.TemporaryDirectory(prefix="native-routing-render-") as directory:
+            file = Path(directory) / "values.json"
+            file.write_text(json.dumps(values))
+            ok = subprocess.run(["helm", "template", "routing-test", str(ROOT / "charts/sessions-pipeline"), "-n", "ci", "-f", str(file)], text=True, capture_output=True)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            values["sessionReadApi"]["networkPolicy"]["gateOnlyControlDirect"] = True
+            file.write_text(json.dumps(values))
+            bad = subprocess.run(["helm", "template", "routing-test", str(ROOT / "charts/sessions-pipeline"), "-n", "ci", "-f", str(file)], text=True, capture_output=True)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("networkPolicy.gateOnlyControlDirect=true requires networkPolicy.controlFrom", bad.stderr)
+        self.render({**gate, "ingestEdge": {"networkPolicy": {"enabled": False}}}, error="requires ingestEdge.networkPolicy.enabled=true")
+        self.render({**gate, "sessionReadApi": {"networkPolicy": {"enabled": False}}}, error="requires networkPolicy.enabled=true")
+
     def test_exact_paths_bind_to_actual_service_ports_not_container_ports(self):
         docs = self.render({"sessionReadApi": {"port": 8092}, "ingestEdge": {"port": 8093}})
         route = self.ingress(docs)
@@ -179,8 +217,8 @@ class NativeRouting(unittest.TestCase):
         reader = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "routing-test-read-api")
         reader_env = {e["name"]: e for e in reader["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(reader_env["RELAYHISTORY_SELFHOST_LOGIN_ADVERTISES_SYNC"]["value"], "true")
-        self.render({"components": {"relayhistory": True}, "relayhistory": {"ingress": {"enabled": True}}}, umbrella=True, error="relayhistory.ingress.enabled=false")
-        self.render({"gkeIngress": {"enabled": True}}, umbrella=True, error="cannot share the legacy gkeIngress")
+        self.render({"components": {"relayhistory": True}}, umbrella=True, error="components.relayhistory was removed")
+        self.render({"gkeIngress": {"enabled": True}}, umbrella=True, error="cannot be combined with gkeIngress")
         for key in ["relayhistoryPublicUrl", "relayhistoryReadApiUrl"]:
             api = {"services": {key: "https://other.selfhosted.company:8443"}}
             # Keep leaf authentication admission valid so this causal case

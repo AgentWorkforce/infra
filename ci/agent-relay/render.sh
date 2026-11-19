@@ -36,6 +36,21 @@ root_login=$(yq 'select(.kind == "Ingress" and .metadata.name == "agent-relay-gc
   .http.paths[] | select(.path == "/login") | .backend.service.name' <<<"$out")
 test "$root_login" = relay-control
 
+# Desktop calls the relay-node broker routes (POST /relay-node/v1/nodes, the
+# GET /relay-node/v1/ws node WebSocket) on the sign-in origin. relay-control
+# serves them only at the root path (no /cloud alias), so the root host must
+# send /relay-node to relay-control ahead of the dashboard catch-all, and the
+# api BackendConfig must keep the socket open past GCE's 30 s default.
+root_paths=$(yq 'select(.kind == "Ingress" and .metadata.name == "agent-relay-gcp-proof") |
+  .spec.rules[] | select(.host == "gcp-proof.agentrelay.com") |
+  .http.paths[] | .path + " " + .pathType + " " + .backend.service.name' <<<"$out")
+test "$root_paths" = "$(printf '%s\n' '/cloud/api Prefix relay-control' '/login Prefix relay-control' '/relay-node Prefix relay-control' '/ Prefix relay-webapp')" \
+  || { echo "unexpected routes on the root host: $root_paths" >&2; exit 1; }
+test "$(yq 'select(.kind == "BackendConfig" and .metadata.name == "agent-relay-gcp-proof-api") | .spec.timeoutSec' <<<"$out")" = 3600 \
+  || { echo "api BackendConfig must keep the relay-node WebSocket open (timeoutSec 3600)" >&2; exit 1; }
+test "$(yq 'select(.kind == "Service" and .metadata.name == "relay-control") | .metadata.annotations["cloud.google.com/backend-config"]' <<<"$out")" = '{"default":"agent-relay-gcp-proof-api"}' \
+  || { echo "relay-control Service must bind the api BackendConfig" >&2; exit 1; }
+
 api_backend=$(yq 'select(.kind == "Ingress" and .metadata.name == "agent-relay-gcp-proof") |
   .spec.rules[] | select(.host == "api.gcp-proof.agentrelay.com") |
   .http.paths[] | select(.path == "/") | .backend.service.name' <<<"$out")
@@ -49,27 +64,43 @@ done
 for image in \
   ghcr.io/agentworkforce/relay-control \
   us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/relay-dashboard \
-  us-central1-docker.pkg.dev/agentrelay-96bulls-soc2-2610/awf-conformance-images/relayhistory; do
+  ghcr.io/agentworkforce/96bulls-services; do
   grep -Eq "image: [\"']?${image}@sha256:[a-f0-9]{64}" <<<"$out"
 done
 
-for service in relaycast relayhistory relay-control relay-webapp; do
+# The standalone RelayHistory server is gone: no workload may use its image.
+if grep -Eq "image: [\"']?[^\"' ]*/relayhistory@" <<<"$out"; then
+  echo "proof render still deploys a standalone RelayHistory image" >&2; exit 1
+fi
+for service in relaycast relay-control relay-webapp; do
   test "$(yq "select(.kind == \"Service\" and .metadata.name == \"$service\") |
     .metadata.annotations[\"cloud.google.com/neg\"]" <<<"$out")" = '{"ingress": true}'
 done
 
-api_history_url=$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") |
-  .spec.template.spec.containers[0].env[] | select(.name == "RELAYHISTORY_URL") | .value' <<<"$out")
-api_history_public_url=$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") |
-  .spec.template.spec.containers[0].env[] | select(.name == "RELAYHISTORY_PUBLIC_URL") | .value' <<<"$out")
-api_cast_public_url=$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") |
-  .spec.template.spec.containers[0].env[] | select(.name == "RELAYCAST_PUBLIC_URL") | .value' <<<"$out")
-history_audience=$(yq 'select(.kind == "ConfigMap" and .metadata.name == "relayhistory") |
-  .data.RELAYAUTH_AUDIENCE' <<<"$out")
-test "$api_history_url" = http://relayhistory:8080
-test "$api_history_public_url" = https://history.gcp-proof.agentrelay.com
-test "$api_history_public_url" = "$history_audience"
-test "$api_cast_public_url" = https://cast.gcp-proof.agentrelay.com
+api_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"relay-control\") |
+  .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$out"; }
+# Native History: Control's native backend hands out the read API origin; no
+# standalone History URL and no RelayAuth.
+test "$(api_env RELAYHISTORY_BACKEND)" = native
+test -z "$(api_env RELAYHISTORY_URL)"
+test -z "$(api_env RELAYHISTORY_PUBLIC_URL)"
+test "$(api_env SESSION_READ_API_URL)" = http://agent-relay-read-api
+test "$(api_env SESSION_READ_API_PUBLIC_URL)" = https://history.gcp-proof.agentrelay.com
+test "$(api_env RELAYCAST_PUBLIC_URL)" = https://cast.gcp-proof.agentrelay.com
+test -z "$(yq 'select(.metadata.name == "relayauth") | .metadata.name' <<<"$out")" \
+  || { echo "native proof render emits a relayauth manifest" >&2; exit 1; }
+# The history host routes to the native reader and ingest edges only.
+history_backends=$(yq 'select(.kind == "Ingress" and .metadata.name == "agent-relay-gcp-proof") |
+  .spec.rules[] | select(.host == "history.gcp-proof.agentrelay.com") |
+  .http.paths[] | .backend.service.name' <<<"$out" | sort -u | tr '\n' ' ')
+test "$history_backends" = "agent-relay-gcp-proof-cast-edge-deny agent-relay-gcp-proof-history-ingest agent-relay-gcp-proof-history-read " \
+  || { echo "history host backends: $history_backends" >&2; exit 1; }
+test "$(yq 'select(.kind == "Ingress" and .metadata.name == "agent-relay-gcp-proof") |
+  .spec.rules[] | select(.host == "history.gcp-proof.agentrelay.com") |
+  .http.paths[] | select(.path == "/v1/sessions") | .backend.service.name' <<<"$out")" = agent-relay-gcp-proof-history-read
+test "$(yq 'select(.kind == "Ingress" and .metadata.name == "agent-relay-gcp-proof") |
+  .spec.rules[] | select(.host == "history.gcp-proof.agentrelay.com") |
+  .http.paths[] | select(.path == "/v1/delivery/batches") | .backend.service.name' <<<"$out")" = agent-relay-gcp-proof-history-ingest
 
 # /internal on the api host is denied at the edge, like the cast host.
 api_internal=$(yq 'select(.kind == "Ingress" and .metadata.name == "agent-relay-gcp-proof") |
@@ -135,22 +166,30 @@ if acme_fail=$(helm template ar charts/agent-relay -n agent-relay --no-hooks -f 
 fi
 grep -Fq 'relay-control.service.backendConfig=acme-relay-api' <<<"$acme_fail" \
   || { echo "values-gcp.yaml: stale backendConfig failed without naming the expected value" >&2; echo "$acme_fail" >&2; exit 1; }
-# Session ingest's History audience must equal RelayHistory's origin.
-if origin_fail=$(helm template ar charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-gcp.yaml \
-  --set relayhistory.relayauth.historyOrigin=https://history.acme.example 2>&1); then
-  echo "values-gcp.yaml: mismatched sessions-pipeline.alleyoop.auth.historyOrigin rendered" >&2; exit 1
-fi
-grep -Fq 'sessions-pipeline.alleyoop.auth.historyOrigin (https://history.placeholder.company) must equal relayhistory.relayauth.historyOrigin (https://history.acme.example)' <<<"$origin_fail" \
-  || { echo "values-gcp.yaml: historyOrigin mismatch failed without the expected error" >&2; echo "$origin_fail" >&2; exit 1; }
-# RelayHistory write-hold step 1 through the umbrella: History drains to zero
-# replicas while its migrate Job takes the write hold.
-wh_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
-  -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml \
-  --set relayhistory.migrations.allowWriteHold=true --set relayhistory.migrations.drainForWriteHold=true)
-test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relayhistory") | .spec.replicas' <<<"$wh_out")" = 0 \
-  || { echo "relayhistory.migrations.drainForWriteHold did not drain History" >&2; exit 1; }
-test "$(yq 'select(.kind == "Job" and .metadata.labels["app.kubernetes.io/component"] == "migration" and (.metadata.name | test("^relayhistory-migrate-"))) | .spec.template.spec.containers[0].env[] | select(.name == "ALLOW_WRITE_HOLD") | .value' <<<"$wh_out")" = yes \
-  || { echo "relayhistory write-hold Job does not take the hold" >&2; exit 1; }
+# The standalone RelayHistory component was removed: values that would have
+# deployed it fail rather than silently dropping an install's History.
+for removed in "components.relayhistory=true|components.relayhistory was removed" \
+  "relayhistory.relayauth.historyOrigin=https://history.acme.example|the relayhistory values block was removed"; do
+  if removed_fail=$(helm template ar charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-gcp.yaml \
+    --set "${removed%%|*}" 2>&1); then
+    echo "values-gcp.yaml: ${removed%%|*} rendered" >&2; exit 1
+  fi
+  grep -Fq "${removed#*|}" <<<"$removed_fail" \
+    || { echo "values-gcp.yaml: ${removed%%|*} failed without the expected error" >&2; echo "$removed_fail" >&2; exit 1; }
+done
+# values-gcp.yaml alone is the native profile; the native overlay is a no-op.
+gcp_base=$(helm template ar charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-gcp.yaml)
+test "$gcp_base" = "$(helm template ar charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-gcp.yaml -f charts/agent-relay/values-gcp-native.yaml)" \
+  || { echo "values-gcp-native.yaml must be a no-op on values-gcp.yaml" >&2; exit 1; }
+eks_base=$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-eks.yaml)
+test "$eks_base" = "$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-native.yaml)" \
+  || { echo "values-eks-native.yaml must be a no-op on values-eks.yaml" >&2; exit 1; }
+for base_out in "$gcp_base" "$eks_base"; do
+  test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYHISTORY_BACKEND") | .value' <<<"$base_out")" = native \
+    || { echo "base EKS/GCP profile does not select Control's native History backend" >&2; exit 1; }
+  test -z "$(yq 'select(.metadata.name == "relayauth") | .metadata.name' <<<"$base_out")" \
+    || { echo "base EKS/GCP profile renders RelayAuth" >&2; exit 1; }
+done
 expect_leaf_failure_early() { # expected helm-args...
   local expected=$1 output; shift
   if output=$(helm template ci charts/relay-control -n ci --no-hooks -f charts/relay-control/ci/default-values.yaml "$@" 2>&1); then
@@ -187,11 +226,7 @@ if grep -q '^relayauth' <<<"$netpol_names"; then
   exit 1
 fi
 test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-cloud-api") |
-  .spec.template.spec.containers[0].env[] | select(.name == "RELAYAUTH_URL") | .value' <<<"$live_out")" = http://relayauth.relayauth.svc:8787
-test "$(yq 'select(.kind == "ConfigMap" and .metadata.name == "relayhistory") |
-  .data.RELAYAUTH_ISSUER' <<<"$live_out")" = http://relayauth.relayauth.svc:8787
-test "$(yq 'select(.kind == "ConfigMap" and .metadata.name == "relayhistory") |
-  .data.RELAYAUTH_JWKS_URL' <<<"$live_out")" = http://relayauth.relayauth.svc:8787/.well-known/jwks.json
+  .spec.template.spec.containers[0].env[] | select(.name == "RELAYHISTORY_BACKEND") | .value' <<<"$live_out")" = native
 
 live_api_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"relay-cloud-api\") |
   .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | .value" <<<"$live_out"; }
@@ -223,7 +258,7 @@ grep -q 'requires components.relayauth=true' <<<"$ar_fail" \
 # Migration Jobs: spec.template is immutable, so any pod template change
 # (here: resources) must produce a new Job name.
 proof_args=(-f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml)
-for child in relayhistory relay-control; do
+for child in relay-control; do
   base_job=$(yq "select(.kind == \"Job\" and .metadata.name == \"${child}-migrate-*\") | .metadata.name" <<<"$out")
   resized=$(helm template proof charts/agent-relay -n agent-relay --no-hooks "${proof_args[@]}" \
     --set "${child}.resources.limits.memory=7Gi" |
@@ -237,7 +272,7 @@ done
 
 # NOTES.txt waits on Jobs by component=migration; the Job object itself
 # (not only its pods) must carry that label.
-for child in relayhistory relay-control; do
+for child in relay-control; do
   test "$(yq "select(.kind == \"Job\" and .metadata.name == \"${child}-migrate-*\") |
     .metadata.labels[\"app.kubernetes.io/component\"]" <<<"$out")" = migration \
     || { echo "$child: migration Job metadata lacks app.kubernetes.io/component=migration" >&2; exit 1; }
@@ -375,7 +410,7 @@ other_ref=$(helm template ci charts/relay-control -n ci --no-hooks -f charts/rel
 test "$other_ref" = "other-secret database-migrations-url" \
   || { echo "relay-control: a valueFrom from another Secret must still render name and key (got $other_ref)" >&2; exit 1; }
 db_egress='[{"to":[{"ipBlock":{"cidr":"10.20.0.0/24"}}],"ports":[{"protocol":"TCP","port":5432}]}]'
-for child in relayhistory relay-control; do
+for child in relay-control; do
   expect_leaf_failure "$child" "allowAllEgress=false requires networkPolicy.additionalEgress" \
     --set networkPolicy.allowAllEgress=false
   expect_leaf_failure "$child" "additionalEgress rule needs a non-empty to" \
@@ -383,14 +418,6 @@ for child in relayhistory relay-control; do
   helm template ci "charts/$child" -n ci --no-hooks -f "charts/$child/ci/default-values.yaml" \
     --set networkPolicy.allowAllEgress=false --set-json "networkPolicy.additionalEgress=$db_egress" >/dev/null
 done
-
-# relayhistory: extraEnvFrom must not override chart-managed ConfigMap keys,
-# so the chart ConfigMap is the last (winning) envFrom source.
-last_env_from=$(helm template ci charts/relayhistory -n ci --no-hooks -f charts/relayhistory/ci/default-values.yaml \
-  --set-json 'extraEnvFrom=[{"configMapRef":{"name":"operator-extra"}}]' |
-  yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].envFrom[-1].configMapRef.name')
-test "$last_env_from" = ci-relayhistory \
-  || { echo "relayhistory: extraEnvFrom can override the chart ConfigMap (last envFrom is $last_env_from)" >&2; exit 1; }
 
 # relay-control runtime contract (relaycontrol src/config.ts): fail closed at
 # render time on what the API refuses at startup.
@@ -544,7 +571,7 @@ expect_leaf_failure relay-webapp "runtime.loginPath must not be /" --set runtime
 expect_leaf_failure relay-webapp "runtime.apiBasePath and runtime.loginPath must differ" --set runtime.loginPath=/cloud/api/
 expect_leaf_failure relay-webapp "runtime.loginPath must differ from runtime.appPath" --set runtime.appPath=/app --set runtime.loginPath=/app/
 
-for child in relay-webapp relay-control relayhistory; do
+for child in relay-webapp relay-control; do
   expect_leaf_failure "$child" "podLabels must not set selector label app.kubernetes.io/name" \
     --set 'podLabels.app\.kubernetes\.io/name=custom'
 done
@@ -552,7 +579,7 @@ done
 # The authority gate applies only when Relaycast itself is deployed.
 helm template proof charts/agent-relay -n agent-relay --no-hooks \
   --set components.relaycast=false --set components.relayauth=false \
-  --set components.sessionsPipeline=false --set components.relayhistory=false \
+  --set components.sessionsPipeline=false \
   --set components.control=false --set components.webapp=false \
   --set relaycast.credentials.authority=relayauth >/dev/null \
   || { echo "authority=relayauth gate fired with components.relaycast=false" >&2; exit 1; }
@@ -560,7 +587,7 @@ helm template proof charts/agent-relay -n agent-relay --no-hooks \
 # Umbrella Ingress backends must name Services the children render, also
 # without the profile's fullnameOverrides.
 no_override=$(helm template ar charts/agent-relay -n agent-relay --no-hooks "${proof_args[@]}" \
-  --set relaycast.fullnameOverride=null --set relayhistory.fullnameOverride=null \
+  --set relaycast.fullnameOverride=null \
   --set relay-control.fullnameOverride=null --set relay-webapp.fullnameOverride=null \
   --set relay-webapp.api.serviceName=null)
 rendered_services=$(yq 'select(.kind == "Service") | .metadata.name' <<<"$no_override" | grep -v '^---$' | sort -u)
@@ -569,17 +596,17 @@ for backend in $(yq 'select(.kind == "Ingress") | .spec.rules[].http.paths[].bac
     || { echo "umbrella Ingress backend $backend has no rendered Service" >&2; exit 1; }
 done
 if mismatch=$(helm template proof charts/agent-relay -n agent-relay --no-hooks "${proof_args[@]}" \
-  --set gkeIngress.backends.history.serviceName=history 2>&1); then
+  --set gkeIngress.backends.cast.serviceName=cast 2>&1); then
   echo "mismatched gkeIngress backend serviceName rendered successfully" >&2
   exit 1
 fi
-grep -q 'gkeIngress.backends.history.serviceName=history does not match' <<<"$mismatch" \
+grep -q 'gkeIngress.backends.cast.serviceName=cast does not match' <<<"$mismatch" \
   || { echo "backend mismatch failed without the expected error" >&2; exit 1; }
 
 # The customer GCP profile stores Sessions objects in GCS through the native
 # adapter (Workload Identity), never AWS S3 or HMAC keys.
 gcp_out=$(helm template ar charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-gcp.yaml)
-for w in ar-worker-session-status-worker ar-worker-session-summary-worker ar-worker-session-metadata-indexer ar-session-ingest-api; do
+for w in ar-worker-session-status-worker ar-worker-session-summary-worker ar-worker-session-metadata-indexer agent-relay-read-api ar-ingest-edge ar-search-indexer; do
   test "$(yq "select(.kind == \"Deployment\" and .metadata.name == \"$w\") |
     .spec.template.spec.containers[0].env[] | select(.name == \"LOCKER_PROVIDER\") | .value" <<<"$gcp_out")" = gcs \
     || { echo "values-gcp.yaml: $w does not select the GCS Locker" >&2; exit 1; }
@@ -686,7 +713,13 @@ expect_da_umbrella_failure "components.durableActors=true has no consumer" \
   --set relaycast.credentials.format=legacy --set relaycast.credentials.authority= --set relayfile.secrets.existingSecret=relayfile
 expect_da_umbrella_failure "durable-actors.publicUrl must be https://actors.gcp-proof.agentrelay.com" --set durable-actors.publicUrl=https://other.example.com
 expect_da_umbrella_failure "must be durable-actors.credentialsSecret" --set relayfile.runtime.durableActors.adminKeySecret.name=other-admin
-expect_da_umbrella_failure "must be durable-actors.storage.bucket" --set relaycast.runtime.durableActors.deployer.artifactBucket=other-bucket
+expect_da_umbrella_failure "must be durable-actors.storage.artifactBucket" --set relaycast.runtime.durableActors.deployer.artifactBucket=other-bucket
+# A separate durable-actors artifact bucket (UPSTREAM.md patch 14) is where the deployers must upload.
+helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${da_args[@]}" \
+  --set durable-actors.storage.artifactBucket=regional-artifacts \
+  --set relaycast.runtime.durableActors.deployer.artifactBucket=regional-artifacts \
+  --set relayfile.runtime.durableActors.deployer.artifactBucket=regional-artifacts >/dev/null 2>&1 \
+  || da_fail "deployers on durable-actors.storage.artifactBucket did not render"
 expect_da_umbrella_failure "gkeIngress.hosts.files requires relayfile.service.annotations" --set 'relayfile.service.annotations=null'
 expect_da_umbrella_failure "gkeIngress.hosts must all be distinct" --set gkeIngress.hosts.files=actors.gcp-proof.agentrelay.com
 expect_da_umbrella_failure "/images/controlPlane/digest" --set durable-actors.images.controlPlane.digest=
@@ -791,7 +824,7 @@ sh_args=(-f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/si
 sh_host=relay.gcp-proof.agentrelay.com
 sh_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks "${sh_args[@]}")
 sh_paths() { yq "select(.kind == \"Ingress\") | .spec.rules[] | select(.host == \"$1\") | .http.paths[] | .path + \" \" + .backend.service.name" <<<"$sh_out"; }
-test "$(sh_paths "$sh_host")" = "$(printf '%s\n' '/cloud/api relay-control' '/login relay-control' '/api relay-control' '/ relay-webapp')" \
+test "$(sh_paths "$sh_host")" = "$(printf '%s\n' '/cloud/api relay-control' '/login relay-control' '/relay-node relay-control' '/api relay-control' '/ relay-webapp')" \
   || sh_fail "unexpected routes on $sh_host: $(sh_paths "$sh_host")"
 test "$(yq 'select(.kind == "Ingress") | .spec.rules[].host' <<<"$sh_out" | sort | tr '\n' ' ')" = \
   "cast.gcp-proof.agentrelay.com history.gcp-proof.agentrelay.com $sh_host " || sh_fail "unexpected Ingress hosts (an api host must not render)"
@@ -818,7 +851,7 @@ expect_sh_failure() { # expected-error helm-args...
 expect_sh_failure "gkeIngress.hosts.api must be empty in single-host mode" --set gkeIngress.hosts.api=api.gcp-proof.agentrelay.com
 expect_sh_failure "gkeIngress.hosts.root is global.singleHost.host" --set gkeIngress.hosts.root=other.gcp-proof.agentrelay.com
 expect_sh_failure "gkeIngress.hosts.cast is still required in single-host mode: relaycast cannot be served under a path prefix" --set gkeIngress.hosts.cast=
-expect_sh_failure "gkeIngress.hosts.history is still required in single-host mode: relayhistory cannot be served under a path prefix" --set gkeIngress.hosts.history=
+expect_sh_failure "gkeIngress.hosts.history is still required in single-host mode: history cannot be served under a path prefix" --set gkeIngress.hosts.history=
 expect_sh_failure "global.singleHost.host and gkeIngress.hosts.cast/history must all be distinct" --set gkeIngress.hosts.cast=$sh_host
 long_label=$(printf 'a%.0s' $(seq 64))
 for bad in https://$sh_host relay..gcp-proof.agentrelay.com relay.-gcp-proof.agentrelay.com Relay.gcp-proof.agentrelay.com 127.0.0.1 "$long_label.agentrelay.com"; do
@@ -826,30 +859,36 @@ for bad in https://$sh_host relay..gcp-proof.agentrelay.com relay.-gcp-proof.age
 done
 expect_sh_failure "runtime.appPath must not be /api or under it" --set relay-webapp.runtime.appPath=/api/dashboard
 expect_sh_failure "relaycast.baseUrl must not use global.singleHost.host" --set relaycast.baseUrl=https://$sh_host
-expect_sh_failure "relayhistory.relayauth.historyOrigin must not use global.singleHost.host" \
-  --set relayhistory.relayauth.historyOrigin=https://$sh_host --set sessions-pipeline.alleyoop.auth.historyOrigin=https://$sh_host
+expect_sh_failure "sessions-pipeline.sessionReadApi.origin must not use global.singleHost.host" \
+  --set sessions-pipeline.sessionReadApi.origin=https://$sh_host --set sessions-pipeline.ingestEdge.origin=https://$sh_host
+expect_sh_failure "relay-control.services.sessionReadApiPublicUrl must not use global.singleHost.host" \
+  --set relay-control.services.sessionReadApiPublicUrl=https://$sh_host --set "relay-control.introspection.audiences[0]=https://$sh_host"
 expect_sh_failure "relay-control.services.relaycastPublicUrl must not use global.singleHost.host" --set relay-control.services.relaycastPublicUrl=https://$sh_host
 expect_sh_failure "relaycast.ingress.hosts must not include global.singleHost.host" --set-json "relaycast.ingress.hosts=[\"$sh_host\"]"
 expect_sh_failure "publicUrl is derived from global.singleHost.host" --set relay-control.publicUrl=https://api.gcp-proof.agentrelay.com
 expect_sh_failure "runtime.publicUrl is derived from global.singleHost.host" --set relay-webapp.runtime.publicUrl=https://gcp-proof.agentrelay.com
 # Leaf charts on their own (non-GKE edge): the dashboard Ingress carries /api.
 leaf_sh=$(helm template ci charts/relay-webapp -n ci --no-hooks -f charts/relay-webapp/ci/single-host-values.yaml)
-test "$(yq 'select(.kind == "Ingress") | .spec.rules[] | .host + " " + ([.http.paths[].path] | join(","))' <<<"$leaf_sh")" = "$sh_host /cloud/api,/login,/api,/" \
+test "$(yq 'select(.kind == "Ingress") | .spec.rules[] | .host + " " + ([.http.paths[].path] | join(","))' <<<"$leaf_sh")" = "$sh_host /cloud/api,/login,/relay-node,/api,/" \
   || sh_fail "relay-webapp leaf Ingress in single-host mode"
+# The leaf Ingress outside single-host mode still sends /relay-node to Control.
+leaf_mh=$(helm template ci charts/relay-webapp -n ci --no-hooks -f charts/relay-webapp/ci/default-values.yaml)
+test "$(yq 'select(.kind == "Ingress") | .spec.rules[].http.paths[] | select(.path == "/relay-node") | .pathType + " " + .backend.service.name' <<<"$leaf_mh")" = "Prefix $(yq '.api.serviceName' charts/relay-webapp/ci/default-values.yaml)" \
+  || { echo "relay-webapp leaf Ingress must route /relay-node to relay-control" >&2; exit 1; }
 if out=$(helm template ci charts/relay-control -n ci --no-hooks -f charts/relay-control/ci/single-host-values.yaml --set ingress.enabled=true --set-json "ingress.hosts=[\"$sh_host\"]" --set ingress.externalTls=true 2>&1); then
   sh_fail "relay-control rendered its own Ingress in single-host mode"
 fi
 grep -Fq "global.singleHost.host serves the API through the dashboard host" <<<"$out" || { echo "$out" >&2; sh_fail "relay-control ingress error"; }
 
-# postgresCa passes through the umbrella by subchart key.
+# postgresCa passes through the umbrella by subchart key. The native reader,
+# ingest edge and search indexer take their CA from their own postgres settings.
 ca_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
   -f charts/agent-relay/values-gcp-proof.yaml \
   -f charts/agent-relay/ci/gcp-proof-values.yaml \
   --set relay-control.postgresCa.enabled=true --set relay-control.postgresCa.configMap=rds-ca \
-  --set relayhistory.postgresCa.enabled=true --set relayhistory.postgresCa.configMap=rds-ca \
   --set sessions-pipeline.worker.postgresCa.enabled=true --set sessions-pipeline.worker.postgresCa.configMap=rds-ca \
   --set sessions-pipeline.alleyoop.postgresCa.enabled=true --set sessions-pipeline.alleyoop.postgresCa.configMap=rds-ca)
-ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | test("/relay-control@|/relayhistory@|96bulls-services"))) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$ca_out" | grep -v '^---$' || true)
+ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | test("/relay-control@|96bulls-services")) and (.metadata.name | test("read-api|ingest-edge|search-indexer") | not)) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$ca_out" | grep -v '^---$' || true)
 test -z "$ca_gaps" || { echo "postgresCa missing from: $ca_gaps" >&2; exit 1; }
 test "$(yq 'select(.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) | select(.spec.template.spec.containers[0].env[].name == "NODE_EXTRA_CA_CERTS") | .metadata.name' <<<"$ca_out" | grep -v '^---$' | grep -c .)" -ge 4
 
@@ -862,6 +901,131 @@ test -z "$(helm template proof charts/agent-relay "${chief_args[@]}" | yq 'selec
 test "$(helm template proof charts/agent-relay "${chief_args[@]}" --set components.relayChief=true | yq 'select(.kind == "CronJob" and (.metadata.name | contains("chief"))) | .spec.suspend')" = "true" \
   || { echo "relay-chief is not a suspended CronJob when enabled" >&2; exit 1; }
 rm -f "$chief_values"
+
+# GKE edge hardening: gkeIngress.sslPolicy, securityPolicy and tlsSecretName
+# are off by default (the default render has none of them) and, when set, reach
+# the FrontendConfig, every backend's BackendConfig and the Ingress.
+edge_fail() { echo "gke edge hardening: $*" >&2; exit 1; }
+edge_default=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
+  -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml)
+test "$(yq 'select(.kind == "BackendConfig") | .metadata.name' <<<"$edge_default" | grep -c '^agent-relay-gcp-proof-')" = 4 || edge_fail "default render must keep exactly the api, cast and two history BackendConfigs"
+test -z "$(yq 'select(.kind == "FrontendConfig") | .spec.sslPolicy // ""' <<<"$edge_default")" || edge_fail "default render sets an sslPolicy"
+test -z "$(yq 'select(.kind == "BackendConfig") | .spec.securityPolicy.name // ""' <<<"$edge_default" | sed '/^---$/d;/^$/d')" || edge_fail "default render sets a securityPolicy"
+test -z "$(yq 'select(.kind == "Ingress") | .spec.tls // ""' <<<"$edge_default")" || edge_fail "default render sets spec.tls"
+edge_dashboard='relay-webapp.service.annotations={"cloud.google.com/neg":"{\"ingress\": true}","cloud.google.com/backend-config":"{\"default\": \"agent-relay-gcp-proof-dashboard\"}"}'
+edge_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
+  -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml \
+  --set gkeIngress.sslPolicy=relay-tls --set gkeIngress.securityPolicy=relay-edge --set-json "$edge_dashboard")
+test "$(yq 'select(.kind == "FrontendConfig") | .spec.sslPolicy + " " + (.spec.redirectToHttps.enabled | tostring)' <<<"$edge_out")" = "relay-tls true" \
+  || edge_fail "FrontendConfig must carry sslPolicy and keep the HTTPS redirect"
+# Every BackendConfig carries the policy, and the timeouts and health checks stay.
+test "$(yq 'select(.kind == "BackendConfig") | .metadata.name + "=" + (.spec.securityPolicy.name // "none")' <<<"$edge_out" | sed '/^---$/d;/^$/d' | sort | tr '\n' ' ')" \
+  = "agent-relay-gcp-proof-api=relay-edge agent-relay-gcp-proof-cast=relay-edge agent-relay-gcp-proof-dashboard=relay-edge agent-relay-gcp-proof-edge-deny=relay-edge agent-relay-gcp-proof-history-ingest=relay-edge agent-relay-gcp-proof-history-read=relay-edge " \
+  || edge_fail "securityPolicy must be on the api, cast, dashboard, edge-deny and both history BackendConfigs"
+test "$(yq 'select(.kind == "BackendConfig" and .metadata.name == "agent-relay-gcp-proof-api") | .spec.timeoutSec' <<<"$edge_out")" = 3600 || edge_fail "api BackendConfig lost its timeout"
+test "$(yq 'select(.kind == "BackendConfig" and .metadata.name == "agent-relay-gcp-proof-history-read") | .spec.healthCheck.requestPath' <<<"$edge_out")" = /healthz || edge_fail "history read BackendConfig lost its health check"
+# Every Service the Ingress routes to is bound to a BackendConfig that has the
+# policy: no backend is left outside Cloud Armor.
+edge_backends=$(yq 'select(.kind == "Ingress") | .spec.rules[].http.paths[].backend.service.name' <<<"$edge_out" | sort -u)
+test "$(grep -c . <<<"$edge_backends")" -ge 6 || edge_fail "expected at least six Ingress backends, got: $edge_backends"
+for svc in $edge_backends; do
+  bc=$(SVC="$svc" yq 'select(.kind == "Service" and .metadata.name == strenv(SVC)) | .metadata.annotations["cloud.google.com/backend-config"] // ""' <<<"$edge_out" | yq '.default // ""')
+  [ -n "$bc" ] || edge_fail "Ingress backend Service $svc has no backend-config annotation"
+  test "$(BC="$bc" yq 'select(.kind == "BackendConfig" and .metadata.name == strenv(BC)) | .spec.securityPolicy.name' <<<"$edge_out")" = relay-edge \
+    || edge_fail "Ingress backend Service $svc is bound to $bc, which has no securityPolicy"
+done
+expect_umbrella_failure "gkeIngress.securityPolicy requires relay-webapp.service.annotations[cloud.google.com/backend-config]='{\"default\": \"agent-relay-gcp-proof-dashboard\"}'" \
+  --set gkeIngress.securityPolicy=relay-edge
+expect_umbrella_failure "gkeIngress.securityPolicy must be the name of a Cloud Armor security policy" \
+  --set gkeIngress.securityPolicy=projects/p/global/securityPolicies/relay-edge
+expect_umbrella_failure "gkeIngress.sslPolicy must be the name of a Compute Engine SSL policy" --set gkeIngress.sslPolicy=Relay_TLS
+# tlsSecretName replaces the ManagedCertificate (an edge behind a proxy or CDN).
+tls_out=$(helm template proof charts/agent-relay -n agent-relay --no-hooks \
+  -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml \
+  --set gkeIngress.tlsSecretName=relay-origin-tls --set gkeIngress.managedCertificateName=)
+test -z "$(yq 'select(.kind == "ManagedCertificate") | .metadata.name' <<<"$tls_out")" || edge_fail "tlsSecretName must not render a ManagedCertificate"
+test "$(yq 'select(.kind == "Ingress") | .spec.tls[0].secretName + " " + (.metadata.annotations | has("networking.gke.io/managed-certificates") | tostring) + " " + .metadata.annotations["networking.gke.io/v1beta1.FrontendConfig"]' <<<"$tls_out")" \
+  = "relay-origin-tls false agent-relay-gcp-proof" || edge_fail "tlsSecretName must set spec.tls, drop the managed-certificates annotation and keep the FrontendConfig"
+expect_umbrella_failure "gkeIngress.tlsSecretName must be the name of a kubernetes.io/tls Secret" --set gkeIngress.tlsSecretName=Bad_Name
+expect_umbrella_failure "gkeIngress.managedCertificateName is required" --set gkeIngress.managedCertificateName=
+
+# With the optional actors and files hosts, their backends are covered too:
+# the actors edge BackendConfig takes the policy, and Relayfile needs its own.
+edge_files='relayfile.service.annotations={"cloud.google.com/neg":"{\"ingress\": true}","cloud.google.com/backend-config":"{\"default\": \"agent-relay-gcp-proof-files\"}"}'
+edge_da=$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${da_args[@]}" \
+  --set gkeIngress.securityPolicy=relay-edge --set-json "$edge_dashboard" --set-json "$edge_files")
+test -z "$(yq 'select(.kind == "BackendConfig" and .spec.securityPolicy.name != "relay-edge") | .metadata.name' <<<"$edge_da" | sed '/^---$/d;/^$/d')" \
+  || edge_fail "a BackendConfig in the actors/files overlay has no securityPolicy"
+for bc in agent-relay-gcp-proof-actors-edge agent-relay-gcp-proof-files; do
+  test "$(BC="$bc" yq 'select(.kind == "BackendConfig" and .metadata.name == strenv(BC)) | .spec.securityPolicy.name' <<<"$edge_da")" = relay-edge || edge_fail "$bc has no securityPolicy"
+done
+test "$(yq 'select(.kind == "BackendConfig" and .metadata.name == "agent-relay-gcp-proof-actors-edge") | .spec.timeoutSec' <<<"$edge_da")" = 3600 || edge_fail "actors edge BackendConfig lost its timeout"
+if edge_err=$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${da_args[@]}" \
+  --set gkeIngress.securityPolicy=relay-edge --set-json "$edge_dashboard" 2>&1); then edge_fail "securityPolicy rendered without the relayfile backend-config annotation"; fi
+grep -Fq "gkeIngress.securityPolicy requires relayfile.service.annotations[cloud.google.com/backend-config]" <<<"$edge_err" || edge_fail "unexpected error without the relayfile annotation: $edge_err"
+
+# Internal-only GKE edge (gkeIngress.mode=internal, values-gcp-internal.yaml):
+# a regional internal load balancer, HTTPS only, no ManagedCertificate or
+# FrontendConfig, and every backend policy admits the proxy-only subnet.
+int_fail() { echo "gke internal edge: $*" >&2; exit 1; }
+int_args=(-n agent-relay --no-hooks -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml -f charts/agent-relay/values-gcp-internal.yaml)
+int_out=$(helm template proof charts/agent-relay "${int_args[@]}")
+test "$(yq 'select(.kind == "Ingress") | .metadata.annotations | [.["kubernetes.io/ingress.class"], .["kubernetes.io/ingress.regional-static-ip-name"], .["kubernetes.io/ingress.allow-http"]] | join(" ")' <<<"$int_out" | sed '/^---$/d;/^$/d')" = "gce-internal example-agent-relay-internal false" \
+  || int_fail "Ingress must be class gce-internal with the regional address and HTTP closed"
+test "$(yq 'select(.kind == "Ingress") | .metadata.annotations | [has("kubernetes.io/ingress.global-static-ip-name"), has("networking.gke.io/managed-certificates"), has("networking.gke.io/v1beta1.FrontendConfig"), has("ingress.gcp.kubernetes.io/pre-shared-cert")] | join(" ")' <<<"$int_out" | sed '/^---$/d;/^$/d')" = "false false false false" \
+  || int_fail "Ingress must carry no external-only annotation"
+test "$(yq 'select(.kind == "Ingress") | .spec.tls[0].secretName' <<<"$int_out")" = example-agent-relay-tls || int_fail "Ingress must serve the TLS Secret"
+test -z "$(yq 'select(.kind == "ManagedCertificate" or .kind == "FrontendConfig") | .kind' <<<"$int_out")" || int_fail "ManagedCertificate and FrontendConfig must not render"
+# The routes are the same as on the external edge.
+int_rules=$(yq -o=json -I=0 'select(.kind == "Ingress") | .spec.rules' <<<"$int_out" | sed '/^---$/d;/^$/d;/^null$/d')
+test "$(grep -c '"host"' <<<"$int_rules")" = 1 || int_fail "expected one Ingress with rules"
+# Every host, path, pathType, backend Service and port is identical to the external edge.
+test "$int_rules" = "$(yq -o=json -I=0 'select(.kind == "Ingress") | .spec.rules' <<<"$edge_default" | sed '/^---$/d;/^$/d;/^null$/d')" \
+  || int_fail "internal mode changed the Ingress rules"
+# Every NetworkPolicy that admits the Google health-check range also admits the proxy-only subnet.
+int_gaps=$(yq 'select(.kind == "NetworkPolicy") | select([.spec.ingress[]?.from[]?.ipBlock.cidr] | contains(["35.191.0.0/16"])) | select([.spec.ingress[]?.from[]?.ipBlock.cidr] | contains(["10.129.0.0/23"]) | not) | .metadata.name' <<<"$int_out" | sed '/^---$/d;/^$/d')
+test -z "$int_gaps" || int_fail "NetworkPolicy without the proxy-only subnet: $int_gaps"
+test "$(yq 'select(.kind == "NetworkPolicy") | select([.spec.ingress[]?.from[]?.ipBlock.cidr] | contains(["10.129.0.0/23"])) | .metadata.name' <<<"$int_out" | grep -c '[a-z]')" -ge 5 || int_fail "expected at least five backend policies to admit the proxy-only subnet"
+# Pre-shared regional certificates instead of a Secret.
+int_psc=$(helm template proof charts/agent-relay "${int_args[@]}" --set gkeIngress.tlsSecretName= --set 'gkeIngress.internal.preSharedCerts={relay-cert-a,relay-cert-b}')
+test "$(yq 'select(.kind == "Ingress") | .metadata.annotations["ingress.gcp.kubernetes.io/pre-shared-cert"] + " " + ((.spec | has("tls")) | tostring)' <<<"$int_psc")" = "relay-cert-a,relay-cert-b false" \
+  || int_fail "preSharedCerts must render the pre-shared-cert annotation and no spec.tls"
+expect_internal_failure() { # expected-error helm-args...
+  local expected=$1 output; shift
+  if output=$(helm template proof charts/agent-relay "${int_args[@]}" "$@" 2>&1); then int_fail "rendered despite expected failure: $expected"; fi
+  grep -Fq "$expected" <<<"$output" || { echo "$output" >&2; int_fail "failed without expected error: $expected"; }
+}
+expect_internal_failure "gkeIngress.mode must be external or internal" --set gkeIngress.mode=private
+expect_internal_failure "requires gkeIngress.internal.proxyOnlySubnetCidr" --set gkeIngress.internal.proxyOnlySubnetCidr=
+expect_internal_failure "requires gkeIngress.internal.proxyOnlySubnetCidr" --set gkeIngress.internal.proxyOnlySubnetCidr=203.0.113.0/24
+for bad in 10.129.999.0/23 172.16.0.0.1/24 10.129.0/23 10.129.0.0/27 10.129.0.0 172.32.0.0/16; do
+  expect_internal_failure "requires gkeIngress.internal.proxyOnlySubnetCidr" --set "gkeIngress.internal.proxyOnlySubnetCidr=$bad"
+done
+expect_internal_failure "gkeIngress.mode=internal requires a certificate" --set gkeIngress.tlsSecretName=
+expect_internal_failure "set only one of gkeIngress.tlsSecretName and gkeIngress.internal.preSharedCerts" --set 'gkeIngress.internal.preSharedCerts={relay-cert}'
+expect_internal_failure "is not a Compute Engine SSL certificate name" --set gkeIngress.tlsSecretName= --set 'gkeIngress.internal.preSharedCerts={Bad_Cert}'
+expect_internal_failure "gkeIngress.securityPolicy cannot be used with gkeIngress.mode=internal" --set gkeIngress.securityPolicy=relay-edge --set-json "$edge_dashboard"
+expect_internal_failure "gkeIngress.sslPolicy cannot be used with gkeIngress.mode=internal" --set gkeIngress.sslPolicy=relay-tls
+# The overlay is applied last and clears an sslPolicy that an earlier file set
+# (the GKE guide's managed-values.json names one).
+int_managed=$(mktemp)
+printf 'gkeIngress:\n  sslPolicy: relay-tls\n' >"$int_managed"
+helm template proof charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-gcp-proof.yaml -f charts/agent-relay/ci/gcp-proof-values.yaml \
+  -f "$int_managed" -f charts/agent-relay/values-gcp-internal.yaml >/dev/null || int_fail "the overlay must clear an sslPolicy set by an earlier values file"
+rm -f "$int_managed"
+# A backend whose policy does not admit the proxy-only subnet is refused, by name.
+expect_internal_failure "gkeIngress.mode=internal requires relay-webapp.networkPolicy.ingressFrom to allow the proxy-only subnet 10.129.0.0/23" \
+  --set-json 'relay-webapp.networkPolicy.ingressFrom=[{"podSelector":{}},{"ipBlock":{"cidr":"35.191.0.0/16"}},{"ipBlock":{"cidr":"130.211.0.0/22"}}]'
+expect_internal_failure "gkeIngress.mode=internal requires sessions-pipeline.ingestEdge.networkPolicy.ingressFrom to allow the proxy-only subnet 10.129.0.0/23" \
+  --set-json 'sessions-pipeline.ingestEdge.networkPolicy.ingressFrom=[{"ipBlock":{"cidr":"35.191.0.0/16"}},{"ipBlock":{"cidr":"130.211.0.0/22"}}]'
+expect_internal_failure "to allow the proxy-only subnet 10.129.0.0/23 (gkeIngress.internal.proxyOnlySubnetCidr) without exclusions" \
+  --set-json 'relaycast.networkPolicy.ingressFrom=[{"podSelector":{}},{"ipBlock":{"cidr":"35.191.0.0/16"}},{"ipBlock":{"cidr":"130.211.0.0/22"}},{"ipBlock":{"cidr":"10.129.0.0/23","except":["10.129.0.0/24"]}}]'
+# internal.* without the mode is refused, so a half-applied overlay cannot pass silently.
+expect_umbrella_failure "gkeIngress.internal.* is set but gkeIngress.mode is external" --set gkeIngress.internal.proxyOnlySubnetCidr=10.129.0.0/23
+# The values-gcp.yaml profile renders with the overlay too.
+helm template proof charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-gcp.yaml -f charts/agent-relay/values-gcp-native.yaml \
+  -f charts/agent-relay/ci/gcp-native-values.yaml -f charts/agent-relay/values-gcp-internal.yaml >/dev/null 2>/tmp/int-gcp.err \
+  || { cat /tmp/int-gcp.err >&2; int_fail "values-gcp.yaml with values-gcp-internal.yaml did not render"; }
 
 # With single-host mode off, every default (subdomain) render is unchanged.
 ci/agent-relay/subdomain-golden.sh check

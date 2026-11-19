@@ -89,11 +89,10 @@ class ReleaseManifestTest(unittest.TestCase):
 
     def test_overlay_sets_all_services_surfaces_and_postgres_scalar(self):
         names = [
-            "relaycast",
+            "relaycast-postgres",
             "relaycast-eks-collector",
             "relayauth",
             "sessions-pipeline",
-            "relayhistory",
             "relay-control",
             "relay-webapp",
             "sessions-migration-postgresql",
@@ -116,10 +115,15 @@ class ReleaseManifestTest(unittest.TestCase):
             overlay.count(
                 "__IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast-eks-collector"
             ),
-            2,
+            1,
         )
-        self.assertNotIn(
-            "repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast\n",
+        self.assertIn(
+            "repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast-postgres\n",
+            overlay,
+        )
+        self.assertIn(
+            "runtime:\n    postgres:\n      image:\n"
+            "        repository: __IMAGE_MIRROR_ROOT__/ghcr.io/example/relaycast-postgres\n",
             overlay,
         )
         self.assertIn("# customer registry mirror root. Profile: eks.", overlay)
@@ -131,6 +135,43 @@ class ReleaseManifestTest(unittest.TestCase):
             "sessions-migration-postgresql@sha256:",
             overlay,
         )
+
+    def test_names_sharing_one_digest_each_get_an_entry(self):
+        shared = f"ghcr.io/example/relaycast@{DIGEST_A}"
+        manifest = self.build_fixture(
+            [shared],
+            [
+                f"relaycast\tghcr.io/example/relaycast\t{DIGEST_A}\tapproved",
+                f"relaycast-postgres\tghcr.io/example/relaycast\t{DIGEST_A}\tapproved",
+            ],
+        )
+        self.assertEqual(
+            manifest["images"],
+            [
+                {"name": "relaycast", "ref": shared},
+                {"name": "relaycast-postgres", "ref": shared},
+            ],
+        )
+
+    def test_shared_digest_with_an_unapproved_name_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "not release-approved"):
+            self.build_fixture(
+                [f"ghcr.io/example/relaycast@{DIGEST_A}"],
+                [
+                    f"relaycast\tghcr.io/example/relaycast\t{DIGEST_A}\tapproved",
+                    f"relaycast-postgres\tghcr.io/example/relaycast\t{DIGEST_A}\tblocked",
+                ],
+            )
+
+    def test_duplicate_inventory_name_is_still_rejected(self):
+        with self.assertRaisesRegex(ValueError, "duplicate image name"):
+            self.build_fixture(
+                [f"ghcr.io/example/relaycast@{DIGEST_A}"],
+                [
+                    f"relaycast\tghcr.io/example/relaycast\t{DIGEST_A}\tapproved",
+                    f"relaycast\tghcr.io/example/relaycast\t{DIGEST_B}\tapproved",
+                ],
+            )
 
     def test_rejects_unpinned_customer_image(self):
         with self.assertRaisesRegex(ValueError, "not pinned"):
@@ -248,6 +289,48 @@ class ReleaseManifestTest(unittest.TestCase):
                     candidate_pins=pins,
                 )
 
+    def webapp_pin_fixture(self, source_repository):
+        with tempfile.TemporaryDirectory() as directory:
+            pins = pathlib.Path(directory) / "pins.json"
+            pins.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "version": "2026.11.0",
+                        "pins": {
+                            "relay-webapp": {
+                                "repository": "ghcr.io/agentworkforce/relay-webapp",
+                                "digest": DIGEST_B,
+                                "sourceRepository": source_repository,
+                                "sourceRevision": COMMIT,
+                            }
+                        },
+                    }
+                )
+                + "\n"
+            )
+            return self.build_fixture(
+                [f"ghcr.io/agentworkforce/relay-webapp@{DIGEST_B}"],
+                [
+                    "relay-webapp\tghcr.io/agentworkforce/relay-webapp\t"
+                    f"{DIGEST_A}\tapproved"
+                ],
+                candidate_pins=pins,
+            )
+
+    def test_webapp_pin_accepts_current_and_pre_rename_source(self):
+        for source in ("AgentWorkforce/relay-web", "AgentWorkforce/relay-webapp"):
+            with self.subTest(source=source):
+                manifest = self.webapp_pin_fixture(source)
+                self.assertEqual(
+                    manifest["images"][0]["ref"],
+                    f"ghcr.io/agentworkforce/relay-webapp@{DIGEST_B}",
+                )
+
+    def test_webapp_pin_rejects_other_source(self):
+        with self.assertRaisesRegex(ValueError, "source repository drift"):
+            self.webapp_pin_fixture("AgentWorkforce/relay-webapp-fork")
+
     def test_sessions_candidate_pin_requires_publish_run_id(self):
         with tempfile.TemporaryDirectory() as directory:
             pins = pathlib.Path(directory) / "pins.json"
@@ -313,7 +396,6 @@ class ReleaseManifestTest(unittest.TestCase):
             "relaycast",
             "relayauth",
             "sessions-pipeline",
-            "relayhistory",
             "relay-control",
             "relay-webapp",
             "sessions-migration-postgresql",

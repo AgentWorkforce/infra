@@ -140,10 +140,10 @@ class CompatibleUpload(unittest.TestCase):
             self.render(extra=dict(extraEnv=[dict(name=name,value='unsafe')]),failure='managed by historyUpload')
 
 class UploadConsumer(unittest.TestCase):
-    def render(self, mode='allowlist', admission='async', allowlist=None, failure=None):
+    def render(self, mode='allowlist', admission='async', allowlist=None, failure=None, **upload):
         v = {'ingestEdge': {'createServiceAccount': True, 'admission': {'mode': admission}, 'uploadDirect': dict(mode=mode,
-            allowlist=['org:test_org'] if allowlist is None else allowlist, scanBatch=16,
-            witness=dict(existingSecret='test-upload-witness', key='key'))}}
+            allowlist=['org:test_org'] if allowlist is None else allowlist,
+            witness=dict(existingSecret='test-upload-witness', key='key'), **{'scanBatch': 16, **upload})}}
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'values.yaml'; path.write_text(yaml.safe_dump(v))
             p=subprocess.run(['helm','template','test',str(ROOT/'charts/sessions-pipeline'),'-n','ci',
@@ -167,6 +167,19 @@ class UploadConsumer(unittest.TestCase):
         check=subprocess.run(['kubeconform','-strict','-summary'],input=yaml.safe_dump_all(docs),capture_output=True,text=True)
         self.assertEqual(check.returncode,0,check.stdout+check.stderr)
         self.assertFalse(any('UPLOAD_WITNESS_KEY'==e['name'] for d in docs if d['kind']=='Job' for c in d['spec']['template']['spec']['containers'] for e in c.get('env',[])))
+
+    def test_scan_batch_and_promote_concurrency(self):
+        env=lambda docs:{e['name']:e.get('value') for e in next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']=='test-ingest-edge')['spec']['template']['spec']['containers'][0]['env']}
+        default=env(self.render())
+        self.assertEqual(default['SELFHOST_UPLOAD_SCAN_BATCH'],'16')
+        self.assertNotIn('SELFHOST_UPLOAD_PROMOTE_CONCURRENCY',default)
+        tuned=env(self.render(scanBatch=256,promoteConcurrency=16))
+        self.assertEqual(tuned['SELFHOST_UPLOAD_SCAN_BATCH'],'256')
+        self.assertEqual(tuned['SELFHOST_UPLOAD_PROMOTE_CONCURRENCY'],'16')
+        for value in (0,2001):
+            self.render(scanBatch=value,failure='ingestEdge.uploadDirect.scanBatch must be 1..2000')
+        for value in (0,65,'x'):
+            self.render(promoteConcurrency=value,failure='ingestEdge.uploadDirect.promoteConcurrency must be 1..64')
 
     def test_off_does_not_receive_witness(self):
         docs=self.render(mode='off',admission='sync')

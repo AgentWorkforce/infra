@@ -1,0 +1,22 @@
+# PG arm for the relaycast#665 exit test: AgentWorkforce/relaycast PR #667,
+# fix/pg-failover-recovery @ 90de0b31 (on main dd08d458, includes #657).
+# Self-built (bench ECR, not released). Chart-default CPU/memory. Wires the
+# probes and keepalive sysctls the PR body lists.
+relaycast:
+  runtime:
+    postgres:
+      image:
+        repository: 805532413586.dkr.ecr.us-west-2.amazonaws.com/relaycast-actors-bench/relaycast-self-host
+        digest: sha256:e158a9015626cc208f89c4a227a09e8c26a65c334b0d379502d6a994b7faf621
+  readinessProbe:
+    httpGet: {path: /health/ready, port: http}
+    periodSeconds: 5
+    timeoutSeconds: 3
+  livenessProbe:
+    httpGet: {path: /health/live, port: http}
+    periodSeconds: 20
+    timeoutSeconds: 5
+  podSecurityContext:
+    sysctls:
+      - {name: net.ipv4.tcp_keepalive_intvl, value: "5"}
+      - {name: net.ipv4.tcp_keepalive_probes, value: "3"}

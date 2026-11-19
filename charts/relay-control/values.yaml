@@ -2,12 +2,15 @@
 # replica is enforced; this chart does not claim HA.
 replicaCount: 1
 image:
-  # relay-control 0.5.0, df4b390; 0.5.1 is not published yet, so the session read handoff is inert on this pin.
-  # Published at ghcr.io/agentworkforce/relay-control:0.5.0. Pin 0.5.1 here once
-  # that tag exists; never pin a digest that is not published under this name.
-  # Mirror by digest to your registry and override repository if needed.
+  # relay-control 0.5.24, edad6432 (#134 desktop enrollment keys/migration
+  # 0050, #136 Grok Bot wake-ups/0051, #137 sender receipts and grant-bound
+  # OAuth launches, #138 optional Ed25519 file feed signer). Published at
+  # ghcr.io/agentworkforce/relay-control:0.5.24 by publish run 43673082170 with
+  # a GitHub build-provenance attestation; never pin a digest that is not
+  # published under this name. Mirror by digest to your registry and override
+  # repository if needed.
   repository: ghcr.io/agentworkforce/relay-control
-  digest: sha256:d8c26d44dccb6dd21b7033288241a379e46ce5fbca69f276c4d4745001c3c3e2
+  digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 nameOverride: ""
@@ -31,6 +34,13 @@ global:
       svg: ""
       existingConfigMap: ""
       key: ""
+  # Only the key defaults: the Secrets relay-control and relaygate share for a
+  # Control-owned relaygate policy, set on the umbrella
+  # (global.relaygate.controlPolicy; see docs/self-hosted-relaygate.md).
+  relaygate:
+    controlPolicy:
+      adminToken: { key: token }
+      policySecret: { key: secret }
 existingSecret: ""
 # null preserves existing extraEnv selection; [] explicitly selects core only.
 # Managed names: flows, relayfile, chief, usage, launch, usage_people. No
@@ -313,6 +323,11 @@ services:
   relayauthEnabled: true
   relayauthUrl: ""
   relaycastUrl: ""
+  # With global.relaygate.gateOnly.enabled (agent-relay umbrella) this is also
+  # SELFHOST_RELAYGATE_PUBLIC_URL: the cast host is relaygate's public origin,
+  # so /resolve returns urls.relaygateUrl and withholds the shared Relaycast
+  # key, and events-shim temp workspaces are refused (relay-control cc361ed or
+  # later). Unset when gate-only is off.
   relaycastPublicUrl: ""
   relayhistoryUrl: ""
   relayhistoryPublicUrl: ""
@@ -326,6 +341,11 @@ services:
   # Session read API credential handoff, default off (relay-control #13; first
   # image with it is 0.5.1). Set together with secretKeys.sessionReadApiSecret,
   # or leave all three empty. Internal HTTP(S) origin of the read API Service.
+  # With global.relaygate.gateOnly.enabled (agent-relay umbrella) Control's
+  # SESSION_READ_API_URL is relaygate's internal Sessions listener instead
+  # (http://<relaygate>-sessions.<ns>.svc.cluster.local:8081, an origin:
+  # Control refuses a path), which passes
+  # Control's calls to this Service; keep this set to the read API.
   sessionReadApiUrl: ""
   # Bare public HTTPS origin of the read API, returned to clients.
   sessionReadApiPublicUrl: ""
@@ -464,6 +484,20 @@ topologySpreadConstraints: []
 # A valueFrom.secretKeyRef must not read the migration credential from
 # existingSecret.
 extraEnv: []
+
+# OPTIONAL: the signed Desktop feed's file signer (relay-control 0.5.24+,
+# docs/desktop-feed.md). Off unless existingSecret is set. Each profile's
+# Ed25519 private key (PKCS#8 PEM) is a key "<profile>.pem" in an existing
+# Secret you create (never in values). The keys are mounted read-only at
+# /var/run/desktop-feed/<profile>.pem (mode 0440, group 1000), and the chart
+# sets SELFHOST_DESKTOP_FEED_SIGNER=file and SELFHOST_DESKTOP_FEED_KEY_FILES.
+# Set the feed's storage and key label through extraEnv
+# (SELFHOST_DESKTOP_FEED_STORAGE, ..._KEY_LABEL and the storage settings).
+desktopFeed:
+  signingKeys:
+    existingSecret: ""
+    # Profile ids with a key in the Secret, e.g. [f6b9x4unfg].
+    profiles: []
 
 # OPTIONAL: a CA bundle that lets node-pg verify the Postgres server certificate
 # when the database uses a private CA, such as Amazon RDS. Off by default. When

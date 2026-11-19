@@ -1,0 +1,19 @@
+account_id  = "000000000000" # the account that owns the bucket
+region      = "us-west-2"
+bucket_name = "example-private-downloads"
+# origin_prefix = "desktop"
+# One entry per key: name => PEM. Add a second entry to rotate.
+signing_public_keys = {
+  example-signing-1 = <<-PEM
+    -----BEGIN PUBLIC KEY-----
+    (the public half of your RSA 2048 key pair; never the private half)
+    -----END PUBLIC KEY-----
+  PEM
+}
+# key_group_name             = "example-private-downloads-signers"
+# origin_access_control_name = "example-private-downloads-oac"
+# Step 1: create the certificate (its DNS is not managed here), keep attach_domain false.
+# Step 2: after the validation CNAME exists and the certificate is issued, set attach_domain = true.
+# domain_name   = "downloads.example.com"
+# attach_domain = false
+# price_class   = "PriceClass_100"

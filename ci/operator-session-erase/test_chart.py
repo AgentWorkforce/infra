@@ -216,6 +216,8 @@ class OperatorSessionErase(unittest.TestCase):
         pipeline = self.pipeline_values()
         self.enable_pipeline(pipeline, bytes_=False)
         control = self.control_values()
+        # Leaf fixture History mode; the umbrella's own default is native.
+        control.setdefault("services", {}).setdefault("relayhistoryBackend", "legacy")
         control["sessionErasureApi"] = {"enabled": True, "url": "http://test-ingest-edge.ci.svc.cluster.local", "existingSecret": "erase-api", "secretKey": "current"}
         components = {name: False for name in yaml.safe_load((ROOT / "charts/agent-relay/values.yaml").read_text())["components"]}
         components.update(sessionsPipeline=True, control=True)

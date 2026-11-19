@@ -1,0 +1,70 @@
+{
+ "arm": "noop",
+ "dir": "<results dir>",
+ "phases": [
+  {
+   "label": "noop-10000",
+   "kind": "mixed",
+   "offeredRate": 10000,
+   "startedAt": 1794513689050,
+   "endedAt": 1794513809635,
+   "issued": 1199984
+  }
+ ],
+ "routes": [
+  {
+   "arm": "noop",
+   "phase": "noop-10000",
+   "route": "POST /v1/dm",
+   "requests": 719569,
+   "ok": 718500,
+   "rps_ok": 5958.45,
+   "err_rate": 0.00149,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 1069,
+   "p50": 0.718,
+   "p95": 2.464,
+   "p99": 221.497,
+   "max": 10489.331000000238,
+   "corrected_p50": 1.804,
+   "corrected_p95": 3.608,
+   "corrected_p99": 2354.4
+  },
+  {
+   "arm": "noop",
+   "phase": "noop-10000",
+   "route": "POST /v1/channels/:name/messages",
+   "requests": 480415,
+   "ok": 480184,
+   "rps_ok": 3982.12,
+   "err_rate": 0.00048,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 231,
+   "p50": 0.718,
+   "p95": 2.03,
+   "p99": 34.087,
+   "max": 10483.552000000142,
+   "corrected_p50": 1.804,
+   "corrected_p95": 3.787,
+   "corrected_p99": 2799.869
+  }
+ ],
+ "delivery": [],
+ "integrity": [
+  {
+   "arm": "noop",
+   "phase": "noop-10000",
+   "expected": 1678868,
+   "delivered": 0,
+   "lost": 1678868,
+   "duplicate": 0,
+   "redelivered": 0,
+   "reordered": 0,
+   "unexpected": 0,
+   "truncated": 0
+  }
+ ],
+ "sinks": []
+}

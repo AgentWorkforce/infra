@@ -2,7 +2,7 @@
   "terraform": {
     "default_development": {
       "outputs": {
-        "application_contract": "8b911e7862289aedb76e20924aebd23264faeda45705fb2380456fece90f9a2b",
+        "application_contract": "9b8dd6909710025fe94d0016f198fb6e40add949b288fcca24a8d89fd8eaea57",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "environment": "f9df2b2ae29cd03bea8010899e56f7ca9438a2db6b28edefb8b242257eea2d84",
@@ -58,7 +58,7 @@
     },
     "default_external_roles": {
       "outputs": {
-        "application_contract": "8b911e7862289aedb76e20924aebd23264faeda45705fb2380456fece90f9a2b",
+        "application_contract": "9b8dd6909710025fe94d0016f198fb6e40add949b288fcca24a8d89fd8eaea57",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "environment": "f9df2b2ae29cd03bea8010899e56f7ca9438a2db6b28edefb8b242257eea2d84",
@@ -106,11 +106,11 @@
     },
     "default_history_upload_and_feed": {
       "outputs": {
-        "application_contract": "8b911e7862289aedb76e20924aebd23264faeda45705fb2380456fece90f9a2b",
+        "application_contract": "9b8dd6909710025fe94d0016f198fb6e40add949b288fcca24a8d89fd8eaea57",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "de2167cb5f314b784ed88064d3ad800940d4469c560b9c0c7ef62ea034aa0f4d",
         "environment": "f9df2b2ae29cd03bea8010899e56f7ca9438a2db6b28edefb8b242257eea2d84",
-        "history_upload": "80c57aaee5a10ffa1d8161f4fa5f0973f104474b73871a690a457acf4d1ca50f",
+        "history_upload": "1154de55787483c83db6ac6a16ed911fde8cb25ce6f381446866488a471562c7",
         "lambda_shared_environment": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "pipeline": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "postgres_service_bindings": "b1940cb0822ed6f5f8597cf451df7a09eaf391d54c4d2cb132f78c2cd1377f40",
@@ -186,7 +186,7 @@
     },
     "default_lambda": {
       "outputs": {
-        "application_contract": "97bd8c996a8e5be4d844ffa8867136afe21892f849d1c7c5c866ae5cbd813b95",
+        "application_contract": "907c467d4d0d00ff61562f669c16deaa6b0607ac85286b125f46fa8c10bbd273",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "environment": "f9df2b2ae29cd03bea8010899e56f7ca9438a2db6b28edefb8b242257eea2d84",
@@ -266,7 +266,7 @@
     },
     "default_production": {
       "outputs": {
-        "application_contract": "8b911e7862289aedb76e20924aebd23264faeda45705fb2380456fece90f9a2b",
+        "application_contract": "9b8dd6909710025fe94d0016f198fb6e40add949b288fcca24a8d89fd8eaea57",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "environment": "481b93f97bbae78e4867fdcd1706bff5f3746505ef1064e9fb92168f7b74b533",
@@ -322,7 +322,7 @@
     },
     "default_staging": {
       "outputs": {
-        "application_contract": "8b911e7862289aedb76e20924aebd23264faeda45705fb2380456fece90f9a2b",
+        "application_contract": "9b8dd6909710025fe94d0016f198fb6e40add949b288fcca24a8d89fd8eaea57",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "environment": "60006979ad84833a75e4ec1e8ded1ff2e369c48dd2abb455866726a599429423",
@@ -380,7 +380,7 @@
   "tofu": {
     "default_development": {
       "outputs": {
-        "application_contract": "8b911e7862289aedb76e20924aebd23264faeda45705fb2380456fece90f9a2b",
+        "application_contract": "9b8dd6909710025fe94d0016f198fb6e40add949b288fcca24a8d89fd8eaea57",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "environment": "f9df2b2ae29cd03bea8010899e56f7ca9438a2db6b28edefb8b242257eea2d84",
@@ -436,7 +436,7 @@
     },
     "default_external_roles": {
       "outputs": {
-        "application_contract": "8b911e7862289aedb76e20924aebd23264faeda45705fb2380456fece90f9a2b",
+        "application_contract": "9b8dd6909710025fe94d0016f198fb6e40add949b288fcca24a8d89fd8eaea57",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "environment": "f9df2b2ae29cd03bea8010899e56f7ca9438a2db6b28edefb8b242257eea2d84",
@@ -484,11 +484,11 @@
     },
     "default_history_upload_and_feed": {
       "outputs": {
-        "application_contract": "8b911e7862289aedb76e20924aebd23264faeda45705fb2380456fece90f9a2b",
+        "application_contract": "9b8dd6909710025fe94d0016f198fb6e40add949b288fcca24a8d89fd8eaea57",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "b1877d209d2533c2808ff153817ccd498d4828719bdcbb3dca88a5cf8b402866",
         "environment": "f9df2b2ae29cd03bea8010899e56f7ca9438a2db6b28edefb8b242257eea2d84",
-        "history_upload": "a63a91fbe190363339c6508599526003e139aa05b489a3c4bdf575477c20a36b",
+        "history_upload": "37183ecf807d54ce773396df19a0a0f6516f05092dacf02d2b5883d7f0f00f12",
         "lambda_shared_environment": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "pipeline": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "postgres_service_bindings": "483436419a6bfa0e9d68c86cfaf1dd71e95f7bf982ab593e6a9f67961e534e9c",
@@ -545,7 +545,7 @@
         "module.sessions_bucket.aws_eks_pod_identity_association.access[\"relay/agent-relay-dev/agent-relay-session-ingest-api\"]": "e3b5af87fea11b8c6663f524237cbc4d68dfbb41daa93210ba46591801aa8ba7",
         "module.sessions_bucket.aws_eks_pod_identity_association.access[\"relay/agent-relay-dev/agent-relay-worker\"]": "40c1b3de62c5ad7ef2a1e82bd592b769e4278ad547c5444871f33d084485312c",
         "module.sessions_bucket.aws_iam_role.access[0]": "1ae8a809687f02faa4d9819772a438a7b6f38bbac429d6fce4c80fb5e0a667c0",
-        "module.sessions_bucket.aws_iam_role.history_upload[0]": "28af6d438ecc3ecf51f9ad9a2cd4010a89d8d1b57e75cdc5c490e7a1c7f3eaed",
+        "module.sessions_bucket.aws_iam_role.history_upload[0]": "271116aa4dc38aa3982acda611706395c3808d5df43178dfd497e1d3a3151b3c",
         "module.sessions_bucket.aws_iam_role_policy.access[0]": "ad812540a941ffa94ec07dd6ebc6ff6fecb4139c742b60a2dfbc9cdbeecb6de2",
         "module.sessions_bucket.aws_iam_role_policy.history_upload[0]": "d8fe373ee92d1fcdff71037dc7f52e6dceb93bddd43083eb7ebb35e87e785724",
         "module.sessions_bucket.aws_iam_role_policy.history_upload_issuer[0]": "5d668ff6ac305c54ce6e869bdcb03ea939658b78854c7ce9a18621aa2bca52e1",
@@ -564,7 +564,7 @@
     },
     "default_lambda": {
       "outputs": {
-        "application_contract": "97bd8c996a8e5be4d844ffa8867136afe21892f849d1c7c5c866ae5cbd813b95",
+        "application_contract": "907c467d4d0d00ff61562f669c16deaa6b0607ac85286b125f46fa8c10bbd273",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "environment": "f9df2b2ae29cd03bea8010899e56f7ca9438a2db6b28edefb8b242257eea2d84",
@@ -644,7 +644,7 @@
     },
     "default_production": {
       "outputs": {
-        "application_contract": "8b911e7862289aedb76e20924aebd23264faeda45705fb2380456fece90f9a2b",
+        "application_contract": "9b8dd6909710025fe94d0016f198fb6e40add949b288fcca24a8d89fd8eaea57",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "environment": "481b93f97bbae78e4867fdcd1706bff5f3746505ef1064e9fb92168f7b74b533",
@@ -700,7 +700,7 @@
     },
     "default_staging": {
       "outputs": {
-        "application_contract": "8b911e7862289aedb76e20924aebd23264faeda45705fb2380456fece90f9a2b",
+        "application_contract": "9b8dd6909710025fe94d0016f198fb6e40add949b288fcca24a8d89fd8eaea57",
         "chief_execution_node": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "desktop_feed": "cc4f90f7f318dc1e973290ce09e68caf90297c2738d541f0945883cc80655368",
         "environment": "60006979ad84833a75e4ec1e8ded1ff2e369c48dd2abb455866726a599429423",

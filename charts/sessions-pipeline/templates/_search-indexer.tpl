@@ -14,6 +14,33 @@
     secretKeyRef: { name: {{ .secret | quote }}, key: {{ .key | quote }} }
 - { name: SEARCH_INDEX_BACKEND, value: {{ $c.search.backend | quote }} }
 - { name: SEARCH_INDEX_POSTGRES_BACKEND_ID, value: {{ $c.search.backendId | quote }} }
+{{- if eq .service "session-pipeline-consumer" }}
+{{- with $c.limits }}
+{{- with .maxScopeBytes }}
+- { name: SEARCH_INDEX_MAX_SCOPE_BYTES, value: {{ . | toString | quote }} }
+{{- end }}
+{{- with .maxScopeEvents }}
+- { name: SEARCH_INDEX_MAX_SCOPE_EVENTS, value: {{ . | int64 | toString | quote }} }
+{{- end }}
+{{- with .maxRows }}
+- { name: SEARCH_INDEX_MAX_ROWS, value: {{ . | int64 | toString | quote }} }
+{{- end }}
+{{- end }}
+{{- $streaming := $c.streaming | default dict }}
+{{- if kindIs "bool" $streaming.enabled }}
+- { name: SEARCH_INDEX_STREAMING_ENABLED, value: {{ ternary "true" "false" $streaming.enabled | quote }} }
+{{- end }}
+{{- with $streaming.maxReadBytes }}
+- { name: SEARCH_INDEX_STREAM_MAX_READ_BYTES, value: {{ . | toString | quote }} }
+{{- end }}
+{{- with $streaming.maxReadEvents }}
+- { name: SEARCH_INDEX_STREAM_MAX_READ_EVENTS, value: {{ . | int64 | toString | quote }} }
+{{- end }}
+{{- $staged := ($c.stagedReconcile | default dict).enabled }}
+{{- if kindIs "bool" $staged }}
+- { name: SEARCH_INDEX_STAGED_RECONCILE_ENABLED, value: {{ ternary "true" "false" $staged | quote }} }
+{{- end }}
+{{- end }}
 - { name: READ_API_COMPLETE_SINCE, value: {{ $c.completeSince | quote }} }
 - { name: PIPELINE_KEY_PREFIX, value: {{ $c.keyPrefix | quote }} }
 - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
@@ -32,6 +59,14 @@
 - { name: LOCKER_REGION, value: {{ $c.locker.region | quote }} }
 {{- with $c.locker.endpoint }}
 - { name: LOCKER_ENDPOINT, value: {{ . | quote }} }
+{{- end }}
+{{- if eq (dig "credentials" "mode" "podIdentity" $c.locker) "secret" }}
+- name: LOCKER_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef: { name: {{ $c.locker.existingSecret | quote }}, key: {{ $c.locker.accessKeyIdKey | default "access-key-id" | quote }} }
+- name: LOCKER_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef: { name: {{ $c.locker.existingSecret | quote }}, key: {{ $c.locker.secretAccessKeyKey | default "secret-access-key" | quote }} }
 {{- end }}
 {{- with $c.extraEnv }}
 {{- toYaml . | nindent 0 }}

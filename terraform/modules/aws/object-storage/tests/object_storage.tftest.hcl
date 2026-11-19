@@ -181,12 +181,12 @@ run "direct_upload_is_write_only_and_consumer_isolated" {
     error_message = "Object-scoped KMS session policies cannot use S3 Bucket Keys."
   }
   assert {
-    condition     = jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[0].Principal.AWS == "arn:aws:iam::111111111111:role/control" && contains(jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[0].Action, "sts:SetSourceIdentity")
+    condition     = jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[0].Principal.AWS == "arn:aws:iam::111111111111:role/control" && contains(jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[0].Action, "sts:SetSourceIdentity") && contains(jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[0].Action, "sts:AssumeRole") && jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[0].Condition.StringLike["sts:SourceIdentity"] == "u_*"
     error_message = "Only Control may assume the upload role, with traceable source identity."
   }
   assert {
-    condition     = contains(jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[0].Action, "sts:TagSession") && contains(jsondecode(aws_iam_role_policy.history_upload_issuer[0].policy).Statement[0].Action, "sts:TagSession")
-    error_message = "Both target trust and Control grant must permit EKS Pod Identity transitive session tags during role chaining."
+    condition     = jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[1].Action == "sts:TagSession" && !can(jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[1].Condition) && jsondecode(aws_iam_role.history_upload[0].assume_role_policy).Statement[1].Principal.AWS == "arn:aws:iam::111111111111:role/control" && contains(jsondecode(aws_iam_role_policy.history_upload_issuer[0].policy).Statement[0].Action, "sts:TagSession")
+    error_message = "Both target trust and Control grant must permit EKS Pod Identity transitive session tags during role chaining, with TagSession outside the SourceIdentity condition."
   }
   assert {
     condition     = jsondecode(aws_iam_role_policy.history_upload[0].policy).Statement[0].Action == "s3:PutObject" && jsondecode(aws_iam_role_policy.history_upload[0].policy).Statement[0].Resource == "arn:aws:s3:::relay-sessions/96bulls/.upload-inbox/*" && jsondecode(aws_iam_role_policy.history_upload[0].policy).Statement[0].Condition.Null["s3:if-none-match"] == "false"

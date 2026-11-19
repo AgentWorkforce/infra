@@ -255,33 +255,6 @@
       ],
       "type": "object"
     },
-    "relayHistoryMigrations": {
-      "additionalProperties": false,
-      "properties": {
-        "evidence": {
-          "type": "string"
-        },
-        "imageCount": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sourceCount": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sourceRevision": {
-          "pattern": "^[0-9a-f]{40,64}$",
-          "type": "string"
-        }
-      },
-      "required": [
-        "sourceRevision",
-        "sourceCount",
-        "imageCount",
-        "evidence"
-      ],
-      "type": "object"
-    },
     "release": {
       "additionalProperties": false,
       "properties": {
@@ -398,7 +371,6 @@
     "releaseDecision",
     "release",
     "licenses",
-    "relayHistoryMigrations",
     "upgradeRestore",
     "desktop"
   ],

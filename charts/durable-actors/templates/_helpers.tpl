@@ -14,6 +14,10 @@
 {{- define "actors.validate" -}}
 {{- if eq (include "actors.sandboxNamespace" .) .Release.Namespace }}{{ fail "sandbox namespace must differ from the control-plane namespace" }}{{ end -}}
 {{- if and (gt (int .Values.replicaCount) 1) (not .Values.redis.urlSecretKey) }}{{ fail "replicaCount above 1 requires redis.urlSecretKey" }}{{ end -}}
+{{- with .Values.topologySpread -}}
+{{- if and .enabled (or (lt (int .maxSkew) 1) (ne (toString (int .maxSkew)) (toString .maxSkew))) }}{{ fail "topologySpread.maxSkew must be a positive integer" }}{{ end -}}
+{{- if and .enabled (not (has (toString .whenUnsatisfiable) (list "DoNotSchedule" "ScheduleAnyway"))) }}{{ fail "topologySpread.whenUnsatisfiable must be DoNotSchedule or ScheduleAnyway" }}{{ end -}}
+{{- end -}}
 {{- if eq .Values.analytics.backend "clickhouse" -}}
 {{- range $key, $value := .Values.analytics.clickhouse -}}
 {{- if empty $value }}{{ fail (printf "analytics.clickhouse.%s is required" $key) }}{{ end -}}
@@ -26,6 +30,22 @@
 {{- if .Values.storage.s3.actorRoleArn }}{{ fail "storage.s3.actorRoleArn applies only to storage.s3.actorCredentials=assume-role" }}{{ end -}}
 {{- else if empty .Values.storage.s3.actorRoleArn }}{{ fail "storage.s3.actorCredentials=assume-role requires storage.s3.actorRoleArn" }}{{ end -}}
 {{- if eq .Values.storage.mode "rapid" }}{{ fail "Rapid persistence requires storage.provider=gcs" }}{{ end -}}
+{{- /* Local patch 14: S3 Express state needs a regional checkpoint and regional artifacts. */ -}}
+{{- $checkpoint := .Values.storage.s3.checkpoint.bucket -}}
+{{- if hasSuffix "--x-s3" .Values.storage.bucket -}}
+{{- if empty $checkpoint }}{{ fail "storage.bucket is an S3 Express directory bucket (one Availability Zone); set storage.s3.checkpoint.bucket to a regional bucket" }}{{ end -}}
+{{- if or (empty .Values.storage.artifactBucket) (hasSuffix "--x-s3" .Values.storage.artifactBucket) }}{{ fail "storage.bucket is an S3 Express directory bucket; set storage.artifactBucket to a regional bucket (the actor deployers cannot upload to Express)" }}{{ end -}}
+{{- end -}}
+{{- if hasSuffix "--x-s3" $checkpoint }}{{ fail "storage.s3.checkpoint.bucket must be a regional bucket, not a directory bucket" }}{{ end -}}
+{{- if and (not (kindIs "invalid" .Values.storage.s3.checkpoint.maxLagMs)) (empty $checkpoint) }}{{ fail "storage.s3.checkpoint.maxLagMs requires storage.s3.checkpoint.bucket" }}{{ end -}}
+{{- else if .Values.storage.s3.checkpoint.bucket -}}
+{{- fail "storage.s3.checkpoint requires storage.provider=s3" -}}
+{{- end -}}
+{{- /* Local patch 12: a half-configured Postgres CA would look verified while it is not. */ -}}
+{{- with .Values.postgresCa -}}
+{{- if .enabled -}}
+{{- if eq (empty .configMap) (empty .secret) }}{{ fail "postgresCa.enabled=true requires exactly one of postgresCa.configMap or postgresCa.secret" }}{{ end -}}
+{{- else if or .configMap .secret }}{{ fail "postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true" }}{{ end -}}
 {{- end -}}
 {{- if .Values.ingress.enabled -}}
 {{- if or (empty .Values.ingress.className) (empty .Values.ingress.tlsSecret) }}{{ fail "ingress requires className and tlsSecret" }}{{ end -}}

@@ -1,0 +1,19 @@
+# Actors arm at relaycast main a63961bd (#652/#653/#655/#656) on infra main
+# a01566c3 (#274). Images: publish-actors-images run 43350514591
+# (tag 12.8.0-actors.1) when available, else self-built from 10e93f94.
+# DURABLE_ACTORS_SOCKET_ORIGIN (#655): the gateway dials actor sockets through
+# the in-cluster control-plane Service instead of durable-actors.publicUrl, so
+# realtime works without public DNS (replaces bench/relaycast/infra/actors-ingress.sh).
+relaycast:
+  extraEnv:
+    - {name: DURABLE_ACTORS_SOCKET_ORIGIN, value: "http://agent-relay-durable-actors.arm-actors.svc.cluster.local:7100"}
+  runtime:
+    durableActors:
+      gateway:
+        image:
+          repository: 805532413586.dkr.ecr.us-west-2.amazonaws.com/relaycast-actors-bench/relaycast-actors-gateway
+          digest: sha256:98a4361ec4b7ef1264d29d487d1006eb6c76051053ea121e2a7d1b58d014ec82
+      deployer:
+        image:
+          repository: 805532413586.dkr.ecr.us-west-2.amazonaws.com/relaycast-actors-bench/relaycast-actors-deployer
+          digest: sha256:d8b7f444653f66c251f4ea2ebab6af2173ede6c405be18f9a043c063f5e66d86

@@ -1,7 +1,8 @@
 # Human quick start: self-hosted Agent Relay on GCP
 
-This handoff installs Relaycast, RelayAuth, Sessions Pipeline, RelayHistory, the
-headless control-plane API, and Relay Dashboard. It intentionally excludes
+This handoff installs Relaycast, Sessions Pipeline (including the native
+History read API and ingest edge), the headless control-plane API, and Relay
+Dashboard. RelayAuth is not needed. It intentionally excludes
 Flows, Relayfile, billing, hosted fleet, and provider integrations.
 
 The deployment is `portable-single`, not highly available.
@@ -11,7 +12,6 @@ The deployment is `portable-single`, not highly available.
 - GKE 1.28+
 - PostgreSQL 17 with `vector` and `pg_trgm`
 - separate runtime and migration-owner database roles
-- a dedicated RelayHistory database (never reuse the Sessions Pipeline `hoopdb`)
 - GKE Workload Identity and a GCS bucket for Sessions objects; the Sessions Pipeline
   worker and AlleyOop service accounts need object access to it (native GCS,
   `locker.provider: gcs`; no storage key)
@@ -19,7 +19,7 @@ The deployment is `portable-single`, not highly available.
 - `gcloud`, `kubectl`, `helm`, `kubeconform`, `jq`, `yq`, Node, and OpenSSL
 - approved immutable images in a registry the customer GKE nodes can pull
 
-The internal proof API, Dashboard, and RelayHistory images are not a public
+The internal proof API and Dashboard images are not a public
 customer distribution channel. Promote approved builds into the customer registry and
 replace every repository and digest in the values overlay.
 
@@ -55,15 +55,16 @@ operating procedure.
 Edit `customer-values.yaml` and replace every example:
 
 - project, region, bucket, registry, and organization ID;
-- Dashboard, API, Relaycast, and RelayHistory hostname;
+- Dashboard, API, Relaycast, and History hostname;
 - static IP, ManagedCertificate, and FrontendConfig name;
 - Kubernetes Secret and service-account reference;
 - image repository and immutable `sha256:` digest;
 - PostgreSQL runtime role.
 
 Keep credentials out of the values file. Create the documented Kubernetes
-Secret from an approved secret manager or private mode-0600 files. RelayHistory
-and the control API each need separate runtime and migration database URLs.
+Secret from an approved secret manager or private mode-0600 files. The control
+API and the Sessions Pipeline each need separate runtime and migration
+database URLs.
 
 ## 4. Validate
 
@@ -101,7 +102,7 @@ the managed certificate.
 In Agent Relay Desktop Settings, set the trusted deployment origin to the
 public API origin, for example `https://api.relay.customer.example`. The
 current implementation accepts only a bare public HTTPS DNS origin. Complete
-device approval; the control plane supplies scoped Relaycast and RelayHistory
+device approval; the control plane supplies scoped Relaycast and History
 credentials.
 
 ## 7. Verify

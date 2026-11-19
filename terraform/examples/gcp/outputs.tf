@@ -76,13 +76,27 @@ output "chart_values" {
         extraEnv = local.pipeline_extra_env
       }
     }
-    "relay-control" = {
+    "relay-control" = merge({
       postgresCa = {
         enabled   = true
         configMap = "cloud-sql-ca"
         key       = "ca.crt"
       }
-    }
+      }, [for _ in(local.desktop_feed_enabled ? [1] : []) : merge({
+        serviceAccount = {
+          annotations = {
+            "iam.gke.io/gcp-service-account"          = module.desktop_feed_bucket[0].google_service_account_email
+            "iam.gke.io/return-principal-id-as-email" = "true"
+          }
+        }
+        }, [for _ in(length(local.desktop_feed_env) > 0 ? [1] : []) : {
+          # Signed Desktop feed on GCS (relay-control 0.5.25+). If your values.yaml
+          # sets relay-control.extraEnv or serviceAccount.annotations, repeat these.
+          # Left out with desktop_feed_has_signing_keys = false: relay-control
+          # exits when the storage env is set without a signer.
+          extraEnv = local.desktop_feed_env
+      }]...)
+    ]...)
     relaycast = {
       postgresCa = {
         enabled   = true
@@ -90,6 +104,20 @@ output "chart_values" {
         key       = "ca.crt"
       }
     }
+    # The TLS policy of the load balancer's HTTPS listener (edge.tf). Empty
+    # with edge_ssl_policy.create = false, which is the chart's default.
+    gkeIngress = {
+      sslPolicy = module.edge_security.ssl_policy_name != null ? module.edge_security.ssl_policy_name : ""
+    }
+  }
+}
+
+output "edge" {
+  description = "Edge policy names (edge.tf). security_policy is null unless edge_security_policy.create is set; put it in gkeIngress.securityPolicy together with the backend-config annotation the chart asks for. client_ip_header set means a proxy fronts the load balancer: relay-control.auth.trustedProxies is 3 instead of 2."
+  value = {
+    ssl_policy       = module.edge_security.ssl_policy_name
+    security_policy  = module.edge_security.security_policy_name
+    client_ip_header = module.edge_security.client_ip_header
   }
 }
 
@@ -131,5 +159,22 @@ output "functions" {
     events_topic_id      = module.functions[0].events_topic_id
     dead_letter_topic_id = module.functions[0].dead_letter_topic_id
     secret_id            = module.functions[0].secret_id
+  } : null
+}
+
+output "image_mirror_root" {
+  description = "MIRROR_ROOT for install guide step 5 (null unless image_mirror_repository is set)."
+  value       = local.image_mirror_enabled ? "${var.region}-docker.pkg.dev/${var.project_id}/${var.image_mirror_repository}" : null
+}
+
+output "desktop_feed" {
+  description = "Values for relay-control's signed Desktop feed on GCS (null unless desktop_feed_bucket_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys. env is empty with desktop_feed_has_signing_keys = false: relay-control exits when the storage env is set without a signer."
+  value = local.desktop_feed_enabled ? {
+    service_account = module.desktop_feed_bucket[0].google_service_account_email
+    env             = local.desktop_feed_env
+    service_account_annotations = {
+      "iam.gke.io/gcp-service-account"          = module.desktop_feed_bucket[0].google_service_account_email
+      "iam.gke.io/return-principal-id-as-email" = "true"
+    }
   } : null
 }

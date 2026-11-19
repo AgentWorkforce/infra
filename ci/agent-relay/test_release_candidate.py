@@ -350,6 +350,10 @@ class ReleaseCandidateTest(unittest.TestCase):
         self.assertIn("verify-sessions-pipeline-sigstore.py", workflow)
         self.assertIn('publish_run_id="$(jq -er \'.publishRunId\'', workflow)
         self.assertIn("gh run download", workflow)
+        self.assertIn(
+            '.id == "relaycast-eks-collector" or .id == "relaycast-postgres" or .id == "relayauth"',
+            workflow,
+        )
         for receipt_file in VERIFY.FILES:
             self.assertIn(f".release/{receipt_file}", workflow)
 
@@ -553,6 +557,92 @@ class SessionsSigstoreReceiptTest(unittest.TestCase):
             with mock.patch.object(VERIFY.subprocess, "run", side_effect=error):
                 with self.assertRaises(VERIFY.subprocess.CalledProcessError):
                     VERIFY.verify(root, digest, source_sha, str(RUN_ID))
+
+
+try:
+    import yaml  # noqa: F401  (render-fast-path.py needs PyYAML)
+except ImportError:  # release-candidate.yml runs this file without PyYAML
+    yaml = None
+
+
+@unittest.skipIf(yaml is None, "PyYAML is not installed")
+class FastPathWorkflowTest(unittest.TestCase):
+    """fast-path.yml is rendered from the release workflows, never hand-edited."""
+
+    def load_renderer(self):
+        spec = importlib.util.spec_from_file_location(
+            "render_fast_path", ROOT / "scripts/ci/render-fast-path.py"
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_fast_path_matches_a_fresh_render(self):
+        rendered = self.load_renderer().render()
+        current = (ROOT / ".github/workflows/fast-path.yml").read_text()
+        self.assertEqual(
+            current,
+            rendered,
+            "fast-path.yml is stale: run python3 scripts/ci/render-fast-path.py",
+        )
+
+    def test_fast_path_keeps_the_source_guards_and_gate(self):
+        renderer = self.load_renderer()
+        workflow = yaml.safe_load(renderer.render())
+        jobs = workflow["jobs"]
+        self.assertEqual(jobs["gate"]["environment"], "fast-path")
+        for name, job in jobs.items():
+            if name != "gate":
+                self.assertIn("gate", job["needs"], name)
+                self.assertNotIn("environment", job, name)
+        sources = {
+            "candidate": renderer.load("release-candidate.yml")["jobs"]["update"],
+            "tag": renderer.load("release-candidate-tag.yml")["jobs"]["tag"],
+            "charts": renderer.load("release.yml")["jobs"]["release"],
+        }
+        for name, job in renderer.load("lint.yml")["jobs"].items():
+            sources[f"lint-{name}"] = job
+        sources["slack-relay-test"] = renderer.load("slack-relay.yml")["jobs"]["test"]
+        for name, source in sources.items():
+            scripts = [step["run"] for step in jobs[name]["steps"] if "run" in step]
+            for step in source["steps"]:
+                if "run" in step:
+                    self.assertIn(step["run"], scripts, f"{name}: {step.get('name')}")
+        # Only a manual dispatch starts it, with read-only defaults, and no
+        # workflow-level concurrency group that a run awaiting approval holds.
+        self.assertEqual(list(workflow["on"]), ["workflow_dispatch"])
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertNotIn("concurrency", workflow)
+        # Nothing saves a cache that normal CI or a release restores.
+        self.assertNotRegex(renderer.render(), r"actions/cache|rust-cache|cache:")
+        # The umbrella publish keeps its GitHub-hosted signer identity.
+        self.assertNotIn("attest-build-provenance", renderer.render())
+
+    def test_fast_path_slack_relay_image_never_moves_main(self):
+        renderer = self.load_renderer()
+        workflow = yaml.safe_load(renderer.render())
+        stage = workflow["on"]["workflow_dispatch"]["inputs"]["stage"]
+        self.assertIn("slack-relay-image", stage["options"])
+        image = workflow["jobs"]["slack-relay-image"]
+        self.assertEqual(image["needs"], ["gate", "slack-relay-test"])
+        self.assertEqual(workflow["jobs"]["slack-relay-test"]["needs"], ["gate"])
+        steps = {step.get("name"): step for step in image["steps"]}
+        tags = steps["Tags"]["run"]
+        self.assertIn(":fast-$SHA,", tags)
+        self.assertIn(":sha-${SHA:0:7}", tags)
+        tag_line = next(line for line in tags.splitlines() if "tags=" in line)
+        self.assertNotRegex(tag_line, r":(main|latest)\b")
+        build = steps["Build and push"]["with"]
+        self.assertIs(build["push"], True)
+        source = renderer.load("slack-relay.yml")["jobs"]["image"]
+        source_build = next(s for s in source["steps"] if "build-push-action" in s.get("uses", ""))
+        for key in ("context", "platforms", "provenance", "sbom"):
+            self.assertEqual(build[key], source_build["with"][key], key)
+        self.assertIn("$GITHUB_STEP_SUMMARY", steps["Digest"]["run"])
+        for step in image["steps"]:
+            if str(step.get("uses", "")).startswith("actions/checkout@"):
+                self.assertEqual(step["with"]["ref"], "${{ needs.gate.outputs.sha }}")
 
 
 if __name__ == "__main__":

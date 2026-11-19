@@ -1,4 +1,6 @@
-// Sessions Pipeline probe for e2e-gcp-proof.sh.
+// Sessions Pipeline probe. ci/agent-relay/kind/test_pipeline.mjs imports its
+// `verify`. e2e-gcp-proof.sh no longer runs `push`: the courier needs a
+// RelayAuth assertion, and native History (the only History) runs no RelayAuth.
 //
 // Runs inside the existing bulls96-alleyoop-ingest pod (default-deny
 // namespace; this pod already reaches HoopDb, the Locker bucket and its own

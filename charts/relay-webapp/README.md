@@ -1,6 +1,6 @@
 # relay-webapp
 
-Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
+Public chart names and existing-release compatibility: [Control/Webapp rename](https://github.com/AgentWorkforce/infra/blob/main/docs/control-webapp-chart-rename.md).
 
 Deploys the self-hosted Agent Relay dashboard container. The image digest is
 required; this chart never follows a tag and does not create Secrets. Runtime
@@ -127,3 +127,17 @@ containing relay-webapp #124 and also requires `runtime.sessionReadApiEnabled`
 plus a read API serving the Postgres coordination-overlaps contract. Pin and
 verify that image before enabling the view; the chart refuses the view flag
 without the direct-read flag, and older images ignore the setting.
+
+`runtime.sessionAgentNamesEnabled` (strict boolean, default `false`) renders
+`DASHBOARD_SESSION_AGENT_NAMES_ENABLED=true`: the session list asks for each
+session's recorded agent name (`includeAgentName=recorded`) and shows it in the
+caption beside the harness and model. Enable it only when Control and the
+session reader both take that opt-in.
+
+`runtime.sessionShortSummariesEnabled` (strict boolean, default `false`)
+renders `DASHBOARD_SESSION_SHORT_SUMMARIES_ENABLED=true`: the list asks the
+session reader for each session's recorded short summary
+(`includeShortSummary=recorded`) and shows it under the title. It requires
+`runtime.sessionReadApiEnabled` (the chart refuses it otherwise), a dashboard
+image containing relay-web #143, and a reader with
+`READ_API_LIST_SHORT_SUMMARY_ENABLED=true`.

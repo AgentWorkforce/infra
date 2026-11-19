@@ -397,6 +397,64 @@ searchIndexer:
     region: us-east-1
     # Empty uses the AWS S3 endpoint for the region (Pod Identity credentials).
     endpoint: ""
+    # podIdentity: no keys; the AWS credential chain of the ServiceAccount.
+    # secret: static keys from existingSecret, for an S3-compatible endpoint
+    # (MinIO) where no pod identity exists, such as AKS. Needs endpoint.
+    # Left unset here so existing renders (and the content-addressed bootstrap
+    # Job name) do not change:
+    # credentials:
+    #   mode: secret
+    # existingSecret: <Secret name>
+    # accessKeyIdKey: access-key-id
+    # secretAccessKeyKey: secret-access-key
+  # Per-scope index limits (issue 610), consumer only. Unset keeps the image
+  # defaults (the lower bounds). Raise the indexer's memory limit with them.
+  limits:
+    # SEARCH_INDEX_MAX_SCOPE_BYTES: 64MiB..256MiB (bytes, or a MiB/GiB size).
+    maxScopeBytes: ""
+    # SEARCH_INDEX_MAX_SCOPE_EVENTS: 100000..1000000.
+    maxScopeEvents: null
+    # SEARCH_INDEX_MAX_ROWS: 500000..1000000.
+    maxRows: null
+  # Streaming reconcile (issue 610 Phase 2), consumer only. On, a scope above
+  # the limits is indexed in passes instead of recorded as partial.
+  # enabled is tri-state: null (default) renders nothing and keeps the image
+  # default; true renders "true"; false renders "false" explicitly (an image
+  # whose default is on needs the explicit "false" to turn it off).
+  # true together with outputFacts.enabled is refused (the consumer refuses it).
+  # A scope streams only when four times its size fits BOTH budgets; at their
+  # defaults every streamed scope is still refused and the consumer warns at
+  # startup, so raise the budget(s) the scope exceeds. Memory: the non-streaming
+  # sizing plus about 2 GB at the default budgets: one decompressed chunk (at
+  # most 16 MiB) plus about 3 KB per record of the scope (measured: +0.6 GB at
+  # 100000 records, +3.3 GB at 1000000; 500000 records at the default budgets).
+  # It scales with SEARCH_INDEX_STREAM_MAX_READ_EVENTS.
+  # resources below defaults to a 3Gi limit for this; raise it where streaming
+  # is on with larger budgets, or set enabled: false. The staged reconcile
+  # (SEARCH_INDEX_STAGED_RECONCILE_ENABLED) needs the same sizing.
+  streaming:
+    # SEARCH_INDEX_STREAMING_ENABLED: null | true | false.
+    enabled: null
+    # SEARCH_INDEX_STREAM_MAX_READ_BYTES: 4x limits.maxScopeBytes..2GiB (bytes,
+    # or a MiB/GiB size), rendered only when set. Images that default streaming
+    # on validate it at startup even when enabled is null.
+    maxReadBytes: ""
+    # SEARCH_INDEX_STREAM_MAX_READ_EVENTS: 4x limits.maxScopeEvents..2000000.
+    maxReadEvents: null
+  # Staged reconcile (issue 610 Phase 3), consumer only:
+  # SEARCH_INDEX_STAGED_RECONCILE_ENABLED. Tri-state like streaming.enabled:
+  # null (default) renders nothing and keeps the image default, which is ON
+  # from the first services image built from relayhistory-pipeline efdd4bb2 or
+  # later (off in older images); true or false render explicitly, and false
+  # keeps the pre-staged path. true with streaming.enabled=false is refused.
+  # On needs migration 20261105062110 (and 20261105062140 with outputFacts
+  # enabled) and the same memory as streaming (see above).
+  # Upgrade note: the migrate Job is a plain Job, not a hook, so on an upgrade
+  # to a default-on image the indexer pod restarts until migrate has applied
+  # those migrations, then starts; this is expected. Set enabled: false to
+  # stay on the pre-staged path.
+  stagedReconcile:
+    enabled: null
   # GCS readiness settings (Cloud SQL, Memorystore and Pub/Sub). Empty for S3.
   extraEnv: []
   postgres:
@@ -461,9 +519,14 @@ searchIndexer:
   tolerations: []
   affinity: {}
   podAnnotations: {}
+  # Sized for streaming reconcile at the default budgets (see streaming above).
+  # Upgrading from 0.8.48 or earlier: Helm merges these keys with your values,
+  # so a values file that sets only limits.memory below 1Gi now also gets the
+  # 1Gi request and the pod is refused (request above limit). Set
+  # requests.memory with it, or replace the whole resources block.
   resources:
-    requests: { cpu: 50m, memory: 256Mi }
-    limits: { memory: 1Gi }
+    requests: { cpu: 50m, memory: 1Gi }
+    limits: { memory: 3Gi }
 
 # Per-session operator hard-delete composition. Every switch is off by default.
 # The chart renders only Secret references; create the Secrets separately and
@@ -520,6 +583,13 @@ ingestEdge:
     caConfigMap: "" # optional public CA bundle, added to OS trust
     caKey: ca.crt
   enabled: false
+  # Ingest edge Deployment replicas, integer 1..8 (strategy stays Recreate). Above 1 requires
+  # ledger=s3. Tenant caps are enforced per replica, so halve per-replica caps when raising this.
+  replicas: 1
+  # Liveness /healthz timeoutSeconds, integer 2..30. Unset keeps 2. Under heavy async admission the
+  # event loop can answer /healthz in more than 2 s; three misses restart the pod and drop its claims,
+  # and the first scan after a start is slow. Raise it (for example to admission.probeTimeoutSeconds).
+  livenessTimeoutSeconds: null
   # Requires an image implementing SELFHOST_INGEST_ADMISSION. Sync preserves
   # the existing request path. Async acknowledges durable object storage and
   # defers admission SQL; drain consumes the inbox but accepts new work sync.
@@ -528,6 +598,28 @@ ingestEdge:
     concurrency: 4
     scanIntervalMs: 15000
     maxAttempts: 20
+    # INGEST_ASYNC_MAX_PER_ORG: the async consumer's per-org cap with s3TenantLimit=true,
+    # 1..concurrency. Unset (default) renders nothing: the image uses max(1, concurrency/2).
+    asyncMaxPerOrg: null
+    # SELFHOST_ADMISSION_AWAIT_AUTHORITY: true renders "on", so async admission defers uploads for
+    # orgs with no fence-authority marker yet (they wait in S3 for the marker) instead of retrying or
+    # refusing them. Requires ledger=s3 and admission.mode async or drain. Default false renders nothing.
+    awaitAuthority: false
+    # SELFHOST_ADMISSION_SPREAD: true renders "on". Work younger than the grace is ordered by a
+    # per-process salted hash, so replicas sharing one inbox mostly start on different items instead of all
+    # claiming the oldest; work older than the grace stays strict oldest-first. Meant for
+    # ingestEdge.replicas > 1. Requires admission.mode async or drain. Default false renders nothing.
+    spread: false
+    # SELFHOST_ADMISSION_SPREAD_GRACE_MS, integer 1000..86400000; requires spread=true. Unset (default)
+    # renders nothing: the image uses max(120000, 4 x scanIntervalMs).
+    spreadGraceMs: null
+    # Async/drain startup and readiness exec probes: timeoutSeconds, 3..30. The probe's own /readyz fetch
+    # aborts 1 s earlier. Unset keeps 3 s and the 1500 ms fetch. Raise it when long upload scans
+    # (large uploadDirect.scanBatch) make /readyz slow, so a busy single replica stays in the Service.
+    probeTimeoutSeconds: null
+    # Startup probe failureThreshold (period 2 s), 30..900; unset keeps 30 (~60 s). Async/drain /readyz
+    # passes only after the first admission scan, which takes longer than 60 s on a large backlog.
+    startupFailureThreshold: null
   # Pipeline #515: scan .upload-inbox and promote into async admission.
   # Requires a published image implementing HISTORY_UPLOAD_DIRECT. The witness
   # must be the SAME Secret value used by Control's historyUpload.witness.
@@ -535,7 +627,12 @@ ingestEdge:
     mode: "off" # off | allowlist | on
     # Consumer allowlist uses org:<id>/ws:<id>, unlike Control's user ID list.
     allowlist: []
+    # 1..2000. Images before the upload-promote fix (relayhistory-pipeline
+    # review/claude-upload-promote-expiry) accept only 1..100 and refuse startup above it.
     scanBatch: 16
+    # SELFHOST_UPLOAD_PROMOTE_CONCURRENCY, 1..64; unset renders nothing (the image defaults to 8).
+    # Needs an image with the upload-promote fix.
+    promoteConcurrency: null
     witness:
       existingSecret: ""
       key: upload-witness-key
@@ -546,6 +643,31 @@ ingestEdge:
   # lock waits become 429 + Retry-After; statement timeouts still return 503.
   # This does not remove SQL from sync uploads or change async consumer backoff.
   claimLockBusy: true
+  # Requires ledger=s3 and a services image with the S3 tenant limit (relayhistory-pipeline
+  # 09f6a70b). true renders INGEST_S3_TENANT_LIMIT=on: maxPerUser and maxPerOrg are then
+  # enforced against the S3 ledger too. false (default) renders nothing.
+  s3TenantLimit: false
+  # INGEST_LEDGER_PARALLEL: S3 ledger requests in flight per admission, 1..64; requires ledger=s3.
+  # Unset (default) renders nothing (the image uses 32). Lower it when admissions x parallel
+  # over-subscribes the process's sockets (fetch-level ledger_store_transient).
+  ledgerParallel: null
+  # INGEST_LEDGER_BUCKET / INGEST_LEDGER_REGION (relayhistory-pipeline docs/ledger-relocation.md):
+  # the S3 ledger's own objects (each user's ledger/ and the ledger-home marker) in
+  # a separate bucket, e.g. one in the cluster's region; everything else, fences
+  # included, stays in locker.bucket. Requires ledger=s3, locker.provider=s3 and a
+  # services image with ledger-store.ts; same endpoint and credentials as locker.
+  # Empty bucket (default) renders nothing. Moving an existing ledger is an offline
+  # relocation (stop, copy, verify, switch the ledger-home marker), never just a
+  # values change: with this set, no claim admits until the marker names the bucket.
+  # INGEST_LEDGER_HOME_GUARD=on: every claim also reads the ledger-home marker in
+  # locker.bucket and refuses when it names another bucket (a relocated ledger).
+  # Requires ledger=s3. false (default) renders nothing. Turn it on before a
+  # relocation starts (relayhistory-pipeline docs/ledger-relocation.md step 0).
+  ledgerHomeGuard: false
+  ledgerBucket:
+    bucket: ""
+    # Empty: locker.region.
+    region: ""
   fullnameOverride: ""
   image:
     repository: ghcr.io/agentworkforce/96bulls-services
@@ -565,6 +687,10 @@ ingestEdge:
     databaseUrlKey: database-url
     introspectSecretKey: introspect-secret
   postgres:
+    # custom-ca (default): verify against caConfigMap/caKey, pinned by caSha256.
+    # supabase: the image's built-in Supabase CA; it also lets the role check
+    # accept Supabase's creator membership edge. Leave the CA fields empty.
+    tlsProfile: custom-ca
     # The server must already serve TLS under this CA, with matching DNS.
     caConfigMap: ""
     caKey: ca.crt
@@ -586,6 +712,16 @@ ingestEdge:
   # Serves the per-session erase on POST /v1/delivery/sessions/selection
   # (RELAYHISTORY_SELFHOST_SESSION_SELECTION). Needs pipeline migration 043910.
   sessionSelection: false
+  # Upload accounting ledger (pipeline decision 0005, INGEST_LEDGER). sql (the
+  # default) renders nothing and keeps the SQL ledger. s3 renders INGEST_LEDGER=s3:
+  # every admission path of this ingest (sync, async consumer, direct-upload
+  # promotion) claims and commits through the S3 ledger, and no org is admitted
+  # until an operator writes its fence-authority marker (README "S3 upload
+  # ledger"). The database stays required: s3 controls still mirror deletions to
+  # SQL. s3 refuses (render fails, as the binary does at startup) sessionSelection,
+  # the operator session erase and upload consent. Needs a services image from
+  # pipeline 8b2430c7 or later.
+  ledger: sql
   # Answers the Desktop's POST /v1/onboarding/heartbeat 204 and discards it
   # (RELAYHISTORY_SELFHOST_HEARTBEAT_ACCEPT). Needs a services image from pipeline
   # #431 or later.
@@ -600,6 +736,63 @@ ingestEdge:
   networkPolicy:
     enabled: false
     ingressFrom: []
+    # Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay
+    # umbrella): ingressFrom is ignored and only relaygate is admitted, plus
+    # these peers. Leave it empty unless a caller must bypass the gate, e.g.
+    # Control for the operator session erase API (operatorSessionErase.api),
+    # which then can also upload without relaygate.
+    gateOnlyFrom: []
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+# S3 ledger re-arm sweeper (pipeline decision 0005, rearm-sweeper-main.ts).
+# Default off: nothing renders. Enabled, a CronJob runs one sweeper pass per
+# schedule tick with ingestEdge's image, bucket, region, endpoint and keyRoot
+# (derived, never duplicated: the marker's rearmSweeper "live" means it sweeps
+# THIS bucket and key root). Requires ingestEdge.enabled and ingestEdge.ledger=s3.
+# A pass erases canonical object versions named by ledger/rearm/ markers, so it
+# needs its own credential (README "Re-arm sweeper IAM").
+rearmSweeper:
+  enabled: false
+  schedule: "*/5 * * * *"
+  # A tick that cannot start within this window is skipped; the next one resumes
+  # from the durable cursor in the bucket.
+  startingDeadlineSeconds: 240
+  # Upper bound on one pass. A killed pass resumes after the last finished marker.
+  activeDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  # Optional org scope (INGEST_REARM_ORGS). Empty sweeps every org. A per-org
+  # fence-authority marker may claim rearmSweeper "live" only for an org listed
+  # here (or with this empty); the deployment-wide marker needs this empty.
+  orgs: []
+  # INGEST_REARM_DRY_RUN=1: classify and count only, no write and no delete. A dry
+  # run is NOT "live" for the fence-authority marker.
+  dryRun: false
+  # Optional INGEST_REARM_CONCURRENCY (1..16) and INGEST_REARM_MAX_MARKERS
+  # (1..10000); null keeps the binary defaults (4 and 500).
+  concurrency: null
+  maxMarkers: null
+  credentials:
+    # secret: static keys from existingSecret (MinIO or AWS), mounted as files
+    # (INGEST_REARM_CREDENTIALS=keys, INGEST_REARM_S3_*_FILE).
+    # podIdentity: INGEST_REARM_CREDENTIALS=podIdentity; no Secret. Requires
+    # serviceAccountName (its own EKS Pod Identity association, distinct from the
+    # ingest's) and a services image from pipeline 9be2ad8e or later.
+    # webIdentity (IRSA) is refused: the binary has no such mode.
+    mode: secret
+    # Dedicated Secret for mode=secret; must stay empty with podIdentity. The
+    # ingest runtime, Locker writer and upload witness Secrets are refused.
+    existingSecret: ""
+    accessKeyIdKey: access-key-id
+    secretAccessKeyKey: secret-access-key
+  createServiceAccount: false
+  serviceAccountName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }
@@ -699,6 +892,10 @@ nativeConsumer:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 768Mi }
 
+# With global.relaygate.gateOnly.enabled (set in the agent-relay umbrella), the
+# origin's routes relaygate serves go to the relaygate Service
+# (global.relaygate.gateOnly.serviceName, default <release>-relaygate) and the
+# rest are not routed; see docs/self-hosted-relaygate.md, "Gate-only".
 nativeRouting:
   enabled: false
   fullnameOverride: ""

@@ -6,6 +6,9 @@ installation or production use.
 
 Hard blockers as of 2026-11-04 (agent-relay 0.3.12; details in [STATUS.md](STATUS.md)):
 
+(The standalone RelayHistory component referenced here was removed in
+agent-relay 0.7.0; History is now the native read API and ingest edge.)
+
 - None for images: since 0.3.11 every image in `values-gcp.yaml` is a public
   GHCR release digest (control-plane API, dashboard, RelayHistory, Sessions
   services, Relaycast, RelayAuth, PostgreSQL).

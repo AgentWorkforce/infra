@@ -8,11 +8,17 @@
 #     [--db-instance <rds-instance-id>] [--context <kube-context>] \
 #     [--namespace agent-relay] [--release agent-relay] [--prefix agent-relay] \
 #     [--first-install] [--rds-setup] [--apply]
+#   scripts/selfhost/agent-relay-upgrade.sh ... --profile eks-rds-native \
+#     --relaycast-actors credentials|cutover [--actors-values <file>]... \
+#     [--reregister-legacy] [--apply]
 #
 #   --profile P     the chart profile this install uses, so an upgrade never
 #                   switches it. Required. One of:
-#                     eks             values-eks.yaml
+#                     eks             values-eks.yaml (native History)
 #                     eks-native      values-eks.yaml + values-eks-native.yaml
+#                                     (an empty compatibility overlay: renders
+#                                     the same as eks; kept for installs that
+#                                     already name it)
 #                     eks-rds-native  values-eks.yaml + values-eks-rds-native.yaml
 #                                     (implies --rds-setup; needs a release
 #                                     whose chart ships that file)
@@ -20,6 +26,25 @@
 #                   install (helm install, then the migration barrier) instead
 #                   of helm upgrade. Refused when the release already exists;
 #                   a plain upgrade is refused when it does not.
+#   --relaycast-actors PHASE
+#                   opt-in: move Relaycast from its PostgreSQL backend to
+#                   durable-actors with every row and file
+#                   (docs/relaycast-postgres-to-actors-migration.md), on the
+#                   chart version already deployed, in two runs:
+#                     credentials  switch Relaycast to ar_ credentials (the
+#                                  keyring in relaycast.existingSecret) and
+#                                  re-key what relay-control holds; online
+#                     cutover      preflight, quiesce, export, helm upgrade with
+#                                  values-eks-actors.yaml + --actors-values,
+#                                  copy files, import and verify; messaging is
+#                                  down meanwhile
+#                   Both take the RDS snapshot first and refuse on any failed
+#                   precondition (wrong backend or chart version, a component
+#                   the actors values would remove, a control plane without an
+#                   RDS CA bundle, missing files, legacy credentials).
+#   --actors-values F  your overrides for values-eks-actors.yaml (cutover)
+#   --reregister-legacy  cutover: accept that holders of never-upgraded legacy
+#                   credentials re-register afterwards (their data still moves)
 #   --rds-setup     this install's RDS databases are managed with
 #                   scripts/selfhost/rds-setup.sh (next to this script). First
 #                   install then runs "rds-setup.sh post" after the HoopDb
@@ -38,6 +63,17 @@
 #      release-images.values.yaml and SHA256SUMS. It checks every checksum and
 #      verifies the GitHub build attestations (gh attestation verify), bound to
 #      the release workflow and the release tag.
+#   2a. Upgrades only: a read-only census of the Sessions database (one pod
+#      cloned from the deployed HoopDb migrate Job, deleted afterwards) decides
+#      how the migration's adopt-or-create index steps run. Absent indexes on
+#      populated tables with at most AGENT_RELAY_BLOCKING_INDEX_MAX_ROWS rows to
+#      index (default 1000000) are built by the migration with a blocking
+#      CREATE INDEX: this upgrade alone sets
+#      sessions-pipeline.worker.migrations.allowBlockingIndexBuild, and the plan
+#      prints the tables, rows and expected lock time. Above the limit, or with
+#      an INVALID or drifted index, it refuses: prebuild CONCURRENTLY with the
+#      packet it names, then re-run. Needs sessions-index-census.mjs next to
+#      this script.
 #   2. Renders the chart with your values plus the release image overlay and
 #      checks that every image it would deploy is exactly a release image in
 #      your mirror, then prints the image changes against what is running and
@@ -74,6 +110,7 @@ repo="${AGENT_RELAY_INFRA_REPO:-AgentWorkforce/infra}"
 signer_workflow="$repo/.github/workflows/release-agent-relay.yml"
 version="" registry="" profile="" db_instance="" context="" namespace="agent-relay" release="agent-relay"
 prefix="agent-relay" apply=false assume_yes=false first_install=false rds_setup=false values=()
+rta_phase="" rta_actor_values=() rta_reregister_legacy=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) [ $# -ge 2 ] || die "--version needs a value"; version=$2; shift 2 ;;
@@ -87,6 +124,9 @@ while [ $# -gt 0 ]; do
     --prefix) [ $# -ge 2 ] || die "--prefix needs a value"; prefix=$2; shift 2 ;;
     --first-install) first_install=true; shift ;;
     --rds-setup) rds_setup=true; shift ;;
+    --relaycast-actors) [ $# -ge 2 ] || die "--relaycast-actors needs credentials or cutover"; rta_phase=$2; shift 2 ;;
+    --actors-values) [ $# -ge 2 ] || die "--actors-values needs a value"; rta_actor_values+=("$2"); shift 2 ;;
+    --reregister-legacy) rta_reregister_legacy=true; shift ;;
     --apply) apply=true; shift ;;
     --yes) assume_yes=true; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -98,13 +138,31 @@ done
 [[ "$release" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || die "--release must be a DNS-1123 label"
 case "$profile" in
   eks) overlay_profile=eks; profile_files=(values-eks.yaml) ;;
+  # values-eks.yaml is native on its own; values-eks-native.yaml is an empty
+  # compatibility overlay, still layered so an install naming it never changes.
   eks-native) overlay_profile=eks; profile_files=(values-eks.yaml values-eks-native.yaml) ;;
-  # values-eks-rds-native.yaml layers on values-eks.yaml and replaces
+  # values-eks-rds-native.yaml layers on values-eks.yaml in place of
   # values-eks-native.yaml; its databases are bootstrapped by rds-setup.sh.
   eks-rds-native) overlay_profile=eks; profile_files=(values-eks.yaml values-eks-rds-native.yaml); rds_setup=true ;;
   *) die "--profile must be eks, eks-native or eks-rds-native (the profile this install already uses)" ;;
 esac
 [ "${#values[@]}" -gt 0 ] || die "--values must point to your existing values file(s)"
+case "$rta_phase" in
+  "") [ "${#rta_actor_values[@]}" -eq 0 ] && ! $rta_reregister_legacy || die "--actors-values and --reregister-legacy need --relaycast-actors" ;;
+  credentials|cutover)
+    [ -f "$here/relaycast-to-actors.sh" ] || die "relaycast-to-actors.sh must sit next to this script"
+    # shellcheck source=relaycast-to-actors.sh
+    . "$here/relaycast-to-actors.sh"
+    # Its state under STATE_DIR (and the work files) must stay owner-only:
+    # the STATE_DIR guard above refuses anything wider on the next run.
+    umask 077
+    # A failure inside its functions must reach the ERR trap (rollback hint),
+    # not end the run silently.
+    set -o errtrace
+    # shellcheck disable=SC2034  # read by relaycast-to-actors.sh
+    rta_run="relaycast-actors-$(date -u +%Y%m%d%H%M%S)" rta_actor_files=() ;;
+  *) die "--relaycast-actors must be credentials or cutover" ;;
+esac
 for v in "${values[@]}"; do [ -f "$v" ] || die "values file not found: $v"; done
 if $apply && [ -z "$db_instance" ]; then die "--apply needs --db-instance so a snapshot is taken first"; fi
 for tool in gh jq yq helm kubectl tar; do command -v "$tool" >/dev/null || die "missing tool: $tool"; done
@@ -136,11 +194,182 @@ sha256_of() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shas
 
 kube=(kubectl -n "$namespace"); helmx=(helm -n "$namespace")
 if [ -n "$context" ]; then kube+=(--context "$context"); helmx+=(--kube-context "$context"); fi
-work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+work=$(mktemp -d)
+# The index census pod mounts the migration owner's database Secret: any exit
+# (error, set -e, Ctrl-C, TERM) deletes it and its ConfigMap, idempotently.
+census_name=""
+index_census_cleanup() {
+  [ -n "$census_name" ] || return 0
+  "${kube[@]}" delete pod,configmap,secret "$census_name" --ignore-not-found --wait=true --timeout=30s >/dev/null 2>&1 || true
+  census_name=""
+}
+trap 'index_census_cleanup; rm -rf "$work"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 tag="agent-relay-$version"; rel="$work/rel"
 verify_attestation() {
   gh attestation verify "$1" --repo "$repo" --signer-workflow "$signer_workflow" \
     --source-ref "refs/tags/$tag" --deny-self-hosted-runners >/dev/null
+}
+
+# sessions_index_check: the Sessions adopt-or-create index steps (20261105044020,
+# 044040, 047000, 058000). Each builds a missing index itself only on an empty
+# table and refuses (SQLSTATE 55000) on a populated one, unless the migrate Job
+# has HOOPDB_ALLOW_BLOCKING_INDEX_BUILD=true. That opt-in covers the whole
+# migrate run, so the census covers every step the ledger has not recorded. A
+# one-off pod cloned from the DEPLOYED migrate Job (same image, Secret, CA and
+# ServiceAccount; no init containers) runs sessions-index-census.mjs in a READ
+# ONLY transaction and is deleted afterwards. Then:
+#   nothing absent on a populated table   -> nothing to set (adopt or build on empty)
+#   rows to index <= index_max_rows       -> blocking build, this upgrade only
+#   above it, or an INVALID/drifted index -> refuse: prebuild CONCURRENTLY, re-run
+#   census unreadable                     -> refuse (fail closed)
+index_max_rows="${AGENT_RELAY_BLOCKING_INDEX_MAX_ROWS:-1000000}"
+# Rows per second one blocking CREATE INDEX builds, for the lock-time estimate
+# (PostgreSQL 17 built 058000's indexes at about 1M rows/s on a 24-core host;
+# the default assumes a 2-vCPU database is about 4x slower).
+index_rows_per_second="${AGENT_RELAY_INDEX_BUILD_ROWS_PER_SECOND:-250000}"
+census_timeout="${AGENT_RELAY_INDEX_CENSUS_TIMEOUT_SECONDS:-300}"
+sessions_index_check() {
+  local v job name pod_json phase deadline census decision n_build rows tables secs url_file=""
+  [[ "$index_max_rows" =~ ^[0-9]+$ ]] || die "AGENT_RELAY_BLOCKING_INDEX_MAX_ROWS must be a whole number of rows"
+  [[ "$index_rows_per_second" =~ ^[1-9][0-9]*$ ]] || die "AGENT_RELAY_INDEX_BUILD_ROWS_PER_SECOND must be a positive whole number"
+  for v in "${values[@]}"; do
+    case "$(yq -r '.["sessions-pipeline"].worker.migrations.allowBlockingIndexBuild // ""' "$v" 2>/dev/null || true)" in
+      ""|false) ;;
+      *) die "$v sets sessions-pipeline.worker.migrations.allowBlockingIndexBuild: remove it; this upgrader sets it for one upgrade from its index census" ;;
+    esac
+  done
+  say "== 2a. Sessions index steps: read-only census of the HoopDb database"
+  job=$("${helmx[@]}" get manifest "$release" \
+    | yq -o=json -I=0 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate")') \
+    || die "could not read the deployed manifest of $release"
+  if [ -z "$job" ]; then
+    say "   the deployed release has no HoopDb migrate Job to clone: no census"
+    index_census_skipped=true; return 0
+  fi
+  [[ "$job" != *$'\n'* ]] || die "the deployed release has more than one HoopDb migrate Job"
+  jq -e '.spec.template.spec.containers[0].image | strings' <<<"$job" >/dev/null \
+    || die "the deployed HoopDb migrate Job has no container to clone for the index census"
+  [ -f "$here/sessions-index-census.mjs" ] || die "sessions-index-census.mjs must sit next to this script"
+  # RDS rotates the admin password that the migration owner URL carries. With
+  # --rds-setup and its inputs, refresh it first (rds-setup.sh refresh-admin
+  # reads Secrets Manager and rewrites only STATE_DIR files) and give the census
+  # that URL through a temporary Secret, so a rotation never blocks the plan.
+  if $rds_setup && [ -n "${AWS_REGION:-}" ] && [ -n "${RDS_HOST:-}" ] && [ -n "${RDS_ADMIN_SECRET_ARN:-}" ] \
+    && [ -d "$state_dir/secret-files/agent-relay-secrets" ] \
+    && jq -e '[.spec.template.spec.containers[0].env[]? | select(.name == "HOOPDB_URL") | .valueFrom.secretKeyRef
+        | select(.name == "agent-relay-secrets" and .key == "HOOPDB_MIGRATION_URL")] | length == 1' <<<"$job" >/dev/null; then
+    say "   refreshing the RDS admin credential (rds-setup.sh refresh-admin) for the census"
+    env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir" "$here/rds-setup.sh" refresh-admin >/dev/null \
+      || die "rds-setup.sh refresh-admin failed, so the census has no current database credential; nothing was changed"
+    url_file="$state_dir/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL"
+    [ -s "$url_file" ] || die "rds-setup.sh refresh-admin did not write agent-relay-secrets/HOOPDB_MIGRATION_URL; nothing was changed"
+  fi
+  # The census creates a ConfigMap, a pod and (with a refreshed URL) a Secret.
+  # A plan run under the documented read-only plan role may not: defer the
+  # census to --apply, which always runs it before any change (snapshot,
+  # mirror push or helm) and refuses there exactly as it would here.
+  if ! $apply; then
+    local verb_resource
+    for verb_resource in configmaps pods $([ -n "$url_file" ] && echo secrets); do
+      if [ "$("${kube[@]}" auth can-i create "$verb_resource" 2>/dev/null || true)" != yes ]; then
+        say "   this plan's credentials cannot create $verb_resource in $namespace (read-only plan role): census deferred to --apply"
+        index_census_deferred=true; return 0
+      fi
+    done
+  fi
+  name="$release-index-census-$(date -u +%Y%m%d%H%M%S)"
+  say "   one read-only pod, $name, cloned from the deployed migrate Job; deleted afterwards"
+  # From here any exit deletes the pod and ConfigMap (the EXIT trap).
+  census_name=$name
+  "${kube[@]}" create configmap "$name" --from-file=sessions-index-census.mjs="$here/sessions-index-census.mjs" \
+    --dry-run=client -o yaml | "${kube[@]}" apply -f - >/dev/null || die "could not create the index census ConfigMap"
+  if [ -n "$url_file" ]; then
+    # The value goes from the 0600 state file into the Secret; never argv or logs.
+    # Plain create, not apply: apply would copy the whole object, password
+    # included, into the last-applied-configuration annotation. The name is new
+    # per run, so create never meets an existing object.
+    "${kube[@]}" create secret generic "$name" --from-file=HOOPDB_URL="$url_file" >/dev/null \
+      || die "could not create the index census credential Secret"
+  fi
+  pod_json=$(jq --arg name "$name" --arg ns "$namespace" --arg limit "$index_max_rows" --argjson deadline "$census_timeout" \
+      --argjson fresh "$([ -n "$url_file" ] && echo true || echo false)" '
+    .spec.template as $t
+    | { apiVersion: "v1", kind: "Pod",
+        metadata: { name: $name, namespace: $ns,
+          labels: (($t.metadata.labels // {}) + { "agent-relay.dev/index-census": "true" }) },
+        spec: ($t.spec
+          | del(.initContainers)
+          | .restartPolicy = "Never"
+          | .activeDeadlineSeconds = $deadline
+          | .volumes = ((.volumes // []) + [{ name: "index-census", configMap: { name: $name } }])
+          | .containers = [ .containers[0]
+              | .name = "census"
+              | .command = ["bun", "/index-census/sessions-index-census.mjs"]
+              | del(.args, .livenessProbe, .readinessProbe, .startupProbe, .ports)
+              | .env = ([(.env // [])[] | select(.name != "INDEX_CENSUS_LIMIT")
+                  | if $fresh and .name == "HOOPDB_URL" then { name: "HOOPDB_URL", valueFrom: { secretKeyRef: { name: $name, key: "HOOPDB_URL" } } } else . end]
+                  + [{ name: "INDEX_CENSUS_LIMIT", value: $limit }])
+              | .volumeMounts = ((.volumeMounts // []) + [{ name: "index-census", mountPath: "/index-census", readOnly: true }]) ]) }' <<<"$job")
+  if ! "${kube[@]}" apply -f - <<<"$pod_json" >/dev/null; then index_census_cleanup; die "could not start the index census pod"; fi
+  deadline=$(( $(date +%s) + census_timeout + 60 ))
+  while :; do
+    phase=$("${kube[@]}" get pod "$name" -o json 2>/dev/null | jq -r '.status.phase // "Pending"' || echo Pending)
+    case "$phase" in Succeeded|Failed) break ;; esac
+    if [ "$(date +%s)" -ge "$deadline" ]; then phase=timeout; break; fi
+    sleep "${AGENT_RELAY_JOB_POLL_SECONDS:-5}"
+  done
+  census=$("${kube[@]}" logs "pod/$name" -c census 2>/dev/null | grep -E '^INDEX_CENSUS(_ERROR)? ' | tail -1 || true)
+  index_census_cleanup
+  case "$census" in
+    "INDEX_CENSUS "*) census=${census#INDEX_CENSUS } ;;
+    "INDEX_CENSUS_ERROR 28P01 "*) die "the index census could not log in to the Sessions database (${census#INDEX_CENSUS_ERROR }); nothing was changed. If the RDS admin password rotated, refresh the admin inputs first (rds-setup.sh refresh-admin, then update the agent-relay-secrets Secret, or pass --rds-setup with its environment so this upgrader does it), then re-run" ;;
+    "INDEX_CENSUS_ERROR "*) die "the index census failed (${census#INDEX_CENSUS_ERROR }); nothing was changed. Fix that and re-run" ;;
+    *) die "the index census pod ended $phase without a result; nothing was changed (kubectl -n $namespace describe pod $name, before it is gone)" ;;
+  esac
+  decision=$(jq -c '
+    [.steps[] | select(.applied | not) as $s | .indexes[] | . + { step: $s.step, packet: $s.packet }] as $ix
+    | { pending: [.steps[] | select(.applied | not) | .step | sub("^upstream:"; "")],
+        refused: [$ix[] | select(.state == "mismatch" or .state == "not_ready")],
+        build: [$ix[] | select(.state == "absent" and .table_exists and ((.rows // 0) > 0))],
+        empty: [$ix[] | select(.state == "absent" and ((.table_exists | not) or ((.rows // 0) == 0)))],
+        adopted: [$ix[] | select(.state == "adoptable")],
+        counts: [$ix[] | select(.state == "absent" and .table_exists) | .rows] }
+    | .rows = ([.build[].rows] | add // 0)
+    | .packets = ([.build[], .refused[] | .packet] | unique)' <<<"$census") \
+    || die "the index census result could not be read; nothing was changed"
+  if [ "$(jq '.pending | length' <<<"$decision")" -eq 0 ]; then
+    say "   every adopt-or-create index step is already applied: nothing to build"; return 0
+  fi
+  say "   pending steps: $(jq -r '.pending | join(", ")' <<<"$decision")"
+  say "   $(jq -r '"\(.adopted | length) index(es) prebuilt and adopted, \(.empty | length) built on empty tables, \(.build | length) absent on populated tables"' <<<"$decision")"
+  jq -r '.build[] | "     sessions.\(.name) on \(.table): \(.rows) rows\(if .exact then "" else " (at least; estimate \(.estimate))" end)"' <<<"$decision"
+  # Rows to index count a table once per absent index: each build scans it again.
+  jq -r '.build | group_by(.table)[] | select(length > 1)
+    | "     \(.[0].table) gets \(length) indexes: \(length) x \(.[0].rows) = \(length * .[0].rows) rows to index"' <<<"$decision"
+  if [ "$(jq '.refused | length' <<<"$decision")" -gt 0 ]; then
+    jq -r '.refused[] | "     sessions.\(.name) on \(.table): \(if .state == "not_ready" then "INVALID or still building (check pg_stat_progress_create_index before any DROP INDEX CONCURRENTLY)" else "exists but is not the declared index; reconcile it by hand" end)"' <<<"$decision"
+    die "refusing: an index the Sessions migration would adopt is not usable (above). Follow \"Failed or cancelled builds\" in the packet ($(jq -r '.packets | join("; ")' <<<"$decision"), Sessions repository), then re-run. Nothing was changed."
+  fi
+  n_build=$(jq '.build | length' <<<"$decision"); rows=$(jq '.rows' <<<"$decision")
+  # Every count must be a whole number of rows (fail closed on anything else).
+  jq -e '.counts | all(type == "number" and . >= 0 and . == floor and . < 1e15)' <<<"$decision" >/dev/null \
+    && [[ "$rows" =~ ^[0-9]+$ ]] \
+    || die "the index census returned a row count that is not a whole number ($(jq -c '.counts' <<<"$decision")); nothing was changed"
+  if [ "$n_build" -eq 0 ]; then
+    say "   path: no blocking build; the migration adopts or builds every index itself"; return 0
+  fi
+  if [ "$rows" -gt "$index_max_rows" ]; then
+    die "refusing: $n_build index(es) are absent on populated tables with $rows rows to index, above the blocking-build limit of $index_max_rows rows (AGENT_RELAY_BLOCKING_INDEX_MAX_ROWS). Prebuild them with CREATE INDEX CONCURRENTLY first, following $(jq -r '.packets | join("; ")' <<<"$decision") in the Sessions repository, then re-run: the migration adopts each prebuilt index without locking its table. Nothing was changed."
+  fi
+  tables=$(jq -r '[.build[].table] | unique | join(", ")' <<<"$decision")
+  secs=$(( (rows + index_rows_per_second - 1) / index_rows_per_second )); [ "$secs" -ge 1 ] || secs=1
+  say "   path: blocking build for this upgrade. $rows rows to index is within the limit of $index_max_rows,"
+  say "         so this upgrade's migrate Job gets HOOPDB_ALLOW_BLOCKING_INDEX_BUILD=true (the next upgrade drops it)."
+  say "         Expected lock: about ${secs}s of SHARE lock on $tables during the migration: reads continue, writes to those tables wait."
+  printf 'sessions-pipeline:\n  worker:\n    migrations:\n      allowBlockingIndexBuild: true\n' > "$work/blocking-index.values.yaml"
+  index_values=(-f "$work/blocking-index.values.yaml")
 }
 
 say "== 1. Download and verify release $tag"
@@ -188,6 +417,12 @@ fi
 if ! $first_install && [ -z "$existing" ]; then
   die "release $release does not exist in $namespace; use --first-install for a new install"
 fi
+# Sessions adopt-or-create index steps (plain upgrades only). Decides, from a
+# read-only census, whether this upgrade's HoopDb migrate Job may build missing
+# indexes with a blocking CREATE INDEX (worker.migrations.allowBlockingIndexBuild,
+# set for this upgrade only) or must wait for a CONCURRENTLY prebuild.
+index_values=() index_census_skipped=false index_census_deferred=false
+if ! $first_install && [ -z "$rta_phase" ]; then sessions_index_check; fi
 overlay="$work/release-images.values.yaml"
 # Overlay repositories are __IMAGE_MIRROR_ROOT__/<source host>/<source path>, exactly where
 # mirror-images-to-ecr.sh copies each image.
@@ -197,6 +432,8 @@ base=()
 for f in "${profile_files[@]}"; do base+=(-f "$chart/$f"); done
 for v in "${values[@]}"; do base+=(-f "$v"); done
 base+=(-f "$overlay")
+# Last, so the census decision wins: present only on the blocking path.
+base+=(${index_values[@]+"${index_values[@]}"})
 render=(helm template "$release" "$chart" -n "$namespace")
 if ! $first_install; then render+=(--is-upgrade); fi
 # Render with the cluster's real capabilities, as helm install/upgrade will:
@@ -215,6 +452,16 @@ unexpected=$(comm -23 "$work/new-images.txt" "$work/expected-images.txt")
 [ -z "$unexpected" ] || die "the render would deploy images that are not this release's mirrored images:
 $unexpected"
 [ -s "$work/new-images.txt" ] || die "the render contains no images"
+if $index_census_skipped && [ -n "$(yq -N -r 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .metadata.name' "$work/new.yaml")" ]; then
+  say "   NOTE: this upgrade adds a HoopDb migrate Job that the deployed release did not have, so no index census ran."
+  say "         If the Sessions database is populated, that Job refuses (read-only, before any write) any index it"
+  say "         would have to build on a populated table; prebuild those CONCURRENTLY with the packet it names, then re-run."
+fi
+if $index_census_deferred; then
+  say "   NOTE: the index census did not run in this read-only plan. The apply job runs it first, before any"
+  say "         snapshot, image push or helm change. It may add allowBlockingIndexBuild for that one upgrade"
+  say "         (printing tables, rows and expected lock time), or refuse with nothing changed."
+fi
 if ! $rds_setup; then
   db_mode=""
   for f in "${profile_files[@]/#/$chart/}" "${values[@]}"; do
@@ -261,6 +508,12 @@ else
   fi
 fi
 say "plan: changes=$plan_changes"
+if [ -n "$rta_phase" ]; then
+  say "== 2b. Relaycast to durable-actors ($rta_phase): preconditions"
+  rta_check
+  if [ "$rta_phase" = cutover ]; then rta_check_cutover; fi
+  say "   preconditions hold (Relaycast on PostgreSQL in $release, chart $chart_version)"
+fi
 
 say "== 3. Mirror release images into $registry"
 jq -r '.images[].ref | "---\nimage: \(.)"' "$manifest" > "$work/release-images.rendered.yaml"
@@ -272,7 +525,8 @@ if ! $apply; then
   say ""; say "Plan only. Re-run with --apply --db-instance <id> to snapshot and $($first_install && echo install || echo upgrade)."
   exit 0
 fi
-if $first_install; then action="Install new release"; else action="Upgrade release"; fi
+if [ -n "$rta_phase" ]; then action="Run the Relaycast durable-actors $rta_phase phase on"
+elif $first_install; then action="Install new release"; else action="Upgrade release"; fi
 if ! $assume_yes; then
   printf '%s %s in %s to %s? Type the version to continue: ' "$action" "$release" "$namespace" "$version"
   read -r answer; [ "$answer" = "$version" ] || die "not confirmed; nothing changed"
@@ -296,9 +550,13 @@ rollback_hint() {
     say "   the new release has no earlier revision; inspect its Jobs and Pods before retrying"
   fi
   say "   database snapshot:      $snapshot (restore only if a migration damaged data)"
+  if [ -n "$rta_phase" ]; then rta_rollback_hint; fi
   exit 1
 }
 trap 'rollback_hint' ERR
+# A Relaycast migration refusal after the snapshot also prints the rollback
+# for the phase it reached.
+if [ -n "$rta_phase" ]; then die() { printf 'agent-relay-upgrade: %s\n' "$*" >&2; rollback_hint; }; fi
 
 # rds-setup.sh reads its inputs from the environment (never argv).
 rds_env=(env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir")
@@ -348,7 +606,9 @@ wait_jobs() {
 }
 mirrored_ref() { jq -r --arg n "$1" --arg root "${registry}/${prefix}" '[.images[] | select(.name == $n) | "\($root)/\(.ref)"] | first // empty' "$manifest"; }
 
-if $first_install; then
+if [ -n "$rta_phase" ]; then
+  if [ "$rta_phase" = credentials ]; then rta_credentials; else rta_cutover; fi
+elif $first_install; then
   say "== 5. helm install $release at $version"
   "${helmx[@]}" install "$release" "$chart" "${base[@]}" --create-namespace --no-hooks --timeout 20m
   migration_job=$("${helmx[@]}" get manifest "$release" \
@@ -402,7 +662,9 @@ fi
 failed=$("${kube[@]}" get jobs -l "$release_selector" -o json | jq -r '[.items[]|select((.status.failed // 0) > 0 and (.status.succeeded // 0) == 0)|.metadata.name]|join(",")')
 [ -z "$failed" ] || { say "   failed Jobs: $failed"; false; }
 trap - ERR
-if $first_install; then
+if [ -n "$rta_phase" ]; then
+  say ""; say "Relaycast durable-actors $rta_phase phase done in $release (chart $chart_version). Snapshot kept: $snapshot"
+elif $first_install; then
   say ""; say "Installed $release at $version (infra $commit, chart $chart_version). Snapshot kept: $snapshot"
 else
   say ""; say "Upgraded $release to $version (infra $commit, chart $chart_version). Snapshot kept: $snapshot"

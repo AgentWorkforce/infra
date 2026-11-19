@@ -174,7 +174,6 @@ def validate_evidence_shape(evidence: Any, schema: Any, gate: Gate) -> None:
     for key in (
         "release",
         "licenses",
-        "relayHistoryMigrations",
         "upgradeRestore",
         "desktop",
     ):
@@ -682,36 +681,6 @@ def validate_hooks(scan_root: Path, gate: Gate) -> None:
                 )
 
 
-def validate_migrations(
-    evidence: dict[str, Any], images: list[Any], gate: Gate
-) -> None:
-    row = mapping(evidence.get("relayHistoryMigrations"))
-    source_count = row.get("sourceCount")
-    image_count = row.get("imageCount")
-    gate.require(
-        isinstance(source_count, int)
-        and source_count > 0
-        and image_count == source_count,
-        "relayhistory-migrations",
-        "source and image migration counts must match and be positive",
-    )
-    history = next(
-        (mapping(item) for item in images if mapping(item).get("id") == "relayhistory"),
-        {},
-    )
-    gate.require(
-        text(row.get("sourceRevision"))
-        == text(mapping(history.get("source")).get("revision")),
-        "relayhistory-migrations",
-        "migration count revision does not match the RelayHistory image source",
-    )
-    gate.require(
-        text(row.get("evidence")).strip() != "",
-        "relayhistory-migrations",
-        "migration count evidence is missing",
-    )
-
-
 def validate_test_evidence(
     evidence: dict[str, Any], image_manifest_sha: str, gate: Gate
 ) -> None:
@@ -958,7 +927,6 @@ def main() -> int:
     if documents is not None:
         validate_rendered_images(documents, images, gate)
     validate_hooks(scan_root, gate)
-    validate_migrations(evidence_map, images, gate)
     validate_test_evidence(evidence_map, manifest_sha, gate)
     validate_operational_readiness(evidence_map, manifest_sha, gate)
     validate_version_compatibility(evidence_map, gate)

@@ -30,33 +30,6 @@ def fail(message):
     raise ValueError("native kind network: " + message)
 
 
-def refuse_legacy_bootstrap(layers):
-    """The legacy PG/bootstrap code must never operate on a native selection.
-
-    Read enabled values in Helm overlay order, before any Docker/ready/PG call.
-    The separate complete native recipe must replace this guard, not bypass it.
-    """
-    selected = {}
-    for layer in layers:
-        if not isinstance(layer, dict):
-            fail("profile values must be objects")
-        pipeline = layer.get("sessions-pipeline", {})
-        if not isinstance(pipeline, dict):
-            fail("pipeline values must be an object")
-        for name in ("readApi", "sessionReadApi", "ingestEdge", "nativeConsumer", "nativeRouting"):
-            if name not in pipeline:
-                continue
-            slot = pipeline[name]
-            if not isinstance(slot, dict):
-                fail("native service selections must be objects")
-            if "enabled" in slot:
-                if type(slot["enabled"]) is not bool:
-                    fail("native enabled settings must be booleans")
-                selected[name] = slot["enabled"]
-    if any(selected.values()):
-        fail("native services require the complete native bootstrap recipe; legacy kind-up refused before Docker, readiness or PostgreSQL changes")
-
-
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 

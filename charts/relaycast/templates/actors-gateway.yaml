@@ -138,8 +138,18 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if $da.gateway.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ $da.gateway.topologySpread.maxSkew }}
+          topologyKey: {{ $da.gateway.topologySpread.topologyKey | quote }}
+          whenUnsatisfiable: {{ $da.gateway.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "relaycast.selectorLabels" . | nindent 14 }}
+      {{- else }}
       {{- with .Values.topologySpreadConstraints }}
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- end }}
 {{- end }}

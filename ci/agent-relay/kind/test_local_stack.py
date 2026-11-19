@@ -23,6 +23,29 @@ from stack import StackError
 
 
 class LocalTests(unittest.TestCase):
+    def test_dependency_graph_change_refreshes_packages_without_repeating_bootstrap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for chart in ("agent-relay", "sessions-pipeline"):
+                directory = root / "charts" / chart
+                directory.mkdir(parents=True)
+                for name in ("Chart.yaml", "Chart.lock"):
+                    (directory / name).write_text("old metadata\n")
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = root / "state"; stack.state.mkdir()
+            completed = ["chart-dependencies", "databases", "control", "pipeline-schema"]
+            (stack.state / "phases.json").write_text(json.dumps(completed))
+            builds = []
+            stack.dependencies = lambda: builds.append("rebuilt")
+            with patch.object(local_stack, "ROOT", root):
+                stack.chart_dependencies()
+                stack.chart_dependencies()
+                self.assertEqual(builds, ["rebuilt"])
+                (root / "charts/agent-relay/Chart.lock").write_text("removed history dependency\n")
+                stack.chart_dependencies()
+                self.assertEqual(builds, ["rebuilt", "rebuilt"])
+            self.assertTrue(set(completed) <= set(json.loads((stack.state / "phases.json").read_text())))
+
     def test_postgres_cast_identities_have_schema_ownership_and_dml_without_database_ownership(self):
         queries = []
         stack = object.__new__(LocalStack)
@@ -138,7 +161,7 @@ class LocalTests(unittest.TestCase):
             actual = json.loads(process.stdout)
             self.assertEqual([actual[key] for key in ("control", "webapp", "pipeline")],
                 [references[name] for name in ("relay-control", "relay-webapp", "sessions-pipeline")])
-            with patch.multiple(local_stack, AA_VALUES=profile, DESKTOP_RELEASES=False,
+            with patch.multiple(local_stack, PROFILE_VALUES=profile, DESKTOP_RELEASES=False,
                     CONTROL=references["relay-control"], WEBAPP=references["relay-webapp"], PIPELINE=references["sessions-pipeline"]):
                 selected = selected_images()
                 self.assertEqual([selected[key] for key in ("control", "webapp", "pipeline")],
@@ -463,13 +486,99 @@ class LocalTests(unittest.TestCase):
         with patch.multiple(local_stack, DESKTOP_RELEASES=False, CONTROL=control, WEBAPP=webapp):
             self.assert_final_render(experimental=False)
 
+    def test_google_oidc_renders_control_sign_in_and_egress_only_when_stored(self):
+        control, webapp = local_stack.profile_images(False)
+        with tempfile.TemporaryDirectory() as tmp, patch.multiple(local_stack, DESKTOP_RELEASES=False, CONTROL=control, WEBAPP=webapp):
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.ca_sha = "c" * 64
+            stack.edge_ip = "10.96.0.10"
+            stack.credentials = {"createdAt": "2026-11-11T00:00:00Z"}
+            tenant = {"organizationId": "11111111-1111-4111-8111-111111111111", "workspaceId": "22222222-2222-4222-8222-222222222222"}
+            self.assertIsNone(stack.google_oidc())
+            self.assertNotIn("oidc", stack.values("serve", tenant)["relay-control"]["auth"])
+            (stack.state / "google-oidc.json").write_text(json.dumps({"client_id": "1-x.apps.googleusercontent.com",
+                "client_secret": "not-a-real-secret", "allowed_domains": ["agentrelay.com"]}))
+            values = stack.values("serve", tenant)
+            self.assertEqual(values["relay-control"]["auth"]["oidc"]["issuer"], "https://accounts.google.com")
+            self.assertTrue(values["relay-control"]["auth"]["emailLink"]["enabled"])
+            result = subprocess.run(["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay", "-f", "-", "--is-upgrade"],
+                cwd=ROOT, input=json.dumps(values), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("not-a-real-secret", result.stdout)
+            api = next(d for d in yaml.safe_load_all(result.stdout) if d and d["kind"] == "Deployment" and d["metadata"]["name"] == "relay-control")
+            names = {e["name"]: e.get("value") for c in api["spec"]["template"]["spec"]["containers"] for e in c.get("env", [])}
+            self.assertEqual(names["SELFHOST_OIDC_ISSUER"], "https://accounts.google.com")
+            self.assertEqual(names["SELFHOST_OIDC_ALLOWED_DOMAINS"], "agentrelay.com")
+            self.assertEqual(names["SELFHOST_AUTO_JOIN_DOMAINS"], "agentrelay.com")
+            self.assertIn("SELFHOST_OIDC_CLIENT_SECRET_FILE", names)
+            with patch.object(stack, "apply") as apply:
+                stack.google_oidc_egress()
+            selector = apply.call_args.args[0]["spec"]["podSelector"]["matchLabels"]
+            labels = api["spec"]["template"]["metadata"]["labels"]
+            self.assertTrue(all(labels.get(k) == v for k, v in selector.items()))
+            (stack.state / "google-oidc.json").write_text(json.dumps({"client_id": "not-google", "client_secret": "x"}))
+            with self.assertRaises(local_stack.StackError):
+                stack.google_oidc()
+
+    def test_google_oidc_secret_reconciles_when_control_bootstrap_is_cached(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stack = LocalStack.__new__(LocalStack)
+            stack.state = Path(tmp)
+            stack.docker_args = ["docker"]
+            credentials = {key: "fixture-" + key for key in (
+                "control_api_runtime", "bootstrap", "encryption", "cast", "internal", "introspection", "readerIssuer")}
+            credentials["createdAt"] = "2026-11-13T00:00:00Z"
+            (stack.state / "credentials.json").write_text(json.dumps(credentials))
+            (stack.state / "tenant.json").write_text("{}")
+            for name in ("ca.crt", "tls.crt"):
+                (stack.state / name).write_text("fixture-certificate")
+            stored = stack.state / "google-oidc.json"
+            secrets = {}
+            stages = []
+            stack.secret = lambda name, data: secrets.update({name: data})
+            # Every bootstrap stage, especially control/migrations, is already
+            # complete on this existing fixture: no callback may run again.
+            stack.stage = lambda name, callback: stages.append(name)
+            stack.cmd = lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"reader": True, "consumer": True}))
+            stack.k = lambda *args, **kwargs: SimpleNamespace(stdout="10.96.0.10")
+            stack.values = lambda *args: {}
+            for name in ("docker", "cluster", "apply", "chart_dependencies", "reload_leaf_consumer",
+                    "prepare_pipeline_generation", "mail", "github_releases_egress", "sql", "support_credentials", "login_link"):
+                setattr(stack, name, lambda *args, **kwargs: None)
+            expected_secret = {"value": None}
+            def helm(values):
+                data = secrets["local-control"]
+                self.assertEqual(data["bootstrap-token"], credentials["bootstrap"])
+                self.assertEqual(data["encryption-key"], credentials["encryption"])
+                self.assertEqual(data["reader-secret"], credentials["readerIssuer"])
+                self.assertIn("database-url", data)
+                if expected_secret["value"] is None:
+                    self.assertNotIn("oidc-client-secret", data)
+                else:
+                    self.assertEqual(data["oidc-client-secret"], expected_secret["value"])
+            stack.helm = helm
+            with patch.multiple(local_stack, CAST_BACKEND="sqlite"), patch("local_ca.prepare", return_value=False), \
+                    patch("tls.create"), patch("edge.install"), patch.object(stack, "control") as bootstrap:
+                for value in ("fake-google-secret-one", "fake-google-secret-two", None):
+                    with self.subTest(secret_present=value is not None):
+                        if value is None:
+                            stored.unlink()
+                        else:
+                            stored.write_text(json.dumps({"client_id": "1-x.apps.googleusercontent.com",
+                                "client_secret": value, "allowed_domains": ["agentrelay.com"]}))
+                        expected_secret["value"] = value
+                        stack.up_local()
+                bootstrap.assert_not_called()
+            self.assertEqual(stages.count("control"), 3)
+
     def test_opt_in_final_render_selects_downloads_images_env_and_policy(self):
         control, webapp = local_stack.profile_images(True)
         with patch.multiple(local_stack, DESKTOP_RELEASES=True, CONTROL=control, WEBAPP=webapp):
             self.assert_final_render(experimental=True)
 
     def test_cast_opt_outs_keep_the_collector_enabled_in_real_renders(self):
-        original = local_stack.reference(local_stack.AA_VALUES["relaycast"]["image"])
+        original = local_stack.reference(local_stack.PROFILE_VALUES["relaycast"]["image"])
         for backend in ("postgres", "sqlite"):
             with self.subTest(backend=backend), patch.multiple(local_stack, CAST_BACKEND=backend, CAST=original):
                 self.assert_final_render(experimental=False)
@@ -524,6 +633,7 @@ class LocalTests(unittest.TestCase):
         tenant = {"organizationId": "11111111-1111-4111-8111-111111111111", "workspaceId": "22222222-2222-4222-8222-222222222222"}
         values = stack.values("serve", tenant)
         self.assertEqual(values["sessions-pipeline"]["sessionReadApi"]["cors"]["allowedOrigins"], ["https://relay.kind.agentrelay.com"])
+        self.assertEqual(values["sessions-pipeline"]["sessionReadApi"]["completeSince"], "epoch")
         result = subprocess.run(["helm", "template", "agent-relay", "charts/agent-relay", "-n", "agent-relay", "-f", "-", "--is-upgrade"],
             cwd=ROOT, input=json.dumps(values), capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -538,10 +648,10 @@ class LocalTests(unittest.TestCase):
         active = [d for d in docs if d["kind"] == "Deployment" and d["spec"].get("replicas", 1) > 0]
         self.assertEqual({d["metadata"]["name"] for d in active}, {"relay-control", "relay-webapp", "relaycast", "session-native-ingest",
             "session-native-consumer", "session-read-api", "sessions-session-brief", "telemetry-collector"})
-        aa = profile if profile is not None else yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
-        release = {name: local_stack.reference(aa[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
+        pinned = profile if profile is not None else yaml.safe_load((ROOT / "charts/agent-relay/values-eks.yaml").read_text())
+        release = {name: local_stack.reference(pinned[name]["image"]) for name in ("relay-control", "relay-webapp", "relaycast")}
         release["relaycast"] = local_stack.CAST
-        selected = local_stack.DESKTOP_RELEASE_VALUES if experimental else aa
+        selected = local_stack.DESKTOP_RELEASE_VALUES if experimental else pinned
         for name in ("relay-control", "relay-webapp"):
             release[name] = local_stack.reference(selected[name]["image"])
         with patch.object(stack, "apply") as apply:
@@ -551,7 +661,7 @@ class LocalTests(unittest.TestCase):
         else:
             apply.assert_not_called()
             github_selector = None
-        release.update({name: local_stack.reference(aa["sessions-pipeline"]["worker"]["image"])
+        release.update({name: local_stack.reference(pinned["sessions-pipeline"]["worker"]["image"])
             for name in ("session-native-ingest", "session-native-consumer", "session-read-api", "sessions-session-brief")})
         for deployment in active:
             pod = deployment["spec"]["template"]["spec"]
@@ -608,7 +718,7 @@ class LocalTests(unittest.TestCase):
                     else:
                         self.assertNotIn("SELFHOST_DESKTOP_RELEASES_REPO", env)
                         for component in ("relay-control", "relay-webapp"):
-                            self.assertEqual(release[component], local_stack.reference(aa[component]["image"]))
+                            self.assertEqual(release[component], local_stack.reference(pinned[component]["image"]))
                     self.assertEqual(env["SELFHOST_ANALYTICS_DESTINATION"]["value"], "collector")
                     self.assertTrue(any(m["name"] == "analytics-producer" for m in container["volumeMounts"]))
                 if name == "relaycast":

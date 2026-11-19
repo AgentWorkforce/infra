@@ -1,0 +1,66 @@
+# Checks the layered infra-ops agent's own stack (agent/): typecheck, the
+# user-data and IAM tests against the published @agentworkforce/layered-agent,
+# and shellcheck of the lane scripts.
+name: Agent CI
+
+# Every push to main (Agent Deploy follows a green run of main's head, and the
+# kit makes a deploy of an unchanged agent/ a no-op), and PRs that touch it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: [agent/**, .github/workflows/agent-ci.yml, .github/workflows/agent-deploy.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent:
+    name: Agent stack checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          registry-url: https://npm.pkg.github.com
+          scope: '@agentworkforce'
+
+      - name: Install, typecheck and test
+        working-directory: agent
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund --ignore-scripts; fi
+          npm run typecheck
+          npm test
+
+      - name: Shellcheck the lane scripts
+        working-directory: agent
+        run: shellcheck ./*.sh
+
+      # The credential broker's roles: plan-only tests with mocked providers
+      # (no AWS credentials, no state, no apply).
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.7
+          terraform_wrapper: false
+
+      - name: Test the credential broker's Terraform
+        working-directory: agent/broker/terraform
+        run: |
+          terraform fmt -recursive -check .
+          for d in modules/broker-role modules/scoped-role modules/elevated-role modules/audit-log sandbox bootstrap-sandbox dev; do
+            (cd "$d" && terraform init -backend=false -input=false && terraform validate && terraform test)
+          done

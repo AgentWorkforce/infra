@@ -19,9 +19,12 @@ and the dev sidecar read is wired in this file only.
 {{- if and (include "relaycast.actors.enabled" .) .Values.runtime.durableActors.devRuntime.enabled }}true{{ end -}}
 {{- end }}
 
-{{/* PVC needed: sqlite always; durable-actors only for the local file store. */}}
+{{/* PVC needed: sqlite and postgres always; durable-actors for the local file
+store, or while persistence.retainForMigration keeps the previous backend's
+claim in the release (a helm rollback to that backend then finds the same
+claim instead of re-adopting a bound one it can no longer patch). */}}
 {{- define "relaycast.needsDataClaim" -}}
-{{- if or (not (include "relaycast.actors.enabled" .)) (eq (toString .Values.runtime.durableActors.fileStore.driver) "local") }}true{{ end -}}
+{{- if or (not (include "relaycast.actors.enabled" .)) (eq (toString .Values.runtime.durableActors.fileStore.driver) "local") .Values.persistence.retainForMigration }}true{{ end -}}
 {{- end }}
 
 {{- define "relaycast.actors.deployerName" -}}
@@ -92,6 +95,11 @@ The durable-actors control-plane Service name. Must equal the vendored chart's
 {{- if or (not (include "relaycast.isInt" $da.gateway.replicaCount)) (lt ($da.gateway.replicaCount | int64) 1) }}{{ fail "runtime.durableActors.gateway.replicaCount must be a positive integer" }}{{ end -}}
 {{- if and (eq $driver "local") (gt (int $da.gateway.replicaCount) 1) }}{{ fail "runtime.durableActors.gateway.replicaCount > 1 requires fileStore.driver gcs or s3: the local file store is one RWO volume" }}{{ end -}}
 {{- if lt (int $da.gateway.replicaCount) 1 }}{{ fail "runtime.durableActors.gateway.replicaCount must be >= 1" }}{{ end -}}
+{{- with $da.gateway.topologySpread -}}
+{{- if and .enabled (or (not (include "relaycast.isInt" .maxSkew)) (lt (.maxSkew | int64) 1)) }}{{ fail "runtime.durableActors.gateway.topologySpread.maxSkew must be a positive integer" }}{{ end -}}
+{{- if and .enabled (not (has (toString .whenUnsatisfiable) (list "DoNotSchedule" "ScheduleAnyway"))) }}{{ fail "runtime.durableActors.gateway.topologySpread.whenUnsatisfiable must be DoNotSchedule or ScheduleAnyway" }}{{ end -}}
+{{- if and .enabled (not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(/[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?)?$" (toString .topologyKey))) }}{{ fail "runtime.durableActors.gateway.topologySpread.topologyKey must be a Kubernetes label key" }}{{ end -}}
+{{- end -}}
 {{- if or (not (include "relaycast.isInt" $da.maxUploadBytes)) (lt ($da.maxUploadBytes | int64) 1) }}{{ fail "runtime.durableActors.maxUploadBytes must be a positive integer (and equal the actor's RELAYCAST_MAX_UPLOAD_BYTES)" }}{{ end -}}
 {{- if or (not (include "relaycast.isInt" $da.shutdownGraceMs)) (lt ($da.shutdownGraceMs | int64) 0) }}{{ fail "runtime.durableActors.shutdownGraceMs must be a non-negative integer" }}{{ end -}}
 {{- $reserved := include "relaycast.actors.reservedEnv" . | fromJsonArray -}}
@@ -167,6 +175,10 @@ keyed create answers 503 workspace_create_idempotency_unavailable.
 {{- with $da.homeRegion }}
 - name: DURABLE_ACTORS_HOME_REGION
   value: {{ . | quote }}
+{{- end }}
+{{- with $da.socketOrigin }}
+- name: DURABLE_ACTORS_SOCKET_ORIGIN
+  value: {{ eq (toString .) "controlPlane" | ternary (include "relaycast.actors.controlPlaneUrl" $) . | quote }}
 {{- end }}
 {{ include "relaycast.actors.secretEnv" (dict "name" "RELAYCAST_FILE_SIGNING_SECRET" "secret" .Values.existingSecret "key" $da.fileSigningSecretKey) }}
 - name: RELAYCAST_CREDENTIAL_KEYRING_FILE

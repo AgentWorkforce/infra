@@ -6,11 +6,12 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/agentworkforce/relaycast-self-host
-  # relaycast-self-host:12.7.0, built from relaycast main bf713d86 by the
-  # reviewed publish-container workflow (engine 12.7.0). Immutable
-  # multi-platform manifest (linux/amd64 and linux/arm64) with an SPDX SBOM,
-  # max-mode provenance and a GitHub build-provenance attestation.
-  digest: sha256:81274dca7ab58673383dc7a9c777f422f29606c7422e81b5ea15724770f1455e
+  # relaycast-self-host:12.10.0, relaycast main fd10195 (v12.10.0: #625
+  # delivery confirmation (SQLite migration 0081, PostgreSQL 0005), 0082 pending
+  # events settled retention, 0083/0084 strict spawn placement token and dispatch
+  # generation, #669/#670 S3 file store behind RELAYCAST_FILE_STORE, default
+  # local), publish run 43671881371. Multi-platform with GitHub build provenance.
+  digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -47,8 +48,21 @@ runtime:
     # Used instead of image.* on this backend.
     image:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      # relaycast-self-host:12.8.0-pg.1.
-      digest: sha256:84f59482cb82f3c50d38f45cfca7d004cffaa95652782dbfc93c179cc343ac59
+      # relaycast-self-host:12.10.0, relaycast main fd10195 (v12.10.0: #625
+      # delivery confirmation (SQLite migration 0081, PostgreSQL 0005), 0082 pending
+      # events settled retention, 0083/0084 strict spawn placement token and dispatch
+      # generation, #669/#670 S3 file store behind RELAYCAST_FILE_STORE, default
+      # local), publish run 43671881371. Multi-platform with GitHub build provenance.
+      digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+    # TCP keepalive sysctls on the server pod (net.ipv4.tcp_keepalive_intvl /
+    # tcp_keepalive_probes, namespaced safe sysctls from Kubernetes 1.29). With
+    # the engine's socket keepalive a half-open connection to a failed-over
+    # primary is found in about intervalSeconds x probes instead of ~11 min of
+    # kernel defaults. Ignored on clusters before 1.29.
+    tcpKeepalive:
+      enabled: true
+      intervalSeconds: 5
+      probes: 3
     # The `migrate` Job: a plain Job (no Helm hook) named by a hash of its
     # rendered pod template, so any change to it runs a new Job.
     migrations:
@@ -67,6 +81,14 @@ runtime:
     controlPlaneUrl: ""
     # Optional DURABLE_ACTORS_HOME_REGION for the gateway's invocations.
     homeRegion: ""
+    # Where the gateway dials actor sockets (DURABLE_ACTORS_SOCKET_ORIGIN, needs
+    # an actors gateway built from relaycast #655 or later). The control plane
+    # hands out socket URLs on durable-actors.publicUrl; a cluster that cannot
+    # resolve or reach that host (no split-horizon DNS or hairpin) closes
+    # every /v1/ws and /v1/node/ws client with 1011. "controlPlane": the
+    # in-cluster control plane URL above; an http(s) origin: that; "": the
+    # public URL.
+    socketOrigin: ""
     gateway:
       image:
         repository: ghcr.io/agentworkforce/relaycast-actors-gateway
@@ -76,6 +98,15 @@ runtime:
         pullPolicy: IfNotPresent
       # More than one replica requires fileStore.driver gcs or s3.
       replicaCount: 1
+      # Generated topology spread for the gateway Deployment. Unlike the
+      # chart-wide topologySpreadConstraints escape hatch, this selector is
+      # derived from the release labels and cannot accidentally select a
+      # different Relaycast release in the namespace.
+      topologySpread:
+        enabled: false
+        maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
       resources:
         requests: { cpu: 100m, memory: 128Mi }
         limits: { memory: 512Mi }
@@ -321,11 +352,25 @@ ingress:
   externalTls: false
 
 persistence:
+  # runtime.backend=durable-actors only: keep rendering the data claim of the
+  # PostgreSQL/SQLite backend this release moved from (its files and the
+  # migration export live there). Set by the move to durable-actors
+  # (docs/relaycast-postgres-to-actors-migration.md) and kept until its
+  # clean-up, so a helm rollback finds the claim it created unchanged.
+  retainForMigration: false
   existingClaim: ""
   storageClass: ""
   # ReadWriteOnce is required when backup.enabled: the backup pod is scheduled
   # onto the Relaycast pod's node and mounts the same claim.
   accessMode: ReadWriteOnce
+  # Availability zone of the data claim's volume (topology.kubernetes.io/zone).
+  # Set, the pod requires a node in that zone, so a reschedule (node drain,
+  # node loss) never waits on a node elsewhere that cannot attach the volume.
+  # A drain only stays short with at least two schedulable nodes in that zone;
+  # losing the zone is an outage until it returns (README "Node drains").
+  # Leave empty to rely on the volume's own node affinity. Not combinable with
+  # affinity.nodeAffinity.
+  zone: ""
   size: 10Gi
   annotations:
     helm.sh/resource-policy: keep
@@ -384,6 +429,14 @@ resources:
     cpu: "1"
     memory: 1Gi
 
+# "split": the image serves /health/live (process) and /health/ready (database
+# answers within 2 s), relaycast#667; startup and liveness use /health/live and
+# readiness /health/ready, so a database failover takes the pod out of the
+# Service without restarting it. "legacy": every probe uses /health as set
+# below. Set split only with an image that has the endpoints (relaycast main
+# 810f48ce or later); an older one answers 404 and never becomes ready.
+healthProbes: legacy
+
 startupProbe:
   httpGet:
     path: /health
@@ -411,6 +464,17 @@ networkPolicy:
   # Empty allows callers only from the release namespace. With ingress enabled,
   # list the ingress controller's namespace/pods here (required).
   ingressFrom: []
+  # Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay
+  # umbrella): ingressFrom is ignored and Relaycast admits only relaygate, this
+  # chart's own migration Job, and these in-cluster callers that talk to
+  # Relaycast directly with server credentials. Agents and people reach
+  # Relaycast through relaygate. Add a caller here only if it must bypass the
+  # gate; anything that can read through it bypasses the pit boundary.
+  gateOnlyFrom:
+    # Control: workspace provisioning and keys (services.relaycastUrl).
+    - podSelector: { matchLabels: { app.kubernetes.io/name: relay-control } }
+    # RelayAuth (components.relayauth, model B): pushes ar_ keys to /internal.
+    - podSelector: { matchLabels: { app.kubernetes.io/name: relayauth } }
 
 terminationGracePeriodSeconds: 30
 nodeSelector: {}
@@ -421,3 +485,25 @@ topologySpreadConstraints: []
 # Additional non-secret environment variables. Names managed by the structured
 # values above are reserved and rejected here.
 extraEnv: []
+
+# Moving a runtime.backend=postgres release to durable-actors with every row
+# and file (docs/relaycast-postgres-to-actors-migration.md in
+# AgentWorkforce/infra). Off: renders nothing. The upgrader
+# (agent-relay-upgrade.sh --relaycast-actors cutover) renders one step at a
+# time with `helm template --show-only templates/migration-job.yaml` and
+# applies it itself; never set these in a release's values.
+migration:
+  enabled: false
+  # preflight | export (on the postgres release) | files | import | verify |
+  # open (after the cutover to durable-actors; open is the go-live).
+  step: ""
+  # 8-64 URL-safe characters; names the export directory on the data claim
+  # (/data/migration/<runId>) and the import run.
+  runId: ""
+  # preflight: epoch seconds when credentials.format=ar was enabled; principals
+  # created before it and never upgraded are reported as legacy.
+  arSince: ""
+  # preflight: report principals still on legacy credentials without failing
+  # (their holders re-register after the move; their data still moves).
+  allowLegacy: false
+  activeDeadlineSeconds: 21600

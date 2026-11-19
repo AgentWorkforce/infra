@@ -48,6 +48,15 @@ of set a second time. Desktop and the CLI log in against that same origin. */ -}
 {{- end -}}
 {{- end -}}
 {{- define "relay-control.validate" -}}
+{{- /* Control's config refuses a path on these service URLs, and crash-loops;
+check what is rendered, including the gate-only SESSION_READ_API_URL. */ -}}
+{{- if and .Values.services.sessionReadApiUrl (dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict)) (lt (int (dig "relaygate" "gateOnly" "sessionsPort" 0 (.Values.global | default dict))) 1) }}{{ fail "relay-control: global.relaygate.gateOnly.enabled needs global.relaygate.gateOnly.sessionsPort (relaygate's internal Sessions listener, SESSION_READ_API_URL)" }}{{ end -}}
+{{- if include "relay-control.controlPolicy" . }}
+{{- $cp := .Values.global.relaygate.controlPolicy -}}
+{{- if or (not (dig "adminToken" "name" "" $cp)) (not (dig "adminToken" "key" "" $cp)) (not (dig "policySecret" "name" "" $cp)) (not (dig "policySecret" "key" "" $cp)) }}{{ fail "relay-control: global.relaygate.controlPolicy.enabled needs controlPolicy.adminToken and controlPolicy.policySecret ({name, key})" }}{{ end -}}
+{{- if not (regexMatch "^https?://[^/?#@]+/?$" (include "relay-control.relaygateAdminUrl" .)) }}{{ fail "relay-control: SELFHOST_RELAYGATE_ADMIN_URL must be an http(s) origin with no path" }}{{ end -}}
+{{- end -}}
+{{- with include "relay-control.sessionReadApiUrl" . }}{{ if not (regexMatch "^https?://[^/?#@]+/?$" .) }}{{ fail (printf "relay-control: SESSION_READ_API_URL would be %s; it must be an http(s) origin with no path, credentials, query or fragment" .) }}{{ end }}{{ end -}}
 {{- include "relay-control.historyUpload.validate" . -}}
 {{- include "relay-control.validateAdapters" . -}}
 {{- $image := include "relay-control.image" . -}}
@@ -117,11 +126,12 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SELFHOST_TELEMETRY_INSTALL_KEY_FILE" "RELAYCONTROL_INTROSPECT_SECRET_FILE" "SESSION_READ_API_SECRET_FILE"
   "SELFHOST_PASSWORD_PEPPER_FILE" "SELFHOST_SETUP_KEY_FILE" "SELFHOST_SIGNIN_METHODS" "SELFHOST_TRUSTED_PROXIES"
   "SELFHOST_MICROSOFT_CLIENT_ID" "SELFHOST_MICROSOFT_TENANT" "SELFHOST_MICROSOFT_REDIRECT_URL" "SELFHOST_MICROSOFT_CLIENT_SECRET_FILE"
-  "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES"
+  "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES" "SELFHOST_RELAYGATE_PUBLIC_URL" "SELFHOST_RELAYGATE_ADMIN_URL" "SELFHOST_RELAYGATE_ADMIN_TOKEN" "SELFHOST_RELAYGATE_POLICY_SECRET"
   "RELAYHISTORY_BACKEND" "SESSION_ERASE_API_URL" "SESSION_ERASE_API_SECRET" -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) }}{{ $managed = append $managed "SELFHOST_FEATURES" }}{{ end -}}
 {{- if .Values.services.relayhistoryReadApiUrl }}{{ $managed = concat $managed (list "RELAYHISTORY_READ_API_URL" "RELAYHISTORY_READ_API_EVENTS") }}{{ end -}}
 {{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
+{{- if .Values.desktopFeed.signingKeys.existingSecret }}{{ $managed = concat $managed (list "SELFHOST_DESKTOP_FEED_SIGNER" "SELFHOST_DESKTOP_FEED_KEY_FILES") }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
 {{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}
 {{- range $item := $src | fromYamlArray }}{{ $managed = append $managed (toString $item.name) }}{{ end -}}
@@ -243,7 +253,7 @@ telemetry.deployment is checked in validateRuntime before it is merged. */ -}}
 {{- if eq .Values.services.relayhistoryBackend "native" }}
 - { name: RELAYHISTORY_BACKEND, value: native }
 {{- end }}
-{{- with .Values.services.sessionReadApiUrl }}
+{{- with include "relay-control.sessionReadApiUrl" . }}
 - { name: SESSION_READ_API_URL, value: {{ . | quote }} }
 {{- end }}
 {{- with .Values.services.sessionReadApiPublicUrl }}
@@ -505,7 +515,7 @@ global.branding.logo at <dashboard origin>/brand/<file>. The file name rule
 matches relay-webapp.brandLogoFile. */ -}}
 {{- define "relay-control.brandLogoFile" -}}
 {{- $logo := dig "branding" "logo" dict (.Values.global | default dict) | default dict -}}
-{{- if not (kindIs "map" $logo) }}{{ fail "global.branding.logo must be a map with svg, existingConfigMap or key" }}{{ end -}}
+{{- if not (kindIs "map" $logo) }}{{ fail "global.branding.logo must be a map with svg, existingConfigMap, key or dashboardKey" }}{{ end -}}
 {{- if $logo.svg }}logo.svg{{ else if $logo.existingConfigMap }}{{ $logo.key | default "logo.png" }}{{ end -}}
 {{- end -}}
 {{- define "relay-control.loginLogoUrl" -}}
@@ -649,3 +659,33 @@ leave the certificate unverified while looking configured. */ -}}
 {{- if not (regexMatch "^[A-Za-z0-9._-]+$" (get $ca "key" | default "" | toString)) }}{{ fail "postgresCa.key must be a Kubernetes data key" }}{{ end -}}
 {{- end -}}
 {{- end -}}
+
+{{- /* SESSION_READ_API_URL. Gate-only (global.relaygate.gateOnly.enabled):
+relaygate's internal Sessions listener (http://<relaygate>-sessions.<ns>.svc.cluster.local:<sessionsPort>,
+an origin: Control refuses a path; relaygate serves Sessions at that port's root), so Control's mint, refresh and service-token
+calls and its server-side reads go through relaygate, which passes them to the
+read API unchanged. services.sessionReadApiUrl stays the read API Service
+(the handoff validation and the umbrella's checks still use it). */ -}}
+{{- define "relay-control.sessionReadApiUrl" -}}
+{{- $g := dig "relaygate" "gateOnly" dict (.Values.global | default dict) | default dict -}}
+{{- if and .Values.services.sessionReadApiUrl (dig "enabled" false $g) -}}
+{{- $gate := dig "serviceName" "" $g | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
+{{- printf "http://%s-sessions.%s.svc.cluster.local:%d" ($gate | trunc 54 | trimSuffix "-") .Release.Namespace (int (dig "sessionsPort" 0 $g)) -}}
+{{- else -}}
+{{- .Values.services.sessionReadApiUrl -}}
+{{- end -}}
+{{- end }}
+
+{{- /* Control-owned relaygate policy (global.relaygate.controlPolicy.enabled,
+agent-relay umbrella, gate-only installs). */ -}}
+{{- define "relay-control.controlPolicy" -}}
+{{- $g := dig "relaygate" dict (.Values.global | default dict) | default dict -}}
+{{- if and (dig "controlPolicy" "enabled" false $g) (dig "gateOnly" "enabled" false $g) }}true{{ end -}}
+{{- end }}
+
+{{- /* relaygate's in-cluster admin origin (its main Service; the admin API is on it). */ -}}
+{{- define "relay-control.relaygateAdminUrl" -}}
+{{- $g := dig "relaygate" "gateOnly" dict (.Values.global | default dict) | default dict -}}
+{{- $gate := dig "serviceName" "" $g | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
+{{- printf "http://%s.%s.svc.cluster.local:%d" $gate .Release.Namespace (int (dig "servicePort" 8080 $g)) -}}
+{{- end }}

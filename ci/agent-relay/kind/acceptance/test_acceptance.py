@@ -44,7 +44,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             status, body = 401, {"error": "unauthorized"}
         elif request.path == "/cloud/api/v1/organizations/" + ORG + "/usage" and query == {"days": ["7"]}:
             if cookie.startswith("owner="):
-                status, body = 200, {"totals": {"activeUsers": 2, "sessionsUploaded": 1, "searches": 3}, "secret": SECRET}
+                report = {"totals": {"activeUsers": 2, "sessionsUploaded": 1, "searches": 3}, "secret": SECRET}
+                status, body = 200, report if self.mode == "unwrapped_usage" else {"usage": report}
             else:
                 status, body = 403, {"error": "forbidden", "secret": SECRET}
         elif request.path == root + "/" + SID + "/summary" and query == {"source": ["codex"]}:
@@ -182,6 +183,14 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(code, 1)
         result = next(c for c in payload["checks"] if c["id"] == "usage_roles")
         self.assertEqual(result["code"], "member_authentication_not_proven")
+
+    def test_unwrapped_usage_totals_cannot_satisfy_the_documented_envelope(self):
+        Handler.mode = "unwrapped_usage"
+        code, payload = self.run_suite()
+        self.assertEqual(code, 1)
+        result = next(c for c in payload["checks"] if c["id"] == "usage_roles")
+        self.assertEqual(result["code"], "usage_report_missing")
+        self.assertEqual(verify(self.path / "acceptance.json", self.path / "signing_key.pub")["status"], "fail")
 
     def test_redirect_is_not_followed_and_response_location_is_not_reported(self):
         Handler.mode = "redirect"

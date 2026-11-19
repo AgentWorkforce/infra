@@ -1,0 +1,228 @@
+{
+ "arm": "pg",
+ "dir": "<results dir>",
+ "phases": [
+  {
+   "label": "fo",
+   "kind": "mixed",
+   "offeredRate": 3,
+   "startedAt": 1794595374754,
+   "endedAt": 1794597175718,
+   "issued": 5398
+  }
+ ],
+ "routes": [
+  {
+   "arm": "pg",
+   "phase": "fo",
+   "route": "POST /v1/dm",
+   "requests": 3073,
+   "ok": 3021,
+   "rps_ok": 1.68,
+   "err_rate": 0.01692,
+   "r429": 0,
+   "r5xx": 51,
+   "net_err": 1,
+   "p50": 36.03,
+   "p95": 144.122,
+   "p99": 2612.371,
+   "max": 13499.961999999825,
+   "corrected_p50": 36.03,
+   "corrected_p95": 144.122,
+   "corrected_p99": 2612.371
+  },
+  {
+   "arm": "pg",
+   "phase": "fo",
+   "route": "POST /v1/channels/:name/messages",
+   "requests": 2032,
+   "ok": 1996,
+   "rps_ok": 1.11,
+   "err_rate": 0.01772,
+   "r429": 0,
+   "r5xx": 36,
+   "net_err": 0,
+   "p50": 30.934,
+   "p95": 119.523,
+   "p99": 6001.651,
+   "max": 14557.179000000004,
+   "corrected_p50": 30.934,
+   "corrected_p95": 118.697,
+   "corrected_p99": 6001.651
+  },
+  {
+   "arm": "pg",
+   "phase": "fo",
+   "route": "POST /v1/files/upload",
+   "requests": 293,
+   "ok": 282,
+   "rps_ok": 0.16,
+   "err_rate": 0.03754,
+   "r429": 0,
+   "r5xx": 11,
+   "net_err": 0,
+   "p50": 8.346,
+   "p95": 66.771,
+   "p99": 9615.484,
+   "max": 10635.805000000168,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "pg",
+   "phase": "fo",
+   "route": "PUT /_relayfiles",
+   "requests": 282,
+   "ok": 282,
+   "rps_ok": 0.16,
+   "err_rate": 0,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 6.733,
+   "p95": 9.325,
+   "p99": 11.722,
+   "max": 11.969000000040978,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "pg",
+   "phase": "fo",
+   "route": "POST /v1/files/:id/complete",
+   "requests": 282,
+   "ok": 282,
+   "rps_ok": 0.16,
+   "err_rate": 0,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 9.008,
+   "p95": 23.771,
+   "p99": 73.067,
+   "max": 81.15699999965727,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  },
+  {
+   "arm": "pg",
+   "phase": "fo",
+   "route": "upload_total_raw",
+   "requests": 0,
+   "ok": 0,
+   "rps_ok": 0,
+   "err_rate": null,
+   "r429": 0,
+   "r5xx": 0,
+   "net_err": 0,
+   "p50": 23.937,
+   "p95": 132.619,
+   "p99": 9615.484,
+   "max": 10636,
+   "corrected_p50": null,
+   "corrected_p95": null,
+   "corrected_p99": null
+  }
+ ],
+ "delivery": [
+  {
+   "arm": "pg",
+   "phase": "fo",
+   "deliveries": 44937,
+   "deliveries_per_s": 24.95,
+   "p50": 36.03,
+   "p95": 120.354,
+   "p99": 176.209,
+   "p999": 359.823,
+   "max": 1113
+  }
+ ],
+ "integrity": [
+  {
+   "arm": "pg",
+   "phase": "fo",
+   "expected": 26973,
+   "delivered": 26973,
+   "lost": 0,
+   "duplicate": 0,
+   "redelivered": 0,
+   "reordered": 0,
+   "reordered_after_timeout": 0,
+   "unexpected": 0,
+   "truncated": 0
+  }
+ ],
+ "sinks": [
+  {
+   "shard": 0,
+   "sockets": 45,
+   "connected": 45,
+   "drops": 0,
+   "connect": {
+    "n": 45,
+    "mean": 1119.244,
+    "min": 656,
+    "p50": 1185.388,
+    "p95": 1390.265,
+    "p99": 1429.35,
+    "p999": 1429.35,
+    "max": 1428
+   },
+   "reconnect": {
+    "n": 0,
+    "mean": null,
+    "min": null,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "p999": null,
+    "max": null
+   },
+   "counters": {
+    "frame context.update": 50281,
+    "join 200": 72,
+    "deliver": 22467,
+    "ws_error node_control_failed": 90
+   },
+   "drain": [],
+   "rssBytes": 87638016
+  },
+  {
+   "shard": 1,
+   "sockets": 45,
+   "connected": 45,
+   "drops": 0,
+   "connect": {
+    "n": 45,
+    "mean": 1021.756,
+    "min": 696,
+    "p50": 1145.009,
+    "p95": 1235.727,
+    "p99": 1252.977,
+    "p999": 1252.977,
+    "max": 1254
+   },
+   "reconnect": {
+    "n": 0,
+    "mean": null,
+    "min": null,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "p999": null,
+    "max": null
+   },
+   "counters": {
+    "frame context.update": 50294,
+    "join 200": 72,
+    "deliver": 22470,
+    "ws_error node_control_failed": 90
+   },
+   "drain": [],
+   "rssBytes": 86945792
+  }
+ ]
+}

@@ -1,0 +1,11 @@
+# Fairness rerun (agreed with infra-chief): the PG arm's Relaycast with room to
+# breathe. The chart default (1 CPU / 1Gi, V8 default old space ~0.5 GB) pinned
+# at 1 CPU and OOM-crash-looped at 40 workspaces x 1000 node sockets x 100
+# msgs/s (relaycast#659). Same image (#657 fix), same RDS. The actors gateway
+# has no CPU limit as shipped.
+relaycast:
+  resources:
+    requests: {cpu: "2", memory: 2Gi}
+    limits: {cpu: "4", memory: 4Gi}
+  extraEnv:
+    - {name: NODE_OPTIONS, value: "--max-old-space-size=3072"}

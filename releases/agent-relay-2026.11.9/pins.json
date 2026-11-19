@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "version": "2026.11.9",
+  "pins": {
+    "relay-control": {
+      "repository": "ghcr.io/agentworkforce/relay-control",
+      "digest": "sha256:5261e0bed045c93196710f021a37cb87222d385ab29ed3d2184453a801b369d7",
+      "sourceRepository": "AgentWorkforce/relay-control",
+      "sourceRevision": "643bce892bbadda9208f1063f6fd474bfc4689f0"
+    },
+    "relay-webapp": {
+      "repository": "ghcr.io/agentworkforce/relay-webapp",
+      "digest": "sha256:90e4d4341165647ba79b4afd867a976018b6356af38cc1421f7a1ad677d9a26d",
+      "sourceRepository": "AgentWorkforce/relay-web",
+      "sourceRevision": "8d45f44ecb306e6e5e6b6720656b746c2b3fa843"
+    },
+    "sessions-pipeline": {
+      "repository": "ghcr.io/agentworkforce/sessions-pipeline",
+      "digest": "sha256:3d9c0a4dff67c92da30964857713e625f3f967bc2ff98851614a70adbb4fe3fe",
+      "sourceRepository": "AgentWorkforce/relayhistory-pipeline",
+      "sourceRevision": "02c8951d0ea0100c8ae2a2b93266b8c6d2635b1b",
+      "publishRunId": 43626590763
+    }
+  }
+}

@@ -1,0 +1,13 @@
+image:
+  digest: sha256:0ca54cddf43b4771fade43d06d280405574ea77280eb0fde392fdb90ee29e248
+policy:
+  enrollmentKeys:
+    - { id: local, gid: 11, sha256: "2222222222222222222222222222222222222222222222222222222222222222", namePrefix: "local-" }
+    - { id: slack-bridge, gid: 22, sha256: "1111111111111111111111111111111111111111111111111111111111111111", namePrefix: "slack-" }
+proxy:
+  relaycastUrl: http://relaycast:8787
+  sessionsUrl: https://history.example.com
+secrets:
+  relaycastWorkspaceKey: { name: relaygate-relaycast, key: workspace-key }
+  relaygateSecret: { name: relaygate-seal, key: secret }
+  adminToken: { name: relaygate-admin, key: token }

@@ -69,6 +69,17 @@ upload-enabled bucket: the current credential session policy restricts KMS
 operations by **object ARN**, whereas Bucket Keys use **bucket ARN** as their
 encryption context. Existing objects are not rewritten.
 
+A bucket you created yourself (not through this module) needs the same setting
+before direct uploads are turned on. With Bucket Keys on, every inbox PUT from a
+desktop fails with 403 (`kms:GenerateDataKey` denied). Check and set it:
+
+```sh
+aws s3api get-bucket-encryption --bucket <bucket> \
+  --query 'ServerSideEncryptionConfiguration.Rules[0].BucketKeyEnabled'
+aws s3api put-bucket-encryption --bucket <bucket> --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"aws:kms","KMSMasterKeyID":"<kms key arn>"},"BucketKeyEnabled":false}]}'
+```
+
 Provision one random 32-byte witness key encoded as unpadded base64url in an
 existing Kubernetes Secret through your secret manager. Share the same value
 only with Control and ingest-edge. Never put the key into Terraform, committed

@@ -152,7 +152,7 @@ def build(stack):
     values.setdefault("relay-control", {})["image"] = {
         "repository": REPOSITORY, "digest": receipt["manifestDigest"], "pullPolicy": "Never"}
     private_json(stack.overrides, values)
-    print("Built and selected " + receipt["reference"] + "; run kind-up to install. No image published.")
+    print("Built and selected " + receipt["reference"] + ". No image published.")
 
 
 def alias(stack, image, metadata):

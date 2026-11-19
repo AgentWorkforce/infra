@@ -160,16 +160,41 @@ class NativeControlTests(unittest.TestCase):
         result = run(good); self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout.split("NATIVE_CONTROL_OBSERVATION ")[1]), {"organizationId": org, "workspaceId": workspace})
         self.assertNotIn(data["administratorEmail"], result.stdout)
-        aa = deepcopy(good)
-        aa["/readyz"]["capabilities"].update(usage=True, launch=True)
-        result = run(aa, ["usage", "launch"])
+        usage_launch = deepcopy(good)
+        usage_launch["/readyz"]["capabilities"].update(usage=True, launch=True)
+        result = run(usage_launch, ["usage", "launch"])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout.split("NATIVE_CONTROL_OBSERVATION ")[1]), {"organizationId": org, "workspaceId": workspace})
         # Exact capability shape at the opt-in 0.5.19 image's source ad74a1a3.
-        modern = deepcopy(aa)
+        modern = deepcopy(usage_launch)
         modern["/readyz"]["capabilities"].update(usage_people=False, events_shim=False)
         result = run(modern, ["usage", "launch"])
         self.assertEqual(result.returncode, 0, result.stderr)
+        # Exact shape at the pinned 0.5.24 image's source edad6432: session_delete is false without erase wiring.
+        current = deepcopy(modern)
+        current["/readyz"]["capabilities"].update(session_delete=False, enrollment_keys=True)
+        result = run(current, ["usage", "launch"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        current_core = deepcopy(current)
+        current_core["/readyz"]["capabilities"].update(usage=False, launch=False)
+        self.assertEqual(run(current_core).returncode, 0)
+        # Shape at relay-control 0.5.35 (source b985c6f): enrollment_self_mint is true unless self-renewal is turned off.
+        newer = deepcopy(current)
+        newer["/readyz"]["capabilities"].update(enrollment_self_mint=True)
+        self.assertEqual(run(newer, ["usage", "launch"]).returncode, 0)
+        for kind in ("session-delete-enabled", "session-delete-nonboolean", "enrollment-keys-disabled", "enrollment-keys-nonboolean",
+                "self-mint-disabled", "self-mint-nonboolean"):
+            changed = deepcopy(newer)
+            if kind == "session-delete-enabled": changed["/readyz"]["capabilities"]["session_delete"] = True
+            if kind == "session-delete-nonboolean": changed["/readyz"]["capabilities"]["session_delete"] = 0
+            if kind == "enrollment-keys-disabled": changed["/readyz"]["capabilities"]["enrollment_keys"] = False
+            if kind == "enrollment-keys-nonboolean": changed["/readyz"]["capabilities"]["enrollment_keys"] = 1
+            if kind == "self-mint-disabled": changed["/readyz"]["capabilities"]["enrollment_self_mint"] = False
+            if kind == "self-mint-nonboolean": changed["/readyz"]["capabilities"]["enrollment_self_mint"] = 1
+            with self.subTest(capability=kind):
+                refused = run(changed, ["usage", "launch"])
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertEqual(refused.stdout, "")
         modern_core = deepcopy(modern)
         modern_core["/readyz"]["capabilities"].update(usage=False, launch=False)
         self.assertEqual(run(modern_core).returncode, 0)

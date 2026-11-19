@@ -1,0 +1,264 @@
+{{- include "relaygate.validate" . }}
+{{- $full := include "relaygate.fullname" . }}
+{{- $pull := include "relaygate.controlPolicy.pull" . }}
+{{- /* With the policy pulled from relay-control there is no file and no ConfigMap. */ -}}
+{{- if and (not .Values.existingConfigMap) (not $pull) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-policy
+  labels:
+    {{- include "relaygate.labels" . | nindent 4 }}
+data:
+  policy.json: |
+    {{- /* inboxDefaults: the chart's default (gid 11, 660, acl 22:r, mirroring the local- inbox rule) applies only
+         when policy omits the key, and is dropped when policy.groups lacks gid 11 or 22 so such a policy still loads.
+         Any inboxDefaults the operator sets that names an undefined gid fails the render: it never loosens to
+         relaygate's 660 fallback. */ -}}
+    {{- $policy := deepCopy .Values.policy }}
+    {{- $inherited := not (hasKey $policy "inboxDefaults") }}
+    {{- if $inherited }}{{ $_ := set $policy "inboxDefaults" (list (dict "gid" 11 "mode" "660" "acl" (list (dict "gid" 22 "perm" "r")))) }}{{ end }}
+    {{- $gids := list }}
+    {{- range ($policy.groups | default list) }}{{ $gids = append $gids (toString .gid) }}{{ end }}
+    {{- $kept := list }}
+    {{- range ($policy.inboxDefaults | default list) }}
+    {{- $missing := list }}
+    {{- if not (has (toString .gid) $gids) }}{{ $missing = append $missing (toString .gid) }}{{ end }}
+    {{- range (.acl | default list) }}{{ if not (has (toString .gid) $gids) }}{{ $missing = append $missing (toString .gid) }}{{ end }}{{ end }}
+    {{- if not $missing }}
+    {{- $kept = append $kept . }}
+    {{- else if not $inherited }}
+    {{- fail (printf "relaygate: policy.inboxDefaults entry for gid %v names gid(s) %s that policy.groups doesn't define; define them or remove the entry" .gid (join ", " (uniq $missing))) }}
+    {{- end }}
+    {{- end }}
+    {{- $_ := set $policy "inboxDefaults" $kept }}
+    {{- $policy | toPrettyJson | nindent 4 }}
+---
+{{- end }}
+{{- if not .Values.persistence.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $full }}-data
+  labels:
+    {{- include "relaygate.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "relaygate.labels" . | nindent 4 }}
+spec:
+  # SQLite store: exactly one gate, never two at once.
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      {{- include "relaygate.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "relaygate.selectorLabels" . | nindent 8 }}
+      annotations:
+        {{- if and (not .Values.existingConfigMap) (not $pull) }}
+        checksum/policy: {{ .Values.policy | toJson | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: relaygate
+          image: {{ printf "%s@%s" .Values.image.repository .Values.image.digest }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: PORT
+              value: "8080"
+            {{- if $pull }}
+            # The policy comes from relay-control (signed, versioned); no file.
+            - name: RELAYCONTROL_POLICY_URL
+              value: {{ include "relaygate.controlPolicy.url" . | quote }}
+            - name: RELAYCONTROL_POLICY_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.global.relaygate.controlPolicy.policySecret.name }}, key: {{ .Values.global.relaygate.controlPolicy.policySecret.key }} } }
+            {{- else }}
+            - name: RELAYGATE_POLICY
+              value: /policy/policy.json
+            {{- end }}
+            - name: RELAYGATE_DB
+              value: /data/relaygate.db
+            {{- with .Values.proxy.relaycastUrl | trim }}
+            - name: RELAYCAST_URL
+              value: {{ . | quote }}
+            - name: RELAYCAST_WORKSPACE_KEY
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.relaycastWorkspaceKey.name }}, key: {{ $.Values.secrets.relaycastWorkspaceKey.key }} } }
+            - name: RELAYGATE_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.relaygateSecret.name }}, key: {{ $.Values.secrets.relaygateSecret.key }} } }
+            {{- end }}
+            {{- with .Values.proxy.sessionsUrl | trim }}
+            - name: SESSIONS_URL
+              value: {{ . | quote }}
+            {{- with $.Values.proxy.sessionsUploadUrl | trim }}
+            - name: SESSIONS_UPLOAD_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $.Values.proxy.sessionsReadUrl | trim }}
+            - name: SESSIONS_READ_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $.Values.proxy.sessionsHosts }}
+            - name: SESSIONS_HOSTS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with $.Values.proxy.sessionsCorsOrigins }}
+            - name: SESSIONS_CORS_ORIGINS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- if $.Values.secrets.sessionsInternalSecret.name }}
+            - name: SESSIONS_INTERNAL_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.sessionsInternalSecret.name }}, key: {{ $.Values.secrets.sessionsInternalSecret.key }} } }
+            {{- end }}
+            {{- if $.Values.secrets.sessionsToken.name }}
+            - name: SESSIONS_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.sessionsToken.name }}, key: {{ $.Values.secrets.sessionsToken.key }} } }
+            {{- end }}
+            {{- end }}
+            {{- /* Control principals: desktop enrolment (POST /v1/register with a device
+            token) and Control callers on Sessions. Independent of the proxies. */}}
+            {{- with .Values.control.introspectUrl | trim }}
+            - name: RELAYCONTROL_INTROSPECT_URL
+              value: {{ . | quote }}
+            - name: RELAYCONTROL_INTROSPECT_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $.Values.secrets.relaycontrolIntrospectSecret.name }}, key: {{ $.Values.secrets.relaycontrolIntrospectSecret.key }} } }
+            - name: SESSION_INGEST_AUDIENCE
+              value: {{ $.Values.control.sessionIngestAudience | trim | quote }}
+            {{- end }}
+            {{- if include "relaygate.gateOnly" . }}
+            # Gate-only: the internal Sessions listener (relaygate #28 or later).
+            - name: SESSIONS_PORT
+              value: {{ include "relaygate.sessionsPort" . | quote }}
+            {{- end }}
+            {{- with include "relaygate.adminToken" . | fromJson }}
+            - name: RELAYGATE_ADMIN_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .name }}, key: {{ .key }} } }
+            {{- end }}
+            {{- if .Values.secrets.anthropicApiKey.name }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.anthropicApiKey.name }}
+                  key: {{ .Values.secrets.anthropicApiKey.key }}
+            {{- end }}
+          ports:
+            - { name: http, containerPort: 8080 }
+            {{- if include "relaygate.gateOnly" . }}
+            - { name: sessions, containerPort: {{ include "relaygate.sessionsPort" . }} }
+            {{- end }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            {{- if not $pull }}
+            - { name: policy, mountPath: /policy, readOnly: true }
+            {{- end }}
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        {{- if not $pull }}
+        - name: policy
+          configMap:
+            name: {{ .Values.existingConfigMap | default (printf "%s-policy" $full) }}
+        {{- end }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" $full) }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "relaygate.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "relaygate.selectorLabels" . | nindent 4 }}
+  ports:
+    - { name: http, port: {{ .Values.service.port }}, targetPort: http }
+{{- if include "relaygate.gateOnly" . }}
+---
+# Gate-only: relaygate's internal Sessions listener (SESSIONS_PORT), for
+# relay-control's SESSION_READ_API_URL (an origin, no path). Internal only:
+# never put this Service on an Ingress, HTTPRoute or NEG.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "relaygate.sessionsServiceName" . }}
+  labels:
+    {{- include "relaygate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sessions
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "relaygate.selectorLabels" . | nindent 4 }}
+  ports:
+    - { name: sessions, port: {{ include "relaygate.sessionsPort" . }}, targetPort: sessions }
+---
+# Gate-only: anyone may reach the main port (agents, the load balancer,
+# ingress controllers); only relay-control may reach the internal Sessions
+# listener, where its internal mint is allowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "relaygate.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "relaygate.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: http, protocol: TCP }]
+    - from:
+        {{- toYaml .Values.sessionsListener.controlFrom | nindent 8 }}
+      ports: [{ port: sessions, protocol: TCP }]
+{{- end }}

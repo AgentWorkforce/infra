@@ -259,10 +259,12 @@ jobs:
             .release/customer-pack-render.yaml \
             > .release/customer-images.txt
           # The pull upgrader currently supports EKS profiles. Include their
-          # approved collector-capable Relaycast pin instead of allowing the
-          # GCP render's Postgres Relaycast pin to overwrite EKS customer values.
+          # approved collector-capable Relaycast and migration/export pins
+          # instead of allowing the GCP render's Postgres Relaycast pin to
+          # overwrite either EKS customer value. RelayAuth is default-off in
+          # native History profiles but remains an optional pinned component.
           yq -N -r \
-            '.images[] | select(.id == "relaycast-eks-collector") | .current.repository + "@" + .current.digest' \
+            '.images[] | select(.id == "relaycast-eks-collector" or .id == "relaycast-postgres" or .id == "relayauth") | .current.repository + "@" + .current.digest' \
             self-hosted/customer-images.yaml \
             >> .release/customer-images.txt
           sort -u -o .release/customer-images.txt .release/customer-images.txt

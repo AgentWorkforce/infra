@@ -1,3 +1,12 @@
+{{- define "sessions-pipeline.gateOnly" -}}
+{{- if dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict) }}true{{ end -}}
+{{- end -}}
+
+{{- /* The relaygate Service public routes point at under gate-only. */ -}}
+{{- define "sessions-pipeline.gateService" -}}
+{{- dig "relaygate" "gateOnly" "serviceName" "" (.Values.global | default dict) | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "sessions-pipeline.nativeRouting.fullname" -}}
 {{- default (printf "%s-native-history" .Release.Name) .Values.nativeRouting.fullnameOverride -}}
 {{- end -}}

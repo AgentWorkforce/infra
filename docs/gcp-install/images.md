@@ -1,0 +1,32 @@
+# Images (agent-relay-2026.11.16)
+
+Step 5 of 0-START-HERE.md mirrors every image in the release's
+`release-manifest.json` into your Artifact Registry, by digest. These are the
+eight images. A GKE install runs five of them; the other three (RelayAuth and
+the two other Relaycast names) are in the release for other profiles. Mirroring them is harmless and keeps the step identical
+to the release manifest. In this release the three Relaycast names
+(`relaycast`, `relaycast-eks-collector`, `relaycast-postgres`) share one image
+digest.
+
+| Release name | `image@digest` | Runs on GKE |
+|---|---|---|
+| relay-control | `ghcr.io/agentworkforce/relay-control@sha256:377bc2b9477d0bbd966cccd61380dd9d7f6e022a76ff0f7ad80e391d56ec0a83` | yes |
+| relay-webapp | `ghcr.io/agentworkforce/relay-webapp@sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e` | yes |
+| relaycast-eks-collector | `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc` | no (Relaycast with the collector adapter, for other profiles) |
+| sessions-pipeline | `ghcr.io/agentworkforce/sessions-pipeline@sha256:fd2efd61dca4761dfb55256aa4797cb7f61c3434cc8af4833287e0e7bb7b59a9` | yes (worker, read API, ingest edge, search indexer, and `cloud-sql-setup.sh`) |
+| sessions-migration-postgresql | `ghcr.io/cloudnative-pg/postgresql@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3` | yes (`cloud-sql-setup.sh` PostgreSQL client) |
+| relaycast | `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc` | no |
+| relaycast-postgres | `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc` | yes (Relaycast 12.10.0 on the PostgreSQL backend, Cloud SQL here) |
+| relayauth | `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdffef3b5838a1eef4c226925f859706365d9ccece229795b877288` | no |
+
+Copy each image by digest and keep the whole multi-architecture index, so the
+digests stay the same in your registry (`crane copy` does this). The release
+assets are signed: `gh attestation verify` against
+`AgentWorkforce/infra/.github/workflows/release-agent-relay.yml` verifies
+`agent-relay-0.7.54.tgz` and `release-manifest.json` if your process requires
+it.
+
+`release-images.values.yaml` (the release asset, with `__IMAGE_MIRROR_ROOT__`
+replaced) points every workload at these digests under your mirror. Apply it
+last. `values-gcp.yaml` on its own still names the previous release's images
+(NOT-QUALIFIED.md, item 4).

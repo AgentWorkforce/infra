@@ -31,6 +31,15 @@ runtime:
   # Default off even when the sessions-pipeline backend endpoint is enabled.
   # Requires a dashboard image containing relay-webapp #124.
   coordinationOverlapsEnabled: false
+  # DASHBOARD_SESSION_AGENT_NAMES_ENABLED: show each session's recorded agent
+  # name in the list caption (includeAgentName=recorded). Needs a Control and
+  # session reader that take the opt-in.
+  sessionAgentNamesEnabled: false
+  # DASHBOARD_SESSION_SHORT_SUMMARIES_ENABLED: show each session's recorded
+  # short summary under its title in the list (includeShortSummary=recorded,
+  # direct reader only). Needs sessionReadApiEnabled, a dashboard image with
+  # relay-web #143 and the reader's READ_API_LIST_SHORT_SUMMARY_ENABLED=true.
+  sessionShortSummariesEnabled: false
   # DASHBOARD_ANALYTICS_ENABLED: browser events use Control's collector proxy.
   # Null preserves the image default; explicit true/false is rendered faithfully.
   # Requires a compatible dashboard image and separately configured Control adapter.
@@ -44,10 +53,11 @@ runtime:
 # See the README "Customer profile" section.
 customerProfile: {}
 
-# A leaf Ingress can proxy /cloud/api to this Service. The GKE proof uses the
-# umbrella Ingress instead and leaves this ingress disabled. Required when
-# ingress.enabled=true: the relay-control Service name in this namespace,
-# i.e. its fullname (<release>-relay-control unless fullnameOverride is set).
+# A leaf Ingress can proxy /cloud/api, /login and /relay-node to this Service.
+# The GKE proof uses the umbrella Ingress instead and leaves this ingress
+# disabled. Required when ingress.enabled=true: the relay-control Service name
+# in this namespace, i.e. its fullname (<release>-relay-control unless
+# fullnameOverride is set).
 api:
   serviceName: ""
   servicePort: 80
@@ -55,6 +65,11 @@ api:
 ingress:
   enabled: false
   className: ""
+  # The Ingress also carries the relay-node WebSocket (GET /relay-node/v1/ws)
+  # and the flows worker SSE stream to relay-control; raise the controller's
+  # read timeout above their keepalive interval, e.g. for ingress-nginx:
+  #   nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+  #   nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
   annotations: {}
   # Derived from global.singleHost.host in single-host mode.
   host: ""
@@ -133,3 +148,9 @@ global:
       # The key in existingConfigMap, which is also the served file name:
       # [A-Za-z0-9._-], ending in .png. Empty: logo.png.
       key: ""
+      # Optional second PNG in existingConfigMap, served at
+      # /brand/<dashboardKey> beside key, for customerProfile.logo: for
+      # example a combined Agent Relay + customer logo for the dashboard
+      # while key stays the customer's mark for the sign-in page. Same name
+      # rule as key; must differ from it.
+      dashboardKey: ""

@@ -139,45 +139,26 @@ class Names(unittest.TestCase):
                 helper.ingest_pod(pods)
             with self.assertRaises(ValueError):
                 helper.worker_deployment(deployments + deployments, "referee")
-        for name in ["e2e-gcp-proof.sh", "e2e-eks-proof.sh"]:
-            self.assertIn("session-identities.py\" ingest-pod", (ROOT / "scripts/selfhost" / name).read_text())
+        # The GKE proof no longer runs the RelayAuth courier probe in the
+        # ingest pod (native History has no RelayAuth); the EKS S3 check does.
+        self.assertIn("session-identities.py\" ingest-pod", (ROOT / "scripts/selfhost/e2e-eks-proof.sh").read_text())
 
-    def test_kind_up_refuses_legacy_storage_before_readiness_or_dependencies_change(self):
-        sys.path.insert(0, str(ROOT / "ci/agent-relay/kind"))
-        import stack
-        for metadata in [{"name": "locker"}, {"name": "custom-data", "annotations": {"meta.helm.sh/release-name": "kind-locker"}}]:
-            with tempfile.TemporaryDirectory() as directory, patch.object(stack, "ROOT", Path(directory)), patch.object(stack.shutil, "which", return_value="/fake/tool"):
-                # Let the new read-only native selection gate pass so the
-                # original data-preserving legacy storage gate is exercised.
-                charts = Path(directory) / "charts/agent-relay"
-                charts.mkdir(parents=True)
-                (charts / "values.yaml").write_text("{}\n")
-                (charts / "values-kind-core.yaml").write_text("{}\n")
-                local = stack.Stack("core")
-                ready = local.state / "ready.json"
-                ready.write_text("original readiness evidence")
-                local.docker = lambda **kw: None
-                local.require_owned_cluster = lambda: None
-                local.cmd = lambda *args, **kw: SimpleNamespace(stdout=local.name + "\n")
-                local.k = lambda *args, **kw: SimpleNamespace(stdout=json.dumps({"items": [{"metadata": metadata}]}))
-                local.dependencies = lambda: self.fail("dependency preparation ran before the legacy storage refusal")
-                with self.assertRaisesRegex(stack.StackError, "legacy kind-locker storage exists"):
-                    local.up()
-                self.assertEqual(ready.read_text(), "original readiness evidence")
-
-    def test_kind_legacy_storage_check_allows_an_owned_empty_cluster(self):
+    def test_retired_kind_up_refuses_before_storage_readiness_or_dependencies_change(self):
+        # The single-phase kind-up (and its legacy kind-locker storage gate) was
+        # retired with the standalone RelayHistory server; it touches nothing.
         sys.path.insert(0, str(ROOT / "ci/agent-relay/kind"))
         import stack
         with tempfile.TemporaryDirectory() as directory, patch.object(stack, "ROOT", Path(directory)):
             local = stack.Stack("core")
-            calls = []
-            def lookup(*args, **kw):
-                calls.append(args)
-                return SimpleNamespace(stdout="")
-            local.k = lookup
-            local.require_no_legacy_storage()
-            self.assertEqual(len(calls), 1)
-            self.assertEqual(calls[0][:3], ("get", "namespace", stack.NS))
+            ready = local.state / "ready.json"
+            ready.write_text("original readiness evidence")
+            local.docker = lambda **kw: self.fail("docker preflight ran")
+            local.cmd = lambda *args, **kw: self.fail("command ran")
+            local.k = lambda *args, **kw: self.fail("cluster lookup ran")
+            local.dependencies = lambda: self.fail("dependency preparation ran")
+            with self.assertRaisesRegex(stack.StackError, "retired.*make local-up"):
+                local.up()
+            self.assertEqual(ready.read_text(), "original readiness evidence")
 
     def test_native_ci_selectors_include_all_four_renamed_app_deployments(self):
         documents = render()

@@ -28,10 +28,11 @@ Fail early on missing required values (render time, not crash-loop time).
 {{- if and $idx.enabled (gt (int $idx.replicas) 1) }}{{ fail "sessions-pipeline-worker: components.hoopdb-indexer.replicas must be 1 (manifest reconcile is not leader-elected)" }}{{ end -}}
 {{- /* Phase 2 role verify must run in migrate: with it off, readiness never passes
 unless a separate mark_pass step runs, which this chart does not have. */ -}}
-{{- $reserved := list "HOOPDB_ROLE_VERIFY" "HOOPDB_ROLE_BOOTSTRAP" "HOOPDB_DB_MODE" "HOOPDB_SUPABASE_SHIM" "HOOPDB_RUNTIME_ROLE" "HOOPDB_RUNTIME_ROLE_LOGIN" "HOOPDB_RUNTIME_WORKLOAD_ROLE" "HOOPDB_FUNCTION_BOUNDARY_MODE" "HOOPDB_FUNCTION_BOUNDARY_APPROVED" -}}
+{{- $reserved := list "HOOPDB_ROLE_VERIFY" "HOOPDB_ROLE_BOOTSTRAP" "HOOPDB_DB_MODE" "HOOPDB_SUPABASE_SHIM" "HOOPDB_RUNTIME_ROLE" "HOOPDB_RUNTIME_ROLE_LOGIN" "HOOPDB_RUNTIME_WORKLOAD_ROLE" "HOOPDB_FUNCTION_BOUNDARY_MODE" "HOOPDB_FUNCTION_BOUNDARY_APPROVED" "HOOPDB_ALLOW_BLOCKING_INDEX_BUILD" -}}
 {{- range .Values.extraEnv }}{{ if has (.name | default "") $reserved }}{{ fail (printf "sessions-pipeline-worker: extraEnv must not set %s: it is a migrations.* value, rendered into migrate only" .name) }}{{ end }}{{ end -}}
 {{- range $n, $c := .Values.components }}{{ range ($c.env | default list) }}{{ if has (.name | default "") $reserved }}{{ fail (printf "sessions-pipeline-worker: components.%s.env must not set %s: it is a migrations.* value, rendered into migrate only" $n .name) }}{{ end }}{{ end }}{{ end -}}
 {{- if .Values.migrations.enabled }}{{ include "sessions-pipeline-worker.validateProfile" . }}{{ end -}}
+{{- if and .Values.migrations.databaseMode (not (has .Values.migrations.databaseMode (list "local" "selfhosted" "cloudsql" "supabase" "rds"))) }}{{ fail "sessions-pipeline-worker: migrations.databaseMode must be local, selfhosted, cloudsql, supabase or rds" }}{{ end -}}
 {{- $bob := index .Values.components "bob-costas" -}}
 {{- if and $bob.enabled (not (.Values.summaryEncryption.existingSecret | default .Values.existingSecret)) }}{{ fail "sessions-pipeline-worker: summaryEncryption.existingSecret or existingSecret is required when bob-costas is enabled" }}{{ end -}}
 {{- if and $bob.enabled (not .Values.summaryEncryption.key) }}{{ fail "sessions-pipeline-worker: summaryEncryption.key is required when bob-costas is enabled" }}{{ end -}}
@@ -162,6 +163,15 @@ Usage: include "sessions-pipeline-worker.env" (dict "context" . "service" "refer
 {{- end }}
 - name: TMPDIR
   value: /tmp
+{{- /* The services' live role gate binds the same mode the migrator verified with
+(expectedSchema() reads HOOPDB_DB_MODE); without it, supabase-only compatibility
+edges (the postgres admin membership) always fail the gate. Only the long-running
+services run the gate: migrate gets the mode from profileEnv, locker-init never
+reads it. */ -}}
+{{- if and $v.migrations.databaseMode (not (has .service (list "hoopdb-migrate" "locker-init"))) }}
+- name: HOOPDB_DB_MODE
+  value: {{ $v.migrations.databaseMode | quote }}
+{{- end }}
 {{- with $v.extraEnv }}
 {{ include "sessions-pipeline-worker.renderEnv" . }}
 {{- end }}
@@ -258,6 +268,7 @@ Role names follow the migrator's pattern exactly.
 {{- if not (or (kindIs "invalid" $m.roleBootstrap) (kindIs "bool" $m.roleBootstrap)) }}{{ fail "sessions-pipeline-worker: migrations.roleBootstrap must be true or false" }}{{ end -}}
 {{- if not (or (kindIs "invalid" $m.supabaseShim) (kindIs "bool" $m.supabaseShim)) }}{{ fail "sessions-pipeline-worker: migrations.supabaseShim must be true or false" }}{{ end -}}
 {{- if not (or (kindIs "invalid" $m.runtimeRoleLogin) (kindIs "bool" $m.runtimeRoleLogin)) }}{{ fail "sessions-pipeline-worker: migrations.runtimeRoleLogin must be true or false" }}{{ end -}}
+{{- if not (or (kindIs "invalid" $m.allowBlockingIndexBuild) (kindIs "bool" $m.allowBlockingIndexBuild)) }}{{ fail "sessions-pipeline-worker: migrations.allowBlockingIndexBuild must be true or false" }}{{ end -}}
 {{- if eq $m.databaseMode "supabase" }}
 {{- if eq $m.supabaseShim true }}{{ fail "sessions-pipeline-worker: migrations.supabaseShim must not be true in supabase mode (the plain-Postgres role shim never runs there)" }}{{ end -}}
 {{- if $m.waitForRole.enabled }}{{ fail "sessions-pipeline-worker: migrations.waitForRole must be disabled in supabase mode (the roles are operator steps; the migrator verifies them)" }}{{ end -}}
@@ -306,6 +317,10 @@ The migrate container's profile env, each name exactly once (context: migrations
 {{- with .functionBoundaryMode }}
 - name: HOOPDB_FUNCTION_BOUNDARY_MODE
   value: {{ . | quote }}
+{{- end }}
+{{- if eq .allowBlockingIndexBuild true }}
+- name: HOOPDB_ALLOW_BLOCKING_INDEX_BUILD
+  value: "true"
 {{- end }}
 {{- end }}
 
