@@ -565,8 +565,11 @@ P="psql -X -q -v ON_ERROR_STOP=1"
 Q="psql -X -A -t -v ON_ERROR_STOP=1"
 
 if [ "$hoopdb_layout" = dedicated-owner ]; then
+  if [ -z "$($Q -c "select 1 from pg_roles where rolname='bulls96_read_api'")" ]; then
+    echo 'bulls96_read_api does not exist: run rds-setup.sh pre first' >&2; exit 3
+  fi
   sed '/^ALTER ROLE bulls96_read_api /d' /sql/session_read_api_role.sql > /tmp/session_read_api_role.sql
-  if grep -Eq '^[[:space:]]*(ALTER|CREATE)[[:space:]]+ROLE([[:space:]]|$)' /tmp/session_read_api_role.sql; then
+  if grep -Eq '^(ALTER|CREATE)[[:space:]]+ROLE([[:space:]]|$)' /tmp/session_read_api_role.sql; then
     echo 'filtered session_read_api_role.sql still contains ALTER ROLE or CREATE ROLE' >&2; exit 3
   fi
   $P -f /tmp/session_read_api_role.sql
@@ -581,8 +584,11 @@ $P -f /sql/session_read_api_role_verify.sql
 echo "read API role ok"
 
 if [ "$hoopdb_layout" = dedicated-owner ]; then
+  if [ -z "$($Q -c "select 1 from pg_roles where rolname='bulls96_session_ingest'")" ]; then
+    echo 'bulls96_session_ingest does not exist: run rds-setup.sh pre first' >&2; exit 3
+  fi
   sed '/^ALTER ROLE bulls96_session_ingest /d' /sql/session_ingest_role.sql > /tmp/session_ingest_role.sql
-  if grep -Eq '^[[:space:]]*(ALTER|CREATE)[[:space:]]+ROLE([[:space:]]|$)' /tmp/session_ingest_role.sql; then
+  if grep -Eq '^(ALTER|CREATE)[[:space:]]+ROLE([[:space:]]|$)' /tmp/session_ingest_role.sql; then
     echo 'filtered session_ingest_role.sql still contains ALTER ROLE or CREATE ROLE' >&2; exit 3
   fi
   $P -f /tmp/session_ingest_role.sql

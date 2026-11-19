@@ -110,8 +110,10 @@ their own Secrets (`agent-relay-read-api`, `agent-relay-ingest-edge-runtime`,
 `search-indexer-runtime`, `search-indexer-owner` in `values-gcp.yaml`).
 On fresh Cloud SQL, RDS and Azure installs, both migration/bootstrap keys use
 the dedicated `hoopdb_owner` URL, never a provider administrator URL. Legacy
-administrator-owned installs use `hoopdb-admin-jobs` only while the relevant
-Jobs run and delete it immediately afterwards.
+administrator-owned installs copy the URL into `hoopdb-admin-jobs` while the
+relevant Jobs run. Upgrade flows retain the old keys until Helm, Jobs and
+Deployments succeed for rollback safety, then remove the old keys and delete
+the temporary Secret.
 
 > **RDS upgrade note:** the shared `external-rds.yaml` and
 > `aws-rds-native.yaml` profiles default to `rdsLayout: separate-database` for

@@ -14,8 +14,11 @@
 #   postgres-setup.sh prepare-admin-jobs
 #                               Existing installs only: creates the temporary
 #                               hoopdb-admin-jobs Secret for an upgrade/guide Job.
+#   postgres-setup.sh remove-legacy-secret-keys
+#                               After Helm, Jobs and Deployments succeed, removes
+#                               the two old administrator-derived long-lived keys.
 #   postgres-setup.sh delete-admin-jobs
-#                               Deletes that temporary Secret after the Jobs finish.
+#                               Deletes the temporary Secret on success or failure.
 #
 # SQL runs as the CNPG superuser `postgres` by `kubectl exec` into the primary
 # (peer authentication on the local socket), the way the chart's own privileged
@@ -43,9 +46,9 @@ set -euo pipefail
 umask 077
 
 MODE="${1:-}"
-case "$MODE" in pre|post|finalize|prepare-admin-jobs|delete-admin-jobs) ;; *) echo "usage: $0 pre|post|finalize|prepare-admin-jobs|delete-admin-jobs" >&2; exit 2 ;; esac
+case "$MODE" in pre|post|finalize|prepare-admin-jobs|remove-legacy-secret-keys|delete-admin-jobs) ;; *) echo "usage: $0 pre|post|finalize|prepare-admin-jobs|remove-legacy-secret-keys|delete-admin-jobs" >&2; exit 2 ;; esac
 
-if [[ "$MODE" == finalize || "$MODE" == prepare-admin-jobs || "$MODE" == delete-admin-jobs ]]; then SERVICES_IMAGE="${SERVICES_IMAGE:-unused@sha256:0}"; fi
+if [[ "$MODE" == finalize || "$MODE" == prepare-admin-jobs || "$MODE" == remove-legacy-secret-keys || "$MODE" == delete-admin-jobs ]]; then SERVICES_IMAGE="${SERVICES_IMAGE:-unused@sha256:0}"; fi
 : "${SERVICES_IMAGE:?set SERVICES_IMAGE to the approved sessions-pipeline image digest}"
 NS="${NAMESPACE:-agent-relay}"
 RELEASE="${RELEASE:-agent-relay}"
@@ -261,7 +264,7 @@ do_pre() {
     printf '%s\n' legacy-admin >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
     write_legacy_admin_files; write_layout_values legacy-admin
     log "existing administrator-owned HoopDb detected; database and roles were left unchanged"
-    log "use '$0 prepare-admin-jobs' immediately before an upgrade or guide Job, then '$0 delete-admin-jobs'"
+    log "use '$0 prepare-admin-jobs' before an upgrade/guide Job; after success run '$0 remove-legacy-secret-keys', then always '$0 delete-admin-jobs'"
     return
   fi
   if [[ "$db_owner" == "$OWNER" ]]; then
@@ -420,8 +423,16 @@ do_prepare-admin-jobs() {
   kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
   kubectl -n "$NS" create secret generic "$ADMIN_JOBS_SECRET" \
     --from-file="$FILES/$ADMIN_JOBS_SECRET" >/dev/null
+  log "$ADMIN_JOBS_SECRET created for migration/bootstrap Jobs only; retain the old keys until Helm, Jobs and Deployments succeed"
+}
+
+do_remove-legacy-secret-keys() {
+  [[ -s "$LAYOUT_FILE" && "$(<"$LAYOUT_FILE")" == legacy-admin ]] \
+    || die "remove-legacy-secret-keys is only for an existing administrator-owned install; run '$0 pre' first"
+  kubectl -n "$NS" get secret "$ADMIN_JOBS_SECRET" -o name >/dev/null \
+    || die "$ADMIN_JOBS_SECRET is absent: run '$0 prepare-admin-jobs' first"
   remove_legacy_secret_keys
-  log "$ADMIN_JOBS_SECRET created for migration/bootstrap Jobs only; delete it as soon as those Jobs finish"
+  log "legacy administrator keys removed after successful Helm/guide Jobs and rollouts"
 }
 
 do_delete-admin-jobs() {

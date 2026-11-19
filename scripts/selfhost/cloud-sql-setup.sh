@@ -10,8 +10,11 @@
 #   cloud-sql-setup.sh prepare-admin-jobs
 #                            Existing installs only: creates the short-lived
 #                            hoopdb-admin-jobs Secret for an upgrade/guide Job.
+#   cloud-sql-setup.sh remove-legacy-secret-keys
+#                            After Helm, Jobs and Deployments succeed, removes
+#                            the two old administrator-derived long-lived keys.
 #   cloud-sql-setup.sh delete-admin-jobs
-#                            Deletes that short-lived Secret after the Jobs finish.
+#                            Deletes the short-lived Secret on success or failure.
 #
 # SQL runs in short-lived Jobs inside GKE, so the instance needs no public IP.
 # Required environment:
@@ -38,7 +41,7 @@ set -euo pipefail
 umask 077
 
 MODE="${1:-}"
-case "$MODE" in pre|post|prepare-admin-jobs|delete-admin-jobs) ;; *) echo "usage: $0 pre|post|prepare-admin-jobs|delete-admin-jobs" >&2; exit 2 ;; esac
+case "$MODE" in pre|post|prepare-admin-jobs|remove-legacy-secret-keys|delete-admin-jobs) ;; *) echo "usage: $0 pre|post|prepare-admin-jobs|remove-legacy-secret-keys|delete-admin-jobs" >&2; exit 2 ;; esac
 
 : "${GCP_PROJECT_ID:?set GCP_PROJECT_ID}"
 : "${CLOUD_SQL_INSTANCE:?set CLOUD_SQL_INSTANCE}"
@@ -401,7 +404,7 @@ EOS
       printf '%s\n' "$layout" >"$LAYOUT_FILE"; chmod 600 "$LAYOUT_FILE"
       write_legacy_admin_files; write_layout_values "$layout"
       log "existing administrator-owned HoopDb detected; database and roles were left unchanged"
-      log "use '$0 prepare-admin-jobs' immediately before an upgrade or guide Job, then '$0 delete-admin-jobs'"
+      log "use '$0 prepare-admin-jobs' before an upgrade/guide Job; after success run '$0 remove-legacy-secret-keys', then always '$0 delete-admin-jobs'"
       ;;
     *) die "setup Job returned no recognised HoopDb layout; nothing was written to install Secrets" ;;
   esac
@@ -470,8 +473,16 @@ do_prepare-admin-jobs() {
   kubectl -n "$NS" delete secret "$ADMIN_JOBS_SECRET" --ignore-not-found >/dev/null
   kubectl -n "$NS" create secret generic "$ADMIN_JOBS_SECRET" \
     --from-file="$FILES/$ADMIN_JOBS_SECRET" >/dev/null
+  log "$ADMIN_JOBS_SECRET created for migration/bootstrap Jobs only; retain the old keys until Helm, Jobs and Deployments succeed"
+}
+
+do_remove-legacy-secret-keys() {
+  [[ -s "$LAYOUT_FILE" && "$(<"$LAYOUT_FILE")" == legacy-admin ]] \
+    || die "remove-legacy-secret-keys is only for an existing administrator-owned install; run '$0 pre' first"
+  kubectl -n "$NS" get secret "$ADMIN_JOBS_SECRET" -o name >/dev/null \
+    || die "$ADMIN_JOBS_SECRET is absent: run '$0 prepare-admin-jobs' first"
   remove_legacy_secret_keys
-  log "$ADMIN_JOBS_SECRET created for migration/bootstrap Jobs only; delete it as soon as those Jobs finish"
+  log "legacy administrator keys removed after successful Helm/guide Jobs and rollouts"
 }
 
 do_delete-admin-jobs() {

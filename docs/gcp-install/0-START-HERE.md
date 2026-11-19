@@ -313,8 +313,12 @@ long-lived migration/bootstrap keys use that URL. The Cloud SQL administrator
 is used only by these one-off setup Jobs and is never stored in a Kubernetes
 Secret. A rerun recognizes an older administrator-owned HoopDb and leaves its
 objects and legacy role edges unchanged. Before a legacy upgrade or guide Job,
-run `cloud-sql-setup.sh prepare-admin-jobs`; delete `hoopdb-admin-jobs`
-immediately afterwards with `cloud-sql-setup.sh delete-admin-jobs`.
+run `cloud-sql-setup.sh prepare-admin-jobs`. Keep the old long-lived keys until
+Helm, every affected Job and all Deployments succeed. On success run
+`cloud-sql-setup.sh remove-legacy-secret-keys`; on success or failure always
+delete the temporary copy with `cloud-sql-setup.sh delete-admin-jobs`. A failed
+upgrade can then roll back to the previous revision without reconstructing its
+credentials.
 
 **Done when:** it ends with `pre done`, after `tls: true` and
 `extensions: btree_gin,pg_trgm,plpgsql,vector`.
@@ -715,8 +719,9 @@ the first session has uploaded, or on a brand-new install with
 cluster as the migration owner. A fresh install reads the dedicated
 `hoopdb_owner` URL from `agent-relay-secrets`; an existing administrator-owned
 install must run `cloud-sql-setup.sh prepare-admin-jobs` immediately first and
-set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`. Delete that temporary Secret with
-`cloud-sql-setup.sh delete-admin-jobs` as soon as the pod finishes. The URL
+set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`. After the pod succeeds, run
+`cloud-sql-setup.sh remove-legacy-secret-keys`; whether it succeeds or fails,
+delete the temporary Secret with `cloud-sql-setup.sh delete-admin-jobs`. The URL
 never reaches your shell. The script isn't in the
 services image, so this fetches it from the commit the image was built from:
 
@@ -874,9 +879,10 @@ bucket, writes nothing in plan mode, and is safe to rerun.
 Run it in a terminal where you ran `cd agent-relay-install && source settings.sh`
 (step 7): it needs `NAMESPACE`, `REGION` and `SESSIONS_BUCKET` from there.
 For a legacy administrator-owned install, prepare `hoopdb-admin-jobs` first,
-set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`, and delete it immediately after the
-restamp pod finishes. A missing temporary Secret makes the pod fail before any
-row is changed.
+set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`, and after a successful re-stamp run
+`cloud-sql-setup.sh remove-legacy-secret-keys`. Always run
+`cloud-sql-setup.sh delete-admin-jobs` afterwards, including on failure. A
+missing temporary Secret makes the pod fail before any row is changed.
 
 ```sh
 IMG="$(kubectl -n $NAMESPACE get deploy agent-relay-read-api -o jsonpath='{.spec.template.spec.containers[0].image}')"

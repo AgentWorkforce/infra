@@ -311,8 +311,11 @@ versus extractive summaries, the daily limits, and how to turn it off.
 Fresh installs use `hoopdb_owner`, which has neither `SUPERUSER` nor
 `CREATEROLE`, for every migration and bootstrap Job. Ownership transfer for
 older `hoop`-owned installs is a follow-up under #480. On those installs the
-administrator URL exists in Kubernetes only in `hoopdb-admin-jobs`, while the
-upgrade Jobs run. The long-running workloads never reference it.
+upgrade first copies the administrator URL to `hoopdb-admin-jobs`. The two old
+keys remain until Helm, every affected Job and all Deployments succeed, so the
+previous revision can still roll back. The successful flow then removes both
+old keys and deletes the temporary Secret. Long-running workloads never
+reference the administrator URL.
 
 Fetch the new release into a new directory, not `release`: `gh release
 download` will not overwrite the files from the install. Set the new tag and
@@ -373,17 +376,23 @@ if helm upgrade agent-relay "$CHART" --namespace agent-relay \
     || upgrade_ok=false
 fi
 
-# 3. Existing installs: delete the administrator credential immediately.
+# 3. Existing installs: only a fully successful upgrade removes the old keys.
+if $upgrade_ok && [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
+  bash postgres-setup.sh remove-legacy-secret-keys || upgrade_ok=false
+fi
+
+# Always delete the temporary copy, including after a failed upgrade.
 bash postgres-setup.sh delete-admin-jobs
 $upgrade_ok || { echo "upgrade or a temporary-credential Job failed" >&2; exit 1; }
 echo "upgrade ok"
 ```
 
 For a dedicated-owner install, `delete-admin-jobs` is harmless because the
-Secret is absent. For a legacy install, run step 3 whether or not Helm
-succeeded. Long-running pods do not use it. If Helm stops, delete the Secret,
-fix the cause, and start again at step 1. Ownership transfer for legacy
-installs is a follow-up under #480.
+Secret is absent. For a legacy install, the failed path deletes only the
+temporary Secret; the old long-lived keys stay available to the previous Helm
+revision. Fix the cause and start again at step 1. The successful path removes
+the old keys only after every Job and Deployment is ready. Ownership transfer
+for legacy installs is a follow-up under #480.
 
 If an earlier attempt left a failed bootstrap Job, delete it before retrying.
 A Job's pod template is immutable, so Helm does not rerun it. Define

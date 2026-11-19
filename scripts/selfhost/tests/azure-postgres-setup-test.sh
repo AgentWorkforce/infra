@@ -43,13 +43,20 @@ credentials_line="$(last_line_of 'write_credential_files')"
   || fail "credentials can be written before membership verification"
 pass "dedicated-owner rerun resumes after an interrupted owner transaction"
 
-secret_create_line="$(last_line_of 'create secret generic "$ADMIN_JOBS_SECRET"')"
-secret_cleanup_line="$(last_line_of 'remove_legacy_secret_keys')"
-[[ -n "$secret_create_line" && -n "$secret_cleanup_line" && "$secret_create_line" -lt "$secret_cleanup_line" ]] \
-  || fail "legacy live keys can be removed before the temporary Secret exists"
+prepare_body="$(awk '/^do_prepare-admin-jobs\(\)/{capture=1} capture{print} capture && /^}$/{exit}' "$SCRIPT")"
+remove_body="$(awk '/^do_remove-legacy-secret-keys\(\)/{capture=1} capture{print} capture && /^}$/{exit}' "$SCRIPT")"
+if grep -Fq 'remove_legacy_secret_keys' <<<"$prepare_body"; then
+  fail "legacy prepare removes rollback credentials before Helm succeeds"
+fi
+# The single quotes intentionally preserve the shell source text under test.
+# shellcheck disable=SC2016
+grep -Fq 'get secret "$ADMIN_JOBS_SECRET" -o name' <<<"$remove_body" \
+  || fail "post-success removal does not require the temporary Secret"
+grep -Fq 'remove_legacy_secret_keys' <<<"$remove_body" \
+  || fail "post-success removal does not remove the live administrator keys"
 grep -Fq 'patch secret "$secret" --type=merge' "$SCRIPT" \
-  || fail "legacy prepare does not remove live administrator keys"
-pass "legacy prepare creates the temporary Secret before removing live keys"
+  || fail "legacy post-success cleanup does not patch live administrator keys"
+pass "legacy keys remain through Helm and are removed only by post-success cleanup"
 
 finalize_guard="$(line_of '[[ -s "$LAYOUT_FILE" ]] || die "missing HoopDb layout marker: run')"
 finalize_read="$(line_of 'layout="$(<"$LAYOUT_FILE")"')"

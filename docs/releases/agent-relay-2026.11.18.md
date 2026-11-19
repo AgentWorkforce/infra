@@ -15,3 +15,9 @@ temporary `hoopdb-admin-jobs` Secret before Helm, retains the old long-lived
 keys until Helm, Jobs, and Deployments succeed, then removes those keys and the
 temporary Secret. Existing-install ownership transfer is a follow-up under
 #480.
+
+Cloud SQL and Azure legacy flows use the same rollback-safe ordering.
+`prepare-admin-jobs` creates only the temporary copy. After Helm, every Job and
+all Deployments succeed, run `remove-legacy-secret-keys`; on either success or
+failure run `delete-admin-jobs`. A failed upgrade therefore leaves the previous
+revision's long-lived keys intact while removing the temporary copy.

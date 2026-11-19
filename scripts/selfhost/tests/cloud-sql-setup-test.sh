@@ -73,6 +73,7 @@ case " $* " in
     fi
     ;;
   *" create secret generic "*) ;;
+  *" get secret hoopdb-admin-jobs -o name "*) printf 'secret/hoopdb-admin-jobs\n' ;;
   *" get secret agent-relay-secrets -o json "*) printf '{"data":{"HOOPDB_MIGRATION_URL":"b2xk"}}\n' ;;
   *" get secret search-indexer-owner -o json "*) printf '{"data":{"RELAYHISTORY_PIPELINE_CONSUMER_SECRET":"b2xk"}}\n' ;;
   *" patch secret "*) ;;
@@ -155,10 +156,14 @@ pass "dedicated-owner pre rerun finishes an interrupted pre and reuses saved pas
 MOCK_LAYOUT=legacy-admin "$TEST_BASH" "$SCRIPT" pre >/dev/null
 "$TEST_BASH" "$SCRIPT" prepare-admin-jobs >/dev/null
 grep -F 'create secret generic hoopdb-admin-jobs' "$LOG" >/dev/null || fail "legacy prepare did not create the temporary Secret"
+if grep -Fq 'patch secret agent-relay-secrets' "$LOG" || grep -Fq 'patch secret search-indexer-owner' "$LOG"; then
+  fail "legacy prepare removed rollback credentials before Helm succeeded"
+fi
+"$TEST_BASH" "$SCRIPT" remove-legacy-secret-keys >/dev/null
 before_migration=$(grep -n 'patch secret agent-relay-secrets' "$LOG" | head -1 | cut -d: -f1)
 before_search=$(grep -n 'patch secret search-indexer-owner' "$LOG" | head -1 | cut -d: -f1)
-[[ -n "$before_migration" && -n "$before_search" ]] || fail "legacy prepare did not remove both live administrator keys"
-pass "legacy prepare creates the temporary Secret then removes both live administrator keys"
+[[ -n "$before_migration" && -n "$before_search" ]] || fail "post-success cleanup did not remove both live administrator keys"
+pass "legacy keys remain through Helm and are removed only by post-success cleanup"
 
 # Terraform's chart_values pin sha256(server_ca_cert): the PEM with exactly one
 # trailing newline. The bundle written for the ConfigMap must be those bytes.

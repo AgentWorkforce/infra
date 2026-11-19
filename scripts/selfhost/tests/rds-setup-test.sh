@@ -139,6 +139,28 @@ diff -u \
 grep -q 'protected role membership edges:' "${MOCK_CAPTURE_DIR}/run.sh" || fail "pre omitted the protected-role membership census"
 pass "pre mode submits the membership-free dedicated-owner role graph"
 
+# These are exact upstream b96e1e1e inputs. Indented role DDL lives inside a
+# guarded DO block and is safe after the explicit existence check; only
+# top-level role DDL that would execute as hoopdb_owner must refuse.
+fixture_dir="${TEST_DIR}/fixtures/rds-post"
+[[ "$(sha256sum "$fixture_dir/session_read_api_role.sql" | cut -d' ' -f1)" == 8ab1906b39358947d2f4b6203d5daaf0fb9996bf3c57a4b7a4dba242c40de057 ]] \
+  || fail "session_read_api_role.sql fixture drifted from relayhistory-pipeline b96e1e1e"
+[[ "$(sha256sum "$fixture_dir/session_ingest_role.sql" | cut -d' ' -f1)" == b944c30a609fd8ad63d6c86424180c67a23fd8978d949b6e0340bb7b0a9e41a9 ]] \
+  || fail "session_ingest_role.sql fixture drifted from relayhistory-pipeline b96e1e1e"
+filter_role_fixture() {
+  local input=$1 role=$2 output=$3
+  sed "/^ALTER ROLE $role /d" "$input" >"$output"
+  ! grep -Eq '^(ALTER|CREATE)[[:space:]]+ROLE([[:space:]]|$)' "$output"
+}
+filter_role_fixture "$fixture_dir/session_read_api_role.sql" bulls96_read_api "$TEST_ROOT/read-filtered.sql" \
+  || fail "real read-role SQL was rejected because of guarded indented DDL"
+filter_role_fixture "$fixture_dir/session_ingest_role.sql" bulls96_session_ingest "$TEST_ROOT/ingest-filtered.sql" \
+  || fail "real ingest-role SQL was rejected"
+if filter_role_fixture "$fixture_dir/top-level-multiline-alter-role.sql" bulls96_read_api "$TEST_ROOT/bad-filtered.sql"; then
+  fail "top-level multi-line ALTER ROLE passed the owner filter"
+fi
+pass "post role filters accept guarded upstream SQL and reject executable top-level DDL"
+
 : >"${COMMAND_LOG}"
 MOCK_LAYOUT=dedicated-owner bash "${RDS_SETUP}" pre >/dev/null
 ! grep -q 'agent-relay-rds-pre-run' "${COMMAND_LOG}" || fail "dedicated-owner rerun changed the role graph"
@@ -171,6 +193,14 @@ grep -q "filtered session_read_api_role.sql still contains ALTER ROLE or CREATE 
   || fail "post does not fail closed if the read-role filter misses role DDL"
 grep -q "filtered session_ingest_role.sql still contains ALTER ROLE or CREATE ROLE" "${MOCK_CAPTURE_DIR}/run.sh" \
   || fail "post does not fail closed if the ingest-role filter misses role DDL"
+read_exists_line="$(grep -n "rolname='bulls96_read_api'" "${MOCK_CAPTURE_DIR}/run.sh" | head -1 | cut -d: -f1)"
+read_filter_line="$(grep -n 'sed .*session_read_api_role.sql' "${MOCK_CAPTURE_DIR}/run.sh" | head -1 | cut -d: -f1)"
+ingest_exists_line="$(grep -n "rolname='bulls96_session_ingest'" "${MOCK_CAPTURE_DIR}/run.sh" | head -1 | cut -d: -f1)"
+ingest_filter_line="$(grep -n 'sed .*session_ingest_role.sql' "${MOCK_CAPTURE_DIR}/run.sh" | head -1 | cut -d: -f1)"
+[[ -n "$read_exists_line" && -n "$read_filter_line" && "$read_exists_line" -lt "$read_filter_line" ]] \
+  || fail "read role is not proven to exist before its filtered SQL runs"
+[[ -n "$ingest_exists_line" && -n "$ingest_filter_line" && "$ingest_exists_line" -lt "$ingest_filter_line" ]] \
+  || fail "ingest role is not proven to exist before its filtered SQL runs"
 pass "post mode requires migration evidence and activates runtime roles"
 
 [[ -s "$STATE_DIR/passwords/bulls96_session_erase_search" ]] || fail "erase search password missing"
