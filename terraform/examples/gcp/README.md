@@ -96,6 +96,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | project\_id | GCP project. | `string` | n/a | yes |
 | region | GCP region. | `string` | n/a | yes |
 | sessions\_bucket\_name | Globally unique GCS bucket name for session objects. | `string` | n/a | yes |
+| admin\_secret\_kms\_key\_name | CMEK key for the Secret Manager secret that holds the Cloud SQL admin password (null: Google-managed, automatic replication). The key must be in var.region; the secret is then replicated to that region only. Grant the Secret Manager service agent (service-<project number>@gcp-sa-secretmanager.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: a secret's replication cannot be changed afterwards. | `string` | `null` | no |
 | deletion\_protection | Prevent deletion of Cloud SQL, Memorystore and Pub/Sub data resources. Disable only for a disposable proof environment. | `bool` | `true` | no |
 | desktop\_feed\_bucket\_name | Globally unique bucket for relay-control's signed Desktop feed (SELFHOST\_DESKTOP\_FEED\_GCS\_BUCKET). Empty disables it. | `string` | `""` | no |
 | desktop\_feed\_service\_account\_id | account\_id of the Google service account relay-control uses for the Desktop feed bucket (6-30 characters). | `string` | `"agent-relay-control"` | no |
@@ -108,6 +109,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | gke\_cluster\_name | Existing GKE cluster that runs agent-relay (only for enable\_search). | `string` | `null` | no |
 | gke\_node\_service\_account | Email of the GKE node pool's service account, granted roles/artifactregistry.reader on the mirror. Empty: the project's default Compute Engine service account (a node pool whose serviceAccount is "default"). | `string` | `""` | no |
 | gke\_use\_private\_endpoint | Reach the control plane on its private endpoint. | `bool` | `true` | no |
+| image\_mirror\_kms\_key\_name | CMEK key for the image mirror repository (null: Google-managed). Grant the Artifact Registry service agent (service-<project number>@gcp-sa-artifactregistry.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: changing it replaces the repository. | `string` | `null` | no |
 | image\_mirror\_repository | Artifact Registry repository for the release images (guide step 5), created in var.region. Empty: no repository and no grant. | `string` | `""` | no |
 | kms\_key\_name | CMEK key for Cloud SQL and the bucket (null: Google-managed). Grant the service agents on it first. | `string` | `null` | no |
 | labels | Labels for every resource that supports them. | `map(string)` | `{}` | no |
@@ -116,6 +118,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | notification\_channels | Cloud Monitoring notification channels for the pipeline alerts. | `list(string)` | `[]` | no |
 | pipeline\_message\_retention | Pub/Sub topic and subscription retention for the native Sessions pipeline. | `string` | `"604800s"` | no |
 | pipeline\_pubsub\_kms\_key\_name | Optional CMEK key for the native Sessions pipeline Pub/Sub topics. | `string` | `null` | no |
+| pipeline\_redis\_kms\_key\_name | CMEK key for the pipeline Redis instance at rest (null: Google-managed). Same region as the instance; grant the Memorystore service agent (service-<project number>@cloud-redis.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: changing it replaces the instance. | `string` | `null` | no |
 | pipeline\_redis\_memory\_size\_gb | Memorystore capacity for the native Sessions pipeline. | `number` | `5` | no |
 | pipeline\_redis\_reserved\_ip\_range | Optional PSA allocated range name for Memorystore. null lets Google choose from the connection. | `string` | `null` | no |
 | pipeline\_redis\_version | Memorystore Redis version. | `string` | `"REDIS_7_2"` | no |

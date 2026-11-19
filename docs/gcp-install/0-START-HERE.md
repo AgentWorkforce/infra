@@ -197,7 +197,9 @@ Either way, keep the state: upgrades and teardown need it.
   configures it on the cluster's VPC; then apply again.
 - **CMEK:** grant the Cloud SQL, Cloud Storage and Pub/Sub service agents
   `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the key first
-  (2-SERVICE-ACCOUNTS.md).
+  (2-SERVICE-ACCOUNTS.md). To use your own keys for everything, and to
+  encrypt Kubernetes Secrets with one (recommended), see
+  REGULATED-PROFILE.md.
 
 ## 5. Mirror the images to Artifact Registry
 

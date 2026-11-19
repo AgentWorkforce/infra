@@ -116,6 +116,7 @@ resource "google_redis_instance" "pipeline" {
   reserved_ip_range       = var.pipeline_redis_reserved_ip_range
   transit_encryption_mode = "SERVER_AUTHENTICATION"
   auth_enabled            = false
+  customer_managed_key    = var.pipeline_redis_kms_key_name
   deletion_protection     = var.deletion_protection
   labels                  = var.labels
 
