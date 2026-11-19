@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Serves the test CA for the RDS truststore; everything else goes to the real curl.
+out=""; url=""; args=("$@")
+for ((i=0;i<${#args[@]};i++)); do
+  case "${args[$i]}" in -o) out="${args[$((i+1))]}" ;; https://truststore.pki.rds.amazonaws.com/*) url="${args[$i]}" ;; esac
+done
+if [[ -n "$url" ]]; then
+  if [[ -n "$out" ]]; then cp "$TEST_CA" "$out"; else cat "$TEST_CA"; fi
+  exit 0
+fi
+exec /usr/bin/curl "$@"

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Minimal AWS Secrets Manager stand-in: secrets are JSON files under $SM_DIR.
+set -euo pipefail
+[[ "$1" == secretsmanager ]] || { echo "aws shim: only secretsmanager is emulated" >&2; exit 2; }
+op="$2"; shift 2
+id="" name="" str="" query="" 
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --secret-id) id="$2"; shift 2 ;; --name) name="$2"; shift 2 ;;
+    --secret-string) str="$2"; shift 2 ;; --query) query="$2"; shift 2 ;;
+    --region|--output) shift 2 ;; *) shift ;;
+  esac
+done
+arn_of() { printf 'arn:aws:secretsmanager:us-west-2:000000000000:secret:%s' "$1"; }
+key_of() { local v="${1##*:secret:}"; printf '%s' "${v//\//_}"; }
+read_str() { if [[ "$1" == file://* ]]; then cat "${1#file://}"; else printf '%s' "$1"; fi; }
+case "$op" in
+  describe-secret) f="$SM_DIR/$(key_of "$id")"; [[ -f "$f" ]] || { echo "ResourceNotFoundException" >&2; exit 254; }; arn_of "$id" ;;
+  create-secret) f="$SM_DIR/$(key_of "$name")"; [[ ! -f "$f" ]] || { echo "ResourceExistsException" >&2; exit 254; }; read_str "$str" > "$f"; arn_of "$name" ;;
+  put-secret-value) f="$SM_DIR/$(key_of "$id")"; [[ -f "$f" ]] || exit 254; read_str "$str" > "$f"; echo '{}' ;;
+  get-secret-value) f="$SM_DIR/$(key_of "$id")"; [[ -f "$f" ]] || { echo "ResourceNotFoundException" >&2; exit 254; }; cat "$f" ;;
+  *) echo "aws shim: unsupported $op" >&2; exit 2 ;;
+esac
