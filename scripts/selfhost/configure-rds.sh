@@ -216,7 +216,7 @@ if [[ "$RESET" == 1 ]]; then
           envFrom: [ { secretRef: { name: "agent-relay-db-reset" } } ],
           env: [ { name: "PGHOST", value: $host }, { name: "PGPORT", value: "5432" }, { name: "PGDATABASE", value: "postgres" },
                  { name: "PGSSLMODE", value: "verify-full" }, { name: "PGSSLROOTCERT", value: "/ca/ca.crt" }, { name: "HOME", value: "/tmp" } ],
-          command: ["sh", "-c", "set -e; v=$(psql -XAtc \"select current_setting(\u0027server_version_num\u0027)\"); if [ \"$v\" -lt 160000 ]; then echo PG_TOO_OLD $v; exit 3; fi; for db in relaycontrol relaycast hoopdb; do psql -X -v ON_ERROR_STOP=1 -c \"DROP DATABASE IF EXISTS $db WITH (FORCE)\"; echo dropped $db; done"] } ] } } } }' \
+          command: ["sh", "-c", "set -e; v=$(psql -XAtc \"select current_setting(\u0027server_version_num\u0027)\"); if [ \"$v\" -lt 160000 ]; then echo PG_TOO_OLD $((v/10000)); exit 3; fi; for db in relaycontrol relaycast hoopdb; do psql -X -v ON_ERROR_STOP=1 -c \"DROP DATABASE IF EXISTS $db WITH (FORCE)\"; echo dropped $db; done"] } ] } } } }' \
     | k apply -f - >/dev/null
   if ! k wait --for=condition=complete job/agent-relay-db-reset --timeout=300s >/dev/null; then
     out="$(k logs job/agent-relay-db-reset --tail=20 2>/dev/null | grep -v -i password || true)"

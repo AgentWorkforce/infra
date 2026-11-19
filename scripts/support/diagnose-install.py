@@ -93,6 +93,65 @@ HOOP_SQL = """SELECT json_build_object(
  'sessions_schema', EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='sessions')
 );"""
 
+# Ingest proof: a desktop upload lands an object in S3 and a pointer row in
+# sessions.session_index. Only counts, an age and booleans leave the database
+# path; the latest bucket/key stay in memory for an optional S3 HEAD.
+INGEST_TABLE_SQL = """SELECT json_build_object(
+ 'present', to_regclass('sessions.session_index') IS NOT NULL,
+ 'forced_rls', coalesce((SELECT relforcerowsecurity FROM pg_class WHERE oid=to_regclass('sessions.session_index')), false)
+);"""
+INGEST_SQL = """SELECT json_build_object(
+ 'rows', (SELECT count(*) FROM sessions.session_index),
+ 'pointers', (SELECT count(*) FROM sessions.session_index WHERE bucket IS NOT NULL AND manifest_key IS NOT NULL AND deleted_at IS NULL),
+ 'latest_age_s', (SELECT floor(extract(epoch FROM now() - max(created_at)))::bigint FROM sessions.session_index),
+ 'latest', (SELECT json_build_object('bucket',bucket,'key',manifest_key) FROM sessions.session_index
+            WHERE bucket IS NOT NULL AND manifest_key IS NOT NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1)
+);"""
+
+
+def ingest_checks(options, credential, report):
+    table = psql(credential, INGEST_TABLE_SQL, options.timeout, options.ca_file)
+    if not table.get('present'):
+        report.unknown('ingest.pointers', 'session-index-missing')
+        return
+    if table.get('forced_rls'):
+        report.unknown('ingest.pointers', 'forced-row-level-security-hides-rows-from-owner')
+        return
+    data = psql(credential, INGEST_SQL, options.timeout, options.ca_file)
+    rows, pointers, age = int(data.get('rows') or 0), int(data.get('pointers') or 0), data.get('latest_age_s')
+    if not rows:
+        report.add('ingest.pointers', 'UNKNOWN', 'No sessions ingested yet.',
+                   'Sign in with the desktop app, start a Claude/Codex session, wait a few minutes, then rerun.')
+        return
+    when = (' Latest arrived '+(str(int(age)//60)+' min' if age is not None and int(age) >= 60 else str(age)+' s')+' ago.') if age is not None else ''
+    report.test('ingest.pointers', pointers > 0,
+                str(rows)+' session row(s), '+str(pointers)+' with an S3 object pointer.'+when,
+                'Rows without S3 pointers: check the ingest edge logs and its S3 (locker) bucket access.')
+    latest = data.get('latest') or {}
+    if not (latest.get('bucket') and latest.get('key')) or getattr(options, 'no_s3_check', False):
+        return
+    try:
+        result = subprocess.run(['aws', 's3api', 'head-object', '--bucket', latest['bucket'], '--key', latest['key'],
+                                 '--output', 'json'], text=True, capture_output=True, timeout=options.timeout)
+        err = result.stderr
+        if result.returncode == 0:
+            report.add('ingest.s3-object', 'PASS', 'The latest pointer\'s object exists in S3.')
+        elif '(404)' in err or 'Not Found' in err:
+            report.add('ingest.s3-object', 'FAIL', 'The latest pointer\'s object was not found in S3.',
+                       'Check the ingest edge S3 (locker) bucket and region; the pointer was written but the object is missing.')
+        elif '(403)' in err or 'Forbidden' in err or 'AccessDenied' in err:
+            report.unknown('ingest.s3-object', 'your-aws-identity-cannot-read-the-bucket')
+        elif 'credentials' in err.lower() or 'ExpiredToken' in err or 'token' in err.lower():
+            report.unknown('ingest.s3-object', 'no-valid-aws-credentials-on-this-machine')
+        else:
+            report.unknown('ingest.s3-object', 'aws-cli-error')
+    except FileNotFoundError:
+        report.unknown('ingest.s3-object', 'aws-cli-not-installed')
+    except subprocess.TimeoutExpired:
+        report.unknown('ingest.s3-object', 'timeout')
+    finally:
+        latest.clear()
+
 
 class DiagnosticError(Exception):
     """Only fixed category strings may be emitted from this exception."""
@@ -474,7 +533,9 @@ def database_checks(options, credentials, report):
                             'Login cannot assume the database owner role.', 'Have the DBA review inherited and SET-role membership paths; Relaycast migrations must own the public schema without owning the database.')
                 if SLOTS[slot][4]=='hoop':
                     report.test('database.'+slot+'.sessions-usage',identity['sessions_usage'],
-                                'Runtime has USAGE on the sessions schema.', 'Check migrations and post-migration phase 2 role activation/grants.')
+                                'Runtime has USAGE on the sessions schema.',
+                                'The search-indexer bootstrap Job grants this after it reaches OpenSearch: check that Job and the OpenSearch URL/access.'
+                                if slot=='search-runtime' else 'Check migrations and post-migration phase 2 role activation/grants.')
             if slot=='control-owner':
                 report.test('control.database-owner',identity['database_owner']==identity['user'],
                             'Control database is owned by its migration login.', 'Review the control database phase 1 bootstrap and the owner URL.')
@@ -502,6 +563,7 @@ def database_checks(options, credentials, report):
             if slot=='hoop-owner':
                 for check,value in psql(credential,HOOP_SQL,options.timeout,options.ca_file).items():
                     report.test('hoop.'+check,value is True,'HoopDb prerequisite: '+check+'.','Check phase 1 extensions and migration completion before phase 2 login activation.')
+                ingest_checks(options,credential,report)
         except (DiagnosticError,KeyError,TypeError,AttributeError) as exc:
             category = str(exc) if isinstance(exc,DiagnosticError) else 'invalid-response'
             if category in ('authentication','role-missing','database-missing'):
@@ -680,6 +742,7 @@ def parse_args(argv=None):
     for group in ('control','cast','hoop'):
         parser.add_argument('--'+group+'-database',help='Expected database name, including custom names.')
     parser.add_argument('--values',type=Path,nargs='*',help='Filled-in Helm values file(s) to lint (default: values*.yaml here).')
+    parser.add_argument('--no-s3-check',action='store_true',help='Skip the S3 HEAD of the latest ingested object.')
     parser.add_argument('--timeout',type=int,default=20)
     parser.add_argument('--output',type=Path,help='New JSON report file, mode 0600; never overwrites (default: ./install-diagnostic-<time>.json).')
     options = parser.parse_args(argv)

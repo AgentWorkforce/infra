@@ -165,6 +165,34 @@ class CredentialTests(unittest.TestCase):
                     self.assertIn('No database credentials found', text)
                     self.assertIn('/<region>/', text)
 
+    def test_ingest_checks(self):
+        cred = {'host':'h','port':'5432','user':'hoopdb_owner','password':'p','database':'hoopdb','params':{}}
+        def run_with(results, s3=None):
+            report = diag.Report()
+            calls = iter(results)
+            with mock.patch.object(diag, 'psql', side_effect=lambda *a, **k: next(calls)), \
+                 mock.patch.object(diag.subprocess, 'run', side_effect=s3 or (lambda *a, **k: SimpleNamespace(returncode=0, stderr=''))):
+                diag.ingest_checks(options(), cred, report)
+            return {c['check']: c for c in report.checks}
+        none = run_with([{'present': True, 'forced_rls': False}, {'rows': 0, 'pointers': 0, 'latest_age_s': None, 'latest': None}])
+        self.assertEqual(none['ingest.pointers']['status'], 'UNKNOWN')
+        self.assertIn('No sessions ingested yet', none['ingest.pointers']['detail'])
+        latest = {'bucket': 'secret-bucket', 'key': 'org/ws/secret-key.json'}
+        ok = run_with([{'present': True, 'forced_rls': False}, {'rows': 3, 'pointers': 3, 'latest_age_s': 120, 'latest': dict(latest)}])
+        self.assertEqual(ok['ingest.pointers']['status'], 'PASS'); self.assertIn('2 min', ok['ingest.pointers']['detail'])
+        self.assertEqual(ok['ingest.s3-object']['status'], 'PASS')
+        self.assertNotIn('secret', json.dumps(ok))
+        for err, status in (('An error occurred (404) when calling the HeadObject operation: Not Found', 'FAIL'),
+                            ('An error occurred (403) when calling the HeadObject operation: Forbidden', 'UNKNOWN'),
+                            ('Unable to locate credentials. You can configure credentials', 'UNKNOWN')):
+            r = run_with([{'present': True, 'forced_rls': False}, {'rows': 1, 'pointers': 1, 'latest_age_s': 5, 'latest': dict(latest)}],
+                         s3=lambda *a, err=err, **k: SimpleNamespace(returncode=255, stderr=err))
+            self.assertEqual(r['ingest.s3-object']['status'], status, err)
+        missing = run_with([{'present': False, 'forced_rls': False}])
+        self.assertEqual(missing['ingest.pointers']['status'], 'UNKNOWN')
+        forced = run_with([{'present': True, 'forced_rls': True}])
+        self.assertIn('row-level', forced['ingest.pointers']['detail'])
+
     def test_secret_manifest_args(self):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             diag.parse_args(['--scope','database','--secret-dir','a','--secret-manifests','b'])
