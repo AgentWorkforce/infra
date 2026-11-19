@@ -178,12 +178,19 @@ class NativeControlTests(unittest.TestCase):
         current_core = deepcopy(current)
         current_core["/readyz"]["capabilities"].update(usage=False, launch=False)
         self.assertEqual(run(current_core).returncode, 0)
-        for kind in ("session-delete-enabled", "session-delete-nonboolean", "enrollment-keys-disabled", "enrollment-keys-nonboolean"):
-            changed = deepcopy(current)
+        # Shape at relay-control 0.5.35 (source b985c6f): enrollment_self_mint is true unless self-renewal is turned off.
+        newer = deepcopy(current)
+        newer["/readyz"]["capabilities"].update(enrollment_self_mint=True)
+        self.assertEqual(run(newer, ["usage", "launch"]).returncode, 0)
+        for kind in ("session-delete-enabled", "session-delete-nonboolean", "enrollment-keys-disabled", "enrollment-keys-nonboolean",
+                "self-mint-disabled", "self-mint-nonboolean"):
+            changed = deepcopy(newer)
             if kind == "session-delete-enabled": changed["/readyz"]["capabilities"]["session_delete"] = True
             if kind == "session-delete-nonboolean": changed["/readyz"]["capabilities"]["session_delete"] = 0
             if kind == "enrollment-keys-disabled": changed["/readyz"]["capabilities"]["enrollment_keys"] = False
             if kind == "enrollment-keys-nonboolean": changed["/readyz"]["capabilities"]["enrollment_keys"] = 1
+            if kind == "self-mint-disabled": changed["/readyz"]["capabilities"]["enrollment_self_mint"] = False
+            if kind == "self-mint-nonboolean": changed["/readyz"]["capabilities"]["enrollment_self_mint"] = 1
             with self.subTest(capability=kind):
                 refused = run(changed, ["usage", "launch"])
                 self.assertNotEqual(refused.returncode, 0)

@@ -77,14 +77,16 @@ let raw='';process.stdin.on('data',b=>raw+=b);process.stdin.on('end',async()=>{
   const health=await get('/healthz',false),ready=await get('/readyz',false);
   if(health.status!=='ok'&&health.ok!==true)throw Error('health');
   const features=x.selectedFeatures??[], disabled=['chief','flows','relayfile'];
-  const known=[...disabled,'usage','launch','usage_people','events_shim','session_delete','enrollment_keys'];
+  const always=['enrollment_keys','enrollment_self_mint'];
+  const known=[...disabled,'usage','launch','usage_people','events_shim','session_delete',...always];
   if(!Array.isArray(features)||features.some(v=>!['usage','launch'].includes(v))||new Set(features).size!==features.length)throw Error('selected-features');
   // Newer pins report known disabled capabilities that older pins omit. session_delete follows the erase
-  // wiring, which no kind profile enables, so it must be false; enrollment_keys is always true when reported.
+  // wiring, which no kind profile enables, so it must be false. enrollment_keys is always true when reported,
+  // and so is enrollment_self_mint (0.5.35 on): no kind profile sets SELFHOST_ENROLLMENT_SELF_RENEWAL=false.
   if(!ready.capabilities||Object.keys(ready.capabilities).some(v=>!known.includes(v))||
    disabled.some(v=>ready.capabilities[v]!==false)||features.some(v=>ready.capabilities[v]!==true)||
-   Object.hasOwn(ready.capabilities,'enrollment_keys')&&ready.capabilities.enrollment_keys!==true||
-   known.some(v=>v!=='enrollment_keys'&&!features.includes(v)&&Object.hasOwn(ready.capabilities,v)&&ready.capabilities[v]!==false))throw Error('optional-features');
+   always.some(v=>Object.hasOwn(ready.capabilities,v)&&ready.capabilities[v]!==true)||
+   known.some(v=>!always.includes(v)&&!features.includes(v)&&Object.hasOwn(ready.capabilities,v)&&ready.capabilities[v]!==false))throw Error('optional-features');
   if(ready.status!=='ready'||!ready.introspection?.enabled||
    !ready.introspection.audiences?.includes(x.historyOrigin))throw Error('ready');
   const orgs=(await get('/api/v1/organizations')).organizations;
