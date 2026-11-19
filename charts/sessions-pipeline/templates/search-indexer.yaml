@@ -46,7 +46,7 @@
 {{- $stagedOn := $stagedCfg.enabled -}}
 {{- if not (or (kindIs "invalid" $stagedOn) (kindIs "bool" $stagedOn)) }}{{ fail "searchIndexer.stagedReconcile.enabled must be null, true or false" }}{{ end -}}
 {{- if and (eq $stagedOn true) (eq $streamingOn false) }}{{ fail "searchIndexer.stagedReconcile.enabled=true needs streaming on; it cannot be combined with searchIndexer.streaming.enabled=false (the consumer refuses to start)" }}{{ end -}}
-{{- if and (eq $streamingOn true) (dig "outputFacts" "enabled" false $c) }}{{ fail "searchIndexer.streaming.enabled=true cannot be combined with searchIndexer.outputFacts.enabled=true (the consumer refuses to start)" }}{{ end -}}
+{{- if and (eq $streamingOn true) (dig "outputFacts" "enabled" false $c) (eq $stagedOn false) }}{{ fail "searchIndexer.streaming.enabled=true cannot be combined with searchIndexer.outputFacts.enabled=true while searchIndexer.stagedReconcile.enabled=false (the consumer refuses to start); leave stagedReconcile unset or true so the staged run carries the facts" }}{{ end -}}
 {{- if or $streaming.maxReadBytes $streaming.maxReadEvents -}}
 {{- $mib := 1048576 -}}
 {{- $scopeBytes := mul 64 $mib -}}
