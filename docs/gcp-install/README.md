@@ -12,6 +12,9 @@ TLS choice, first administrator and required labels. Agent Relay prepares the
 Terraform inputs, Helm values and production Desktop identity for your review.
 Private keys and origin-header values stay in your approved secret path.
 
+**Using Cloudflare, a corporate VPN and vendor MCP?** Use the
+[VPN + Cloudflare profile](CLOUDFLARE-VPN.md) for the settings and ownership.
+
 **Cluster prerequisite:** the platform root uses existing GKE with Workload
 Identity and enforced NetworkPolicies, and a VPC with Private Services Access.
 If absent, the approved operator must provision them first. The

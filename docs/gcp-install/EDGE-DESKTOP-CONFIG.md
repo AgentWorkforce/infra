@@ -22,6 +22,10 @@ identity, the feed bucket and the signer's Ed25519 public key (canonical
 base64 of 32 bytes). Keep private keys, publisher credentials and origin
 header values in the approved secret-management system.
 
+For Cloudflare with corporate VPN access, use the
+[VPN + Cloudflare profile](CLOUDFLARE-VPN.md) and its
+[input template](edge-site-cloudflare-vpn.example.json).
+
 The `edge` options are:
 
 | Setting | Default | Behavior |
