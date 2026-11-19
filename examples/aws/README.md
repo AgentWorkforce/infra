@@ -28,6 +28,9 @@ Check the example renders against the release:
 
 ```sh
 git checkout agent-relay-2026.11.18
+helm repo add cnpg https://cloudnative-pg.github.io/charts
+helm repo add minio https://charts.min.io/
+helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
 helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay
 helm template agent-relay charts/agent-relay -n agent-relay \
   -f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-native.yaml \
