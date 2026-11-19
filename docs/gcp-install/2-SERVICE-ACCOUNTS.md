@@ -99,14 +99,16 @@ The person running 0-START-HERE.md needs, in the project:
 
 ## Who can read the Secrets afterwards
 
-Two of the install's Kubernetes Secrets (`agent-relay-secrets` and
-`search-indexer-owner`) hold the Cloud SQL administrator's URL, which the
-migration and bootstrap Jobs use. Anyone who can read Secrets in the
-namespace, or start a pod there, can use it. `roles/container.developer` and
-`roles/container.admin` on the project grant exactly that, in every
-namespace. Keep those roles to the people who install and upgrade, give
-everyone else `roles/container.clusterViewer` plus a Kubernetes binding to the
-built-in `view` role, and follow
+On a fresh install, `agent-relay-secrets` and `search-indexer-owner` hold the
+plain `hoopdb_owner` URL used by migration and bootstrap Jobs, never the Cloud
+SQL administrator URL. An existing administrator-owned install creates the
+administrator URL only in temporary `hoopdb-admin-jobs` while those Jobs run.
+Anyone who can read Secrets in the namespace, or start a pod there, can use
+whichever database credential is present. `roles/container.developer` and
+`roles/container.admin` on the project grant exactly that, in every namespace.
+Keep those roles to the people who install and upgrade, give everyone else
+`roles/container.clusterViewer` plus a Kubernetes binding to the built-in
+`view` role, and follow
 [selfhost-secret-access.md](../selfhost-secret-access.md) for the example
 Role and RoleBinding and the commands that check who has access.
 

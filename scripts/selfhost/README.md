@@ -48,6 +48,12 @@ export STATE_DIR="$PWD/.private/agent-relay-install"
 scripts/selfhost/rds-setup.sh pre
 ```
 
+Normally `pre` creates `hoopdb`. If the reviewed first-install Terraform
+configuration made literal `hoopdb` the provider-created initial database, run
+the first command normally. The script proves the database has neither the
+`sessions` schema nor HoopDb roles before activation; this classification is
+not an ownership-transfer switch.
+
 Merge the generated `secret-files/` entries with the other release-packet
 secrets, then create the named Kubernetes Secrets before installing the chart.
 Do not commit or archive the state directory in the source bundle. One RDS
@@ -98,15 +104,18 @@ kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout restart \
   deploy/agent-relay-search-indexer
 ```
 
-Run `refresh-admin` immediately before every later upgrade, then update the
-`agent-relay-secrets` and `search-indexer-owner` Secrets from the rewritten
-files. RDS rotates the administrator password (every 7 days by default) and
-the HoopDb migration-owner URL carries it. Do not re-run `pre` for this: once
-`post` has given the session roles LOGIN, `pre` refuses (nothing changed).
-`refresh-admin` touches no database role and needs no services image.
+For an existing administrator-owned install, run `refresh-admin` immediately
+before every later upgrade. It rewrites only the local
+`secret-files/hoopdb-admin-jobs` inputs with the current RDS administrator
+password; never publish them into `agent-relay-secrets` or
+`search-indexer-owner`. Create the temporary `hoopdb-admin-jobs` Secret for
+the migration/bootstrap Jobs, then delete it after Helm, Jobs and Deployments
+succeed. Do not re-run `pre` for this: once `post` has given the session roles
+LOGIN, `pre` classifies and preserves the legacy layout. `refresh-admin`
+touches no database role and needs no services image.
 `agent-relay-upgrade.sh --rds-setup` (implied by `--profile eks-rds-native`)
-does both steps before its `helm upgrade`, and on `--first-install` runs
-`post` after the HoopDb migration. For
+performs that temporary-Secret flow around `helm upgrade`, and on
+`--first-install` runs `post` after the HoopDb migration. For
 `pre` and `post`, the services image and optional PostgreSQL client image must
 be immutable digest references.
 

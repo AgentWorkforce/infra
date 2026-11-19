@@ -185,6 +185,13 @@ test "$gcp_base" = "$(helm template ar charts/agent-relay -n agent-relay --no-ho
 eks_base=$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-eks.yaml)
 test "$eks_base" = "$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks -f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-native.yaml)" \
   || { echo "values-eks-native.yaml must be a no-op on values-eks.yaml" >&2; exit 1; }
+# The public RDS example is also the copy source for operator site values. Its
+# dedicated-owner layout must survive the base + compatibility overlay render.
+eks_example=$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks \
+  -f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-native.yaml \
+  -f examples/aws/values.yaml)
+test "$(yq -N 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/component" == "hoopdb-migrate") | .spec.template.spec.containers[0].env[] | select(.name == "HOOPDB_RDS_LAYOUT") | .value' <<<"$eks_example")" = separate-database \
+  || { echo "AWS example must render exactly one HOOPDB_RDS_LAYOUT=separate-database in the migrate Job" >&2; exit 1; }
 for base_out in "$gcp_base" "$eks_base"; do
   test "$(yq 'select(.kind == "Deployment" and .metadata.name == "relay-control") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYHISTORY_BACKEND") | .value' <<<"$base_out")" = native \
     || { echo "base EKS/GCP profile does not select Control's native History backend" >&2; exit 1; }
