@@ -128,6 +128,8 @@ case "$*" in
   *"get jobs"*)
     n=$(cat "$FAKE/jobs-calls" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE/jobs-calls"
     f="$FAKE/jobs-$n.json"; [ -f "$f" ] || f="$FAKE/jobs.json"; [ -f "$f" ] && cat "$f" || echo '{"items": []}' ;;
+  *"logs job/"*) printf 'applied 0049_x\nconnecting postgresql://u:JOBSECRET@h/db\nDB_PASSWORD=JOBPW2\nmigrations done, exit 0\n' ;;
+  *"get pods"*) echo '{"items": [{"metadata": {"name": "web-1"}, "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}], "containerStatuses": [{"restartCount": 2, "imageID": "img@sha256:abc"}]}}]}' ;;
   *"get deploy,statefulset"*) echo '{"items": [{"kind": "Deployment", "metadata": {"name": "web"}, "spec": {"template": {"spec": {"containers": [{"image": "img:1"}]}}}}]}' ;;
   *"apply --server-side --field-manager=ci-deploy-secret-"*)
     echo "$*" | grep -o 'field-manager=[^ ]*' >> "$FAKE/managers"; cat >> "$FAKE/applied-secrets" ;;
@@ -366,6 +368,24 @@ class ScriptTest(unittest.TestCase):
         p, _ = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7", JOB_TIMEOUT_SECONDS="60")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertGreaterEqual(int((self.fake / "jobs-calls").read_text()), 2)
+
+    def test_apply_records_job_logs_and_pods_without_credentials(self):
+        self.render({"a": 2}, DEPLOY)
+        (self.fake / "jobs.json").write_text(json.dumps({"items": [self.job("done")]}))
+        p, report = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7", JOB_TIMEOUT_SECONDS="60")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        jobs = (report / "jobs.txt").read_text()
+        self.assertIn("### job migrate-done", jobs)
+        self.assertIn("applied 0049_x", jobs)
+        self.assertIn("migrations done, exit 0", jobs)
+        self.assertEqual(jobs.count("[line withheld: may contain a credential]"), 2)
+        for f in report.rglob("*"):
+            if f.is_file():
+                self.assertNotIn("JOBSECRET", f.read_text(errors="ignore"))
+                self.assertNotIn("JOBPW2", f.read_text(errors="ignore"))
+        self.assertIn("job migrate-done: complete", p.stderr)
+        pod = json.loads(next(l for l in (report / "state.jsonl").read_text().splitlines() if '"pod"' in l))
+        self.assertEqual(pod, {"pod": "web-1", "ready": True, "restarts": 2, "imageIDs": ["img@sha256:abc"]})
 
     def test_apply_fails_on_failed_release_job(self):
         self.render({"a": 2}, DEPLOY)

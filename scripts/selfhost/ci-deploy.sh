@@ -227,7 +227,24 @@ record_state(){ # versions now running, for the run record
     helm status "$r" -n "$ns" -o json | jq -c '{release: .name, revision: .version, status: .info.status, chart: (.chart.metadata.name + "-" + .chart.metadata.version), app: .chart.metadata.appVersion}'
     kubectl -n "$ns" get deploy,statefulset -l "app.kubernetes.io/instance=$r" -o json |
       jq -c '.items[] | {kind, name: .metadata.name, images: [.spec.template.spec.containers[].image]}'
+    kubectl -n "$ns" get pods -l "app.kubernetes.io/instance=$r" -o json |
+      jq -c '.items[] | select(.status.phase == "Running") | {pod: .metadata.name, ready: ((.status.conditions // []) | any(.type == "Ready" and .status == "True")),
+        restarts: ([.status.containerStatuses[]?.restartCount] | add), imageIDs: [.status.containerStatuses[]?.imageID]}'
   done | tee "$REPORT_DIR/state.jsonl" >&2
+}
+
+# job_proof <ns> <jobs json>: record each completed Job and the last lines of its log (migration ids, exit),
+# so the run itself proves what ran. Logs go to the run report only. Lines that look like they carry a credential
+# (a URL with userinfo, or password/secret/token=) are replaced, never copied.
+job_proof(){
+  local ns=$1 name
+  for name in $(jq -r '.[].name' <<<"$2"); do
+    log "job $name: complete"
+    { echo "### job $name"
+      kubectl -n "$ns" logs "job/$name" --all-containers --tail="${JOB_LOG_LINES:-40}" 2>&1 |
+        sed -E '/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/[:space:]]*@|([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])[^[:space:]]*[=:]/c\[line withheld: may contain a credential]' || true
+      echo; } >> "$REPORT_DIR/jobs.txt"
+  done
 }
 
 # wait_release_jobs <release> <ns> <RFC3339 start> <timeout seconds>: helm --wait does not wait for plain Jobs
@@ -244,7 +261,7 @@ wait_release_jobs(){
     failed=$(jq -r '[.[] | select(.failed) | .name] | join(" ")' <<<"$jobs")
     [ -z "$failed" ] || { log "jobs failed: $failed"; return 1; }
     active=$(jq -r '[.[] | select((.done or .failed) | not) | .name] | join(" ")' <<<"$jobs")
-    [ -n "$active" ] || return 0
+    [ -n "$active" ] || { job_proof "$ns" "$jobs"; return 0; }
     [ $SECONDS -lt $deadline ] || { log "jobs still running at the timeout: $active"; return 1; }
     sleep "${POLL_SECONDS:-10}"
   done
