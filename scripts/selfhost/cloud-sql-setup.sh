@@ -352,7 +352,7 @@ administrator_owns=0
 if [ "$owner" = "$PGUSER" ]; then
   administrator_owns=1
 elif [ "$owner" = cloudsqlsuperuser ]; then
-  cloudsql_admin_member="$($Q -d postgres -c "select pg_has_role(current_user, 'cloudsqlsuperuser', 'MEMBER')")" \
+  cloudsql_admin_member="$($Q -d postgres -c "select pg_has_role(current_user, 'cloudsqlsuperuser', 'MEMBER') and pg_has_role(current_user, 'cloudsqlsuperuser', 'USAGE')")" \
     || { echo 'could not inspect Cloud SQL administrator membership; refusing' >&2; exit 3; }
   [ "$cloudsql_admin_member" = t ] && administrator_owns=1
 fi
@@ -454,7 +454,7 @@ administrator_owns=0
 if [ "$owner" = "$PGUSER" ]; then
   administrator_owns=1
 elif [ "$owner" = cloudsqlsuperuser ]; then
-  cloudsql_admin_member="$($Q -d postgres -c "select pg_has_role(current_user, 'cloudsqlsuperuser', 'MEMBER')")" \
+  cloudsql_admin_member="$($Q -d postgres -c "select pg_has_role(current_user, 'cloudsqlsuperuser', 'MEMBER') and pg_has_role(current_user, 'cloudsqlsuperuser', 'USAGE')")" \
     || { echo 'could not inspect Cloud SQL administrator membership; refusing' >&2; exit 3; }
   [ "$cloudsql_admin_member" = t ] && administrator_owns=1
 fi

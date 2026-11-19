@@ -55,8 +55,12 @@ fi
 case "$*" in
   *"select 1 from pg_database where datname='hoopdb'"*) [[ "${MOCK_DB_EXISTS:-1}" == 1 ]] && printf '1\n' ;;
   *"select pg_get_userbyid(datdba) from pg_database where datname='hoopdb'"*) printf '%s\n' "${MOCK_DB_OWNER:-hoopdb_owner}" ;;
-  *"select pg_has_role(current_user, 'cloudsqlsuperuser', 'MEMBER')"*)
-    if [[ "${MOCK_CLOUDSQL_ADMIN_MEMBER:-0}" == 1 ]]; then printf 't\n'; else printf 'f\n'; fi
+  *"select pg_has_role(current_user, 'cloudsqlsuperuser', 'MEMBER') and pg_has_role(current_user, 'cloudsqlsuperuser', 'USAGE')"*)
+    if [[ "${MOCK_CLOUDSQL_ADMIN_MEMBER:-0}" == 1 && "${MOCK_CLOUDSQL_ADMIN_USAGE:-${MOCK_CLOUDSQL_ADMIN_MEMBER:-0}}" == 1 ]]; then
+      printf 't\n'
+    else
+      printf 'f\n'
+    fi
     ;;
   *"select 1 from pg_roles where rolname='sessions_pipeline_runtime'"*)
     if [[ "${MOCK_RUNTIME_ROLE_EXISTS:-0}" == 1 ]]; then printf '1\n'; fi
@@ -334,6 +338,12 @@ probe_out="$(PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloudsqlsuperuser
 [[ "$probe_out" == HOOPDB_LAYOUT=unknown-owner ]] \
   || fail "Cloud SQL non-member probe classified as: $probe_out"
 pass "Cloud SQL probe refuses cloudsqlsuperuser ownership for a non-member"
+probe_out="$(PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloudsqlsuperuser \
+  MOCK_CLOUDSQL_ADMIN_MEMBER=1 MOCK_CLOUDSQL_ADMIN_USAGE=0 MOCK_PRISTINE=1 sh "$probe")" \
+  || fail "Cloud SQL NOINHERIT-member probe did not return a refusal classification"
+[[ "$probe_out" == HOOPDB_LAYOUT=unknown-owner ]] \
+  || fail "Cloud SQL NOINHERIT-member probe classified as: $probe_out"
+pass "Cloud SQL probe refuses membership whose authority is not inherited"
 if PGUSER=cloud-admin MOCK_PSQL_FAIL_DATABASE=1 sh "$probe" >"$ROOT/probe-fail.log" 2>&1; then
   fail "failed Cloud SQL pg_database query took a layout path"
 fi
@@ -369,6 +379,18 @@ if grep -Fq 'stdin ' "$SQL_LOG"; then
   fail "Cloud SQL non-member setup reached mutating SQL"
 fi
 pass "Cloud SQL setup Job refuses cloudsqlsuperuser ownership for a non-member"
+
+: >"$SQL_LOG"
+if env PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloudsqlsuperuser \
+    MOCK_CLOUDSQL_ADMIN_MEMBER=1 MOCK_CLOUDSQL_ADMIN_USAGE=0 MISSING_STATE_NAMES='' ACTIVATION_RETRY=0 \
+    sh "$CAPTURE/run.sh" >"$ROOT/job-noinherit-member.log" 2>&1; then
+  fail "Cloud SQL setup Job accepted a NOINHERIT cloudsqlsuperuser member"
+fi
+grep -Fq 'HoopDb owner is neither the Cloud SQL administrator nor hoopdb_owner' "$ROOT/job-noinherit-member.log" \
+  || fail "Cloud SQL NOINHERIT-member setup refusal was unclear"
+grep -Eq 'ALTER ROLE control_owner|CREATE ROLE agent_relay_hoopdb_role_creator|ALTER DATABASE hoopdb' "$SQL_LOG" \
+  && fail "Cloud SQL NOINHERIT-member setup reached mutating SQL"
+pass "Cloud SQL setup Job refuses membership whose authority is not inherited"
 
 : >"$SQL_LOG"
 job_out="$(env PGUSER=cloud-admin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=cloud-admin \
