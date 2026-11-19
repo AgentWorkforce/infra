@@ -84,6 +84,7 @@ module "postgres" {
 # that identity to the private address inside this VPC so every service can use
 # sslmode=verify-full without a proxy or public IP.
 resource "google_dns_managed_zone" "cloud_sql" {
+  labels      = var.labels
   project     = var.project_id
   name        = "${var.name}-cloud-sql"
   dns_name    = module.postgres.dns_name

@@ -112,6 +112,22 @@ gcloud compute backend-services list --format='table(name,securityPolicy.basenam
 Every BackendConfig shows the policy, and the count equals the number of
 backend services of the Ingress (6 for the default install).
 
+That list can be complete several minutes before every backend enforces the
+policy (4 minutes when measured). If your policy refuses some requests (an
+allowlist, Cloudflare, client rules), confirm with a request that it must
+refuse, **on each host**, before you rely on it:
+
+```sh
+IP=$(gcloud compute addresses describe $STATIC_IP_NAME --global --format='value(address)')
+for h in $DOMAIN api.$DOMAIN cast.$DOMAIN history.$DOMAIN; do
+  curl -sk -o /dev/null -w "$h %{http_code}\n" --resolve "$h:443:$IP" "https://$h/"
+done
+```
+
+From an address the policy does not admit, every line must end in `403`.
+Repeat until they all do. Warnings that mention `Translate` in
+`kubectl describe ingress` while the policy attaches are transient.
+
 **Turn the OWASP rules on.** Session transcripts and messages contain code,
 SQL and shell text, which is what those rules look for. Use the install
 normally for a week, then look for requests the rules would have blocked:
@@ -187,8 +203,8 @@ Cloudflare can reach it.
    the address it received the request from, and its own. Measured on a live
    GKE install, the header is `<client>, <load balancer>` and the right value
    is 2. Cloudflare adds one more, so behind Cloudflare the header is
-   `<client>, <Cloudflare>, <load balancer>` and the value is 3. The
-   Cloudflare case is expected, not yet measured; check it as below.
+   `<client>, <Cloudflare>, <load balancer>` and the value is 3 (also
+   measured). Check yours as below.
 
    ```yaml
    relay-control:
@@ -222,9 +238,10 @@ Cloudflare can reach it.
 
    ```hcl
    edge_security_policy = {
-     create      = true
-     cloudflare  = { enabled = true }
-     rate_limits = []
+     create          = true
+     cloudflare      = { enabled = true }
+     connecting_asns = [13335]   # Cloudflare's network; see below
+     rate_limits     = []
      client_ip_rules = [
        { name = "vendors", hosts = ["history.<domain>"], path_prefixes = ["/v1/delivery", "/v1/turns", "/v1/auth/token/refresh"], cidrs = ["<vendor range>", "<your range>"], rate_limit = { count = 600, interval_sec = 60 } },
        { name = "sign-in", path_prefixes = ["/login", "/api/v1/auth", "/cloud/api/v1/auth"], cidrs = ["<your range>"], rate_limit = { count = 60, interval_sec = 60 } },
@@ -232,6 +249,13 @@ Cloudflare can reach it.
      ]
    }
    ```
+
+   `connecting_asns` matters here. A request that one of these rules admits
+   is not checked against Cloudflare's address ranges afterwards, so without
+   it anyone who learned the secret header could connect straight to the
+   load balancer and claim to be any client. With it, a connection that does
+   not come from Cloudflare's network is refused before any of these rules.
+   Terraform refuses `client_ip_rules` without it.
 
    The first rule that matches a request's path decides it: its listed
    clients are admitted, everyone else gets 403. The last rule closes every

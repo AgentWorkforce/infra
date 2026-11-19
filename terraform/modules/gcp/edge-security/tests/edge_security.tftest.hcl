@@ -122,8 +122,9 @@ run "cloudflare_origin_lockdown" {
   command = apply
   variables {
     security_policy = {
-      create     = true
-      cloudflare = { enabled = true }
+      create             = true
+      cloudflare         = { enabled = true }
+      secret_header_only = true
       client_ip_rules = [{
         name          = "uploads"
         path_prefixes = ["/v1/delivery", "/v1/turns"]
@@ -160,7 +161,7 @@ run "cloudflare_origin_lockdown" {
     error_message = "Five client ranges: two allow rules and the path deny."
   }
   assert {
-    condition     = google_compute_security_policy_rule.client_ip["uploads-allow-1"].match[0].expr[0].expression == "request.path.matches('^(?:/v1/delivery|/v1/turns)') && (inIpRange(origin.user_ip, '198.18.0.0/15'))" && google_compute_security_policy_rule.client_ip["uploads-deny"].action == "deny(403)" && google_compute_security_policy_rule.client_ip["uploads-deny"].match[0].expr[0].expression == "request.path.matches('^(?:/v1/delivery|/v1/turns)')"
+    condition     = google_compute_security_policy_rule.client_ip["uploads-allow-1"].match[0].expr[0].expression == "request.path.matches('^(?:/v1/delivery|/v1/turns)(?:/|$)') && (inIpRange(origin.user_ip, '198.18.0.0/15'))" && google_compute_security_policy_rule.client_ip["uploads-deny"].action == "deny(403)" && google_compute_security_policy_rule.client_ip["uploads-deny"].match[0].expr[0].expression == "request.path.matches('^(?:/v1/delivery|/v1/turns)(?:/|$)')"
     error_message = "Client rules match the path and origin.user_ip, then deny the path."
   }
   # Order: secret header, WAF, client rules, rate limits, allowlist, default.
@@ -174,9 +175,10 @@ run "client_rules_need_the_secret_header" {
   command = plan
   variables {
     security_policy = {
-      create          = true
-      cloudflare      = { enabled = true }
-      client_ip_rules = [{ name = "uploads", path_prefixes = ["/v1/delivery"], cidrs = ["192.0.2.0/24"] }]
+      create             = true
+      cloudflare         = { enabled = true }
+      secret_header_only = true
+      client_ip_rules    = [{ name = "uploads", path_prefixes = ["/v1/delivery"], cidrs = ["192.0.2.0/24"] }]
     }
   }
   expect_failures = [google_compute_security_policy.this]
@@ -237,9 +239,10 @@ run "vendor_paths_and_a_closed_remainder" {
   command = apply
   variables {
     security_policy = {
-      create      = true
-      cloudflare  = { enabled = true }
-      rate_limits = []
+      create             = true
+      cloudflare         = { enabled = true }
+      rate_limits        = []
+      secret_header_only = true
       client_ip_rules = [
         {
           name          = "vendors"
@@ -270,7 +273,7 @@ run "vendor_paths_and_a_closed_remainder" {
     error_message = "Every rule admits its clients (four ranges per rule, three with hosts) and then denies its paths."
   }
   assert {
-    condition     = google_compute_security_policy_rule.client_ip["vendors-allow-0"].match[0].expr[0].expression == "request.headers['host'].lower().matches('^(?:history\\\\.relay\\\\.example\\\\.com)(?::[0-9]+)?$') && request.path.matches('^(?:/v1/delivery|/v1/turns|/v1/auth/token/refresh)') && (inIpRange(origin.user_ip, '192.0.2.0/24') || inIpRange(origin.user_ip, '198.51.100.0/24'))"
+    condition     = google_compute_security_policy_rule.client_ip["vendors-allow-0"].match[0].expr[0].expression == "request.headers['host'].lower().matches('^(?:history\\\\.relay\\\\.example\\\\.com)(?::[0-9]+)?$') && request.path.matches('^(?:/v1/delivery|/v1/turns|/v1/auth/token/refresh)(?:/|$)') && (inIpRange(origin.user_ip, '192.0.2.0/24') || inIpRange(origin.user_ip, '198.51.100.0/24'))"
     error_message = "Host, path and the client ranges, within five subexpressions."
   }
   # A short vendor list ahead of a staff-only "/" rule: the vendor is admitted
@@ -286,7 +289,7 @@ run "vendor_paths_and_a_closed_remainder" {
     error_message = "A one-range rule with a rate_limit throttles per client address."
   }
   assert {
-    condition     = google_compute_security_policy_rule.client_ip["staff-allow-0"].action == "allow" && length(google_compute_security_policy_rule.client_ip["staff-allow-0"].rate_limit_options) == 0 && google_compute_security_policy_rule.client_ip["staff-deny"].action == "deny(403)" && google_compute_security_policy_rule.client_ip["staff-deny"].match[0].expr[0].expression == "request.path.matches('^(?:/)')"
+    condition     = google_compute_security_policy_rule.client_ip["staff-allow-0"].action == "allow" && length(google_compute_security_policy_rule.client_ip["staff-allow-0"].rate_limit_options) == 0 && google_compute_security_policy_rule.client_ip["staff-deny"].action == "deny(403)" && google_compute_security_policy_rule.client_ip["staff-deny"].match[0].expr[0].expression == "request.path.matches('^/')"
     error_message = "An unthrottled rule admits with allow; the closing rule denies every remaining path."
   }
   assert {
@@ -300,9 +303,10 @@ run "client_rule_must_choose_a_limit" {
   command = plan
   variables {
     security_policy = {
-      create          = true
-      cloudflare      = { enabled = true }
-      client_ip_rules = [{ name = "uploads", path_prefixes = ["/v1/delivery"], cidrs = ["192.0.2.0/24"] }]
+      create             = true
+      cloudflare         = { enabled = true }
+      secret_header_only = true
+      client_ip_rules    = [{ name = "uploads", path_prefixes = ["/v1/delivery"], cidrs = ["192.0.2.0/24"] }]
     }
     origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
   }
@@ -314,9 +318,10 @@ run "catch_all_client_rule_refuses_dead_rate_limits" {
   command = plan
   variables {
     security_policy = {
-      create          = true
-      cloudflare      = { enabled = true }
-      client_ip_rules = [{ name = "staff", path_prefixes = ["/"], cidrs = ["203.0.113.0/24"], unthrottled = true }]
+      create             = true
+      cloudflare         = { enabled = true }
+      secret_header_only = true
+      client_ip_rules    = [{ name = "staff", path_prefixes = ["/"], cidrs = ["203.0.113.0/24"], unthrottled = true }]
     }
     origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
   }
@@ -346,9 +351,10 @@ run "rule_counts_and_wider_expressions" {
   command = apply
   variables {
     security_policy = {
-      create      = true
-      cloudflare  = { enabled = true }
-      rate_limits = []
+      create             = true
+      cloudflare         = { enabled = true }
+      rate_limits        = []
+      secret_header_only = true
       client_ip_rules = [{
         name          = "vendors"
         hosts         = ["history.relay.example.com"]
@@ -376,9 +382,10 @@ run "ten_subexpressions_need_a_third_of_the_rules" {
   variables {
     max_subexpressions = 10
     security_policy = {
-      create      = true
-      cloudflare  = { enabled = true }
-      rate_limits = []
+      create             = true
+      cloudflare         = { enabled = true }
+      rate_limits        = []
+      secret_header_only = true
       client_ip_rules = [{
         name          = "vendors"
         hosts         = ["history.relay.example.com"]
@@ -430,8 +437,9 @@ run "generated_expressions_have_no_capture_groups" {
   command = apply
   variables {
     security_policy = {
-      create     = true
-      cloudflare = { enabled = true }
+      create             = true
+      cloudflare         = { enabled = true }
+      secret_header_only = true
       client_ip_rules = [
         { name = "vendors", hosts = ["history.relay.example.com", "api.relay.example.com"], path_prefixes = ["/v1/delivery", "/.well-known"], cidrs = ["192.0.2.0/24"], unthrottled = true },
       ]
@@ -446,7 +454,7 @@ run "generated_expressions_have_no_capture_groups" {
     error_message = "Every group inside a matches() pattern must be non-capturing."
   }
   assert {
-    condition     = google_compute_security_policy_rule.client_ip["vendors-deny"].match[0].expr[0].expression == "request.headers['host'].lower().matches('^(?:history\\\\.relay\\\\.example\\\\.com|api\\\\.relay\\\\.example\\\\.com)(?::[0-9]+)?$') && request.path.matches('^(?:/v1/delivery|/\\\\.well-known)')"
+    condition     = google_compute_security_policy_rule.client_ip["vendors-deny"].match[0].expr[0].expression == "request.headers['host'].lower().matches('^(?:history\\\\.relay\\\\.example\\\\.com|api\\\\.relay\\\\.example\\\\.com)(?::[0-9]+)?$') && request.path.matches('^(?:/v1/delivery|/\\\\.well-known)(?:/|$)')"
     error_message = "Host and path patterns in the form the API accepted."
   }
 }
@@ -472,9 +480,10 @@ run "long_list_keeps_its_band_and_order" {
   command = apply
   variables {
     security_policy = {
-      create      = true
-      cloudflare  = { enabled = true }
-      rate_limits = []
+      create             = true
+      cloudflare         = { enabled = true }
+      rate_limits        = []
+      secret_header_only = true
       client_ip_rules = [
         {
           name          = "vendors"
@@ -556,9 +565,10 @@ run "more_than_twenty_advanced_rules_refused_at_plan" {
     max_subexpressions = 10
     max_advanced_rules = 20
     security_policy = {
-      create      = true
-      cloudflare  = { enabled = true }
-      rate_limits = []
+      create             = true
+      cloudflare         = { enabled = true }
+      rate_limits        = []
+      secret_header_only = true
       client_ip_rules = [{
         name          = "vendors"
         hosts         = ["history.relay.example.com"]
@@ -579,9 +589,10 @@ run "twenty_advanced_rules_fit" {
     max_subexpressions = 10
     max_advanced_rules = 20
     security_policy = {
-      create      = true
-      cloudflare  = { enabled = true }
-      rate_limits = []
+      create             = true
+      cloudflare         = { enabled = true }
+      rate_limits        = []
+      secret_header_only = true
       client_ip_rules = [
         { name = "vendors", hosts = ["history.relay.example.com"], path_prefixes = ["/v1/delivery"], cidrs = [for i in range(96) : "10.0.${i}.0/24"], unthrottled = true },
         { name = "sign-in", path_prefixes = ["/login"], cidrs = ["203.0.113.0/24"], rate_limit = { count = 60, interval_sec = 60 } },
@@ -594,5 +605,103 @@ run "twenty_advanced_rules_fit" {
   assert {
     condition     = output.rule_counts.advanced == 20 && output.rule_counts.total == 23
     error_message = "96 host-scoped vendor ranges with sign-in and staff rules need exactly 20 advanced rules."
+  }
+}
+
+# A prefix stops at a path segment, and a trailing slash in the input does not double it.
+run "path_prefix_ends_at_a_segment" {
+  command = apply
+  variables {
+    security_policy = {
+      create             = true
+      cloudflare         = { enabled = true }
+      secret_header_only = true
+      client_ip_rules    = [{ name = "mcp", path_prefixes = ["/mcp", "/cloud/mcp/"], cidrs = ["192.0.2.0/24"], unthrottled = true }]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+  assert {
+    condition     = google_compute_security_policy_rule.client_ip["mcp-deny"].match[0].expr[0].expression == "request.path.matches('^(?:/mcp|/cloud/mcp)(?:/|$)')"
+    error_message = "/mcp must match /mcp and /mcp/x but not /mcpfoo."
+  }
+  # The same pattern, checked against sample paths.
+  assert {
+    condition     = google_compute_security_policy_rule.client_ip["mcp-deny"].action == "deny(403)" && length(regexall("^(?:/mcp|/cloud/mcp)(?:/|$)", "/mcpfoo")) == 0 && length(regexall("^(?:/mcp|/cloud/mcp)(?:/|$)", "/mcp/tools")) == 1 && length(regexall("^(?:/mcp|/cloud/mcp)(?:/|$)", "/mcp")) == 1
+    error_message = "The pattern has the segment boundary."
+  }
+}
+
+# connecting_asns: a connection from outside the proxy's network is denied
+# before any rule can admit it, so the secret header alone is not enough.
+run "connecting_asns_deny_other_networks_first" {
+  command = apply
+  variables {
+    security_policy = {
+      create          = true
+      cloudflare      = { enabled = true }
+      connecting_asns = [13335, 209242]
+      rate_limits     = []
+      client_ip_rules = [{ name = "staff", path_prefixes = ["/"], cidrs = ["203.0.113.0/24"], unthrottled = true }]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+  assert {
+    condition     = google_compute_security_policy_rule.connecting[0].action == "deny(403)" && google_compute_security_policy_rule.connecting[0].match[0].expr[0].expression == "origin.asn != 13335 && origin.asn != 209242"
+    error_message = "Deny when the connection comes from none of the listed networks."
+  }
+  assert {
+    condition     = google_compute_security_policy_rule.origin_secret[0].priority < google_compute_security_policy_rule.connecting[0].priority && google_compute_security_policy_rule.connecting[0].priority < min([for r in google_compute_security_policy_rule.client_ip : r.priority]...) && google_compute_security_policy_rule.connecting[0].priority < min([for r in google_compute_security_policy_rule.waf : r.priority]...)
+    error_message = "The network check runs before the WAF and before every rule that admits."
+  }
+  assert {
+    condition     = output.rule_counts.advanced == 6
+    error_message = "Secret header, network check, two WAF rules, staff allow and deny."
+  }
+}
+
+run "no_connecting_asn_rule_by_default" {
+  command = apply
+  variables {
+    security_policy = { create = true, cloudflare = { enabled = true } }
+  }
+  assert {
+    condition     = length(google_compute_security_policy_rule.connecting) == 0
+    error_message = "connecting_asns is opt-in."
+  }
+}
+
+# client_ip_rules admit before the connecting-address allowlist, so the plan is
+# refused until connections from outside the proxy are denied first, or the
+# operator accepts the secret header as the only guard.
+run "client_rule_needs_a_connecting_check" {
+  command = plan
+  variables {
+    security_policy = {
+      create          = true
+      cloudflare      = { enabled = true }
+      client_ip_rules = [{ name = "staff", path_prefixes = ["/"], cidrs = ["203.0.113.0/24"], unthrottled = true }]
+      rate_limits     = []
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+  expect_failures = [google_compute_security_policy.this]
+}
+
+# The same guard with an address group of the proxy's ranges (Cloud Armor Enterprise).
+run "connecting_address_group_denies_other_sources_first" {
+  command = apply
+  variables {
+    security_policy = {
+      create                    = true
+      cloudflare                = { enabled = true }
+      connecting_address_groups = ["relay-cloudflare"]
+      rate_limits               = []
+      client_ip_rules           = [{ name = "staff", path_prefixes = ["/"], cidrs = ["203.0.113.0/24"], unthrottled = true }]
+    }
+    origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+  assert {
+    condition     = google_compute_security_policy_rule.connecting[0].match[0].expr[0].expression == "!evaluateAddressGroup('relay-cloudflare', origin.ip)" && google_compute_security_policy_rule.connecting[0].action == "deny(403)" && google_compute_security_policy_rule.connecting[0].priority < min([for r in google_compute_security_policy_rule.client_ip : r.priority]...)
+    error_message = "A connection whose address is outside the proxy's address group is denied before any client rule."
   }
 }

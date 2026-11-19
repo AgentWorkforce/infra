@@ -58,9 +58,11 @@ locals {
       description = "${r.name}: any other client on ${join(", ", concat(r.hosts, r.path_prefixes))}"
       expression  = local.path_match[r.name]
   } })]...)
+  connecting_guard = length(local.sp.connecting_asns) + length(local.sp.connecting_address_groups) > 0
+
   # What the policy costs against the project's Cloud Armor quotas.
   rule_counts = {
-    advanced = (local.secret_header ? 1 : 0) + length(local.waf_groups) + length(local.client_rules) + length(local.rate_rules)
+    advanced = (local.secret_header ? 1 : 0) + (local.connecting_guard ? 1 : 0) + length(local.waf_groups) + length(local.client_rules) + length(local.rate_rules)
     basic    = length(local.allow_rules) + 1
   }
   # The path (one subexpression) and, with hosts, the Host header (a second);
@@ -69,7 +71,9 @@ locals {
   # group ("Capture Groups are not allowed").
   path_match = { for r in local.sp.client_ip_rules : r.name => join(" && ", compact([
     length(r.hosts) > 0 ? "request.headers['host'].lower().matches('^(?:${join("|", [for h in r.hosts : replace(h, ".", "\\\\.")])})(?::[0-9]+)?$')" : "",
-    "request.path.matches('^(?:${join("|", [for p in r.path_prefixes : replace(p, ".", "\\\\.")])})')",
+    # A prefix ends at a path segment: /mcp matches /mcp and /mcp/x, not
+    # /mcpfoo. "/" is every path.
+    contains(r.path_prefixes, "/") ? "request.path.matches('^/')" : "request.path.matches('^(?:${join("|", [for p in r.path_prefixes : replace(trimsuffix(p, "/"), ".", "\\\\.")])})(?:/|$)')",
   ])) }
 }
 
@@ -118,6 +122,10 @@ resource "google_compute_security_policy" "this" {
       error_message = "A list needs more than 999 rules at this max_subexpressions. Shorten it, or enforce it at the fronting proxy."
     }
     precondition {
+      condition     = length(local.sp.client_ip_rules) == 0 || local.connecting_guard || local.sp.secret_header_only
+      error_message = "client_ip_rules admit requests before the allowlist of connecting addresses is checked, so a caller that holds the secret header could skip the proxy and choose its own client address. Set connecting_asns (Cloudflare: [13335]) or connecting_address_groups so connections from outside the proxy are denied first, or set secret_header_only = true to accept that the secret header is the only guard."
+    }
+    precondition {
       condition     = alltrue([for r in local.sp.client_ip_rules : r.rate_limit != null || r.unthrottled])
       error_message = "Each client_ip_rules entry admits its clients, and admitted requests skip rate_limits. Give the rule its own rate_limit, or set unthrottled = true to accept that it has none."
     }
@@ -143,6 +151,29 @@ resource "google_compute_security_policy_rule" "origin_secret" {
     expr {
       # One subexpression for the missing header and one per accepted value.
       expression = "!has(request.headers['${var.origin_secret_header.name}']) || !(${join(" || ", [for v in var.origin_secret_header.values : "request.headers['${var.origin_secret_header.name}'] == '${v}'"])})"
+    }
+  }
+}
+
+# Requests admitted by a client rule never reach the allowlist of connecting
+# addresses further down, so without this rule the shared-secret header alone
+# decides whether a caller that skipped the proxy gets in (and such a caller
+# chooses its own client address). The proxy's ranges do not fit one negated
+# expression, but its network number does, and so does an address group: deny
+# every connection that comes from none of them.
+resource "google_compute_security_policy_rule" "connecting" {
+  count           = local.armor && local.connecting_guard ? 1 : 0
+  project         = var.project_id
+  security_policy = google_compute_security_policy.this[0].name
+  priority        = 150
+  action          = "deny(403)"
+  description     = "Connections from outside the fronting proxy (${join(", ", concat([for a in local.sp.connecting_asns : "AS ${a}"], local.sp.connecting_address_groups))})"
+  match {
+    expr {
+      expression = join(" && ", concat(
+        [for a in local.sp.connecting_asns : "origin.asn != ${a}"],
+        [for g in local.sp.connecting_address_groups : "!evaluateAddressGroup('${g}', origin.ip)"],
+      ))
     }
   }
 }
