@@ -50,7 +50,7 @@ CAST_SQL = """
 WITH roles AS (
  SELECT 'relaycast_owner'::text AS owner, 'relaycast_runtime'::text AS runtime
 ), objects AS (
- SELECT c.oid,c.relowner,c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+ SELECT c.oid,c.relname,c.relowner,c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
  WHERE n.nspname='public' AND c.relkind IN ('r','p','S','v','m','f')
  AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype='e')
 ), defaults AS (
@@ -81,7 +81,8 @@ SELECT json_build_object(
  'sequence_defaults', (SELECT count(DISTINCT privilege_type)=3 FROM defaults WHERE defaclobjtype='S' AND privilege_type IN ('SELECT','USAGE','UPDATE')),
  'objects', (SELECT count(*) FROM objects),
  'wrong_owners', (SELECT count(*) FROM objects WHERE pg_get_userbyid(relowner)<>owner),
- 'missing_table_grants', (SELECT count(*) FROM objects WHERE relkind<>'S' AND NOT (has_table_privilege(runtime,oid,'SELECT') AND has_table_privilege(runtime,oid,'INSERT') AND has_table_privilege(runtime,oid,'UPDATE') AND has_table_privilege(runtime,oid,'DELETE'))),
+ 'missing_table_grants', (SELECT count(*) FROM objects WHERE relkind<>'S' AND relname<>'_engine_migrations' AND NOT (has_table_privilege(runtime,oid,'SELECT') AND has_table_privilege(runtime,oid,'INSERT') AND has_table_privilege(runtime,oid,'UPDATE') AND has_table_privilege(runtime,oid,'DELETE'))),
+ 'ledger_runtime_read_only', (SELECT coalesce(bool_and(has_table_privilege(runtime,oid,'SELECT') AND NOT has_table_privilege(runtime,oid,'INSERT,UPDATE,DELETE,TRUNCATE')),true) FROM objects WHERE relname='_engine_migrations'),
  'missing_sequence_grants', (SELECT count(*) FROM objects WHERE relkind='S' AND NOT (has_sequence_privilege(runtime,oid,'SELECT') AND has_sequence_privilege(runtime,oid,'USAGE') AND has_sequence_privilege(runtime,oid,'UPDATE')))
 ) FROM roles;
 """
