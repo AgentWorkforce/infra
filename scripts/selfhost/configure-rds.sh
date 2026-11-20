@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# One-command database setup for an Agent Relay 2026.11.16 install on an
-# existing (shared) RDS PostgreSQL instance, using the RDS master login.
+# One-command database setup for an Agent Relay install on an existing (shared)
+# RDS PostgreSQL 16+ instance, using the RDS master login.
 #
 # The master login (e.g. postgres) is the only credential you provide. It is
-# used for setup and as the HoopDb migration owner, exactly as release
-# 2026.11.16 expects. Every running service gets its own generated login:
-# the services refuse to run as the master user.
+# used only for setup: it creates a dedicated owner and runtime login per
+# service, with generated passwords. The services refuse to run as the master
+# user. PostgreSQL 15 is refused (the HoopDb RDS security model needs 16+).
 #
 # Steps (each prints what it does; nothing prints passwords or URLs):
 #   1. store the master login in AWS Secrets Manager (for rds-setup.sh)
 #   2. optional: drop and recreate relaycontrol, relaycast and hoopdb
 #      (--reset-databases; only for a failed install with no data)
-#   3. rds-setup.sh pre   (2026.11.16, downloaded and checksum-verified)
+#   3. rds-setup.sh pre   (pinned, downloaded and checksum-verified)
 #   4. merge the generated database URLs into the existing Kubernetes Secrets
 #   5. helm upgrade with your values file
 #   6. wait for the HoopDb migration Job
@@ -30,7 +30,9 @@
 #                      Unset: the script pauses and asks you to run your own helm upgrade.
 #   HELM_EXTRA_VALUES  space-separated values files passed before VALUES
 #                      (e.g. "charts/agent-relay/values-eks.yaml charts/agent-relay/values-eks-rds-native.yaml")
-#   VALUES             your filled-in values file (default: values.yaml in the current folder)
+#   VALUES             your filled-in values file (default: values.yaml in the current folder);
+#                      its image digests are updated to RELEASE_VERSION's pins (a .bak copy is kept)
+#   RELEASE_VERSION    default 2026.11.18; check out the matching tag: git checkout agent-relay-2026.11.18
 #   AWS_REGION         default: taken from RDS_HOST
 #   RDS_ADMIN_USER     default: postgres
 #   RDS_ADMIN_PASSWORD read silently from the terminal when unset
@@ -39,6 +41,7 @@
 #   NAMESPACE / RELEASE   default agent-relay / agent-relay
 #   KUBE_CONTEXT       default: the current kubectl context
 #   STATE_DIR          default $HOME/.agent-relay-install (private credential files)
+#   ADMIN_EMAIL        first admin's real address (default: bootstrap.adminEmail in VALUES)
 set -euo pipefail
 umask 077
 
@@ -51,9 +54,11 @@ for arg in "$@"; do
   esac
 done
 
-# Release 2026.11.16 (infra tag agent-relay-2026.11.16).
-RDS_SETUP_COMMIT=ece71b9df93df64cb63676d2a0ca2767eccc6599
-RDS_SETUP_SHA256=d8640b397e1de7b548e8a4e94e49d8b1d6e947504fb535db0e911d205a061c32
+# rds-setup.sh with the dedicated hoopdb_owner layout (infra #485). The older
+# master-owner layout cannot activate the read API and ingest logins on RDS
+# (their roles end up alterable only by rdsadmin), so it is not used.
+RDS_SETUP_COMMIT=3c54ec7939c905f5eb427bc96e71b1edcff5165a   # tag agent-relay-2026.11.18
+RDS_SETUP_SHA256=a1d1d8efaa67656081fc090b7f9dcbb82b07310d67f36f97293c81367bb22d44
 ERASE_SQL_PATH=scripts/selfhost/rds-session-erase-search.sql
 RAW=https://raw.githubusercontent.com/AgentWorkforce/infra
 DIAG_URL="$RAW/aea8a0edc904b6344e8ee90091f77217a2d1f352/scripts/support/diagnose-install.py"
@@ -63,7 +68,8 @@ log() { printf '\n==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
-for tool in aws kubectl jq openssl curl; do
+RELEASE_VERSION="${RELEASE_VERSION:-2026.11.18}"
+for tool in aws kubectl jq openssl curl python3; do
   command -v "$tool" >/dev/null || die "$tool is not installed"
 done
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
@@ -86,6 +92,35 @@ if [[ -z "${KUBE_CONTEXT:-}" ]]; then KUBE_CONTEXT="$(kubectl config current-con
 export KUBE_CONTEXT
 k() { kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" "$@"; }
 
+# Release pins: the values copied from examples/aws pin older image digests; mixing
+# them with this release's chart breaks the install. Update them in place (backup kept).
+PINS_URL="$RAW/agent-relay-$RELEASE_VERSION/releases/agent-relay-$RELEASE_VERSION/pins.json"
+PINS_JSON="$(curl -fsSL "$PINS_URL")" || die "could not download the release pins for $RELEASE_VERSION"
+cp "$VALUES" "$VALUES.bak-$(date +%Y%m%d%H%M%S)"
+PINS_JSON="$PINS_JSON" python3 - "$VALUES" <<'PYPIN'
+import json, os, re, sys
+path = sys.argv[1]
+pins = json.loads(os.environ["PINS_JSON"])["pins"]
+lines = open(path).read().split("\n")
+changed = 0
+for pin in pins.values():
+    repo, digest = pin["repository"], pin["digest"]
+    for i, line in enumerate(lines):
+        if re.search(r"repository:\s*" + re.escape(repo) + r"\b", line):
+            for j in range(i, min(i + 3, len(lines))):
+                m = re.search(r"sha256:[0-9a-f]{64}", lines[j])
+                if m:
+                    if m.group(0) != digest:
+                        lines[j] = lines[j].replace(m.group(0), digest); changed += 1
+                    break
+open(path, "w").write("\n".join(lines))
+print(f"    release pins applied: {changed} digest(s) updated")
+PYPIN
+if [[ -n "${HELM_CHART:-}" && -f "${HELM_CHART}/Chart.yaml" ]]; then
+  want="$(curl -fsSL "$RAW/agent-relay-$RELEASE_VERSION/charts/agent-relay/Chart.yaml" | sed -nE 's/^version: *//p' | head -n1)"
+  have="$(sed -nE 's/^version: *//p' "$HELM_CHART/Chart.yaml" | head -n1)"
+  [[ "$want" == "$have" ]] || die "chart $HELM_CHART is $have but release $RELEASE_VERSION is $want: in your infra clone run  git fetch --tags && git checkout agent-relay-$RELEASE_VERSION"
+fi
 SERVICES_IMAGE="$(sed -nE 's/.*services-image:.*repository: *([^ ,}]+).*digest: *"?(sha256:[0-9a-f]{64}).*/\1@\2/p' "$VALUES" | head -n1)"
 [[ "$SERVICES_IMAGE" == *@sha256:* ]] || die "could not find the services-image repository and digest in $VALUES"
 export SERVICES_IMAGE
@@ -94,9 +129,19 @@ log "Settings"
 info "kube context : $KUBE_CONTEXT"
 info "namespace    : $NAMESPACE (release $RELEASE)"
 info "RDS host     : $RDS_HOST ($AWS_REGION)"
+info "release      : $RELEASE_VERSION"
 info "values file  : $VALUES"
 info "services img : $SERVICES_IMAGE"
 info "state dir    : $STATE_DIR"
+ADMIN_EMAIL_IN_VALUES="$(sed -nE 's/^[[:space:]]+adminEmail:[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' "$VALUES" | head -n1)"
+ADMIN_EMAIL="${ADMIN_EMAIL:-$ADMIN_EMAIL_IN_VALUES}"
+info "first admin  : ${ADMIN_EMAIL:-<not set>}"
+case "$ADMIN_EMAIL" in
+  ""|*@example.com|*"<"*)
+    printf '\n    WARNING: the first admin (relay-control.bootstrap.adminEmail) is "%s".\n' "${ADMIN_EMAIL:-unset}"
+    printf '    That address becomes the owner. Set ADMIN_EMAIL=<real address> (or fix it in %s) and rerun.\n' "$VALUES"
+    read -r -p "    Continue anyway? [y/N] " ok; [[ "$ok" == y || "$ok" == Y ]] || die "set ADMIN_EMAIL first";;
+esac
 k get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl --context "$KUBE_CONTEXT" get namespace "$NAMESPACE" >/dev/null \
   || die "cannot reach namespace $NAMESPACE with context $KUBE_CONTEXT (cluster VPN on?)"
 
@@ -171,10 +216,16 @@ if [[ "$RESET" == 1 ]]; then
           envFrom: [ { secretRef: { name: "agent-relay-db-reset" } } ],
           env: [ { name: "PGHOST", value: $host }, { name: "PGPORT", value: "5432" }, { name: "PGDATABASE", value: "postgres" },
                  { name: "PGSSLMODE", value: "verify-full" }, { name: "PGSSLROOTCERT", value: "/ca/ca.crt" }, { name: "HOME", value: "/tmp" } ],
-          command: ["sh", "-c", "set -e; for db in relaycontrol relaycast hoopdb; do psql -X -v ON_ERROR_STOP=1 -c \"DROP DATABASE IF EXISTS $db WITH (FORCE)\"; echo dropped $db; done"] } ] } } } }' \
+          command: ["sh", "-c", "set -e; v=$(psql -XAtc \"select current_setting(\u0027server_version_num\u0027)\"); if [ \"$v\" -lt 160000 ]; then echo PG_TOO_OLD $((v/10000)); exit 3; fi; for db in relaycontrol relaycast hoopdb; do psql -X -v ON_ERROR_STOP=1 -c \"DROP DATABASE IF EXISTS $db WITH (FORCE)\"; echo dropped $db; done"] } ] } } } }' \
     | k apply -f - >/dev/null
-  k wait --for=condition=complete job/agent-relay-db-reset --timeout=300s >/dev/null \
-    || { k logs job/agent-relay-db-reset --tail=20 | grep -v -i password || true; k delete secret agent-relay-db-reset --ignore-not-found >/dev/null; die "database reset failed"; }
+  if ! k wait --for=condition=complete job/agent-relay-db-reset --timeout=300s >/dev/null; then
+    out="$(k logs job/agent-relay-db-reset --tail=20 2>/dev/null | grep -v -i password || true)"
+    k delete secret agent-relay-db-reset --ignore-not-found >/dev/null
+    if grep -q PG_TOO_OLD <<<"$out"; then
+      die "the RDS instance runs PostgreSQL $(sed -n 's/.*PG_TOO_OLD //p' <<<"$out" | head -n1); Agent Relay needs PostgreSQL 16 or later. Nothing was dropped. Use a PostgreSQL 16+ RDS instance (a small dedicated one is fine) and rerun with its RDS_HOST."
+    fi
+    printf '%s\n' "$out"; die "database reset failed"
+  fi
   k logs job/agent-relay-db-reset --tail=10 | grep -v -i password || true
   k delete secret agent-relay-db-reset --ignore-not-found >/dev/null
   info "Old failed Jobs from earlier attempts are removed so Helm can re-run them"
@@ -184,7 +235,7 @@ else
 fi
 
 # 3. pre ----------------------------------------------------------------------
-log "3/8 Creating databases, service logins and credential files (rds-setup.sh pre, 2026.11.16)"
+log "3/8 Creating databases, service logins and credential files (rds-setup.sh pre)"
 NAMESPACE="$NAMESPACE" "$RDS_SETUP" pre
 FILES="$STATE_DIR/secret-files"
 [[ -d "$FILES" ]] || die "rds-setup.sh pre wrote no credential files under $FILES"
@@ -210,25 +261,47 @@ done
 info "rds-ca hash for values.yaml (every caSha256/sha256 under rds-ca): $(cat "$STATE_DIR/rds-ca.sha256" 2>/dev/null || echo unknown)"
 
 # 5. helm upgrade -------------------------------------------------------------
-# The RDS master user owns HoopDb and runs its migrations (PostgreSQL 15 works
-# only this way). Newer charts default to rdsLayout: separate-database (PG16+,
-# dedicated hoopdb_owner); this overlay selects the master-owner layout.
-LAYOUT_VALUES="$STATE_DIR/rds-master-owner-values.yaml"
-printf '%s\n' 'sessions-pipeline:' '  worker:' '    migrations:' '      rdsLayout: master-owner' > "$LAYOUT_VALUES"
+# rds-setup.sh pre writes the HoopDb layout overlay (which Secret holds the
+# migration owner, and rdsLayout). It must be the last -f.
+LAYOUT_VALUES="$STATE_DIR/hoopdb-layout-values.yaml"
+[[ -s "$LAYOUT_VALUES" ]] || die "rds-setup.sh pre did not write $LAYOUT_VALUES"
 log "5/8 Helm upgrade"
-info "add this overlay LAST in your -f list: $LAYOUT_VALUES (rdsLayout: master-owner)"
+info "add this overlay LAST in your -f list: $LAYOUT_VALUES"
 if [[ -n "${HELM_CHART:-}" ]]; then
   command -v helm >/dev/null || die "helm is not installed"
+  if [[ -d "$HELM_CHART" ]]; then
+    info "refreshing chart dependencies, nested charts first (stale or missing subcharts drop workloads)"
+    # Public chart repositories the nested charts depend on; added only if missing.
+    known="$(helm repo list -o json 2>/dev/null | jq -r '.[].url' 2>/dev/null || true)"
+    while read -r url; do
+      [[ -z "$url" ]] && continue
+      grep -qxF "${url%/}" <<<"$(sed 's#/$##' <<<"$known")" && continue
+      name="$(sed -E 's#https?://##; s#[^A-Za-z0-9]+#-#g; s#-+$##' <<<"$url")"
+      helm repo add "$name" "$url" >/dev/null && info "added chart repository $url"
+    done < <(cat "$HELM_CHART"/Chart.yaml "$HELM_CHART"/../*/Chart.yaml 2>/dev/null \
+             | sed -nE 's/^[[:space:]]*repository:[[:space:]]*"?(https:\/\/[^"[:space:]]+)"?.*/\1/p' | sort -u)
+    while read -r dep; do
+      d="$HELM_CHART/${dep#file://}"
+      if [[ -f "$d/Chart.yaml" ]] && grep -q 'repository: file://' "$d/Chart.yaml"; then
+        helm dependency build "$d" >/dev/null
+      fi
+    done < <(sed -nE 's/^[[:space:]]*repository:[[:space:]]*"?(file:\/\/[^"[:space:]]+)"?.*/\1/p' "$HELM_CHART/Chart.yaml")
+    helm dependency build "$HELM_CHART" >/dev/null
+  fi
   extra=()
   if [[ -n "${HELM_EXTRA_VALUES:-}" ]]; then
     for f in $HELM_EXTRA_VALUES; do extra+=(-f "$f"); done
   fi
   helm --kube-context "$KUBE_CONTEXT" upgrade --install "$RELEASE" "$HELM_CHART" -n "$NAMESPACE" \
-    "${extra[@]}" -f "$VALUES" -f "$LAYOUT_VALUES"
+    "${extra[@]}" -f "$VALUES" -f "$LAYOUT_VALUES" --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
 else
-  info "HELM_CHART is not set. In another terminal run the same helm upgrade you used for the install,"
-  info "with the overlay added at the end, e.g.:"
-  info "  helm upgrade $RELEASE <chart> -n $NAMESPACE <your -f files> -f $VALUES -f $LAYOUT_VALUES"
+  info "HELM_CHART is not set. In another terminal, from your infra clone, refresh the chart dependencies"
+  info "and run the same helm upgrade you used for the install with the overlay added at the end, e.g.:"
+  info "  helm repo add cnpg https://cloudnative-pg.github.io/charts; helm repo add minio https://charts.min.io/"
+  info "  helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts"
+  info "  helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay"
+  info "  helm upgrade $RELEASE <chart> -n $NAMESPACE <your -f files> -f $VALUES -f $LAYOUT_VALUES \\"
+  info "    --set-string relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
   read -r -p "    Press Enter once helm upgrade has finished... " _
 fi
 
@@ -265,6 +338,37 @@ if command -v python3 >/dev/null && curl -fsSL "$DIAG_URL" -o "$WORK/diagnose-in
     --scope cluster --values "$VALUES" || true
 else
   info "skipped (python3 or download unavailable); run diagnose-install.py --scope cluster yourself"
+fi
+
+# First sign-in ----------------------------------------------------------------
+log "First sign-in"
+DASHBOARD="$(sed -nE 's/^[[:space:]]+dashboardUrl:[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' "$VALUES" | head -n1)"
+SVC="$(k get svc -l app.kubernetes.io/name=relay-control -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+PORT="$(k get svc "$SVC" -o jsonpath='{.spec.ports[?(@.name=="http")].port}' 2>/dev/null || true)"
+TOKEN="$(k get secret agent-relay-secrets -o jsonpath='{.data.selfhost-bootstrap-token}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+MINTED="" code=""
+if [[ -n "$SVC" && -n "$PORT" && -n "$TOKEN" ]] && k rollout status "deployment/$SVC" --timeout=300s >/dev/null 2>&1; then
+  k port-forward "svc/$SVC" 18787:"$PORT" >/dev/null 2>&1 & PF=$!
+  sleep 4
+  code="$(curl -sS -o "$WORK/setup-key.json" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" \
+    http://127.0.0.1:18787/api/v1/installation/setup-key || true)"
+  kill "$PF" 2>/dev/null || true
+  unset TOKEN
+  if [[ "$code" == 201 ]]; then MINTED="$(jq -r .setupKey "$WORK/setup-key.json")"; EXP="$(jq -r .expiresAt "$WORK/setup-key.json")"
+  elif [[ "$code" == 409 ]]; then info "the first admin has already signed in; use your password (or Okta)"; fi
+  rm -f "$WORK/setup-key.json"
+fi
+if [[ -n "$MINTED" ]]; then
+  info "1. Open ${DASHBOARD:-<your dashboard URL>}login"
+  info "2. Choose \"First-time setup: enter setup key\" and sign in as ${ADMIN_EMAIL:-the bootstrap admin}"
+  info "   Setup key (single use, expires $EXP):"
+  info "     $MINTED"
+  info "3. Set a password (12+ characters). Then add people from Settings (temporary passwords) or Okta."
+  info "Desktop app: click Sign in; the browser opens ${DASHBOARD:-the site}; sign in there and it returns to the app."
+  info "On WSL without a browser, the app shows a URL and code to approve from any device."
+elif [[ "$code" != 409 ]]; then
+  info "Could not mint a setup key automatically. Read the configured one with:"
+  info "  kubectl -n $NAMESPACE get secret agent-relay-secrets -o jsonpath='{.data.selfhost-setup-key}' | base64 -d"
 fi
 
 log "Done. Credential files are private under $FILES; keep them, never commit or share them."

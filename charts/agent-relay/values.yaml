@@ -196,6 +196,63 @@ gkeIngress:
   # for the actors host; durable-actors sockets are long-lived.
   actorsBackendTimeoutSec: 3600
 
+# EKS edge (templates/eks-alb-ingress.yaml): one internet-facing ALB Ingress
+# with host rules, exactly what scripts/selfhost/eks-alb-ingress.sh prints for
+# the same options (each option below names the script variable it mirrors;
+# defaults are the script's). The script stays the documented way; this is the
+# alternative that makes the edge part of the release. Exclusive with
+# gkeIngress. Backends are named, not looked up: Flows and Chief are separate
+# releases, and a read-only history host may name a read API Service this
+# release does not install. README: EKS ALB Ingress.
+eksIngress:
+  enabled: false
+  name: agent-relay           # EKS_ALB_INGRESS_NAME
+  className: alb              # EKS_INGRESS_CLASS
+  # Required when enabled: the base domain (<domain>, api., cast., history.)
+  # and the ACM certificate that covers all four names.
+  domain: ""                  # EKS_ALB_DOMAIN
+  certificateArn: ""          # EKS_ALB_CERT_ARN
+  history:
+    enabled: true             # EKS_ALB_HISTORY
+    # Read API only on history.<domain> (needs ingest.enabled=false).
+    readOnly: false           # EKS_ALB_HISTORY_READ_ONLY
+  ingest:
+    # null: on whenever history.enabled and not history.readOnly.
+    enabled: null             # EKS_ALB_INGEST
+    serviceName: agent-relay-ingest-edge  # EKS_ALB_INGEST_SERVICE
+    servicePort: 80           # EKS_ALB_INGEST_PORT
+  readApi:
+    serviceName: agent-relay-read-api     # EKS_ALB_READ_API_SERVICE
+    servicePort: 80           # EKS_ALB_READ_API_PORT
+  # Flows on relayfile-control (a separate release).
+  flows:
+    enabled: false            # EKS_ALB_RELAYFILE_CONTROL
+    serviceName: relayfile-control        # EKS_ALB_RELAYFILE_CONTROL_SERVICE
+    servicePort: 3100         # EKS_ALB_RELAYFILE_CONTROL_PORT
+  # Chief on a separately installed relaychief-control; empty serviceName = off.
+  chief:
+    serviceName: ""           # EKS_ALB_CHIEF_SERVICE
+    servicePort: 3200         # EKS_ALB_CHIEF_PORT
+  control:
+    serviceName: relay-control            # EKS_ALB_CONTROL_SERVICE
+  webapp:
+    serviceName: relay-webapp             # EKS_ALB_WEBAPP_SERVICE
+  # Dashboard-host (<domain>) paths sent to the control API, in order, ahead
+  # of the dashboard catch-all. The script has no option for this; the default
+  # is the list it emits. Pin the list your live ALB has before an upgrade
+  # that changes the default.
+  controlPaths:
+    - /cloud/api
+    - /login
+    - /relay-node
+    - /mcp
+    - /cloud/mcp
+    - /.well-known/oauth-protected-resource
+    - /.well-known/oauth-authorization-server
+    - /.well-known/openid-configuration
+    - /cloud/.well-known
+    - /cloud/oauth
+
 # Child values are intentionally not populated with credentials or image
 # placeholders here. Every leaf chart fails closed until its existingSecret,
 # public origins and immutable image digest are supplied.

@@ -89,6 +89,22 @@ class Routes(unittest.TestCase):
                            "EKS_ALB_RELAYFILE_CONTROL": str(flows).lower()}
                     self.assert_routes(dashboard(documents(run("bash", "scripts/selfhost/eks-alb-ingress.sh", env=env))), chief=chief)
 
+    def test_eks_chart_with_chief_and_flows(self):
+        for chief in (False, True):
+            for flows in (False, True):
+                with self.subTest(chief=chief, flows=flows):
+                    docs = documents(run(
+                        "helm", "template", "ci", "charts/agent-relay", "-n", "agent-relay",
+                        "-f", "charts/agent-relay/values-eks.yaml",
+                        "-f", "charts/agent-relay/values-eks-rds-native.yaml",
+                        "--set", "eksIngress.enabled=true",
+                        "--set", "eksIngress.domain=relay.example.com",
+                        "--set", "eksIngress.certificateArn=arn:render-only",
+                        "--set", "eksIngress.chief.serviceName=" + ("relaychief-control" if chief else ""),
+                        "--set", "eksIngress.flows.enabled=" + str(flows).lower(),
+                        "--show-only", "templates/eks-alb-ingress.yaml"))
+                    self.assert_routes(dashboard(docs), chief=chief)
+
     def test_azure(self):
         self.assert_routes(dashboard(documents((ROOT / "docs/azure-install/ingress.yaml").read_text()), "__HOST_ROOT__"))
 

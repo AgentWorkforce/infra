@@ -414,6 +414,90 @@ read paths to `agent-relay-read-api`, and refuses all other History-host paths
 at the ALB. Set the script's Service overrides only when the private overlay
 renames those Services.
 
+### EKS ALB Ingress
+
+The script stays the documented way to publish the EKS edge. The alternative is
+to render the same Ingress from this release, so an install's edge is applied
+and versioned with it: set `eksIngress.enabled=true` (default false). For the
+same options the chart's Ingress equals the script's output (annotations and
+spec, rule order and `pathType` included; the chart only adds
+`app.kubernetes.io/name` and `app.kubernetes.io/instance` labels), which
+`ci/agent-relay/test_eks_alb_ingress.py` proves by running both. The Ingress
+goes into the release namespace. `eksIngress` and `gkeIngress` are exclusive.
+
+```yaml
+eksIngress:
+  enabled: true
+  domain: relay.example.com
+  certificateArn: arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000
+```
+
+| Option | Script variable | Default |
+| --- | --- | --- |
+| `eksIngress.name` | `EKS_ALB_INGRESS_NAME` | `agent-relay` |
+| `eksIngress.className` | `EKS_INGRESS_CLASS` | `alb` |
+| `eksIngress.domain` | `EKS_ALB_DOMAIN` | required |
+| `eksIngress.certificateArn` | `EKS_ALB_CERT_ARN` | required |
+| `eksIngress.history.enabled` | `EKS_ALB_HISTORY` | `true` |
+| `eksIngress.history.readOnly` | `EKS_ALB_HISTORY_READ_ONLY` | `false` |
+| `eksIngress.ingest.enabled` | `EKS_ALB_INGEST` | `null`: on when the history host is on and not read-only |
+| `eksIngress.ingest.serviceName`, `servicePort` | `EKS_ALB_INGEST_SERVICE`, `_PORT` | `agent-relay-ingest-edge`, `80` |
+| `eksIngress.readApi.serviceName`, `servicePort` | `EKS_ALB_READ_API_SERVICE`, `_PORT` | `agent-relay-read-api`, `80` |
+| `eksIngress.flows.enabled`, `serviceName`, `servicePort` | `EKS_ALB_RELAYFILE_CONTROL`, `_SERVICE`, `_PORT` | `false`, `relayfile-control`, `3100` |
+| `eksIngress.chief.serviceName`, `servicePort` | `EKS_ALB_CHIEF_SERVICE`, `_PORT` | empty (off), `3200` |
+| `eksIngress.control.serviceName` | `EKS_ALB_CONTROL_SERVICE` | `relay-control` |
+| `eksIngress.webapp.serviceName` | `EKS_ALB_WEBAPP_SERVICE` | `relay-webapp` |
+| `eksIngress.controlPaths` | none | `[/cloud/api, /login, /relay-node, /mcp, /cloud/mcp, /.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server, /.well-known/openid-configuration, /cloud/.well-known, /cloud/oauth]` |
+
+The render refuses what the script refuses: no domain or certificate; read-only
+without the history host or with ingest on; ingest off on a history host that is
+not read-only; ingest on without the history host; Service names that are not
+DNS labels and ports outside 1-65535 (each checked only when its route is
+rendered). It also refuses non-boolean switches, a domain that is not a DNS
+name, a certificate that is not an ARN, and malformed `controlPaths`.
+
+`controlPaths` is the list of dashboard-host (`<domain>`) paths sent to the
+control API ahead of the dashboard catch-all, in order (Prefix paths; with Chief
+on, each becomes Exact plus `<path>/*` after the Chief wildcards). The script has
+no such option; the default is the list it emits, including the MCP and OAuth
+discovery/consent prefixes. Only the named root discovery prefixes are routed;
+`/.well-known/acme-challenge` stays available. Pin the list your live ALB has
+so that a chart upgrade which changes the default does not change your
+listener rules unannounced.
+
+Backends are named, never looked up and never required to be part of this
+release: Flows (relayfile-control) and Chief are separate releases, and a
+read-only history host may name a read API Service this release does not
+install. A wrong name renders and the ALB answers 503 for that route.
+
+#### Adopting an Ingress that was applied with the script
+
+Helm will not take over an existing object that lacks its ownership metadata;
+the upgrade fails with `invalid ownership metadata`. To move an install from the
+script to `eksIngress` without a new load balancer:
+
+1. Set the `eksIngress` options to the values the script ran with (same
+   `name`, class, domain, certificate, Service overrides; pin `controlPaths` to
+   the live list).
+2. Render and diff against the live object:
+   `helm template <release> charts/agent-relay -n <namespace> -f <values> --show-only templates/eks-alb-ingress.yaml > eks-ingress.yaml`,
+   then `kubectl diff -f eks-ingress.yaml`. Only the two chart labels may
+   differ.
+3. Add the three ownership fields to the live Ingress:
+
+   ```sh
+   kubectl -n <namespace> annotate ingress <name> \
+     meta.helm.sh/release-name=<release> meta.helm.sh/release-namespace=<namespace>
+   kubectl -n <namespace> label ingress <name> app.kubernetes.io/managed-by=Helm
+   ```
+
+4. `helm upgrade` with `eksIngress.enabled=true`.
+
+The same Ingress name and no `alb.ingress.kubernetes.io/group.name` mean the
+controller reconciles the same object onto the same load balancer, so its DNS
+name and the records pointing at it stay. Stop running the script for that
+install afterwards: a later `kubectl apply` of its output would fight Helm.
+
 Install into `agent-relay-<environment>` (or another namespace explicitly
 bound in Terraform). EKS Pod Identity associations must name that namespace
 and these exact Service Accounts:

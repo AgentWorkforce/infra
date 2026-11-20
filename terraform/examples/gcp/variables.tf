@@ -259,3 +259,15 @@ variable "edge_origin_secret_header" {
   default   = null
   sensitive = true
 }
+
+variable "edge_max_subexpressions" {
+  description = "Subexpressions per Cloud Armor rule expression (modules/gcp/edge-security max_subexpressions). 10 is what the API accepts; lower it only if your project refuses a rule."
+  type        = number
+  default     = 10
+}
+
+variable "edge_max_advanced_rules" {
+  description = "Rules with an expression one Cloud Armor policy may hold (modules/gcp/edge-security max_advanced_rules). Google fixes it at 20; a plan that needs more is refused."
+  type        = number
+  default     = 20
+}
