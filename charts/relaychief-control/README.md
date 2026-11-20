@@ -71,7 +71,12 @@ AWS ALB in IP target mode connects from its subnets, so list those subnets as
 `ipBlock` peers (instance mode would connect from the nodes instead, which the
 pod policy does not admit). The ALB's default health check path is `/`, which
 this service answers with 404, so set
-`alb.ingress.kubernetes.io/healthcheck-path` to `/healthz`. `ingressFrom`
+`alb.ingress.kubernetes.io/healthcheck-path` to `/healthz`. Also set
+`alb.ingress.kubernetes.io/ssl-policy` (the example uses
+`ELBSecurityPolicy-TLS13-1-2-2021-06`): this chart's Ingress creates its own
+ALB, and without the annotation the AWS Load Balancer Controller gives the
+HTTPS listener `ELBSecurityPolicy-2016-08`, which still accepts TLS 1.0 and
+1.1. Adding it to a running release changes the listener in place. `ingressFrom`
 replaces the same-namespace default, so add a `podSelector` or `namespaceSelector`
 peer for cluster-internal callers of `/api/v1`. See
 [`ci/alb-values.yaml`](ci/alb-values.yaml) for the shape.

@@ -53,6 +53,11 @@ the `relayhistory` chart.
 Service. On the shared EKS ALB, leave it off and set
 `EKS_ALB_RELAYFILE_CONTROL=true` for `scripts/selfhost/eks-alb-ingress.sh`; set
 `alb.ingress.kubernetes.io/healthcheck-path: /healthz` in `service.annotations`.
+When this chart's own Ingress creates the ALB, also set
+`alb.ingress.kubernetes.io/ssl-policy` in `ingress.annotations` (as in
+[`ci/flows-values.yaml`](https://github.com/AgentWorkforce/infra/blob/main/charts/relayfile-control/ci/flows-values.yaml)): without it the AWS Load
+Balancer Controller gives the HTTPS listener `ELBSecurityPolicy-2016-08`, which
+still accepts TLS 1.0 and 1.1. The shared-ALB script already sets a TLS 1.3 policy.
 
 `networkPolicy.enabled` defaults to true with restricted egress, so
 `networkPolicy.additionalEgress` must admit the database or the render fails.
