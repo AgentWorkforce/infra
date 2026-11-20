@@ -87,6 +87,10 @@ for d in "${dirs[@]}"; do
     run -C "$ROOT/$d" python3 tests/check_graph.py "$TF_BIN"
     run -C "$ROOT/$d" python3 tests/check_sentinel_version.py "$TF_BIN"
   fi
+  if want test && [ "$d" = "examples/aws-private-downloads" ]; then
+    run -C "$ROOT/$d" tests/sign-url-test.sh
+    run -C "$ROOT/$d" tests/publish-test.sh
+  fi
   if want tflint && have tflint; then
     run -C "$ROOT/$d" tflint --config "$ROOT/.tflint.hcl" --no-color
   fi

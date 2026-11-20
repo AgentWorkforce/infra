@@ -36,6 +36,8 @@ output "gke" {
     workload_pool               = local.wi_pool
     node_service_account        = google_service_account.nodes.email
     persistent_disk_csi_enabled = true
+    secrets_encryption_key      = var.kms.secrets
+    binary_authorization        = var.binary_authorization_enforce ? "PROJECT_SINGLETON_POLICY_ENFORCE" : "DISABLED"
   }
 }
 output "workload_identity" {

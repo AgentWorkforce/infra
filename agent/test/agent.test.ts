@@ -18,7 +18,7 @@ test("user data: under EC2's limit, every kit and lane file, no secret values", 
   const encoded = userDataBase64(agent, read);
   assert.ok(encoded.length < EC2_USER_DATA_ENCODED_LIMIT - 500, `user data is ${encoded.length} bytes encoded`);
   const script = gunzipSync(Buffer.from(encoded, "base64")).toString("utf8");
-  const optional: readonly string[] = ["headless.py", "delegation.md", ...WORKER_KIT_FILES, ...RELAY_SESSIONS_KIT_FILES, ...ISSUE_WATCH_KIT_FILES];
+  const optional: readonly string[] = ["headless.py", "delegation.md", "orchestration.md", ...WORKER_KIT_FILES, ...RELAY_SESSIONS_KIT_FILES, ...ISSUE_WATCH_KIT_FILES];
   for (const f of agent.files) {
     const shipped = script.includes(`cat > /opt/agent-host/${f.name} <<'`);
     // The generated card and issue-watch files travel by hot update, never in user data.
@@ -67,7 +67,14 @@ test("the credential broker ships pinned: broker.ref is one exact commit, instal
   // Root-owned, read-only code; the agent user may run exactly the broker as credbroker.
   assert.match(lane, /install -m 0644 -o root -g root "\$tmp\/out\/agent\/broker\/src\/"\*\.ts/);
   // Relay mode only: request and decide take a message id; no bare approve/refuse, no identity flags.
-  assert.match(lane, /'agent ALL=\(credbroker\) NOPASSWD: %s request \*, %s decide \*, %s sweep, %s verify-audit\\n'/);
+  assert.match(lane, /'agent ALL=\(credbroker\) NOPASSWD: %s request \*, %s decide \*, %s whois \*, %s sweep, %s verify-audit, %s ship-audit\\n'/);
+  // Audit shipping: a credbroker-only timer, the group Terraform grants, off whenever the sudo rule is.
+  assert.match(lane, /^BROKER_AUDIT_LOG_GROUP=\/aws-cred-broker\/audit$/m);
+  // The group's region, not the host's (the host runs in us-west-2; Terraform made the group in us-east-1).
+  assert.match(lane, /^BROKER_AUDIT_LOG_REGION=us-east-1$/m);
+  assert.match(lane, /export BROKER_AUDIT_LOG_GROUP=%s BROKER_AUDIT_LOG_REGION=%s /);
+  assert.match(lane, /User=credbroker\\nGroup=credbroker\\nExecStart=\/usr\/local\/libexec\/aws-cred-broker ship-audit/);
+  assert.match(lane, /rm -f \/etc\/sudoers\.d\/aws-cred-broker\n  systemctl disable --now aws-cred-broker-ship-audit\.timer/);
   const sudoers = lane.split("\n").find((l) => l.includes("NOPASSWD"))!;
   assert.doesNotMatch(sudoers, /approve|refuse/, "decisions only through decide, verified against Relay");
   assert.match(lane, /visudo -cf \/etc\/sudoers\.d\/aws-cred-broker\.new/);
@@ -90,6 +97,11 @@ test("the credential broker ships pinned: broker.ref is one exact commit, instal
   const prompt = readFileSync(new URL("../lead-prompt.md", import.meta.url), "utf8");
   assert.match(prompt, /aws-cred-broker request --message-id ID/);
   assert.match(prompt, /aws-cred-broker decide --message-id ID/);
+  // Every agent's how-to exists and the card points at it.
+  const howto = readFileSync(new URL("../broker/AGENTS.md", import.meta.url), "utf8");
+  assert.match(howto, /client\.ts keygen --name/);
+  assert.match(howto, /DM `layered-infra-ops`/);
+  assert.match(agent.input.card!.skills.find((s) => s.id === "aws-credentials")!.description, /agent\/broker\/AGENTS\.md/);
   assert.doesNotMatch(prompt, /--from-name|--from-kind|aws-cred-broker approve/);
 });
 
@@ -112,6 +124,7 @@ test("the A2A card: renders within the relay's limits, one skill per kind of wor
     "provision-cloud-resources",
     "cloudflare-dns-and-workers",
     "terraform-helm-changes",
+    "aws-credentials",
     "rotate-credentials",
     "posthog-setup",
     "investigate-infrastructure",

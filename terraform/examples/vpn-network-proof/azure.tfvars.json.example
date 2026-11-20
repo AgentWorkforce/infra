@@ -1,0 +1,37 @@
+{
+  "enabled": true,
+  "name": "REPLACE_RUN_PREFIX",
+  "subscription_id": "REPLACE_APPROVED_SUBSCRIPTION_UUID",
+  "resource_group_name": "REPLACE_NEW_PROOF_RESOURCE_GROUP",
+  "virtual_network_name": "REPLACE_OWNED_PROOF_VNET",
+  "connector_cidr": "REPLACE_UNUSED_RFC1918_/28",
+  "existing_network_cidrs": [
+    "REPLACE_ALL_OTHER_ROUTED_IPV4_RANGES"
+  ],
+  "tags": {
+    "app": "agent-relay",
+    "purpose": "vpn-proof",
+    "owner": "REPLACE_OWNER",
+    "expires": "REPLACE_ISO_EXPIRY"
+  },
+  "outbound_rules": {
+    "vpn": {
+      "cidr": "REPLACE_HUB_IPV4/32",
+      "protocol": "udp",
+      "port": 1194,
+      "priority": 200
+    },
+    "edge": {
+      "cidr": "REPLACE_OBSERVER_IPV4/32",
+      "protocol": "tcp",
+      "port": 443,
+      "priority": 100
+    },
+    "dns": {
+      "cidr": "168.63.129.16/32",
+      "protocol": "udp",
+      "port": 53,
+      "priority": 300
+    }
+  }
+}

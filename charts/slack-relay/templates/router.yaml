@@ -68,6 +68,8 @@ spec:
               value: {{ join "," .Values.slack.allowedChannels | quote }}
             - name: SLACK_ALLOW_DMS
               value: {{ .Values.slack.allowDms | quote }}
+            - name: SLACK_ACK_REACTION
+              value: {{ .Values.slack.ackReaction | default "" | quote }}
             {{- include "slack-relay.secretEnv" (dict "env" "SLACK_BOT_TOKEN" "ref" .Values.secrets.slackBotToken) | nindent 12 }}
             {{- if eq .Values.slack.mode "socket" }}
             {{- include "slack-relay.secretEnv" (dict "env" "SLACK_APP_TOKEN" "ref" .Values.secrets.slackAppToken) | nindent 12 }}

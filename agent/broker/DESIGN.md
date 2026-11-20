@@ -64,6 +64,7 @@ agent ◀──Relay reply: request id, pointer, expiry, access key id (no secre
 | --- | --- | --- |
 | Never | `sts:*`, `organizations:*`, `account:*`, billing, `iam:CreateAccessKey` / login profiles, `*`, or any wildcard that overlaps them; an account not on the allowlist; a bad shape (duration outside 15 to 60 min, run tag, region) | Refused, audited, STS never called |
 | Auto | Sandbox account `805532413586`, every action literal and on an `autoRules` entry, scope `run-tag`, the run tag unclaimed or claimed by this agent | Issued on `agent-broker-sandbox-scoped` |
+| Workspace auto | A requester the Relay server verifies as an agent of our workspace (`workspaceAuto.workspaceId`), with a request wholly inside a `workspaceAuto` capability. The same rules and checks as a delegation (never IAM, identity or audit controls, deletes or wildcards), with the capability's IAM tag guards added to the policy. Khaliq's rule, 2026-11-16 | Issued with no approval, audited as `approver: workspace-auto` |
 | Approval | A prod account, `iam:*` / identity / audit actions, wildcards, `scope: account` with any non-read action (changes outside the run's tag), off-list actions, another agent's run tag | Parked. Khaliq is DMed the full request and a digest |
 
 Auto rules (allowlist `autoRules`) have three scopes:
@@ -127,8 +128,9 @@ A run tag is claimed by the first agent that receives credentials for it
 ### Approval
 
 - Only principals in `humanApprovers` (`khaliq-gant`) whose Relay envelope
-  says `kind: human` count. An agent's approval never counts, even under the
-  same name. A requester can't approve its own request.
+  says `kind: human` count, plus the delegated approvers below within their
+  capability. Any other agent's approval never counts, even under a human's
+  name. A requester can't approve its own request.
 - The approval names the request id and at least 12 hex characters of a
   digest over the request, the requester, the role, the session policy and the
   duration. Khaliq approves exactly what he was shown.
@@ -141,21 +143,87 @@ A run tag is claimed by the first agent that receives credentials for it
   are unconditioned (account-level reads have no tagged resource), creates
   must carry the run tag, and everything else applies only to resources
   carrying it. Under scope `account` there is no tag condition, only the
-  requested resources. The approval prompt lists every grant with its
-  condition, so Khaliq sees exactly what IAM will enforce, including which
-  grants are account-wide.
-- Approval-tier sessions use the account's `roles.elevated`. None exists yet,
-  so approval-tier requests are refused up front rather than parked, and
-  Khaliq isn't asked about something the broker can't issue.
+  requested resources, one statement per service: each action gets the
+  named resources its service can apply to (SSM actions also the EC2
+  instances), so a request that mixes a secret write with an SSM session
+  reads as what IAM will allow, and a delegate's check sees each action only
+  on its own resources. An action none of the resources fits keeps them all.
+  The approval prompt lists every grant with its condition, so Khaliq sees
+  exactly what IAM will enforce, including which grants are account-wide.
+- **Delegated approvers** (`delegatedApprovers`, Khaliq's call). A named
+  Relay agent may approve a pending request, over the same verified path
+  (its own DM to the broker, under 15 minutes old, each message id once),
+  only if all of these hold:
+  - the Relay server resolves the sender to the `agentId` the delegation
+    pins, not just its name. A name can be re-registered by another
+    session; the new holder doesn't inherit the delegation, and re-pinning
+    is an allowlist change. The id comes from `aws-cred-broker whois --name
+    <agent>` on the broker's host: a read-only Relay lookup with the
+    broker's observer token that prints only the name, agent id and type,
+    and writes no state or audit line. Until `agentId` is set, the config
+    is unsound and every delegated approval is refused;
+  - its delegation hasn't passed `expiresAt`, and `expiresAt` is at most 30
+    days from now;
+  - the requester named it (`"delegate": "<agent>"` in the request), and
+    isn't the delegate itself, and is on its `requesters` list (required: a
+    delegation without one is unsound);
+  - one capability covers the account, the request's explicitly named
+    regions, and every allowed action on every resource of the session
+    policy the broker built. Read-only auto rules it lists may be on any
+    resource. Everything else goes through a grant, on literal resources
+    the grant names. Secrets match by name prefix ending in `/`, or by exact
+    name plus AWS's 6-character suffix. SSM grants match only the literal
+    `instanceIds` they list, plus listed documents: `SendCommand` is a root
+    shell, which reaches the instance profile's credentials too, so each
+    listed instance's profile must stay minimal. As a second check, when the
+    request names the delegate, the broker adds an IAM deny on instances
+    without the grant's tag;
+  - nothing is never-delegable: IAM, `approvalOnly`, `neverIssue`, deletes
+    (Delete/Terminate/Remove/Purge/Destroy/Untag/Schedule…Deletion verbs),
+    or wildcard actions or resources. A config that lists one is unsound and
+    refuses every delegated approval.
+  The check runs again on the policy re-decided at approval time. The
+  `approved` audit line carries `delegation: {delegate, capability, grants,
+  expiresAt}` next to the request id and digest. Khaliq's approvals don't
+  change: he can approve anything, including requests that name a delegate.
+  The risk: a delegate that has been prompt-injected will approve whatever
+  it is shown within its capability. That's why the scope is narrow, the
+  expiry short, every approval audited, and IAM and deletes never delegable.
+- Approval-tier sessions use the account's `roles.elevated`. An account
+  without one refuses approval-tier requests up front rather than parking
+  them, and Khaliq isn't asked about something the broker can't issue.
+- The dev account (`agentrelay-dev`, tier `prod`) has an `elevated` role that
+  is read-only on purpose: `agent-broker-dev-read`, which allows only
+  `eks:DescribeCluster` on one cluster, and is an EKS access entry with
+  `AmazonEKSViewPolicy` at cluster scope (`terraform/dev`, applied by that
+  account's owner). Its `workspaceAuto` capability `dev-cluster-read` uses
+  the `eksClusters` grant kind: read actions (Describe/List/Get) on exactly
+  the named clusters, by literal name, in the capability's regions. This
+  makes `kubectl` read-only access automatic for workspace agents; the cost
+  is that an approved request for anything else in this account is issued
+  and then denied by IAM, since the role has no more than that.
 
-## Delivery: never in a Relay message
+## Delivery: never in plaintext over Relay
 
+- `encrypted` (Khaliq's choice for cross-node requesters, 2026-11-15):
+  - **The key.** The requester runs `client.ts keygen` on its own machine, which
+    makes a one-time X25519 key pair, and sends the public key in the request
+    (`"delivery": {"kind": "encrypted", "publicKey": "…"}`).
+  - **The seal.** The broker uses an ephemeral X25519 key pair, HKDF-SHA256
+    (salt = both public keys, info = the request id) and AES-256-GCM, with
+    the request id as additional data.
+  - **The reply.** It carries the envelope. The lead relays ciphertext it
+    can't open. In relay mode the public key comes from the Relay server's
+    copy of the request, so a lead can't substitute its own.
+  - **Opening it.** `client.ts open` writes a 0600 `credential_process` file
+    and deletes the single-use key. Nothing is stored on the broker, and the
+    audit log and cleanup record hold only `{kind: encrypted, ref: inline}`.
 - `file`: a `credential_process` JSON file, mode 0600, under
-  `~/.aws-broker/creds/<agent>/<request-id>.json` on the broker's node, for
-  its own workers. Use it with `credential_process = cat <path>`.
+  `/var/lib/aws-cred-broker/creds/<agent>/<request-id>.json` on the broker's
+  node, readable only by `credbroker`.
 - `1password`: an API Credential item in a vault the requester can read. The
-  item template goes to `op item create` on stdin, never on argv. This is the
-  cross-node path, for linuyc agents.
+  item template goes to `op item create` on stdin, never on argv. It needs a
+  1Password service account on the host, which isn't set up.
 
 Before anything is minted, the broker writes the run-tag claim and a cleanup
 record holding the planned delivery: the file path, or the 1Password item
@@ -197,13 +265,50 @@ credential field name, or that contains the exact secret or token just
 minted. It never judges a value by its shape, so a commit SHA in a purpose or
 a 40-character run tag is ordinary metadata.
 
+### Shipping to AWS (`src/ship.ts`)
+
+Every minute a systemd timer on the host (`aws-cred-broker-ship-audit`, as
+`credbroker`) runs `cli.ts ship-audit`. It copies the lines added since the
+last run to the CloudWatch Logs group `/aws-cred-broker/audit` in the
+broker's account (stream: the broker's Relay name), as the broker role.
+- Each line is sent verbatim (seq, prev and hash included), so the copy is
+  checked with the same chain rule as the local file.
+- Shipping is in order and at least once. A cursor
+  (`<state>/ship/cursor.json`, the last shipped seq and hash) moves only
+  after CloudWatch accepts a batch, so a crash at the wrong moment can send a
+  batch twice (same seq and hash, easy to drop), never skip one.
+- Nothing is sent if the local chain doesn't verify, or if the local line at
+  the cursor no longer has the hash that was shipped (the file was rewritten
+  after shipping). The run fails in the journal, and the CloudWatch copy is
+  the record of what the file said.
+- It never takes the state lock, so a slow CloudWatch never holds up a
+  request. It reads the file once and ships only whole lines (a line still
+  being appended has no newline yet). Shipping runs have their own lock.
+- Every audit line is bounded before it's hashed: strings at 2,000
+  characters and lists at 100 items, each saying how much was cut. So a line
+  never reaches CloudWatch's 256 KiB event limit. An older line over the
+  limit ships as a stub (seq, prev, hash, size, sha256), so shipping never
+  stalls and the chain's links stay checkable.
+- The AWS CLI gets each batch from a 0600 file in `<state>/ship`, removed
+  after the call, and never on a command line.
+- The broker role may only `logs:CreateLogStream` and `logs:PutLogEvents` on
+  that group. Vended sessions in that account may not write, delete,
+  re-key, re-tag or shorten it (`DenyBrokerAuditLog` in the elevated role's
+  ceiling).
+- Limit: this protects the record from the sessions the broker hands out and
+  from losing the host. It doesn't protect it from the layered-infra-ops
+  host's own administrator role, which can delete the group. The same
+  trust-boundary caveat as the rest of this design.
+
 ## AWS side (Terraform, `broker/terraform`)
 
 - `modules/broker-role`: `agent-cred-broker` in the host's account. Its trust
   is the account root with `ArnEquals aws:PrincipalArn = <infra-ops host role>`,
   and nothing else. Its only permissions are `sts:AssumeRole`,
   `sts:TagSession` and `sts:SetSourceIdentity` on the exact target role
-  ARNs. Sessions last at most 1 h.
+  ARNs, plus appending to the audit log group. Sessions last at most 1 h.
+- `modules/audit-log`: the CloudWatch Logs group `/aws-cred-broker/audit`,
+  with two years of retention.
 - `modules/scoped-role`: `agent-broker-sandbox-scoped` in 805532413586. It
   trusts only the broker role, and only when the broker sets a `cb-*`
   request id, the run, namespace and agent tags (and no other tag keys) and a source
@@ -242,6 +347,11 @@ layered-infra-ops applies `sandbox/` once this is merged to main (Khaliq,
    `terraform plan -out=broker.tfplan`. Post the plan summary to Khaliq: it
    should show 2 roles, 2 inline policies and 1 attachment, all creates, and
    nothing changed or destroyed. Then `terraform apply broker.tfplan`.
+   Adding audit shipping to a live stack instead shows 1 log group created
+   and 2 inline policies changed in place (the broker role's
+   `vend-agent-sessions` gains `ShipAuditLog`, and the elevated role's
+   `broker-ceiling` gains `DenyBrokerAuditLog`), with nothing destroyed.
+   It's an IAM change: apply only with Khaliq's own OK.
    `allowed_account_ids` stops the run before any change if a profile points
    at the wrong account.
 3. Check that `sandbox_scoped_role_arn` equals the allowlist's `roles.scoped`
@@ -276,6 +386,7 @@ aws-cred-broker request --from-name <sender> --from-address <sender address> --f
 aws-cred-broker approve --request-id cb-… --digest <hex> --from-name khaliq-gant --from-address <addr> --from-kind human
 aws-cred-broker sweep          # at least hourly while requests are outstanding
 aws-cred-broker verify-audit
+aws-cred-broker ship-audit     # the timer runs it every minute; prints {ok, shipped, cursor, problems}
 ```
 
 ## Phase 2 (design only): signing proxy

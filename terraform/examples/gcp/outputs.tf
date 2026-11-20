@@ -82,21 +82,21 @@ output "chart_values" {
         configMap = "cloud-sql-ca"
         key       = "ca.crt"
       }
-      }, [for _ in(local.desktop_feed_enabled ? [1] : []) : {
-        # Signed Desktop feed on GCS (relay-control 0.5.25+). If your values.yaml
-        # sets relay-control.extraEnv or serviceAccount.annotations, repeat these.
-        extraEnv = [
-          { name = "SELFHOST_DESKTOP_FEED_STORAGE", value = "gcs" },
-          { name = "SELFHOST_DESKTOP_FEED_GCS_BUCKET", value = module.desktop_feed_bucket[0].bucket_name },
-          { name = "SELFHOST_DESKTOP_FEED_GCS_PREFIX", value = "desktop-feed" },
-        ]
+      }, [for _ in(local.desktop_feed_enabled ? [1] : []) : merge({
         serviceAccount = {
           annotations = {
             "iam.gke.io/gcp-service-account"          = module.desktop_feed_bucket[0].google_service_account_email
             "iam.gke.io/return-principal-id-as-email" = "true"
           }
         }
-    }]...)
+        }, [for _ in(length(local.desktop_feed_env) > 0 ? [1] : []) : {
+          # Signed Desktop feed on GCS (relay-control 0.5.25+). If your values.yaml
+          # sets relay-control.extraEnv or serviceAccount.annotations, repeat these.
+          # Left out with desktop_feed_has_signing_keys = false: relay-control
+          # exits when the storage env is set without a signer.
+          extraEnv = local.desktop_feed_env
+      }]...)
+    ]...)
     relaycast = {
       postgresCa = {
         enabled   = true
@@ -104,6 +104,21 @@ output "chart_values" {
         key       = "ca.crt"
       }
     }
+    # The TLS policy of the load balancer's HTTPS listener (edge.tf). Empty
+    # with edge_ssl_policy.create = false, which is the chart's default.
+    gkeIngress = {
+      sslPolicy = module.edge_security.ssl_policy_name != null ? module.edge_security.ssl_policy_name : ""
+    }
+  }
+}
+
+output "edge" {
+  description = "Edge policy names (edge.tf). rule_counts is what the Cloud Armor policy needs against the project's quotas (advanced: SECURITY_POLICY_CEVAL_RULES, default 20; total: SECURITY_POLICY_RULES, default 100). security_policy is null unless edge_security_policy.create is set; put it in gkeIngress.securityPolicy together with the backend-config annotation the chart asks for. client_ip_header set means a proxy fronts the load balancer: relay-control.auth.trustedProxies is 3 instead of 2."
+  value = {
+    ssl_policy       = module.edge_security.ssl_policy_name
+    security_policy  = module.edge_security.security_policy_name
+    client_ip_header = module.edge_security.client_ip_header
+    rule_counts      = module.edge_security.rule_counts
   }
 }
 
@@ -154,14 +169,10 @@ output "image_mirror_root" {
 }
 
 output "desktop_feed" {
-  description = "Values for relay-control's signed Desktop feed on GCS (null unless desktop_feed_bucket_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys."
+  description = "Values for relay-control's signed Desktop feed on GCS (null unless desktop_feed_bucket_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys. env is empty with desktop_feed_has_signing_keys = false: relay-control exits when the storage env is set without a signer."
   value = local.desktop_feed_enabled ? {
     service_account = module.desktop_feed_bucket[0].google_service_account_email
-    env = [
-      { name = "SELFHOST_DESKTOP_FEED_STORAGE", value = "gcs" },
-      { name = "SELFHOST_DESKTOP_FEED_GCS_BUCKET", value = module.desktop_feed_bucket[0].bucket_name },
-      { name = "SELFHOST_DESKTOP_FEED_GCS_PREFIX", value = "desktop-feed" },
-    ]
+    env             = local.desktop_feed_env
     service_account_annotations = {
       "iam.gke.io/gcp-service-account"          = module.desktop_feed_bucket[0].google_service_account_email
       "iam.gke.io/return-principal-id-as-email" = "true"

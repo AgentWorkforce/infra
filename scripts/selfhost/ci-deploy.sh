@@ -3,7 +3,7 @@
 # terraform/modules/aws/ci-deploy (see docs/selfhost-ci-deploy.md), from an unpacked deploy bundle:
 #
 #   <bundle>/infra/   this repository at the environment's pinned ref (charts, this script)
-#   <bundle>/env/     the environment: deploy.json, values files, allow-drop.txt, plan-rbac.yaml
+#   <bundle>/env/     the environment: deploy.json, values files, allow-drop.txt, replace-orphans.txt, plan-rbac.yaml
 #
 #   ci-deploy.sh plan     <bundle>   diff every release against what is live; refuse an unlisted drop
 #   ci-deploy.sh apply    <bundle>   the same checks, then snapshot, upgrade, job and health checks
@@ -38,6 +38,25 @@ while IFS= read -r p; do inside "$p" >/dev/null; done < <(jq -r '.releases[] | .
   die "deploy.json: every release needs name, namespace, chart and values"
 
 releases(){ jq -r '.releases[].name' "$CFG"; }
+# orphans <release>: the "<namespace>/<name>" Jobs replace-orphans.txt lists for this release. A listed Job exists
+# without Helm ownership (made outside Helm) under a name the release now renders; the apply deletes it, only if
+# it is still unowned and finished, so the upgrade re-creates it. Lines: job <release> <ns>/<name>  # why, who
+orphans(){ local f="$B/env/replace-orphans.txt"; [ -f "$f" ] || return 0; sed 's/#.*//' "$f" | awk -v r="$1" '$1 == "job" && $2 == r { print $3 }'; }
+
+replace_orphans(){ # <release> <namespace>: delete the orphan Jobs the plan reported for this release
+  local r=$1 key ns name job="$WORK/orphan-job.json" f="$REPORT_DIR/orphans-$r.txt"
+  [ -s "$f" ] || return 0
+  while IFS= read -r key; do
+    ns=${key%%/*}; name=${key#*/}
+    kubectl get job "$name" -n "$ns" -o json --ignore-not-found > "$job" || return 1
+    [ -s "$job" ] || { log "orphan $key: already gone"; continue; }
+    jq -e --arg r "$r" '(.metadata.annotations["meta.helm.sh/release-name"] // "") != $r
+      and ((.status.conditions // []) | any(.type == "Complete" and .status == "True"))' "$job" >/dev/null ||
+      { log "orphan $key is now owned or unfinished; refusing to delete it"; return 1; }
+    kubectl delete job "$name" -n "$ns" --wait=true >/dev/null || return 1
+    log "orphan $key deleted (the upgrade re-creates it)"
+  done < "$f"
+}
 rel(){ jq -r --arg n "$1" ".releases[] | select(.name == \$n) | $2" "$CFG"; }
 
 # helm dependency build, local file:// dependencies first (sessions-pipeline before agent-relay).
@@ -91,8 +110,24 @@ plan_release(){
   fi
   # server: render with the cluster's capabilities and lookups, as the upgrade will (nothing is applied).
   new="$WORK/new-$r.json"
-  helm upgrade --install "$r" "${args[@]}" --dry-run=server -o json > "$new" ||
-    { log "rendering $r failed"; return 1; }
+  if [ -z "$(orphans "$r")" ]; then
+    helm upgrade --install "$r" "${args[@]}" --dry-run=server -o json > "$new" ||
+      { log "rendering $r failed"; return 1; }
+  else
+    # Listed orphans (replace-orphans.txt) would make the dry run fail on ownership. Take ownership in the dry run
+    # only (nothing is written), then refuse unless every unowned live object it would take is a listed, finished Job.
+    helm upgrade --install "$r" "${args[@]}" --dry-run=server --take-ownership -o json > "$new" ||
+      { log "rendering $r failed"; return 1; }
+    local live_objs="$WORK/orphan-live-$r.json" kind name ons
+    : > "$live_objs"
+    while IFS=$'\t' read -r kind name ons; do
+      kubectl get "$kind" "$name" -n "$ons" -o json --ignore-not-found >> "$live_objs" ||
+        { log "reading live $kind/$name failed"; return 1; }
+    done < <(python3 "$HERE/ci_deploy_orphans.py" objects "$new" "$ns")
+    python3 "$HERE/ci_deploy_orphans.py" check "$r" "$live_objs" "$B/env/replace-orphans.txt" "$REPORT_DIR/orphans-$r.txt" ||
+      { log "plan $r: an object exists without Helm ownership and is not a listed orphan (see above)"; return 1; }
+    [ ! -s "$REPORT_DIR/orphans-$r.txt" ] || log "plan $r: the apply replaces orphan Job(s): $(tr '\n' ' ' < "$REPORT_DIR/orphans-$r.txt")"
+  fi
   python3 "$HERE/ci_deploy_plan.py" "$r" "$live" "$new" "$B/env/allow-drop.txt" "$REPORT_DIR/plan"
 }
 
@@ -289,6 +324,7 @@ case "$MODE" in
       args=(); while IFS= read -r -d '' a; do args+=("$a"); done < <(helm_args "$r")
       ns=$(rel "$r" .namespace); start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       log "apply $r (was revision $(live_revision "$r" "$ns"))"
+      replace_orphans "$r" "$ns" || die "replacing orphan Jobs of $r failed (nothing upgraded)"
       if ! helm upgrade --install "$r" "${args[@]}" --wait --timeout "$(rel "$r" '.timeout // "20m"')" > "$REPORT_DIR/helm-$r.txt" 2>&1; then
         tail -20 "$REPORT_DIR/helm-$r.txt" >&2
         die "helm upgrade $r failed. Roll back: dispatch mode=rollback release=$r revision=<previous>"

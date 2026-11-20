@@ -1,10 +1,17 @@
 # Install Agent Relay on your GKE cluster
 
+**Customer handoff:** start with [GCP customer setup](README.md), the short path
+for inputs, Terraform and DNS. This page is the detailed operator reference,
+including alternative secret-delivery methods, optional features, upgrades,
+recovery and teardown. Use the sections that match the approved installation.
+Its release pins below describe this reference's release; a newer edge install
+needs the compatible release selected for that deployment.
+
 Numbered steps, in order. Copy each block, replace `<...>`, and check the
 **Done when** line before moving on. This takes about 1½ hours, most of it
 waiting on Google Cloud (the HTTPS certificate alone can take up to an hour).
 
-Release: **agent-relay-2026.11.6** (infra commit `6b98a4ab`, chart 0.7.11).
+Release: **agent-relay-2026.11.16** (infra commit `ece71b9d`, chart 0.7.54).
 
 **You need:**
 
@@ -41,10 +48,10 @@ git clone https://github.com/AgentWorkforce/infra.git
 # tag predates them. Terraform and the chart come from the tag below.
 git -C infra archive origin/main docs/gcp-install | tar -x --strip-components=2
 ls 0-START-HERE.md values.yaml cloud-sql-setup.sh helm-secrets-prepare.sh first-admin.sh add-user.sh >/dev/null && echo "guide ok"
-git -C infra checkout agent-relay-2026.11.6
-test "$(git -C infra rev-parse HEAD)" = 6b98a4abb7d9ac280d8512ef557c16aef53fd93d && echo "release ok"
-mkdir release && gh release download agent-relay-2026.11.6 -R AgentWorkforce/infra -D release
-(cd release && sha256sum -c SHA256SUMS && tar -xzf agent-relay-0.7.11.tgz) | tail -1
+git -C infra checkout agent-relay-2026.11.16
+test "$(git -C infra rev-parse HEAD)" = ece71b9df93df64cb63676d2a0ca2767eccc6599 && echo "release ok"
+mkdir release && gh release download agent-relay-2026.11.16 -R AgentWorkforce/infra -D release
+(cd release && sha256sum -c SHA256SUMS && tar -xzf agent-relay-0.7.54.tgz) | tail -1
 ```
 
 **Got this guide as a gist?** Replace the `mkdir agent-relay-install ...` line
@@ -53,8 +60,23 @@ and delete the `git -C infra archive ...` line: the gist already holds the
 guide's files.
 
 No `gh`? Download the same assets from
-https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.6 into
+https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.16 into
 `release/`. On macOS use `shasum -a 256 -c SHA256SUMS`.
+
+**Installing the chart from a checkout instead of the released `.tgz`?** (A
+chart newer than the pinned release, or your own change.) Build the
+dependencies in this order, then use `infra/charts/agent-relay` wherever the
+steps name the `.tgz` or `$CHART`:
+
+```sh
+helm dependency build infra/charts/sessions-pipeline
+helm dependency build infra/charts/agent-relay
+```
+
+`sessions-pipeline` has dependencies of its own, so it goes first. Without it
+the second command fails or packages a chart whose read API and workers are
+not rendered. Step 7's image values then need the chart's own release, not
+this guide's pins (see the note there).
 
 Tools: `gcloud` (with `gke-gcloud-auth-plugin`), `terraform` ≥ 1.11 (or
 OpenTofu), `helm` 3, `kubectl`, `jq`, `yq`, `openssl`, and
@@ -74,7 +96,8 @@ gcloud auth login && gcloud auth application-default login
 gcloud config set project <project id>
 gcloud services enable container.googleapis.com sqladmin.googleapis.com servicenetworking.googleapis.com \
   redis.googleapis.com pubsub.googleapis.com secretmanager.googleapis.com dns.googleapis.com \
-  artifactregistry.googleapis.com compute.googleapis.com iamcredentials.googleapis.com
+  artifactregistry.googleapis.com compute.googleapis.com iamcredentials.googleapis.com \
+  cloudresourcemanager.googleapis.com
 gcloud container clusters get-credentials <cluster> --location <region>   # add --internal-ip for a private endpoint
 kubectl auth can-i '*' '*' --all-namespaces
 gcloud container clusters describe <cluster> --location <region> \
@@ -152,7 +175,7 @@ network_self_link    = "projects/<project id>/global/networks/<cluster VPC>"
 sessions_bucket_name = "<globally unique bucket name, e.g. acme-agent-relay-sessions>"
 deletion_protection  = true
 image_mirror_repository = "agent-relay-mirror"   # step 5's registry, readable by the GKE nodes
-# desktop_feed_bucket_name = "<globally unique, e.g. acme-agent-relay-desktop-feed>"   # agent-relay-2026.11.9 or later: the desktop app's update feed
+# desktop_feed_bucket_name = "<globally unique, e.g. acme-agent-relay-desktop-feed>"   # agent-relay-2026.11.9 or later, and only once the feed's signing key exists (see below)
 # gke_node_service_account = "<email>"   # only if the node pool has its own service account
 # kms_key_name = "projects/<p>/locations/<region>/keyRings/<ring>/cryptoKeys/<key>"   # optional CMEK
 labels = { app = "agent-relay" }
@@ -169,7 +192,7 @@ cd -
 change, 0 to destroy` (5 more with `desktop_feed_bucket_name`, 2 fewer
 without `image_mirror_repository`), the apply completes, and `managed-values.json` exists.
 
-From agent-relay-2026.11.9, uncomment `desktop_feed_bucket_name`. It gives the
+From agent-relay-2026.11.9, `desktop_feed_bucket_name` gives the
 desktop app a signed update feed in your project: a private bucket, and a service account relay-control uses to write
 releases there and sign download links. `managed-values.json` carries its
 settings into step 11; if your `values.yaml` sets `relay-control.extraEnv` or
@@ -177,6 +200,31 @@ settings into step 11; if your `values.yaml` sets `relay-control.extraEnv` or
 `terraform output desktop_feed` into them. Earlier releases have neither the
 Terraform input nor relay-control 0.5.25, so leave it commented. Agent Relay sets up
 the feed's signing key with you when we build your branded desktop app.
+
+**Uncomment it only once that signing key is in place** (the key's Secret
+exists and your `values.yaml` sets `relay-control.desktopFeed.signingKeys`).
+The bucket puts the feed's storage settings into `managed-values.json`, and
+relay-control does not start with storage and no signer: it exits with
+`SELFHOST_DESKTOP_FEED_SIGNER and SELFHOST_DESKTOP_FEED_STORAGE must be set together`
+and the pod crash-loops. Adding the bucket later is this step again (5 to
+add), then step 11's command.
+
+**Already applied with the bucket, and no signing key yet?** Keep the bucket
+and take the storage settings out until the key exists:
+
+```sh
+jq 'del(.["relay-control"].extraEnv)' managed-values.json > managed-values.tmp && mv managed-values.tmp managed-values.json
+```
+
+Also remove any `SELFHOST_DESKTOP_FEED_*` entries you copied into
+`values.yaml`. The service account annotations can stay. When the key is in
+place, write `managed-values.json` again (the `terraform output` line above)
+and run step 11's command. The Terraform on `main` (after the pinned release)
+does the same with `desktop_feed_has_signing_keys = false` in
+`terraform.tfvars`: the output then leaves the storage settings out. Outputs
+change only on apply, so after adding or removing that line run
+`terraform plan` and `terraform apply` before writing `managed-values.json`
+again.
 
 **Terraform state.** The example has no `backend` block, so the state stays in
 a local file. To keep it in Cloud Storage, create a private, versioned bucket
@@ -197,7 +245,9 @@ Either way, keep the state: upgrades and teardown need it.
   configures it on the cluster's VPC; then apply again.
 - **CMEK:** grant the Cloud SQL, Cloud Storage and Pub/Sub service agents
   `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the key first
-  (2-SERVICE-ACCOUNTS.md).
+  (2-SERVICE-ACCOUNTS.md). To use your own keys for everything, and to
+  encrypt Kubernetes Secrets with one (recommended), see
+  REGULATED-PROFILE.md.
 
 ## 5. Mirror the images to Artifact Registry
 
@@ -272,7 +322,7 @@ export MIRROR_ROOT=<region>-docker.pkg.dev/<project id>/agent-relay-mirror
 export NAMESPACE=agent-relay
 export HELM_RELEASE=agent-relay
 export STATIC_IP_NAME=agent-relay-ingress
-export SERVICES_IMAGE=$MIRROR_ROOT/ghcr.io/agentworkforce/sessions-pipeline@sha256:3d9c0a4dff67c92da30964857713e625f3f967bc2ff98851614a70adbb4fe3fe
+export SERVICES_IMAGE=$MIRROR_ROOT/ghcr.io/agentworkforce/sessions-pipeline@sha256:fd2efd61dca4761dfb55256aa4797cb7f61c3434cc8af4833287e0e7bb7b59a9
 export PSQL_IMAGE=$MIRROR_ROOT/ghcr.io/cloudnative-pg/postgresql@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3
 export INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 export CHART="$INSTALL_DIR/release/agent-relay"
@@ -290,6 +340,34 @@ source settings.sh
 bash -c 'source ./settings.sh; for v in DOMAIN ORG_ID ORG_NAME ADMIN_EMAIL GCP_PROJECT_ID REGION MIRROR_ROOT CLOUD_SQL_INSTANCE CLOUD_SQL_HOST CLOUD_SQL_ADMIN_USER CLOUD_SQL_ADMIN_SECRET_ID CLOUD_SQL_CA_SHA256 SESSIONS_BUCKET; do [ -n "${!v}" ] && [ "${!v}" != null ] && [[ "${!v}" != *"<"* ]] || echo "MISSING: $v"; done; echo "settings checked"'
 ```
 
+**`SERVICES_IMAGE`, `PSQL_IMAGE` and `agent-relay-0.7.54.tgz` belong to the
+pinned release,** agent-relay-2026.11.16 (chart 0.7.54). Installing another
+release or chart? Don't reuse these digests: the Jobs in steps 8, 13 and 16
+would run an older services image than the workloads. Read the three values
+from that release's own assets in `release/` (step 1, with its tag):
+
+```sh
+ls release/agent-relay-*.tgz
+jq -r '.images[] | select(.name == "sessions-pipeline" or .name == "sessions-migration-postgresql") | "\(.name) \(.ref)"' release/release-manifest.json
+```
+
+`SERVICES_IMAGE` is `$MIRROR_ROOT/` followed by the `sessions-pipeline` ref,
+`PSQL_IMAGE` is `$MIRROR_ROOT/` followed by the `sessions-migration-postgresql`
+ref, and the `.tgz` name replaces `agent-relay-0.7.54.tgz` in steps 11, 13 and
+16.
+
+A chart from a checkout (step 1) has no release assets. Read the same two
+images from the checkout, for the release whose images you run, and mirror
+them (step 5) before use:
+
+```sh
+jq -r '.pins["sessions-pipeline"] | "\(.repository)@\(.digest)"' infra/releases/<release tag>/pins.json
+grep -m1 -o 'ghcr.io/cloudnative-pg/postgresql[^ ]*' infra/charts/sessions-pipeline/values.yaml
+```
+
+The second line prints `repository:tag@sha256:...`; `PSQL_IMAGE` takes it
+without the tag (`repository@sha256:...`), as step 5 mirrors by digest.
+
 **Brought your own resources (step 3)?** Replace the six lines between `PG=`
 and `unset` with the values from 1-BRING-YOUR-OWN.md.
 
@@ -303,10 +381,27 @@ and `unset` with the values from 1-BRING-YOUR-OWN.md.
 bash cloud-sql-setup.sh pre
 ```
 
+Terraform pre-creates an otherwise empty `hoopdb`. The script proves that
+database has no `sessions` schema or HoopDb roles before it activates it. On
+later setup and upgrade runs, an administrator-owned database with either kind
+of state is always treated as a legacy install and is never converted in place.
+
 It creates the namespace, the `cloud-sql-ca` ConfigMap, the three databases
 and their roles (in a Job inside the cluster), and writes every database
 credential to `~/.agent-relay-install` (mode 0700). It reads the Cloud SQL
 admin password from Secret Manager and never prints it.
+
+For a fresh install, HoopDb is owned by the plain `hoopdb_owner` login; both
+long-lived migration/bootstrap keys use that URL. The Cloud SQL administrator
+is used only by these one-off setup Jobs and is never stored in a Kubernetes
+Secret. A rerun recognizes an older administrator-owned HoopDb and leaves its
+objects and legacy role edges unchanged. Before a legacy upgrade or guide Job,
+run `cloud-sql-setup.sh prepare-admin-jobs`. Keep the old long-lived keys until
+Helm, every affected Job and all Deployments succeed. On success run
+`cloud-sql-setup.sh remove-legacy-secret-keys`; on success or failure always
+delete the temporary copy with `cloud-sql-setup.sh delete-admin-jobs`. A failed
+upgrade can then roll back to the previous revision without reconstructing its
+credentials.
 
 **Done when:** it ends with `pre done`, after `tls: true` and
 `extensions: btree_gin,pg_trgm,plpgsql,vector`.
@@ -364,7 +459,7 @@ fill in their placeholders. For a branded desktop app,
 
 ## 10. Create the secrets
 
-Pick **one** of the three ways.
+Pick **one** of the four ways.
 
 **a. Plain `kubectl`:**
 
@@ -395,6 +490,12 @@ done
 **Done when:** five lines that end in `created` (`replaced` on a rerun). Copy `~/.agent-relay-install`
 to your secret store again (step 8 shows how): it now holds the encryption keys.
 
+These Secrets include the database-owner URL. A legacy administrator-owned
+install also creates a provider-administrator URL in temporary
+`hoopdb-admin-jobs` while migration/bootstrap Jobs run. Before other people
+get access to the cluster, restrict who can read Secrets in this namespace:
+[selfhost-secret-access.md](../selfhost-secret-access.md).
+
 **b. helm-secrets with SOPS** (every secret in one encrypted values file, for
 example encrypted with a Cloud KMS key):
 
@@ -423,9 +524,94 @@ application-default login` on a laptop; Workload Identity or the VM's service
 account in CI) and needs `roles/secretmanager.secretAccessor` on the secrets.
 This stores 19 secrets named `agent-relay--<Secret>--<key>` in Secret Manager;
 `secrets.yaml` holds only `ref+gcpsecrets://...` references. If you run vals
-your own way, `vals eval -f secrets.yaml` resolves the same file. External
-Secrets Operator with a `SecretStore` for Secret Manager works too: create the
-same five Secrets with the same keys.
+your own way, `vals eval -f secrets.yaml` resolves the same file.
+
+**d. External Secrets Operator with Google Secret Manager** (the values live
+in Secret Manager and the cluster syncs them; nothing secret passes through
+Helm).
+
+**Not with this guide's pinned release.** Option d needs the `agent-relay`
+chart 0.7.57 or later. The release this guide installs (chart 0.7.54) has no
+`externalSecrets` support: Helm would ignore the settings without an error,
+create no Secret, and the pods would never start. Use a, b or c with the
+pinned release, and option d from the first release whose chart is 0.7.57 or
+later.
+
+You also need [External Secrets Operator](https://external-secrets.io)
+installed in the cluster with the `external-secrets.io/v1` API. This path is
+covered by render tests; it has been proven on AWS (SSM), not yet on a live
+GKE install.
+
+```sh
+# 1. Put the 19 generated values in Secret Manager (the same names as c).
+#    Run cloud-sql-setup.sh pre first: on a fresh install its two HoopDb owner
+#    files contain hoopdb_owner URLs. The Cloud SQL administrator URL is never
+#    copied into Secret Manager or an ExternalSecret.
+VALS_GCPSM=$GCP_PROJECT_ID bash helm-secrets-prepare.sh && rm -f secrets.yaml
+# 2. A ServiceAccount for ESO to read them as, and its access (Workload Identity, no key).
+kubectl -n $NAMESPACE create serviceaccount agent-relay-external-secrets
+NUMBER=$(gcloud projects describe $GCP_PROJECT_ID --format='value(projectNumber)')
+MEMBER="principal://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/$GCP_PROJECT_ID.svc.id.goog/subject/ns/$NAMESPACE/sa/agent-relay-external-secrets"
+for s in $(gcloud secrets list --project $GCP_PROJECT_ID --filter='name~/agent-relay--' --format='value(name)'); do
+  gcloud secrets add-iam-policy-binding "$s" --project $GCP_PROJECT_ID \
+    --member "$MEMBER" --role roles/secretmanager.secretAccessor >/dev/null
+done
+# 3. Fill in the settings and add them to values.yaml, so every later helm
+#    command in this guide carries them.
+GKE_CLUSTER=<cluster name>
+sed -e "s/__GCP_PROJECT_ID__/$GCP_PROJECT_ID/g" -e "s/__REGION__/$REGION/g" \
+  -e "s/__GKE_CLUSTER__/$GKE_CLUSTER/g" external-secrets-values.yaml | grep -v '^#' >> values.yaml
+grep -n '__[A-Z_]*__' values.yaml; grep -c '^externalSecrets:' values.yaml
+```
+
+**Done when:** the first `grep` prints nothing and the second prints `1`.
+
+The settings must be in **every** `helm upgrade` of this install, which is
+why they go into `values.yaml` and not a separate file: Helm does not keep
+values from the previous command, and an upgrade without them removes the
+five ExternalSecrets and, with them, the five Secrets. After the install
+(step 11):
+
+```sh
+kubectl -n $NAMESPACE get secretstore,externalsecret
+```
+
+shows the store `Valid` and five ExternalSecrets `SecretSynced`. Pods that
+started before their Secret existed wait in `CreateContainerConfigError` and
+start by themselves once it does.
+
+- **`SecretSyncedError` with `PermissionDenied`:** the ServiceAccount has no
+  access to that secret. Run the `for` loop again; it also covers secrets
+  added since.
+- **A value changed in Secret Manager** reaches the Secret within an hour
+  (`refreshInterval`); restart the pods that use it.
+- **Do not rotate `hoopdb_owner` by changing only Secret Manager.** There is no
+  supported helper yet that atomically changes the database login, saved setup
+  state, and both owner URLs. Follow the current limitation and verification
+  guidance in [Database Secret access](../selfhost-secret-access.md#6-also-worth-doing).
+- **Existing administrator-owned install:** the first upgrade uses the
+  temporary `hoopdb-admin-jobs` Secret. To remove the old long-lived keys from
+  ESO-managed Secrets, first remove their mappings from the `values.yaml` used
+  by every later Helm command (the template remains unchanged for fresh installs):
+
+  ```sh
+  yq -i '
+    del(.externalSecrets.secrets.agent-relay-secrets.data.HOOPDB_MIGRATION_URL) |
+    del(.externalSecrets.secrets.search-indexer-owner)
+  ' values.yaml
+  ```
+
+  `search-indexer-owner` has no other keys, so remove its whole values entry;
+  leaving an empty `data` map makes chart validation refuse the upgrade. Apply
+  that values file with the successful upgrade, then remove the remaining
+  `agent-relay-secrets` mapping from its live ExternalSecret and delete both
+  old values from Secret Manager. Wait for reconciliation; do not patch the
+  generated Kubernetes Secrets. Delete `hoopdb-admin-jobs` only after the
+  upgrade Jobs, Deployments, and this store-side cleanup succeed. Do not append
+  `external-secrets-values.yaml` to this existing install again: it would
+  restore the removed mappings.
+- **`helm uninstall` deletes these five Secrets** (ESO owns them). The values
+  stay in Secret Manager.
 
 - **Already ran (a)?** Delete those five Secrets first, so helm can own them.
 - **`could not find default credentials`?** Run `gcloud auth application-default login`,
@@ -435,14 +621,15 @@ same five Secrets with the same keys.
 ## 11. Install with Helm
 
 ```sh
-helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.11.tgz" --namespace $NAMESPACE \
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.54.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
   -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
 ```
 
-The order matters: the two GCP profiles, then Terraform's managed services,
-then your site values, then the release images last.
+The order matters: the two GCP profiles, Terraform's managed services, your
+site values, the setup script's HoopDb layout, then the release images last.
 
 **Done when:** it prints `STATUS: deployed`. Don't add `--wait`.
 
@@ -465,9 +652,10 @@ done
 bash cloud-sql-setup.sh post
 kubectl -n $NAMESPACE rollout restart deploy/agent-relay-read-api deploy/agent-relay-ingest-edge deploy/agent-relay-search-indexer
 for j in $(kubectl -n $NAMESPACE get jobs -o name | grep search-indexer-bootstrap); do kubectl -n $NAMESPACE delete "$j"; done
-helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.11.tgz" --namespace $NAMESPACE \
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.54.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
   -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
 kubectl -n $NAMESPACE wait --for=condition=complete "$(kubectl -n $NAMESPACE get jobs -o name | grep search-indexer-bootstrap)" --timeout=10m
 kubectl -n $NAMESPACE rollout status deploy --timeout=10m
@@ -491,7 +679,7 @@ with `echo $CLOUD_SQL_CA_SHA256`.
 kubectl -n $NAMESPACE get managedcertificate agent-relay -o jsonpath='{.status.certificateStatus}{"\n"}'
 ```
 
-Repeat until it prints `Active`. Then:
+Repeat until it prints `Active` (what is normal while you wait is below). Then:
 
 ```sh
 curl -fsS "https://api.$DOMAIN/readyz" && echo " api ok"
@@ -503,12 +691,37 @@ curl -s -o /dev/null -w "history %{http_code}\n" "https://history.$DOMAIN/v1/ses
 **Done when:** `Active`, then `api ok`, `cast ok`, `dashboard 200` and
 `history 401`.
 
+**The Ingress can take 15 to 20 minutes to get its address** after step 11.
+The certificate cannot leave `Provisioning` before that. To look:
+
+```sh
+kubectl -n $NAMESPACE get ingress
+kubectl -n $NAMESPACE describe ingress | sed -n '/^Events:/,$p'
+```
+
+A `Translation failed ... no BackendConfig for service port exists` warning
+on the first sync is harmless when it does not repeat: the load balancer
+controller read the Services before their BackendConfigs, and a later sync
+heals it by itself. Worry only if the `ADDRESS` column is still empty, or the
+warning still repeats, after about 20 minutes; then send us the events.
+
 - **Stuck in `Provisioning` for over an hour:** one of the four names does not
   resolve to the address from step 6, or a CAA record blocks Google. Fix DNS;
   the certificate retries by itself.
 - **`FailedNotVisible`:** the same: DNS does not point at the load balancer yet.
 - **502 for a few minutes after `Active`:** the load balancer's health checks
   are still converging. Wait 5 minutes.
+- **502 on `/internal` and other closed paths is not an outage.** The chart
+  routes paths that must not be public (for example
+  `https://api.<domain>/internal/...`) to the `...-cast-edge-deny` Service,
+  which has no endpoints on purpose. Without a Cloud Armor policy the load
+  balancer answers those paths with 502, not 403 or 404. Only the four checks
+  above tell you whether the install is up.
+
+The load balancer accepts TLS 1.0 and later until it has an SSL policy. To
+require TLS 1.2, add Cloud Armor, or put Cloudflare in front, see
+[3-EDGE-HARDENING.md](3-EDGE-HARDENING.md) (from the first release with chart
+0.7.59; not the release this guide pins).
 
 ## 15. First sign-in, then add users
 
@@ -540,6 +753,19 @@ and signs in at `https://<domain>/login`. The setup key works once, within 24
 hours: the script never retries, and it stops if the secret already exists.
 A `403 csrf_rejected` means the request lacked your dashboard's origin; it is
 refused before the key is read, so the key stays unused.
+
+Two settings, both optional:
+
+- **The API is not at `api.<app hostname>`** (your own four host names): name
+  it with `API_HOST=<api hostname> bash first-admin.sh ...`. The script calls
+  that host and still sends the app hostname as the origin.
+- **No Secret Manager** (the API is off, or you may not create secrets there):
+  `PASSWORD_FILE=<path> bash first-admin.sh ...` keeps the password in that
+  new local file (mode 0600) instead; `<project id>` is then unused and can be
+  `-`. The script stops if the file exists. Hand the file to the admin over a
+  channel you trust, then delete it. By default the script needs
+  `secretmanager.googleapis.com` and permission to create a secret in the
+  project.
 
 Then add users:
 
@@ -633,9 +859,10 @@ replaces the chart's default, so it holds only these two entries.
 **16d.** Apply it, with the same files and order as step 11:
 
 ```sh
-helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.11.tgz" --namespace $NAMESPACE \
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.54.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
   -f "$INSTALL_DIR/release-images.values.yaml" --timeout 25m
 kubectl -n $NAMESPACE rollout status deploy/agent-relay-worker-session-brief deploy/agent-relay-worker-session-summary-worker --timeout=10m
 ```
@@ -656,19 +883,22 @@ Good to know:
   extractive summary and logs `bob costas model summary fallback` with
   `"reason":"no_api_key"`. So does any failed model call, with
   `"reason":"model_failed"`.
-- **Limits.** The brief worker writes at most 20 briefs a day across the
-  install and 3 per session (`nativeBrief.globalDailyCap`, `sessionDailyCap`),
-  for sessions in the listed workspaces only. A workspace added later needs its
-  ID added here and the upgrade run again.
+- **Limits.** The brief worker writes at most 2000 briefs a day across the
+  install and 10 per session (`nativeBrief.globalDailyCap`, `sessionDailyCap`;
+  agent-relay 0.7.49 and later; 20 and 3 before), for sessions in the listed
+  workspaces only. They cap model spend: past a cap new briefs are
+  `rate_limited` and the dashboard shows "No summary yet" until the next UTC
+  day, so raise `globalDailyCap` above your sessions per day if that happens.
+  A workspace added later needs its ID added here and the upgrade run again.
   bob-costas model calls have their own caps, kept in memory per replica and
   reset each UTC day: 5000 sessions per organization
   (`BOB_COSTAS_BACKGROUND_DAILY_BUDGET`) and 20000 model attempts in all
   (`BOB_COSTAS_GLOBAL_DAILY_CAP`). Past a cap, summaries fall back to
   extractive.
 - **MCP `list_session_summaries`:** `values.yaml` already sets
-  `sessions-pipeline.sessionReadApi.summaries.listShortSummary: true`; chart
-  0.7.11 ignores it, and from chart 0.7.15 (AgentWorkforce/infra#346) it lets
-  MCP `list_session_summaries` return the recorded summaries.
+  `sessions-pipeline.sessionReadApi.summaries.listShortSummary: true`, so MCP
+  `list_session_summaries` returns the recorded summaries (chart 0.7.15 and
+  later, AgentWorkforce/infra#346).
 - **Turn it off:** set `nativeBrief.enabled` and `session-brief.enabled` back to
   `false`, remove `nativeBrief.baseUrl` if you set a gateway (the chart refuses
   a `baseUrl` while the brief worker is off), and set the `bob-costas` list back
@@ -688,13 +918,164 @@ Good to know:
   `kubectl -n $NAMESPACE rollout status deploy/agent-relay-worker-session-summary-worker --timeout=10m`.
   Then `kubectl -n $NAMESPACE delete secret agent-relay-llm`.
 
+## 17. Turn on agent search (once, after first sign-in)
+
+Searching Sessions for `@<agent name>` answers "The session agent index isn't
+ready yet" (`501 agent_filter_not_ready` from the API) until this one-time
+activation runs. It checks that every session's agent names are indexed, then
+marks the index ready; later sessions are indexed as they arrive. Run it once
+the first session has uploaded, or on a brand-new install with
+`--fresh-install` (below).
+
+**17a. Get the script and plan (read-only).** It runs in a pod in the
+cluster as the migration owner. A fresh install reads the dedicated
+`hoopdb_owner` URL from `agent-relay-secrets`; an existing administrator-owned
+install must run `cloud-sql-setup.sh prepare-admin-jobs` immediately first and
+set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`. Keep that temporary Secret through
+both the read-only plan and the final apply in 17b; both pods reference it. The
+URL never reaches your shell. The script isn't in the
+services image, so this fetches it from the commit the image was built from:
+
+```sh
+REV="$(crane config "ghcr.io/agentworkforce/sessions-pipeline@${SERVICES_IMAGE#*@}" | jq -r '.config.Labels["org.opencontainers.image.revision"]')"
+HOOPDB_JOB_SECRET="${HOOPDB_JOB_SECRET:-agent-relay-secrets}"
+curl -fsSL -o catalog-activation.ts "https://raw.githubusercontent.com/AgentWorkforce/relayhistory-pipeline/$REV/scripts/native-agent-catalog-activation.ts"
+kubectl -n $NAMESPACE create configmap agent-catalog-activation --from-file=catalog-activation.ts --dry-run=client -o yaml | kubectl apply -f -
+catalog() {  # catalog --plan | catalog --apply <fingerprint>
+  [ -n "$NAMESPACE" ] && [ -n "$SERVICES_IMAGE" ] || { echo "missing settings: run 'source settings.sh' (step 7) first"; return 1; }
+  ARGS="$(printf ', "%s"' "$@")"
+  kubectl -n $NAMESPACE delete pod agent-catalog --ignore-not-found
+  kubectl -n $NAMESPACE apply -f - <<YAML
+apiVersion: v1
+kind: Pod
+metadata: { name: agent-catalog }
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+  volumes:
+    - { name: tmp, emptyDir: { sizeLimit: 64Mi } }
+    - { name: ca, configMap: { name: cloud-sql-ca } }
+    - { name: script, configMap: { name: agent-catalog-activation } }
+  containers:
+    - name: catalog
+      image: $SERVICES_IMAGE
+      workingDir: /app
+      command: [bun, /app/scripts/native-agent-catalog-activation.ts$ARGS]
+      env:
+        - { name: HOOPDB_DB_MODE, value: selfhosted }
+        - { name: HOOPDB_URL, valueFrom: { secretKeyRef: { name: $HOOPDB_JOB_SECRET, key: HOOPDB_MIGRATION_URL } } }
+        - { name: NODE_EXTRA_CA_CERTS, value: /etc/catalog-ca/ca.crt }
+        - { name: HOME, value: /tmp }
+      securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+      volumeMounts:
+        - { name: tmp, mountPath: /tmp }
+        - { name: ca, mountPath: /etc/catalog-ca, readOnly: true }
+        - { name: script, mountPath: /app/scripts/native-agent-catalog-activation.ts, subPath: catalog-activation.ts, readOnly: true }
+YAML
+  t=0
+  until p="$(kubectl -n $NAMESPACE get pod agent-catalog -o jsonpath='{.status.phase}')"; [ "$p" = Succeeded ] || [ "$p" = Failed ]; do
+    sleep 3; t=$((t + 3))
+    [ $t -lt 300 ] || { echo "agent-catalog still $p after 5 min"; kubectl -n $NAMESPACE describe pod agent-catalog | tail -20; return 1; }
+  done
+  kubectl -n $NAMESPACE logs agent-catalog | tail -1
+  rc="$(kubectl -n $NAMESPACE get pod agent-catalog -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}')"
+  echo "exit $rc"; [ "$rc" = 0 ]
+}
+catalog --plan
+```
+
+**Done when:** one JSON line, then `exit 0` or `exit 2`. The plan is read-only
+and safe to run any time. Its line shows `"eligible"` and a 64-character
+`fingerprint`; `"eligible":false` with only `unprojected` above 0 is fine at
+this point.
+
+**17b. Pause uploads, plan, apply, resume (about a minute).** Apply only
+works on a plan made while nothing writes, so stop uploads, give the indexer a
+minute to catch up, then stop it too. `pause` waits until a Deployment's pods
+are gone; `resume` puts back the replica counts read here:
+
+```sh
+IE="$(kubectl -n $NAMESPACE get deploy agent-relay-ingest-edge -o jsonpath='{.spec.replicas}')"
+SI="$(kubectl -n $NAMESPACE get deploy agent-relay-search-indexer -o jsonpath='{.spec.replicas}')"
+pause() {
+  sel="$(kubectl -n $NAMESPACE get deploy "$1" -o json | jq -r '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")')"
+  [ -n "$sel" ] && kubectl -n $NAMESPACE scale deploy/"$1" --replicas=0 || return 1
+  until [ -z "$(kubectl -n $NAMESPACE get pods -l "$sel" -o name)" ]; do sleep 3; done
+}
+resume() {
+  kubectl -n $NAMESPACE scale deploy/agent-relay-search-indexer --replicas=$SI
+  kubectl -n $NAMESPACE scale deploy/agent-relay-ingest-edge --replicas=$IE
+  kubectl -n $NAMESPACE rollout status deploy/agent-relay-search-indexer deploy/agent-relay-ingest-edge --timeout=10m
+}
+if [ -n "$IE" ] && [ -n "$SI" ]; then
+  pause agent-relay-ingest-edge && sleep 60 && pause agent-relay-search-indexer && catalog --plan
+else
+  echo "couldn't read the replica counts; nothing was scaled"
+fi
+```
+
+Check the plan shows `"eligible":true`, then apply that plan's fingerprint.
+Writers resume and the script is removed only if the apply succeeds:
+
+```sh
+catalog --apply <fingerprint from the plan above> && resume &&
+  kubectl -n $NAMESPACE delete pod/agent-catalog configmap/agent-catalog-activation
+```
+
+On a legacy administrator-owned install, only after the apply, writer resume,
+and rollouts above succeed, delete the temporary copy. Do not remove the old
+rollback keys here: that happens only after the first Helm upgrade through the
+temporary-Secret flow succeeds, including all of its Jobs and Deployments:
+
+```sh
+cloud-sql-setup.sh delete-admin-jobs
+```
+
+After a failed attempt, run `cloud-sql-setup.sh delete-admin-jobs`; run
+`prepare-admin-jobs` again before retrying either catalog pod.
+
+**Done when:** the plan shows `"eligible":true`, the apply shows
+`"activated":true` and `exit 0`, both rollouts finish, and searching Sessions
+for `@<agent name>` lists sessions (or none) instead of "The session agent
+index isn't ready yet".
+
+- **Brand-new install, no sessions yet:** the plan shows `"liveRows":0` and
+  `"eligible":false`. Either upload a session first, or add `--fresh-install`
+  as the last argument to both: `catalog --plan --fresh-install`, then
+  `catalog --apply <fingerprint> --fresh-install`. Use it only on an install
+  that has never had a session, deleted ones included; anywhere else the plan
+  stays ineligible.
+- **It briefly pauses writers.** Uploads are refused while
+  `agent-relay-ingest-edge` is at 0, and the apply itself locks the session
+  index (it waits at most 1 second for those locks). Expect about a minute.
+  Run it at a quiet time, and before anyone deletes a session.
+- **To give up or try later:** run `resume`. Uploads stay off until you do. On
+  a legacy install, delete `hoopdb-admin-jobs` after the writers recover and
+  run `prepare-admin-jobs` again before retrying.
+- **`unprojected` above 0 in the paused plan:** the indexer hadn't caught up.
+  Run `kubectl -n $NAMESPACE scale deploy/agent-relay-search-indexer --replicas=$SI`,
+  wait a minute, then `pause agent-relay-search-indexer && catalog --plan`.
+- **`native_catalog_plan_changed`:** something wrote between plan and apply.
+  Plan again and apply the new fingerprint.
+- **`native_catalog_operation_failed` with `exit 1` from apply:** usually a
+  writer still held the locks. Nothing was written and writers are still
+  paused; run the same `catalog --apply ... && resume ...` line again.
+- **`native_catalog_schema_validation_required`:** the pod couldn't reach the
+  database, or the migrations (step 12) haven't finished.
+- **Any other count above 0** (for example `unknownUsers`): run `resume` and
+  send us the JSON line.
+
 ## Next
 
 - **Before people start:** in the dashboard, under Settings › Policies, set
   what the desktop app uploads.
 - **Desktop app:** install it, sign in to `https://<domain>`, run one agent
-  session, and check it appears under **Sessions**. A desktop build for a GKE
-  install doesn't update itself (NOT-QUALIFIED.md item 11).
+  session, and check it appears under **Sessions**. The desktop app updates
+  itself from the signed feed in the `desktop_feed_bucket_name` bucket (step 4)
+  once the feed's signing key is in place (Agent Relay sets it up with you; see
+  step 4). Without the bucket, a newer desktop version means installing the new
+  build over the old one (NOT-QUALIFIED.md item 11).
 - **Search:** transcript search is stored in Cloud SQL (`search.backend:
   postgres`); there is no search cluster to run.
 - **Problems:** to ask for help, send:
@@ -712,20 +1093,70 @@ reads (`/turns`, replay, events) are fixed in 2026.11.6 and verified on a GKE
 install. If you uploaded sessions on 2026.11.1 to 2026.11.5, run "Re-stamp
 sessions uploaded before 2026.11.6" below once after upgrading.
 
+## Set `trustedProxies` to 2 (installs made from an earlier copy of this guide)
+
+Earlier copies of `values.yaml` had `relay-control.auth.trustedProxies: 1`.
+The Google load balancer adds two entries to `X-Forwarded-For` (the client's
+address, then its own), so with 1 the API takes the load balancer's address
+as every client's address. Sign-in then works, but all users share one
+per-address rate limit and one password lockout: a few wrong passwords from
+anyone can lock everyone out for a while.
+
+Check what your pods receive:
+
+```sh
+kubectl -n $NAMESPACE logs deploy/relay-webapp -c dashboard --tail 5
+```
+
+The last quoted field of each line is `X-Forwarded-For`. With the load
+balancer alone it is `<your address>, <load balancer address>`: two entries.
+In `values.yaml` set:
+
+```yaml
+relay-control:
+  auth:
+    trustedProxies: 2
+```
+
+and run step 11's `helm upgrade` again.
+
+**A proxy or CDN in front of the load balancer** adds one more entry, so the
+count is one higher. Raise it only once the load balancer refuses requests
+that do not come through the proxy (for example with a Cloud Armor policy
+that admits only the proxy's addresses). Until then keep 2: a caller who
+connects to the load balancer directly can put any address in
+`X-Forwarded-For`, and with the higher count the API would take that forged
+address as the client's.
+
+**Done when:**
+
+```sh
+kubectl -n $NAMESPACE get deploy relay-control -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SELFHOST_TRUSTED_PROXIES")].value}{"\n"}'
+```
+
+prints `2`.
+
 ## Re-stamp sessions uploaded before 2026.11.6 (upgrades only)
 
 Releases 2026.11.1 to 2026.11.5 recorded sessions uploaded to GCS as if they
 were in S3, so the read API refuses them (`501`). 2026.11.6 records new uploads
-correctly; this one-off tool fixes the rows written before. A fresh 2026.11.6
-install doesn't need it. It changes only rows whose objects it finds in your
+correctly; this one-off tool fixes the rows written before. A fresh install of
+2026.11.6 or later doesn't need it. It changes only rows whose objects it finds in your
 bucket, writes nothing in plan mode, and is safe to rerun.
 
 Run it in a terminal where you ran `cd agent-relay-install && source settings.sh`
 (step 7): it needs `NAMESPACE`, `REGION` and `SESSIONS_BUCKET` from there.
+For a legacy administrator-owned install, prepare `hoopdb-admin-jobs` first,
+set `HOOPDB_JOB_SECRET=hoopdb-admin-jobs`. Always run
+`cloud-sql-setup.sh delete-admin-jobs` afterwards, including on failure. Keep
+the old rollback keys until the first Helm upgrade through the temporary-Secret
+flow, all of its Jobs, and its Deployments succeed. A
+missing temporary Secret makes the pod fail before any row is changed.
 
 ```sh
 IMG="$(kubectl -n $NAMESPACE get deploy agent-relay-read-api -o jsonpath='{.spec.template.spec.containers[0].image}')"
 CA_SHA="$(kubectl -n $NAMESPACE get deploy agent-relay-read-api -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SESSION_POSTGRES_CA_SHA256")].value}')"
+HOOPDB_JOB_SECRET="${HOOPDB_JOB_SECRET:-agent-relay-secrets}"
 restamp() {  # restamp plan | restamp apply
   [ -n "$NAMESPACE" ] && [ -n "$REGION" ] && [ -n "$SESSIONS_BUCKET" ] && [ -n "$CA_SHA" ] && [ -n "$IMG" ] \
     || { echo "missing settings: run 'source settings.sh' (step 7) first"; return 1; }
@@ -743,7 +1174,7 @@ spec:
   volumes:
     - { name: tmp, emptyDir: { sizeLimit: 64Mi } }
     - { name: ca, configMap: { name: cloud-sql-ca } }
-    - { name: url, secret: { secretName: agent-relay-secrets, defaultMode: 0400, items: [ { key: HOOPDB_MIGRATION_URL, path: url } ] } }
+    - { name: url, secret: { secretName: $HOOPDB_JOB_SECRET, defaultMode: 0400, items: [ { key: HOOPDB_MIGRATION_URL, path: url } ] } }
   containers:
     - name: restamp
       image: $IMG
@@ -838,8 +1269,9 @@ cd -
   empties the desktop update feed bucket, and runs only if you set
   `desktop_feed_bucket_name` in step 4.
 - **Databases and admin user:** `cloud-sql-setup.sh` gave the databases to
-  their own roles, so Terraform can't drop them, or the admin user who owns
-  them, one by one (`must be owner of database`, `role ... cannot be
+  their own roles (`hoopdb_owner` for a fresh HoopDb), so Terraform can't drop
+  them, or the bootstrap admin user with remaining dependencies, one by one
+  (`must be owner of database`, `role ... cannot be
   dropped`). The `state rm` loop takes the three databases and the admin user
   out of Terraform's state only; the instance deletion that follows removes
   them with it. Run it only as part of this full teardown.
@@ -859,6 +1291,7 @@ gcloud artifacts repositories delete agent-relay-mirror --location $REGION
 - **Used `first-admin.sh` (step 15)?** Delete the password it stored, or it
   will refuse to run for a new install in this project:
   `gcloud secrets delete agent-relay-first-admin-password --project $GCP_PROJECT_ID`.
+  With `PASSWORD_FILE`, delete that file instead.
 - **Used vals with Secret Manager (step 10c)?** Delete its secrets:
   `gcloud secrets list --filter='name~agent-relay--' --format='value(name)' | xargs -r -n1 gcloud secrets delete --quiet`.
 - Delete `~/.agent-relay-install` from wherever you copied it: the database
@@ -900,6 +1333,21 @@ gcloud container clusters create agent-relay --location $R --num-nodes 1 \
   --enable-master-authorized-networks --master-authorized-networks <your IP>/32 \
   --enable-shielded-nodes --enable-dataplane-v2
 ```
+
+**`Operation denied by org policy ... default Compute Engine service
+account`?** Your organization does not allow nodes to run as the default
+service account. Create one for the nodes and pass it:
+
+```sh
+gcloud iam service-accounts create agent-relay-nodes
+gcloud projects add-iam-policy-binding $P --role roles/container.defaultNodeServiceAccount \
+  --member "serviceAccount:agent-relay-nodes@$P.iam.gserviceaccount.com"
+```
+
+then add `--service-account agent-relay-nodes@$P.iam.gserviceaccount.com` to
+the `clusters create` command, and in step 4 set
+`gke_node_service_account = "agent-relay-nodes@<project id>.iam.gserviceaccount.com"`
+so the image mirror grants it read access.
 
 A regional cluster with `--num-nodes 1` gets one node in each of the region's
 three zones. Then continue at step 1 with `<cluster>` = `agent-relay` and

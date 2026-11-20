@@ -1,0 +1,78 @@
+# Internal-only GKE edge: apply after values-gcp.yaml (and your site values),
+# on EVERY helm upgrade of the release, or merge it into your site values.
+# Helm keeps nothing from the previous command: an upgrade without these
+# settings switches the install back to a public load balancer.
+#
+#   helm upgrade --install ... -f values-gcp.yaml -f site.yaml -f values-gcp-internal.yaml
+#
+# The Ingress becomes a regional internal Application Load Balancer (class
+# gce-internal). It has a private address and answers only inside the VPC and
+# the networks routed to it (VPN, Interconnect); nothing is reachable from
+# the internet. README: Internal-only GKE edge.
+#
+# Before the install, in the cluster's VPC and region (the Terraform module
+# terraform/modules/gcp/internal-edge creates all three):
+#   - a proxy-only subnet (purpose REGIONAL_MANAGED_PROXY);
+#   - a reserved regional internal address, named in gkeIngress.staticIpName;
+#   - a firewall rule that lets the proxy-only subnet reach the nodes.
+gkeIngress:
+  mode: internal
+  # GKE cannot apply an SSL policy or Cloud Armor to an internal load
+  # balancer, and the chart refuses them in this mode. Cleared here so a value
+  # from an earlier file (for example managed-values.json) does not stop the
+  # install.
+  sslPolicy: ""
+  securityPolicy: ""
+  # REQUIRED OVERRIDE: the name of the reserved regional INTERNAL address (not
+  # the global address of an external install).
+  staticIpName: example-agent-relay-internal
+  # The certificate. A Google-managed certificate cannot be used on an
+  # internal load balancer. Either a kubernetes.io/tls Secret:
+  # REQUIRED OVERRIDE (or use internal.preSharedCerts below instead).
+  tlsSecretName: example-agent-relay-tls
+  internal:
+    # REQUIRED OVERRIDE: the proxy-only subnet's range. The load balancer's
+    # proxies connect to the pods from it, so it is also in every list below.
+    proxyOnlySubnetCidr: 10.129.0.0/23
+    # ...or regional self-managed SSL certificates
+    # (gcloud compute ssl-certificates create NAME --region REGION ...);
+    # then leave tlsSecretName empty.
+    preSharedCerts: []
+
+# Helm replaces lists, so each backend's allowed sources are restated here
+# with the proxy-only subnet added. Keep the two Google health-check ranges.
+# REQUIRED OVERRIDE: replace 10.129.0.0/23 in all five lists with your range.
+relaycast:
+  networkPolicy:
+    ingressFrom:
+      - podSelector: {}
+      - ipBlock: { cidr: 35.191.0.0/16 }
+      - ipBlock: { cidr: 130.211.0.0/22 }
+      - ipBlock: { cidr: 10.129.0.0/23 }
+relay-control:
+  networkPolicy:
+    ingressFrom:
+      - podSelector: {}
+      - ipBlock: { cidr: 35.191.0.0/16 }
+      - ipBlock: { cidr: 130.211.0.0/22 }
+      - ipBlock: { cidr: 10.129.0.0/23 }
+relay-webapp:
+  networkPolicy:
+    ingressFrom:
+      - podSelector: {}
+      - ipBlock: { cidr: 35.191.0.0/16 }
+      - ipBlock: { cidr: 130.211.0.0/22 }
+      - ipBlock: { cidr: 10.129.0.0/23 }
+sessions-pipeline:
+  sessionReadApi:
+    networkPolicy:
+      publicFrom:
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+        - ipBlock: { cidr: 10.129.0.0/23 }
+  ingestEdge:
+    networkPolicy:
+      ingressFrom:
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+        - ipBlock: { cidr: 10.129.0.0/23 }

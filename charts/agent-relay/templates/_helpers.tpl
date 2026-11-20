@@ -18,6 +18,7 @@
 {{- include "agent-relay.validateNativeHistory" . }}
 {{- include "agent-relay.validateOperatorSessionErase" . }}
 {{- include "agent-relay.validateGateOnly" . }}
+{{- include "agent-relay.validateControlPolicy" . }}
 {{- end }}
 
 {{- define "agent-relay.gateOnly" -}}
@@ -66,8 +67,23 @@ than leaving a direct path open or a client cut off silently. */ -}}
 {{- range $h := $historyHosts | uniq }}
 {{- if and $h (not (has $h $listed)) }}{{ fail (printf "global.relaygate.gateOnly.enabled routes the history host to relaygate: relaygate.proxy.sessionsHosts must include %s" $h) }}{{ end -}}
 {{- end }}
+{{- /* relay-control's pod label follows its nameOverride; the peers that admit
+Control must select it, or Control loses Sessions (relaygate's internal
+listener) and Relaycast under gate-only. */ -}}
+{{- $controlName := dig "nameOverride" "" $control | default "relay-control" -}}
+{{- range $want := list (list "relaygate.sessionsListener.controlFrom" (dig "sessionsListener" "controlFrom" (list (dict "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "relay-control")))) $gate)) (list "relaycast.networkPolicy.gateOnlyFrom" (dig "networkPolicy" "gateOnlyFrom" (list (dict "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "relay-control")))) $relaycast)) }}
+{{- $found := false -}}
+{{- range $peer := index $want 1 }}
+{{- if eq (dig "podSelector" "matchLabels" "app.kubernetes.io/name" "" $peer) $controlName }}{{ $found = true }}{{ end -}}
+{{- range $e := dig "podSelector" "matchExpressions" (list) $peer }}{{ if and (eq (dig "key" "" $e) "app.kubernetes.io/name") (eq (dig "operator" "" $e) "In") (has $controlName (dig "values" (list) $e)) }}{{ $found = true }}{{ end }}{{ end -}}
+{{- end -}}
+{{- if not $found }}{{ fail (printf "global.relaygate.gateOnly.enabled: %s must select relay-control's pods (app.kubernetes.io/name %s in podSelector matchLabels, or a matchExpressions In; from relay-control.nameOverride)" (index $want 0) $controlName) }}{{ end -}}
+{{- end }}
 {{- $cp := dig "control" dict $gate -}}
-{{- if and (not (dig "existingConfigMap" "" $gate)) (not (dig "policy" "controlPrincipals" (list) $gate)) }}{{ fail "global.relaygate.gateOnly.enabled requires relaygate.policy.controlPrincipals: relaygate refuses every dashboard and desktop caller no rule maps (docs/self-hosted-relaygate.md, Gate-only)" }}{{ end -}}
+{{- /* Inline rules matter only when relaygate reads the chart's ConfigMap:
+not with existingConfigMap, and not when it pulls its policy from relay-control. */ -}}
+{{- $pulls := and (dig "relaygate" "controlPolicy" "enabled" false (.Values.global | default dict)) (dig "relaygate" "controlPolicy" "pull" false (.Values.global | default dict)) -}}
+{{- if and (not (dig "existingConfigMap" "" $gate)) (not $pulls) (not (dig "policy" "controlPrincipals" (list) $gate)) }}{{ fail "global.relaygate.gateOnly.enabled requires relaygate.policy.controlPrincipals: relaygate refuses every dashboard and desktop caller no rule maps (docs/self-hosted-relaygate.md, Gate-only)" }}{{ end -}}
 {{- $introspect := dig "introspectUrl" "" $cp -}}
 {{- if or (not (dig "control" true $components)) (not (include "agent-relay.isService" (dict "root" . "url" $introspect "svc" $controlService))) (not (hasSuffix "/internal/v1/auth/introspect" $introspect)) }}{{ fail (printf "global.relaygate.gateOnly.enabled requires components.control and relaygate.control.introspectUrl=http://%s.%s.svc.cluster.local/internal/v1/auth/introspect (dashboard and desktop callers are mapped through Control)" $controlService .Release.Namespace) }}{{ end -}}
 {{- if ne (dig "sessionIngestAudience" "" $cp) $origin }}{{ fail (printf "relaygate.control.sessionIngestAudience must be the ingest origin %s (sessions-pipeline.ingestEdge.origin), the audience of the desktop's upload tokens" $origin) }}{{ end -}}
@@ -81,6 +97,8 @@ than leaving a direct path open or a client cut off silently. */ -}}
 {{- if or (ne . (dig "existingSecret" "" $reader)) (ne (dig "secrets" "sessionsInternalSecret" "key" "secret" $gate) (dig "key" "READ_API_INTERNAL_SECRET" $reader)) }}{{ fail (printf "relaygate.secrets.sessionsInternalSecret must be the read API's internal secret {name: %s, key: %s} (sessions-pipeline.sessionReadApi.auth.selfIssued.internalSecret)" (dig "existingSecret" "" $reader) (dig "key" "READ_API_INTERNAL_SECRET" $reader)) }}{{ end -}}
 {{- end }}
 {{- with dig "introspection" "audiences" (list) $control }}{{ if not (has $origin .) }}{{ fail (printf "relay-control.introspection.audiences must include %s: relaygate introspects upload tokens for that audience" $origin) }}{{ end }}{{ end -}}
+{{- $castPublic := dig "services" "relaycastPublicUrl" "" $control -}}
+{{- if and (dig "enabled" false (.Values.gkeIngress | default dict)) (ne $castPublic (printf "https://%s" (dig "hosts" "cast" "" .Values.gkeIngress))) }}{{ fail (printf "global.relaygate.gateOnly.enabled requires relay-control.services.relaycastPublicUrl=https://%s: the cast host is relaygate's public origin, and Control also sends it as SELFHOST_RELAYGATE_PUBLIC_URL" (dig "hosts" "cast" "" .Values.gkeIngress)) }}{{ end -}}
 {{- if not (dig "services" "sessionReadApiUrl" "" $control) }}{{ fail "global.relaygate.gateOnly.enabled requires relay-control.services.sessionReadApiUrl (Control's read handoff, then sent through relaygate)" }}{{ end -}}
 {{- if and (dig "slackRelay" false $components) (not (dig "relaygate" "url" "" (index .Values "slack-relay" | default dict))) }}{{ fail "global.relaygate.gateOnly.enabled requires slack-relay.relaygate.url: Relaycast admits only relaygate, so the Slack app must register through it" }}{{ end -}}
 {{- end -}}
@@ -187,7 +205,7 @@ and its actor-mode consumers (relaycast, relayfile).
 
 {{/*
 Single-host mode (global.singleHost.host): the dashboard and the control API
-share one host (/ and /cloud/api, /login, /api). Relaycast, History,
+share one host (/ and /cloud/api, /login, /relay-node, /api). Relaycast, History,
 Relayfile and the durable-actors control plane cannot be served under a path
 prefix on that host without app changes, so they stay on their own hosts and
 the chart refuses to put them on the single host.
@@ -239,4 +257,20 @@ durable-actors: the control plane refuses a publicUrl with a path and issues act
 {{- end }}
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{- /* Control-owned relaygate policy: relaygate and relay-control read the
+shared Secrets from global.relaygate.controlPolicy; this checks what a parent
+can't derive for its children: the Control Service relaygate pulls from. */ -}}
+{{- define "agent-relay.validateControlPolicy" -}}
+{{- $cp := dig "relaygate" "controlPolicy" dict (.Values.global | default dict) | default dict -}}
+{{- if dig "enabled" false $cp -}}
+{{- if not (include "agent-relay.gateOnly" .) }}{{ fail "global.relaygate.controlPolicy.enabled requires global.relaygate.gateOnly.enabled: relay-control manages relaygate's policy only on gate-only installs" }}{{ end -}}
+{{- if not (dig "control" true (.Values.components | default dict)) }}{{ fail "global.relaygate.controlPolicy.enabled requires components.control" }}{{ end -}}
+{{- $control := index .Values "relay-control" | default dict -}}
+{{- $controlService := dig "fullnameOverride" "" $control | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $control | default "relay-control")) | trunc 63 | trimSuffix "-" -}}
+{{- $want := dig "controlServiceName" "" $cp | default (printf "%s-relay-control" .Release.Name | trunc 63 | trimSuffix "-") -}}
+{{- if ne $want $controlService }}{{ fail (printf "global.relaygate.controlPolicy.controlServiceName must be the relay-control Service %s (relaygate pulls the policy from it)" $controlService) }}{{ end -}}
+{{- if ne (int (dig "controlServicePort" 80 $cp)) (int (dig "service" "port" 80 $control)) }}{{ fail (printf "global.relaygate.controlPolicy.controlServicePort must equal relay-control.service.port (%v)" (dig "service" "port" 80 $control)) }}{{ end -}}
+{{- end -}}
 {{- end }}

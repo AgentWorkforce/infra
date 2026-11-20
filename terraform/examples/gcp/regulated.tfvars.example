@@ -1,0 +1,24 @@
+# Regulated profile for the data root: a customer-managed key for every
+# resource this root creates. Pass it after your own tfvars:
+#
+#   terraform plan -var-file=terraform.tfvars -var-file=regulated.tfvars
+#
+# Replace every key name. One key can serve all five inputs, or use one per
+# service. The keys must already exist in var.region. Before the first apply,
+# grant each service agent roles/cloudkms.cryptoKeyEncrypterDecrypter on its
+# key (docs/gcp-install/2-SERVICE-ACCOUNTS.md lists the agents).
+#
+# Set these when the resources are created. On an existing install, a key on
+# Cloud SQL, Redis, the image mirror or the admin password secret replaces that
+# resource; see docs/gcp-install/REGULATED-PROFILE.md before you plan.
+
+# Cloud SQL, the sessions bucket and the desktop feed bucket.
+kms_key_name = "projects/my-security-project/locations/us-central1/keyRings/agent-relay/cryptoKeys/data"
+# The Secret Manager secret that holds the Cloud SQL admin password.
+admin_secret_kms_key_name = "projects/my-security-project/locations/us-central1/keyRings/agent-relay/cryptoKeys/data"
+# Pub/Sub topics of the sessions pipeline.
+pipeline_pubsub_kms_key_name = "projects/my-security-project/locations/us-central1/keyRings/agent-relay/cryptoKeys/data"
+# Memorystore for Redis.
+pipeline_redis_kms_key_name = "projects/my-security-project/locations/us-central1/keyRings/agent-relay/cryptoKeys/data"
+# The Artifact Registry image mirror (only with image_mirror_repository).
+image_mirror_kms_key_name = "projects/my-security-project/locations/us-central1/keyRings/agent-relay/cryptoKeys/data"

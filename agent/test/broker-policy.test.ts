@@ -35,11 +35,20 @@ const req = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
   ...over,
 });
 
-test("the shipped allowlist: sandbox only, Khaliq the only approver, 15 to 60 minutes", () => {
-  assert.deepEqual(Object.keys(allowlist.accounts), [SANDBOX]);
+test("the shipped allowlist: auto only in the sandbox, the agent-hosts account approval-only, Khaliq the only approver, 15 to 60 minutes", () => {
+  assert.deepEqual(Object.keys(allowlist.accounts), [SANDBOX, "500268966557", "154551280135"]);
   assert.equal(allowlist.accounts[SANDBOX]!.tier, "sandbox");
   assert.equal(allowlist.accounts[SANDBOX]!.roles.scoped, `arn:aws:iam::${SANDBOX}:role/agent-broker-sandbox-scoped`);
-  assert.equal(allowlist.accounts[SANDBOX]!.roles.elevated, undefined, "no approval-tier role until Khaliq creates one");
+  assert.equal(allowlist.accounts[SANDBOX]!.roles.elevated, undefined, "no approval-tier role in the sandbox");
+  // The broker's own account (the agent hosts'): no automatic issue at all, only Khaliq-approved sessions.
+  const hosts = allowlist.accounts["500268966557"]!;
+  assert.equal(hosts.tier, "prod");
+  assert.deepEqual(hosts.roles, { elevated: "arn:aws:iam::500268966557:role/agent-broker-elevated" });
+  // The dev account: approval-tier role only, us-west-2 only (the role itself is read-only, terraform/dev).
+  const dev = allowlist.accounts["154551280135"]!;
+  assert.equal(dev.tier, "prod");
+  assert.deepEqual(dev.regions, ["us-west-2"]);
+  assert.deepEqual(dev.roles, { elevated: "arn:aws:iam::154551280135:role/agent-broker-dev-read" });
   assert.deepEqual(allowlist.humanApprovers, ["khaliq-gant"]);
   assert.deepEqual(allowlist.duration, { minMinutes: 15, maxMinutes: 60, autoMaxMinutes: 60 });
   for (const r of allowlist.autoRules) for (const a of r.actions) {
@@ -255,8 +264,10 @@ test("approved run-tag sessions give each action the condition IAM can enforce f
   if (d.outcome !== "approval") return;
   const by = (sid: string) => d.sessionPolicy.Statement.find((s) => s.Sid === sid);
   // Account-level reads: no resource to carry a tag, so unconditioned (and listed as such in the prompt).
-  assert.deepEqual(by("ReadDescribe")!.Action, ["ec2:DescribeInstances"]);
-  assert.equal(by("ReadDescribe")!.Condition, undefined);
+  // ec2:DescribeInstances has no resource-level permissions, so it gets its own "*" statement.
+  assert.deepEqual(by("ReadDescribeAnyResource")!.Action, ["ec2:DescribeInstances"]);
+  assert.equal(by("ReadDescribeAnyResource")!.Resource, "*");
+  assert.equal(by("ReadDescribeAnyResource")!.Condition, undefined);
   // Creates the allowlist covers keep its name scope and tag-on-create; others must carry the run tag.
   assert.ok(by("SqsTagOnCreate"));
   assert.deepEqual(by("ApprovedCreatesWithRunTag")!.Action, ["s3:CreateBucket"]);
@@ -276,6 +287,53 @@ test("approved account-wide sessions: the requested resources, no tag condition,
   assert.equal(w.Condition, undefined);
   const guard = wide.sessionPolicy.Statement.find((s) => s.Sid === "DenyRunTagOnOthers")!;
   assert.deepEqual(guard.Action, ["sqs:TagQueue"], "only the guard actions the session could otherwise use");
+});
+
+test("a runner request in the agent-hosts account: approval only, named resources, wildcard-only reads apart, at most 60 minutes", () => {
+  // Fake identifiers (CONTRIBUTING.md): the shape of legacy-copy's request.
+  const RES = [
+    "arn:aws:secretsmanager:us-east-1:500268966557:secret:example/runner-secret-AbCdEf",
+    "arn:aws:ec2:us-east-1:500268966557:instance/i-0123456789abcdef0",
+    "arn:aws:ssm:us-east-1::document/AWS-RunShellScript",
+    "arn:aws:ssm:us-east-1:500268966557:session/*",
+  ];
+  const runner = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
+    account: "500268966557",
+    purpose: "drive a copy job on the runner over SSM",
+    actions: ["secretsmanager:PutSecretValue", "ssm:StartSession", "ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:ListCommandInvocations", "ssm:TerminateSession", "ssm:DescribeSessions", "ssm:ResumeSession"],
+    durationMinutes: 60,
+    runTag: "example-runner-copy",
+    scope: "account",
+    resources: RES,
+    regions: ["us-east-1"],
+    delivery: { kind: "encrypted", publicKey: Buffer.alloc(32, 9).toString("base64") },
+    ...over,
+  });
+  const d = decide(runner(), agent, allowlist);
+  assert.equal(d.outcome, "approval", d.reasons.join("; "));
+  if (d.outcome !== "approval") return;
+  assert.equal(d.roleArn, "arn:aws:iam::500268966557:role/agent-broker-elevated");
+  const by = (sid: string) => d.sessionPolicy.Statement.find((s) => s.Sid === sid)!;
+  // The secret write only on the secret; the session and commands only on the runner, document and sessions: one statement per service.
+  assert.equal(by("ApprovedAccountWide"), undefined, "a mixed request has no single all-actions-on-all-resources statement");
+  assert.deepEqual(by("ApprovedAccountWideSecretsmanager").Action, ["secretsmanager:PutSecretValue"]);
+  assert.equal(by("ApprovedAccountWideSecretsmanager").Resource, RES[0]);
+  assert.deepEqual(by("ApprovedAccountWideSsm").Action, ["ssm:StartSession", "ssm:SendCommand", "ssm:TerminateSession", "ssm:ResumeSession"]);
+  assert.deepEqual(by("ApprovedAccountWideSsm").Resource, RES.slice(1));
+  // The reads IAM authorizes only on "*": their own statement, so AWS doesn't refuse them.
+  assert.deepEqual(by("ApprovedWithoutResourceLevelPermissions").Action, ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations", "ssm:DescribeSessions"]);
+  assert.equal(by("ApprovedWithoutResourceLevelPermissions").Resource, "*");
+  assert.deepEqual(by("DenyOutsideRegions").Condition, { StringNotEquals: { "aws:RequestedRegion": ["us-east-1"] } });
+  assert.match(d.reasons.join("; "), /agent-hosts is a prod account/);
+  assert.equal(decide(runner({ durationMinutes: 720 }), agent, allowlist).outcome, "deny", "12 h is refused: at most 60 minutes per request");
+  // IAM matches actions case-insensitively, so a differently capitalised read still lands on "*".
+  const mixed = decide(runner({ actions: ["ssm:SendCommand", "ssm:getcommandinvocation", "ssm:DESCRIBESESSIONS"] }), agent, allowlist);
+  assert.equal(mixed.outcome, "approval", mixed.reasons.join("; "));
+  if (mixed.outcome !== "approval") return;
+  const mixedBy = (sid: string) => mixed.sessionPolicy.Statement.find((s) => s.Sid === sid)!;
+  assert.deepEqual(mixedBy("ApprovedAccountWide").Action, ["ssm:SendCommand"]);
+  assert.deepEqual(mixedBy("ApprovedWithoutResourceLevelPermissions").Action, ["ssm:getcommandinvocation", "ssm:DESCRIBESESSIONS"]);
+  assert.equal(mixedBy("ApprovedWithoutResourceLevelPermissions").Resource, "*");
 });
 
 test("only a human on the list approves; an agent never does, whatever its name", () => {

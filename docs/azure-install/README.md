@@ -11,9 +11,13 @@ applied to that chart. The four edge checks passed, a headless sign-in by
 operator device approval worked, two agents exchanged messages through
 Relaycast, and an uploaded session was indexed. See
 [What was not proven](#what-was-not-proven) before a production rollout.
+The message receipts image patch, and a backup and restore of Control's
+database and Relaycast's SQLite volume around it, were qualified separately on
+agent-relay-2026.11.8: see
+[AKS receipts upgrade qualification](#aks-receipts-upgrade-qualification).
 
-This guide installs release **agent-relay-2026.11.5** (chart agent-relay 0.7.10,
-sessions-pipeline 0.8.33). `searchIndexer.locker.credentials` first shipped
+This guide installs release **agent-relay-2026.11.16** (chart agent-relay 0.7.54,
+sessions-pipeline 0.8.47). `searchIndexer.locker.credentials` first shipped
 in agent-relay-2026.11.2. Earlier releases do not render the
 indexer's MinIO keys, so its uploads are never indexed.
 
@@ -26,6 +30,11 @@ indexer's MinIO keys, so its uploads are never indexed.
 | `ingress.yaml` | The edge: one Traefik Ingress, the host and path rules of `scripts/selfhost/eks-alb-ingress.sh` |
 
 ## How Azure differs
+
+For an existing corporate VPN, an optional
+[connector network profile](../vpn-networking.md) supplies a dedicated subnet,
+static outbound NAT and firewall rules in an existing VNet. It creates no VPN
+software or AKS resources and does not extend this guide's qualification.
 
 | AWS (EKS guide) | Azure (this guide) | Why |
 |---|---|---|
@@ -52,11 +61,11 @@ pinned `deps/` values. Every later command runs in `docs/azure-install`:
 
 ```sh
 git clone https://github.com/AgentWorkforce/infra.git && cd infra/docs/azure-install
-mkdir release && gh release download agent-relay-2026.11.5 -R AgentWorkforce/infra -D release
-(cd release && shasum -a 256 -c SHA256SUMS && tar -xzf agent-relay-0.7.10.tgz) | tail -1
+mkdir release && gh release download agent-relay-2026.11.16 -R AgentWorkforce/infra -D release
+(cd release && shasum -a 256 -c SHA256SUMS && tar -xzf agent-relay-0.7.54.tgz) | tail -1
 # Public GHCR images: no mirror root.
 sed 's#__IMAGE_MIRROR_ROOT__/##' release/release-images.values.yaml > release-images.values.yaml
-CHART=release/agent-relay-0.7.10.tgz
+CHART=release/agent-relay-0.7.54.tgz
 ```
 
 **Done when:** every checksum line ends in `OK` (the last is
@@ -134,6 +143,12 @@ roles, the `postgres-ca` ConfigMap and every credential file under
 CloudNativePG superuser by `kubectl exec` into the primary, as the chart's own
 privileged Jobs do.
 
+On a fresh install, `hoopdb_owner` owns HoopDb and both migration/bootstrap
+Secret keys contain only that non-superuser URL. The PostgreSQL superuser is
+used only by this setup command and is never written into the cluster. A
+rerun detects an older `hoop`-owned install and leaves its objects and role
+graph unchanged; see the temporary-Secret upgrade flow below.
+
 **Done when:** it ends with `pre done`.
 
 ### 5. Values and Secrets
@@ -180,7 +195,8 @@ done
 
 ```sh
 helm upgrade --install agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
 for j in $(kubectl -n agent-relay get jobs -o name | grep -E 'relay-control-migrate|agent-relay-worker-migrate'); do
   kubectl -n agent-relay wait --for=condition=complete "$j" --timeout=20m
 done
@@ -196,7 +212,8 @@ bash postgres-setup.sh post
 kubectl -n agent-relay rollout restart deploy/agent-relay-read-api deploy/agent-relay-ingest-edge deploy/agent-relay-search-indexer
 for j in $(kubectl -n agent-relay get jobs -o name | grep search-indexer-bootstrap); do kubectl -n agent-relay delete "$j"; done
 helm upgrade --install agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
 kubectl -n agent-relay wait --for=condition=complete "$(kubectl -n agent-relay get jobs -o name | grep search-indexer-bootstrap)" --timeout=10m
 kubectl -n agent-relay rollout status deploy --timeout=10m
 bash postgres-setup.sh finalize
@@ -204,6 +221,9 @@ bash postgres-setup.sh finalize
 
 **Done when:** three `login ok ... tls=true` lines, the bootstrap Job
 completes, every pod is `Running`, and `finalize` prints `owner createrole: false`.
+
+Before any later upgrade, rerun `postgres-setup.sh pre` to identify the saved
+layout, then follow the upgrade flow below.
 
 ### 8. Edge and checks
 
@@ -249,7 +269,8 @@ sessions-pipeline:
 
 ```sh
 helm upgrade agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
 kubectl -n agent-relay wait --for=condition=complete --timeout=2h \
   job -l app.kubernetes.io/component=output-facts-bootstrap
 ```
@@ -281,7 +302,8 @@ Then apply it with this guide's files:
 
 ```sh
 helm upgrade agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
 kubectl -n agent-relay rollout status deploy/agent-relay-worker-session-brief deploy/agent-relay-worker-session-summary-worker --timeout=10m
 ```
 
@@ -289,16 +311,250 @@ kubectl -n agent-relay rollout status deploy/agent-relay-worker-session-brief de
 summary in the dashboard. The GKE step lists the log lines that show model
 versus extractive summaries, the daily limits, and how to turn it off.
 
+## Upgrades: dedicated owner and legacy temporary credentials
+
+Fresh installs use `hoopdb_owner`, which has neither `SUPERUSER` nor
+`CREATEROLE`, for every migration and bootstrap Job. Ownership transfer for
+older `hoop`-owned installs is a follow-up under #480. On those installs the
+upgrade first copies the administrator URL to `hoopdb-admin-jobs`. The two old
+keys remain until Helm, every affected Job and all Deployments succeed, so the
+previous revision can still roll back. The successful flow then removes both
+old keys and deletes the temporary Secret. Long-running workloads never
+reference the administrator URL.
+
+Fetch the new release into a new directory, not `release`: `gh release
+download` will not overwrite the files from the install. Set the new tag and
+its chart version (the `agent-relay-<version>.tgz` asset):
+
+```sh
+NEW_TAG=agent-relay-<version>; CHART_VERSION=<chart version>; NEW_DIR="$NEW_TAG"
+mkdir "$NEW_DIR" && gh release download "$NEW_TAG" -R AgentWorkforce/infra -D "$NEW_DIR" \
+  && (cd "$NEW_DIR" && shasum -a 256 -c --quiet SHA256SUMS && tar -xzf "agent-relay-$CHART_VERSION.tgz") \
+  && sed 's#__IMAGE_MIRROR_ROOT__/##' "$NEW_DIR/release-images.values.yaml" > release-images.values.yaml \
+  && CHART="$NEW_DIR/agent-relay-$CHART_VERSION.tgz"
+```
+
+**Done when:** it prints nothing (`--quiet` reports only checksum failures)
+and `echo "$CHART"` names the new chart package. Then:
+
+```sh
+# Prints every Job in the selected release. This includes migrate, search
+# bootstrap, output-facts bootstrap, and future release Jobs.
+release_jobs() {
+  helm -n agent-relay get manifest agent-relay \
+    | yq -N -r 'select(.kind == "Job") | .metadata.name' \
+    | sort -u
+}
+
+# 1. Classify the saved layout without changing an existing role graph.
+if ! bash postgres-setup.sh pre; then
+  echo "database setup/classification failed; Helm was not run" >&2
+  exit 1
+fi
+
+admin_jobs_prepared=false
+cleanup_admin_jobs() {
+  $admin_jobs_prepared || return 0
+  bash postgres-setup.sh delete-admin-jobs
+}
+trap 'cleanup_admin_jobs || true' EXIT
+trap 'cleanup_admin_jobs || true; exit 130' INT
+trap 'cleanup_admin_jobs || true; exit 143' TERM
+
+# Existing hoop-owned installs only: create one short-lived administrator Job Secret.
+if [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
+  admin_jobs_prepared=true
+  if ! bash postgres-setup.sh prepare-admin-jobs; then
+    echo "temporary administrator Job Secret preparation failed; Helm was not run" >&2
+    exit 1
+  fi
+fi
+
+# Fail before Helm changes anything if the selected layout's Secret is absent.
+if [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
+  if ! kubectl -n agent-relay get secret hoopdb-admin-jobs >/dev/null; then
+    echo "temporary administrator Job Secret could not be read; Helm was not run" >&2
+    exit 1
+  fi
+fi
+
+# 2. Upgrade, and wait for every Job that reads the temporary Secret.
+upgrade_ok=false
+if helm upgrade agent-relay "$CHART" --namespace agent-relay \
+    -f "$NEW_DIR/agent-relay/values-eks.yaml" -f values.yaml \
+    -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
+    -f release-images.values.yaml --wait --wait-for-jobs --timeout 25m; then
+  upgrade_ok=true
+  JOBS="$(release_jobs)"
+  [ -n "$JOBS" ] || upgrade_ok=false
+  while $upgrade_ok && IFS= read -r JOB; do
+    kubectl -n agent-relay wait --for=condition=complete "job/$JOB" --timeout=10m \
+      || upgrade_ok=false
+  done <<<"$JOBS"
+  $upgrade_ok && kubectl -n agent-relay rollout status deploy --timeout=10m \
+    || upgrade_ok=false
+fi
+
+# 3. Existing installs: only a fully successful upgrade removes the old keys.
+if $upgrade_ok && [ "$(cat ~/.agent-relay-install/hoopdb-layout)" = legacy-admin ]; then
+  bash postgres-setup.sh remove-legacy-secret-keys || upgrade_ok=false
+fi
+
+# Always delete the temporary copy, including after a failed upgrade.
+cleanup_ok=true
+cleanup_admin_jobs || cleanup_ok=false
+admin_jobs_prepared=false
+trap - EXIT INT TERM
+$upgrade_ok || { echo "upgrade or a temporary-credential Job failed" >&2; exit 1; }
+$cleanup_ok || { echo "temporary hoopdb-admin-jobs Secret was not deleted; run: bash postgres-setup.sh delete-admin-jobs" >&2; exit 1; }
+echo "upgrade ok"
+```
+
+For a dedicated-owner install, `delete-admin-jobs` is harmless because the
+Secret is absent. For a legacy install, the failed path deletes only the
+temporary Secret; the old long-lived keys stay available to the previous Helm
+revision. Fix the cause and start again at step 1. The successful path removes
+the old keys only after every Job and Deployment is ready. Ownership transfer
+for legacy installs is a follow-up under #480.
+
+If an earlier attempt left a failed bootstrap Job, delete it before retrying.
+A Job's pod template is immutable, so Helm does not rerun it. Define
+`release_jobs` (above) in your shell, then:
+
+```sh
+release_jobs | while IFS= read -r JOB; do kubectl -n agent-relay delete job "$JOB"; done
+```
+
+Then run steps 1 to 3 with the same release. Existing-install ownership
+transfer remains a follow-up under #480.
+
+## AKS receipts upgrade qualification
+
+The
+[coordinated receipt patch](https://agentrelay.com/docs/self-hosting/upgrades#coordinated-receipt-patch-before-a-suite-release)
+moves an existing install to **Relaycast 12.10.0** (SQLite migration
+`0081_delivery_confirmation.sql`) and **Control 0.5.24** (migrations `0050`
+and `0051`) without changing its chart. It was qualified on AKS, SQLite
+backend, from this starting point:
+
+| | |
+|---|---|
+| Starting release | agent-relay-2026.11.8 (chart agent-relay 0.7.15): Relaycast 12.8.0 (`sha256:ab9dd678…`), Control 0.5.23 (`sha256:46e2cb51…`). The newest whole release without the pair; 2026.11.9 is the first that contains it. |
+| Install | Steps 1 to 7 of this guide with this guide's `values.yaml`, `postgres-*` files and the release's `values-eks.yaml`. No edge (Traefik, `ingress.yaml`): checks ran through `kubectl port-forward`. |
+| Cluster | AKS 1.36, East US, two Standard_D4s_v4 nodes, default StorageClass |
+| Patch overlay | `receipt-images.values.yaml` from the upgrades page: `relaycast.image.digest` `sha256:ec062ef9…` (12.10.0) and `relay-control.image.digest` `sha256:d1b6ca95…` (0.5.24), passed last |
+
+What the patch does on this install:
+
+- The render with the overlay last differs from the deployed manifest only in
+  the `relaycast` and `relay-control` images and the Control migration Job
+  name (`relay-control-migrate-<identity>`).
+- The `search-indexer-bootstrap` Job keeps its name, so
+  [Upgrades: dedicated owner and legacy temporary credentials](#upgrades-dedicated-owner-and-legacy-temporary-credentials)
+  does not apply to this patch.
+- Relaycast 12.8.0 has already applied `0082` to `0084`. 12.10.0 applies the
+  missing `0081` at startup: `deliveries.accepted_at`, `replied_at`,
+  `reply_message_id` and `messages.reply_to_message_id`.
+- Messages sent before the patch stay readable. Their receipt lookup answers
+  `confirmation: available` with the row's existing state (`queued`).
+
+### Backup (both stores, writers stopped)
+
+```sh
+kubectl -n agent-relay scale deploy/relaycast deploy/relay-control --replicas=0
+# scale returns before the pods exit: wait until neither writer has a pod left
+for d in relaycast relay-control; do
+  sel="$(kubectl -n agent-relay get deploy/$d -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}')"
+  until [ -z "$(kubectl -n agent-relay get pods -l "${sel%,}" -o name)" ]; do sleep 2; done
+done
+PRIMARY="$(kubectl -n agent-relay get cluster.postgresql.cnpg.io hoopdb -o jsonpath='{.status.currentPrimary}')"
+# Control: its own database on the HoopDb cluster
+kubectl -n agent-relay exec "$PRIMARY" -c postgres -- pg_dump -Fc -d relaycontrol > relaycontrol.dump
+# Relaycast: the data directory of the relaycast-data PVC, through a pod that
+# mounts the claim (uid 1000, the Relaycast image, command sleep)
+kubectl -n agent-relay exec <helper pod> -- tar -C /data --exclude=lost+found -cf - . > relaycast-data.tar
+# Optional second copy: an incremental snapshot of the PV's managed disk
+az snapshot create -g <resource group> -n <name> --source <disk ID of the PV> --incremental true
+kubectl -n agent-relay scale deploy/relaycast deploy/relay-control --replicas=1
+```
+
+Delete the helper pod before scaling Relaycast back: the volume is
+ReadWriteOnce. With Relaycast stopped cleanly the directory holds only
+`relaycast.db` (the WAL is checkpointed). The disk ID is the PV's
+`spec.csi.volumeHandle`.
+
+### Restore (both stores, back to the starting release)
+
+```sh
+kubectl -n agent-relay scale deploy/relaycast deploy/relay-control --replicas=0
+# scale returns before the pods exit: wait until neither writer has a pod left
+for d in relaycast relay-control; do
+  sel="$(kubectl -n agent-relay get deploy/$d -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}')"
+  until [ -z "$(kubectl -n agent-relay get pods -l "${sel%,}" -o name)" ]; do sleep 2; done
+done
+kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- dropdb --if-exists relaycontrol
+kubectl -n agent-relay exec -i "$PRIMARY" -c postgres -- pg_restore --create --exit-on-error -d postgres < relaycontrol.dump
+# helper pod on relaycast-data, as for the backup
+kubectl -n agent-relay exec <helper pod> -- rm -f /data/relaycast.db /data/relaycast.db-wal /data/relaycast.db-shm
+kubectl -n agent-relay exec -i <helper pod> -- tar -C /data -xf - < relaycast-data.tar
+kubectl -n agent-relay delete pod <helper pod>
+# The original chart and values files, in the original order, without the overlay
+helm upgrade agent-relay "$CHART" --namespace agent-relay \
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
+```
+
+- `pg_restore --create` recreates the database with its owner and grants
+  (`control_owner`, CONNECT for `control_api_runtime`, none for PUBLIC). A
+  plain `pg_restore` into a new empty database does not restore them.
+- The `tar` extract prints `Cannot utime` and `Cannot change mode` for `.` and
+  exits 2: the volume root belongs to root. `relaycast.db` is restored; check it
+  with `PRAGMA integrity_check`.
+- The original `relay-control-migrate-<identity>` Job runs again and applies
+  nothing. Relaycast 12.8.0 starts on the restored file.
+- A Helm rollback alone does not undo `0081` or Control's `0050` and `0051`.
+  Restore both stores from the same stopped backup.
+
+### Evidence
+
+Run of 2026-11-17, resource group `rg-pepsv12-aks-proof-20261117` (deleted
+afterwards). Times are UTC.
+
+| Step | Command or method | Result | IDs and times |
+|---|---|---|---|
+| Starting release | Release assets `release-manifest.json`, image labels | 2026.11.8 is the newest release below the pair (12.8.0 and 0.5.23); 2026.11.9 pins 12.10.0 and Control 0.5.25 | chart 0.7.15 |
+| Install | Steps 1 to 7, Helm revisions 1 and 2 | Migrations completed, every pod `Running`, `finalize` printed `owner createrole: false` | 21:20:16, 21:22:17 |
+| Seed | MCP `join_relay` (two hosted participants) and `send_relay_message` over a device-approved `cli:auth` bearer | Sent, `queued_unconfirmed`; `get_relay_message_status` not listed (0.5.23) | message `248558839320735744`, delivery `del_248558839320735745`, 21:24:05 |
+| Pre-patch state | `_engine_migrations`, `control_schema_migrations` | 83 Relaycast migrations, no `0081`, no receipt columns; Control 51 migrations, last `0049` | 21:25:04 |
+| Backup | Writers scaled to 0, `pg_dump -Fc`, data-directory `tar`, disk snapshot | Dump 307,449 bytes; `relaycast.db` 1,212,416 bytes, `integrity_check` ok, seed present | recovery ID `pepsv12-pre-20261117T212519Z`, dump `sha256:31cddf74…`, tar `sha256:5825988c…`, snapshot `snap-pepsv12-pre-20261117T212519Z-relaycast`, 21:25:19 to 21:29:56 |
+| Attestations | `gh attestation verify … --owner AgentWorkforce` for both digests | Both pass, SLSA v1 provenance | relaycast `fd101954`, relay-control `edad6432`, 21:10:54 |
+| Render review | `helm template` with the overlay last, compared with `helm get manifest` | Only the two images and the Control migration Job name changed | `relay-control-migrate-ee5b1a3c` → `-69fced99` |
+| Patch | `helm upgrade` with the original chart and values, overlay last (Helm revision 3) | Control Job applied `0050`, `0051`; Relaycast applied `0081` at startup; both Deployments ready | 21:30:16 to 21:31:02 |
+| Schema | `_engine_migrations`, `pragma table_info` | `0081_delivery_confirmation.sql` recorded (84 migrations), the four columns present | `0081` applied 21:31:00 |
+| Receipts tool | MCP `tools/list` | `get_relay_message_status` listed | 21:31:49 |
+| Old message | `read_relay_conversation`, `check_relay_inbox`, `get_relay_message_status` | Readable by sender and recipient; status `available`, state `queued` | `248558839320735744` |
+| New message receipts | `send_relay_message`; recipient `check_relay_inbox` with `acknowledge`; reply with `reply_to` | `queued` → `consumed` (`accepted_at`, `acked_at`, `read_at` set) → `replied` | message `248560789369974784` 21:31:50; ack 21:31:58; reply `248560828267950080` 21:31:59 |
+| Restore | Writers to 0, `dropdb` + `pg_restore --create`, data-directory extract, `helm upgrade` without the overlay (Helm revision 4) | Render identical to the install's; Control Job applied nothing; both Deployments on the 2026.11.8 digests | 21:32:26 to 21:34:17 |
+| Restored state | Same queries and MCP calls | 83 Relaycast migrations, no `0081`, no receipt columns, `integrity_check` ok; Control 51 migrations, no `grok_bot_routines`; seed message readable and in the recipient's inbox; `get_relay_message_status` not listed; the pre-backup device bearer works; a new message sends | 21:34:30 to 21:34:49 |
+| Snapshot | Managed disk from the snapshot, static PV, read-only mount | `integrity_check` ok, 83 migrations, seed present | 21:35:33 |
+
 ## What was not proven
 
 - Any release other than agent-relay-2026.11.0 (patched); `values.yaml` renders
-  against agent-relay-2026.11.5 but was not installed from it.
+  against agent-relay-2026.11.16 but was not installed from it.
 - The output facts bootstrap (step 10).
 - Azure Database for PostgreSQL, Azure Blob Storage, Application Gateway.
 - NetworkPolicy enforcement beyond a default install, private clusters,
   internal load balancers.
-- Backup and restore, upgrades, HA (every stateful component is one replica on
-  one Azure disk).
+- Backup and restore and upgrades, except the receipts image patch from
+  agent-relay-2026.11.8 and the restore of Control's `relaycontrol` database
+  and Relaycast's SQLite volume around it
+  ([AKS receipts upgrade qualification](#aks-receipts-upgrade-qualification)).
+  Not proven: whole-release upgrades, other starting releases, a restore of
+  HoopDb (`hoopdb`) or the MinIO session objects, a restore into new resources,
+  an Azure disk snapshot swapped in as the live Relaycast volume, and the
+  receipt lookup over an OAuth MCP connection or through the edge.
+- HA (every stateful component is one replica on one Azure disk).
 - The desktop app, the dashboard, SSO, and titles and summaries with a live model
   (the steps were checked on GKE; see step 11).
 - The Traefik edge keeps HTTP closed rather than redirecting it to HTTPS.

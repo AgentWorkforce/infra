@@ -1,5 +1,5 @@
 image:
-  digest: sha256:c64d6d9bc909c932be25f9acdab4cd62ef760153537b2f30d545db3eb4cef1f7
+  digest: sha256:0ca54cddf43b4771fade43d06d280405574ea77280eb0fde392fdb90ee29e248
 secrets:
   anthropicApiKey: { name: relaygate-anthropic, key: api-key }
 policy:

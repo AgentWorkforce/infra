@@ -67,6 +67,9 @@ jobs:
         run: scripts/selfhost/tests/run-tests.sh
 
       # scripts/selfhost/ci-deploy.sh (environment deploys from CI): drop guard, apply/rollback flow, no secret output.
+      - name: Support diagnostics tests
+        run: python3 -m unittest discover -s scripts/support/tests -p 'test_*.py' -v
+
       - name: CI deploy script tests
         run: |
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet --break-system-packages "pyyaml==6.0.2"
@@ -128,6 +131,8 @@ jobs:
           python3 ci/agent-relay/test_install_pack.py -v
           python3 ci/agent-relay/test_release_manifest.py -v
           python3 ci/agent-relay/test_search_limits.py -v
+          python3 ci/agent-relay/test_search_streaming.py -v
+          python3 ci/agent-relay/test_search_staged.py -v
           python3 ci/agent-relay/test_native_history_connection.py -v
           python3 ci/agent-relay/test_native_kind_policy.py -v
           python3 ci/sessions-pipeline-native-routing/test_native_routing.py -v

@@ -117,15 +117,20 @@ relayauth:
 sessions-pipeline:
   worker:
     image:
-      # Preferred customer services image from relayhistory-pipeline main 7e9b2f0f
-      # (#509 alpha.5 on top of #505), signed publish run 42964243811.
+      # Customer services image from relayhistory-pipeline main efdd4bb2 (issue
+      # 610 Phase 3: staged reconcile on by default), signed publish run
+      # 44489159041. Vendors relayscrubber 0.5.0-alpha.9 under Khaliq's
+      # recorded override of the relayscrubber-lead security block (see
+      # self-hosted/customer-images.yaml); alpha.10 replaces it when it passes.
       # Before its first migrate, run the privileged HoopDb role bootstraps
-      # the chart does not (session_token_verifier,
-      # session ingest roles) as the Postgres superuser, from the image's own
-      # /app/supabase/bootstrap/*.sql. Mirror it by
-      # digest to your ECR to pull with the node role instead.
+      # the chart does not (session_token_verifier, session ingest roles and,
+      # new for efdd4bb2, legacy_export_privacy_roles.sql) as the Postgres
+      # superuser, from the image's own /app/supabase/bootstrap/*.sql. On a
+      # populated database, prebuild the migration 058000 indexes
+      # (CONCURRENTLY) or set worker.migrations.allowBlockingIndexBuild once.
+      # Mirror it by digest to your ECR to pull with the node role instead.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
     # REQUIRED OVERRIDE: existing Secret name; see the chart README for keys.
     existingSecret: example-agent-relay-secrets
     summaryEncryption:
@@ -162,7 +167,7 @@ sessions-pipeline:
     image:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
     # REQUIRED OVERRIDE: existing Secret name; see the chart README for keys.
     existingSecret: example-agent-relay-secrets
     locker:
@@ -201,7 +206,7 @@ sessions-pipeline:
     sqlImage:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
   session-object-storage:
     enabled: false
 
