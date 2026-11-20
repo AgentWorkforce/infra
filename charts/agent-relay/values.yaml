@@ -57,8 +57,9 @@ global:
   # sessions-pipeline nativeRouting, relaycast ingress) point at relaygate;
   # Relaycast, the Sessions reader and the ingest edge admit only relaygate
   # (plus relaycast.networkPolicy.gateOnlyFrom, Control and RelayAuth by
-  # default); Control's SESSION_READ_API_URL becomes relaygate's sessions
-  # Service. Needs components.relaygate with both proxies, proxy.sessionsHosts
+  # default); Control's SESSION_READ_API_URL becomes relaygate's internal
+  # Sessions listener (http://<relaygate>-sessions.<ns>.svc.cluster.local:8081,
+  # an origin; needs relaygate #28 or later). Needs components.relaygate with both proxies, proxy.sessionsHosts
   # and controlPrincipals set, a relaygate image with Control-principal mapping
   # (dashboard and desktop users go through relaygate too) and a cluster that
   # enforces NetworkPolicy. Rendering fails when any of that is missing. See
@@ -72,6 +73,35 @@ global:
       serviceName: ""
       # relaygate.service.port.
       servicePort: 8080
+      # relaygate's internal Sessions listener (SESSIONS_PORT, relaygate #28 or
+      # later): a ClusterIP Service <relaygate>-sessions on this port that only
+      # relay-control may reach, and relay-control's SESSION_READ_API_URL.
+      # Never routed publicly. Required with gate-only.
+      sessionsPort: 8081
+    # Control-owned policy (off by default; needs gate-only, relaygate main at
+    # R1/R2 or later and a relay-control image with C1). Two steps, so
+    # relaygate never starts with no policy:
+    #   1. enabled: relay-control manages the policy (SELFHOST_RELAYGATE_ADMIN_URL,
+    #      _ADMIN_TOKEN, _POLICY_SECRET); relaygate still reads its ConfigMap.
+    #      Import that ConfigMap into Control once (Settings, Gate; owner only).
+    #   2. pull: relaygate pulls the signed policy from relay-control
+    #      (RELAYCONTROL_POLICY_URL, _SECRET); its file and ConfigMap are dropped.
+    # See docs/self-hosted-relaygate.md, "Control-owned policy".
+    controlPolicy:
+      enabled: false
+      pull: false
+      # Shared by relaygate (RELAYGATE_ADMIN_TOKEN, at least 24 characters) and
+      # relay-control (SELFHOST_RELAYGATE_ADMIN_TOKEN).
+      adminToken: { name: "", key: token }
+      # Shared by relaygate (RELAYCONTROL_POLICY_SECRET) and relay-control
+      # (SELFHOST_RELAYGATE_POLICY_SECRET); at least 32 characters, not the
+      # introspection secret.
+      policySecret: { name: "", key: secret }
+      # relay-control's Service and port, for relaygate's
+      # RELAYCONTROL_POLICY_URL. Empty derives <release>-relay-control; set it
+      # when relay-control.fullnameOverride is set (the chart checks).
+      controlServiceName: ""
+      controlServicePort: 80
   # Optional customer logo for the sign-in page and dashboard. relay-webapp
   # serves it at <dashboard origin>/brand/<file> (no extra web server or
   # ingress route: / already reaches the dashboard), and relay-control sets
@@ -100,6 +130,41 @@ gkeIngress:
   staticIpName: agent-relay-ingress
   managedCertificateName: agent-relay
   frontendConfigName: agent-relay
+  # Optional edge hardening. Each names a Google Cloud resource in the
+  # cluster's project that must exist before the upgrade (the chart cannot
+  # create it; terraform/modules/gcp/edge-security does). README: GKE edge
+  # hardening.
+  #
+  # Compute SSL policy for the HTTPS listener. Empty leaves Google's default
+  # policy, which still accepts TLS 1.0 and 1.1; set a policy with
+  # min TLS 1.2 (profile MODERN or RESTRICTED).
+  sslPolicy: ""
+  # Cloud Armor backend security policy, applied to every backend Service
+  # behind the Ingress. Needs the backend-config annotation on the
+  # relay-webapp Service (and relayfile with hosts.files); the render fails
+  # with the exact value when it is missing.
+  securityPolicy: ""
+  # kubernetes.io/tls Secret served instead of the ManagedCertificate (which
+  # is then not rendered). For an edge whose DNS points at a proxy or CDN in
+  # front of the load balancer, where Google cannot issue a managed
+  # certificate. The certificate must cover every host below.
+  tlsSecretName: ""
+  # external (default): a global external Application Load Balancer.
+  # internal: a regional internal one (Ingress class gce-internal) that
+  # answers only inside the VPC and the networks routed to it. Start from
+  # values-gcp-internal.yaml; README: Internal-only GKE edge. In internal
+  # mode staticIpName names a regional internal address, the certificate is
+  # tlsSecretName or internal.preSharedCerts, managedCertificateName and
+  # frontendConfigName are unused, and sslPolicy and securityPolicy are
+  # refused (GKE supports neither on an internal Ingress).
+  mode: external
+  internal:
+    # Range of the VPC's proxy-only subnet (purpose REGIONAL_MANAGED_PROXY) in
+    # the cluster's region. Required in internal mode, and every backend's
+    # networkPolicy must allow it.
+    proxyOnlySubnetCidr: ""
+    # Regional self-managed SSL certificate names, instead of tlsSecretName.
+    preSharedCerts: []
   hosts:
     root: ""
     api: ""
@@ -176,6 +241,78 @@ localKind:
   # Native core installer phase (control, then serve). Required when enabled:
   # the single-phase profile that ran the standalone RelayHistory was removed.
   nativePhase: ""
+# Install Secrets from an external store through External Secrets Operator
+# (ESO, external-secrets.io/v1): AWS SSM Parameter Store, AWS Secrets Manager or
+# any other ESO provider. Off by default; with it off you create the Secrets
+# yourself. Each secrets entry renders one ExternalSecret whose target is the
+# Kubernetes Secret of that name, so the components keep reading the Secret
+# names they already take (relay-control existingSecret, ingestEdge
+# config.existingSecret, ...). Values hold remote key names only, never values.
+#
+# Needs the ESO CRDs and controller in the cluster, and IAM for the controller
+# (Pod Identity or IRSA) to read the parameters (ssm:GetParameter* and
+# kms:Decrypt for SecureString). Pods that start before ESO has written their
+# Secret wait in CreateContainerConfigError and start once it exists.
+# A rotated value reaches running pods only after a restart.
+#
+# Example: AWS SSM Parameter Store, the Secrets of the AWS RDS install.
+#   externalSecrets:
+#     enabled: true
+#     store:
+#       create: true                  # namespaced SecretStore; the controller's own AWS identity
+#       provider: { aws: { service: ParameterStore, region: us-east-1 } }
+#     secrets:
+#       agent-relay-secrets:
+#         data:
+#           database-url: /agent-relay/relaycontrol/runtime-url
+#           database-migrations-url: /agent-relay/relaycontrol/owner-url
+#           HOOPDB_URL: /agent-relay/hoopdb/runtime-url
+#           HOOPDB_MIGRATION_URL: /agent-relay/hoopdb/owner-url  # hoopdb_owner, never the RDS administrator
+#           database-owner-url: /agent-relay/relaycast/owner-url
+#           database-runtime-url: /agent-relay/relaycast/runtime-url
+#           selfhost-setup-key: /agent-relay/selfhost-setup-key
+#           # ...every other key the install's Secrets table lists
+#       agent-relay-read-api:
+#         data: { RELAYHISTORY_READ_API_SECRET: /agent-relay/read-api/config }  # stored as JSON
+#       agent-relay-ingest-edge-runtime:
+#         data:
+#           database-url: /agent-relay/hoopdb/ingest-url
+#           introspect-secret: /agent-relay/relaycontrol-introspect-secret
+#       search-indexer-runtime:
+#         data: { RELAYHISTORY_PIPELINE_CONSUMER_SECRET: /agent-relay/search-indexer/runtime-config }
+#       search-indexer-owner:
+#         data: { RELAYHISTORY_PIPELINE_CONSUMER_SECRET: /agent-relay/search-indexer/owner-config }
+#
+# A data value is a remote key string, or a full ESO remoteRef map
+# ({key, property, version, decodingStrategy, ...}). An entry may instead (or
+# also) set dataFrom (ESO's list as-is, e.g.
+# [{find: {path: /agent-relay/x/, name: {regexp: ".*"}}}] to load every
+# parameter under a path; SSM needs the name or tags matcher), and template (ESO target.template, to
+# build a value such as JSON from several parameters).
+externalSecrets:
+  enabled: false
+  apiVersion: external-secrets.io/v1
+  refreshInterval: 1h
+  # Owner: this release owns each target Secret, and uninstall deletes it.
+  # For a Secret you created by hand before enabling this, use Merge (per entry
+  # or here) or delete the Secret first.
+  creationPolicy: Owner
+  # An existing store. Ignored when store.create is true.
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: ""
+  # Or let the chart render a namespaced SecretStore (named
+  # <release>-external-secrets unless store.name is set). provider is ESO's
+  # spec.provider as-is; without an auth block the AWS provider uses the
+  # controller's own credentials.
+  store:
+    create: false
+    name: ""
+    provider: {}
+  # Target Secret name -> {data, dataFrom, template, creationPolicy,
+  # deletionPolicy, refreshInterval}.
+  secrets: {}
+
 # Umbrella NetworkPolicy for the durable-actors control plane (port 7100):
 # release-namespace pods, the actor sandbox namespace and, with
 # gkeIngress.hosts.actors, the GKE load balancer ranges.

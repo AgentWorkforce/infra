@@ -19,6 +19,12 @@ deletion_protection   = true
 # vpc_connector           = "projects/my-project/locations/us-central1/connectors/my-connector"
 # pipeline_source_archive = { bucket = "my-artifacts", object = "session-pipeline.zip" }
 
+# The load balancer's TLS policy (MODERN, TLS 1.2 minimum) is created by
+# default. A Cloud Armor policy for every backend is opt-in:
+# edge_security_policy = { create = true }                                    # OWASP rules (preview) + sign-in rate limit
+# edge_security_policy = { create = true, source_ip_allowlist = ["198.51.100.0/24"] }   # only these addresses
+# edge_security_policy = { create = true, cloudflare = { enabled = true } }   # only Cloudflare may connect
+
 labels = {
   app = "agent-relay"
 }

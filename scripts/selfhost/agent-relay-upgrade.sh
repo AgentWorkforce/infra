@@ -49,9 +49,10 @@
 #                   scripts/selfhost/rds-setup.sh (next to this script). First
 #                   install then runs "rds-setup.sh post" after the HoopDb
 #                   migration and restarts the read API, ingest edge and search
-#                   indexer; an upgrade runs "rds-setup.sh refresh-admin" and
-#                   updates the agent-relay-secrets and search-indexer-owner
-#                   Secrets from the rewritten files before helm upgrade.
+#                   indexer; a legacy administrator-owned upgrade creates one
+#                   short-lived hoopdb-admin-jobs Secret before Helm and deletes
+#                   it after the migration/bootstrap Jobs finish. Dedicated-owner
+#                   installs do not refresh an administrator credential.
 #                   With --apply it needs AWS_REGION, RDS_HOST and
 #                   RDS_ADMIN_SECRET_ARN in the environment, and STATE_DIR
 #                   (default $HOME/.agent-relay-install) holding the files
@@ -83,8 +84,9 @@
 #      (mirror-images-to-ecr.sh, next to this script).
 #   With --apply, after you confirm:
 #   4. Takes an RDS snapshot of --db-instance and waits for it.
-#   5. Upgrade: [--rds-setup: refresh-admin], helm upgrade, then waits for this
-#      release's migration Jobs and Deployments.
+#   5. Upgrade: [--rds-setup legacy layout: prepare-admin-jobs], helm upgrade,
+#      waits for this release's Jobs and Deployments, then deletes the
+#      temporary Secret.
 #      First install: helm install --no-hooks (no --wait), waits for the HoopDb
 #      migrate Job, [--rds-setup: rds-setup.sh post and a restart of the read
 #      API, ingest edge and search indexer], then waits for every Job in the
@@ -169,25 +171,33 @@ for tool in gh jq yq helm kubectl tar; do command -v "$tool" >/dev/null || die "
 if $apply; then for tool in aws crane; do command -v "$tool" >/dev/null || die "missing tool: $tool"; done; fi
 [ -x "$here/mirror-images-to-ecr.sh" ] || die "mirror-images-to-ecr.sh must sit next to this script"
 state_dir="${STATE_DIR:-${HOME:-}/.agent-relay-install}"
-if $apply && $rds_setup; then
+hoopdb_layout=""
+if $rds_setup; then
   [ -x "$here/rds-setup.sh" ] || die "rds-setup.sh must sit next to this script (--rds-setup)"
+  [ -d "$state_dir" ] || die "STATE_DIR $state_dir does not exist: run 'rds-setup.sh pre' first (or set STATE_DIR)"
+  [ -s "$state_dir/hoopdb-layout" ] || die "STATE_DIR has no hoopdb-layout marker: run 'rds-setup.sh pre' first"
+  hoopdb_layout="$(<"$state_dir/hoopdb-layout")"
+  case "$hoopdb_layout" in dedicated-owner|legacy-admin) ;; *) die "STATE_DIR has an unknown HoopDb layout: rerun 'rds-setup.sh pre'" ;; esac
+  [ -s "$state_dir/hoopdb-layout-values.yaml" ] || die "STATE_DIR has no hoopdb-layout-values.yaml: rerun 'rds-setup.sh pre'"
+fi
+if $apply && $rds_setup; then
+  [ -n "$hoopdb_layout" ] || die "STATE_DIR has no hoopdb-layout marker: run 'rds-setup.sh pre' first"
+  # Apply reads database passwords from STATE_DIR: refuse it if group or others can reach anything in it.
+  open_perms=$(find "$state_dir" \( -perm -0001 -o -perm -0002 -o -perm -0004 -o -perm -0010 -o -perm -0020 -o -perm -0040 \) -print | head -3)
+  [ -z "$open_perms" ] || die "STATE_DIR holds database passwords but is readable beyond its owner (want 0700 directories, 0600 files):
+$open_perms"
   for tool in openssl curl; do command -v "$tool" >/dev/null || die "missing tool: $tool"; done
   for var in AWS_REGION RDS_HOST RDS_ADMIN_SECRET_ARN; do
     [ -n "${!var:-}" ] || die "--rds-setup needs $var in the environment (see rds-setup.sh)"
   done
-  # STATE_DIR holds database passwords: refuse it if group or others can reach anything in it.
-  [ -d "$state_dir" ] || die "STATE_DIR $state_dir does not exist: run 'rds-setup.sh pre' first (or set STATE_DIR)"
-  open_perms=$(find "$state_dir" \( -perm -0001 -o -perm -0002 -o -perm -0004 -o -perm -0010 -o -perm -0020 -o -perm -0040 \) -print | head -3)
-  [ -z "$open_perms" ] || die "STATE_DIR holds database passwords but is readable beyond its owner (want 0700 directories, 0600 files):
-$open_perms"
   if $first_install; then
+    [ "$hoopdb_layout" = dedicated-owner ] || die "--first-install cannot use a legacy administrator-owned HoopDb layout"
     for p in bulls96_read_api bulls96_session_ingest search_consumer_runtime; do
       [ -s "$state_dir/passwords/$p" ] || die "no rds-setup state under $state_dir: run 'rds-setup.sh pre' first (or set STATE_DIR)"
     done
-  else
-    for s in agent-relay-secrets search-indexer-owner; do
-      [ -d "$state_dir/secret-files/$s" ] || die "no rds-setup credential files under $state_dir/secret-files: set STATE_DIR to the directory 'rds-setup.sh pre' used"
-    done
+  elif [ "$hoopdb_layout" = legacy-admin ]; then
+    [ -d "$state_dir/secret-files/hoopdb-admin-jobs" ] \
+      || die "no legacy administrator Job credential files under STATE_DIR: rerun 'rds-setup.sh pre'"
   fi
 fi
 sha256_of() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{print $1}'; }
@@ -198,12 +208,26 @@ work=$(mktemp -d)
 # The index census pod mounts the migration owner's database Secret: any exit
 # (error, set -e, Ctrl-C, TERM) deletes it and its ConfigMap, idempotently.
 census_name=""
+admin_jobs_created=false
 index_census_cleanup() {
   [ -n "$census_name" ] || return 0
   "${kube[@]}" delete pod,configmap,secret "$census_name" --ignore-not-found --wait=true --timeout=30s >/dev/null 2>&1 || true
   census_name=""
 }
-trap 'index_census_cleanup; rm -rf "$work"' EXIT
+admin_jobs_cleanup() {
+  local cleanup_command
+  $admin_jobs_created || return 0
+  if ! env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir" \
+      "$here/rds-setup.sh" delete-admin-jobs >/dev/null 2>&1; then
+    printf -v cleanup_command 'NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q delete-admin-jobs' \
+      "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+    say "WARNING: could not delete hoopdb-admin-jobs; the administrator credential may still be live. Remove it with:"
+    say "  $cleanup_command"
+  fi
+  admin_jobs_created=false
+  return 0
+}
+trap 'index_census_cleanup; admin_jobs_cleanup; rm -rf "$work"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 tag="agent-relay-$version"; rel="$work/rel"
@@ -252,19 +276,20 @@ sessions_index_check() {
   jq -e '.spec.template.spec.containers[0].image | strings' <<<"$job" >/dev/null \
     || die "the deployed HoopDb migrate Job has no container to clone for the index census"
   [ -f "$here/sessions-index-census.mjs" ] || die "sessions-index-census.mjs must sit next to this script"
-  # RDS rotates the admin password that the migration owner URL carries. With
-  # --rds-setup and its inputs, refresh it first (rds-setup.sh refresh-admin
-  # reads Secrets Manager and rewrites only STATE_DIR files) and give the census
+  # Legacy RDS rotates the admin password that the migration owner URL carries.
+  # Refresh only its dedicated Job files and give the census
   # that URL through a temporary Secret, so a rotation never blocks the plan.
-  if $rds_setup && [ -n "${AWS_REGION:-}" ] && [ -n "${RDS_HOST:-}" ] && [ -n "${RDS_ADMIN_SECRET_ARN:-}" ] \
-    && [ -d "$state_dir/secret-files/agent-relay-secrets" ] \
+  if $rds_setup && [ "$hoopdb_layout" = legacy-admin ] && [ -n "${AWS_REGION:-}" ] && [ -n "${RDS_HOST:-}" ] && [ -n "${RDS_ADMIN_SECRET_ARN:-}" ] \
+    && [ -d "$state_dir/secret-files/hoopdb-admin-jobs" ] \
     && jq -e '[.spec.template.spec.containers[0].env[]? | select(.name == "HOOPDB_URL") | .valueFrom.secretKeyRef
-        | select(.name == "agent-relay-secrets" and .key == "HOOPDB_MIGRATION_URL")] | length == 1' <<<"$job" >/dev/null; then
-    say "   refreshing the RDS admin credential (rds-setup.sh refresh-admin) for the census"
+        | select((.name == "agent-relay-secrets" or .name == "hoopdb-admin-jobs") and .key == "HOOPDB_MIGRATION_URL")] | length == 1' <<<"$job" >/dev/null; then
+    say "   refreshing the legacy RDS administrator Job credential for the census"
+    open_perms=$(find "$state_dir" \( -perm -0001 -o -perm -0002 -o -perm -0004 -o -perm -0010 -o -perm -0020 -o -perm -0040 \) -print | head -3)
+    [ -z "$open_perms" ] || die "STATE_DIR holds database passwords but is readable beyond its owner (want 0700 directories, 0600 files)"
     env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir" "$here/rds-setup.sh" refresh-admin >/dev/null \
-      || die "rds-setup.sh refresh-admin failed, so the census has no current database credential; nothing was changed"
-    url_file="$state_dir/secret-files/agent-relay-secrets/HOOPDB_MIGRATION_URL"
-    [ -s "$url_file" ] || die "rds-setup.sh refresh-admin did not write agent-relay-secrets/HOOPDB_MIGRATION_URL; nothing was changed"
+      || die "rds-setup.sh could not refresh the legacy Job credential; nothing was changed"
+    url_file="$state_dir/secret-files/hoopdb-admin-jobs/HOOPDB_MIGRATION_URL"
+    [ -s "$url_file" ] || die "rds-setup.sh did not write hoopdb-admin-jobs/HOOPDB_MIGRATION_URL; nothing was changed"
   fi
   # The census creates a ConfigMap, a pod and (with a refreshed URL) a Secret.
   # A plan run under the documented read-only plan role may not: defer the
@@ -324,7 +349,7 @@ sessions_index_check() {
   index_census_cleanup
   case "$census" in
     "INDEX_CENSUS "*) census=${census#INDEX_CENSUS } ;;
-    "INDEX_CENSUS_ERROR 28P01 "*) die "the index census could not log in to the Sessions database (${census#INDEX_CENSUS_ERROR }); nothing was changed. If the RDS admin password rotated, refresh the admin inputs first (rds-setup.sh refresh-admin, then update the agent-relay-secrets Secret, or pass --rds-setup with its environment so this upgrader does it), then re-run" ;;
+    "INDEX_CENSUS_ERROR 28P01 "*) die "the index census could not log in to the Sessions database (${census#INDEX_CENSUS_ERROR }); nothing was changed. For a legacy RDS layout, re-run this command with --rds-setup so the census uses the refreshed temporary administrator credential" ;;
     "INDEX_CENSUS_ERROR "*) die "the index census failed (${census#INDEX_CENSUS_ERROR }); nothing was changed. Fix that and re-run" ;;
     *) die "the index census pod ended $phase without a result; nothing was changed (kubectl -n $namespace describe pod $name, before it is gone)" ;;
   esac
@@ -432,6 +457,7 @@ base=()
 for f in "${profile_files[@]}"; do base+=(-f "$chart/$f"); done
 for v in "${values[@]}"; do base+=(-f "$v"); done
 base+=(-f "$overlay")
+if $rds_setup; then base+=(-f "$state_dir/hoopdb-layout-values.yaml"); fi
 # Last, so the census decision wins: present only on the blocking path.
 base+=(${index_values[@]+"${index_values[@]}"})
 render=(helm template "$release" "$chart" -n "$namespace")
@@ -470,7 +496,7 @@ if ! $rds_setup; then
   done
   if [ "$db_mode" = rds ]; then
     say "   NOTE: these values select databaseMode rds. If the databases were bootstrapped with"
-    say "         rds-setup.sh, add --rds-setup (post on first install, refresh-admin on upgrade)."
+    say "         rds-setup.sh, add --rds-setup (post on first install, temporary administrator Job Secret on a legacy upgrade)."
   fi
 fi
 "${kube[@]}" get deploy,statefulset,job,cronjob -l "$release_selector" -o jsonpath='{range .items[*]}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}{range .spec.jobTemplate.spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}' 2>/dev/null \
@@ -531,9 +557,9 @@ if ! $assume_yes; then
   printf '%s %s in %s to %s? Type the version to continue: ' "$action" "$release" "$namespace" "$version"
   read -r answer; [ "$answer" = "$version" ] || die "not confirmed; nothing changed"
 fi
-if $rds_setup && ! $first_install; then
+if $rds_setup && ! $first_install && [ "$hoopdb_layout" = dedicated-owner ]; then
   "${kube[@]}" get secret agent-relay-secrets search-indexer-owner -o name >/dev/null \
-    || die "--rds-setup upgrade needs the agent-relay-secrets and search-indexer-owner Secrets in $namespace; nothing changed"
+    || die "--rds-setup dedicated-owner upgrade needs its owner Secrets in $namespace; nothing changed"
 fi
 
 say "== 4. RDS snapshot of $db_instance"
@@ -543,9 +569,52 @@ aws rds wait db-snapshot-available --db-snapshot-identifier "$snapshot"
 say "   snapshot $snapshot is available"
 
 rollback_hint() {
+  local rollback_prepare rollback_delete rollback_helm rollback_manifest rollback_uses_old_keys=false
   say ""; say "$($first_install && echo INSTALL || echo UPGRADE) FAILED. Nothing further was changed."
   if [ -n "$current_rev" ]; then
-    say "   roll back the release:  helm -n $namespace ${context:+--kube-context $context }rollback $release $current_rev"
+    if $rds_setup && [ "$hoopdb_layout" = legacy-admin ]; then
+      rollback_manifest=$("${helmx[@]}" get manifest "$release" --revision "$current_rev" 2>/dev/null || true)
+      if yq -e '
+        .. | select(tag == "!!map") |
+        select((.name == "agent-relay-secrets" and .key == "HOOPDB_MIGRATION_URL") or
+               (.name == "search-indexer-owner" and .key == "RELAYHISTORY_PIPELINE_CONSUMER_SECRET"))' \
+          <<<"$rollback_manifest" >/dev/null 2>&1; then
+        rollback_uses_old_keys=true
+      fi
+      if $rollback_uses_old_keys; then
+        printf -v rollback_prepare \
+          'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q prepare-rollback-admin-keys' \
+          "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+        printf -v rollback_delete \
+          'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q remove-rollback-admin-keys' \
+          "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+      else
+        printf -v rollback_prepare \
+          'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q prepare-admin-jobs' \
+          "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+        printf -v rollback_delete \
+          'AWS_REGION=%q RDS_HOST=%q RDS_ADMIN_SECRET_ARN=%q NAMESPACE=%q KUBE_CONTEXT=%q STATE_DIR=%q %q delete-admin-jobs' \
+          "$AWS_REGION" "$RDS_HOST" "$RDS_ADMIN_SECRET_ARN" "$namespace" "$context" "$state_dir" "$here/rds-setup.sh"
+      fi
+      rollback_helm="helm -n $(printf '%q' "$namespace")"
+      [ -z "$context" ] || rollback_helm+=" --kube-context $(printf '%q' "$context")"
+      rollback_helm+=" rollback $(printf '%q' "$release") $(printf '%q' "$current_rev") --wait --wait-for-jobs --timeout 15m"
+      if $rollback_uses_old_keys; then
+        say "   revision $current_rev still references the two legacy long-lived keys. Temporarily restore them with the current RDS administrator credential, roll back, then remove them after rollback Jobs and workloads finish:"
+      else
+        say "   revision $current_rev references the temporary Job Secret. The failed run asked its exit handler to delete it; a WARNING after this block means manual cleanup is still required. Roll back in this order:"
+      fi
+      say "     $rollback_prepare"
+      say "     $rollback_helm"
+      say "     $rollback_delete"
+      if $rollback_uses_old_keys; then
+        say "   the restored administrator keys are rollback-only; the final command must run after rollback Jobs and workloads finish"
+      else
+        say "   delete hoopdb-admin-jobs only after the rollback Jobs and workloads finish"
+      fi
+    else
+      say "   roll back the release:  helm -n $namespace ${context:+--kube-context $context }rollback $release $current_rev"
+    fi
   elif $first_install; then
     say "   the new release has no earlier revision; inspect its Jobs and Pods before retrying"
   fi
@@ -560,6 +629,74 @@ if [ -n "$rta_phase" ]; then die() { printf 'agent-relay-upgrade: %s\n' "$*" >&2
 
 # rds-setup.sh reads its inputs from the environment (never argv).
 rds_env=(env NAMESPACE="$namespace" KUBE_CONTEXT="$context" STATE_DIR="$state_dir")
+prepare_legacy_admin_jobs() {
+  say "== 5. create the temporary administrator credential for migration/bootstrap Jobs"
+  admin_jobs_created=true
+  "${rds_env[@]}" "$here/rds-setup.sh" prepare-admin-jobs
+  "${kube[@]}" get secret hoopdb-admin-jobs -o name >/dev/null \
+    || { say "   hoopdb-admin-jobs is absent; refusing before Helm changes anything"; false; }
+}
+external_secret_mapping_active() { # target-secret key: 0 active, 1 absent, 2 unknown
+  local target="$1" key="$2" json="$work/externalsecrets.json" error="$work/externalsecrets.err" rc=0
+  if ! "${kube[@]}" get externalsecrets.external-secrets.io --ignore-not-found -o json >"$json" 2>"$error"; then
+    if grep -Eqi "(doesn't have a resource type|could not find the requested resource|no matches for kind.*ExternalSecret)" "$error"; then
+      return 1
+    fi
+    return 2
+  fi
+  jq -e --arg target "$target" --arg key "$key" '
+    any(.items[]?;
+      ((.spec.target.name // .metadata.name) == $target) and
+      (any(.spec.data[]?; .secretKey == $key) or
+       ((.spec.dataFrom // []) | length > 0) or
+       ((.spec.target.template.data // {}) | has($key)) or
+       ((.spec.target.template.templateFrom // []) | length > 0) or
+       ((.spec.target.templateFrom // []) | length > 0)))' "$json" >/dev/null || rc=$?
+  case "$rc" in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
+}
+remove_legacy_long_lived_keys() {
+  local pair s k secret_json key_present externally_managed mapping_rc
+  for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
+    s=${pair%%:*}; k=${pair#*:}
+    secret_json="$work/$s.json"
+    if ! "${kube[@]}" get secret "$s" --ignore-not-found -o json >"$secret_json"; then
+      say "   could not read Secret $s while removing legacy administrator keys"
+      return 1
+    fi
+    if [ -s "$secret_json" ]; then
+      key_present=$(jq -r --arg k "$k" 'if .data[$k] == null then "no" else "yes" end' "$secret_json") \
+        || { say "   could not parse Secret $s while removing legacy administrator keys"; return 1; }
+      externally_managed=$(jq -r '
+        any(.metadata.ownerReferences[]?; .kind == "ExternalSecret") or
+        ((.metadata.labels // {}) | has("reconcile.external-secrets.io/managed"))' "$secret_json") \
+        || { say "   could not parse Secret $s while checking its owner"; return 1; }
+    else
+      key_present=no; externally_managed=false
+    fi
+    mapping_rc=1
+    if external_secret_mapping_active "$s" "$k"; then mapping_rc=0; else mapping_rc=$?; fi
+    if [ "$mapping_rc" = 0 ]; then
+      say "   External Secrets still maps $s/$k: remove that mapping from the Helm release values and ExternalSecret, delete the backing-store value, and wait for reconciliation; hoopdb-admin-jobs was retained"
+      return 1
+    elif [ "$mapping_rc" = 2 ]; then
+      say "   could not inspect ExternalSecret mappings while removing $s/$k; hoopdb-admin-jobs was retained"
+      return 1
+    fi
+    [ "$key_present" = no ] && continue
+    if [ "$externally_managed" = true ]; then
+      say "   Secret $s is managed by External Secrets: remove the $k mapping from the Helm release values and ExternalSecret, delete the backing-store value, wait for reconciliation, then rerun this upgrade; hoopdb-admin-jobs was retained"
+      return 1
+    fi
+    ( umask 077; jq -n --arg path "/data/$k" '[{"op":"remove","path":$path}]' >"$work/remove-key.json" )
+    if ! "${kube[@]}" patch secret "$s" --type json --patch-file "$work/remove-key.json" >/dev/null; then
+      rm -f "$work/remove-key.json"
+      say "   could not remove legacy administrator key $s/$k"
+      return 1
+    fi
+    rm -f "$work/remove-key.json"
+    say "   removed legacy administrator key $s/$k"
+  done
+}
 # wait_jobs NAME...: poll each Job until it completes; a Job that fails (its
 # Failed condition) or is still unfinished at the deadline fails the run with
 # its name and the last lines of its logs. Jobs confirmed complete are
@@ -604,9 +741,38 @@ wait_jobs() {
     say "   Job $job completed"
   done
 }
+wait_release_jobs_quiescent() {
+  local deadline json failed running
+  deadline=$(( $(date +%s) + job_timeout ))
+  while :; do
+    if json=$("${kube[@]}" get jobs -l "$release_selector" -o json 2>"$work/release-jobs.err"); then
+      failed=$(jq -r '[.items[] | select(any(.status.conditions[]?; .type == "Failed" and .status == "True")) | .metadata.name] | join(",")' <<<"$json") \
+        || { say "   could not parse release Jobs"; return 1; }
+      [ -z "$failed" ] || { say "   failed Jobs: $failed"; return 1; }
+      running=$(jq -r '[.items[] | select(
+        (any(.status.conditions[]?; .type == "Complete" and .status == "True") | not) and
+        (any(.status.conditions[]?; .type == "Failed" and .status == "True") | not)) | .metadata.name] | join(",")' <<<"$json") \
+        || { say "   could not parse release Jobs"; return 1; }
+      if [ -z "$running" ]; then
+        say "   every observed release Job is terminal (TTL-deleted Jobs count as complete)"
+        return 0
+      fi
+    else
+      running="API read failed"
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      say "   release Jobs did not become terminal before the deadline: $running"
+      return 1
+    fi
+    sleep "$job_poll"
+  done
+}
 mirrored_ref() { jq -r --arg n "$1" --arg root "${registry}/${prefix}" '[.images[] | select(.name == $n) | "\($root)/\(.ref)"] | first // empty' "$manifest"; }
 
 if [ -n "$rta_phase" ]; then
+  if $rds_setup && [ "$hoopdb_layout" = legacy-admin ]; then
+    prepare_legacy_admin_jobs
+  fi
   if [ "$rta_phase" = credentials ]; then rta_credentials; else rta_cutover; fi
 elif $first_install; then
   say "== 5. helm install $release at $version"
@@ -642,18 +808,8 @@ elif $first_install; then
     wait_jobs "${release_jobs[@]}"
   fi
 else
-  if $rds_setup; then
-    say "== 5. rds-setup.sh refresh-admin, then update the admin-derived Secret keys"
-    "${rds_env[@]}" "$here/rds-setup.sh" refresh-admin
-    for pair in agent-relay-secrets:HOOPDB_MIGRATION_URL search-indexer-owner:RELAYHISTORY_PIPELINE_CONSUMER_SECRET; do
-      s=${pair%%:*}; k=${pair#*:}; src="$state_dir/secret-files/$s/$k"
-      [ -s "$src" ] || { say "   refresh-admin did not write $s/$k"; false; }
-      # A merge patch replaces only this key; the value goes through a 0600 file, never argv.
-      ( umask 077; printf '{"data":{"%s":"%s"}}' "$k" "$(base64 < "$src" | tr -d '\n')" > "$work/patch.json" )
-      "${kube[@]}" patch secret "$s" --type merge --patch-file "$work/patch.json" >/dev/null
-      rm -f "$work/patch.json"
-      say "   updated Secret $s key $k"
-    done
+  if $rds_setup && [ "$hoopdb_layout" = legacy-admin ]; then
+    prepare_legacy_admin_jobs
   fi
   say "== $($rds_setup && echo 6 || echo 5). helm upgrade $release to $version"
   "${helmx[@]}" upgrade "$release" "$chart" "${base[@]}" --wait --wait-for-jobs --timeout 15m
@@ -661,6 +817,32 @@ fi
 "${kube[@]}" get deploy -l "$release_selector" -o name | while read -r d; do "${kube[@]}" rollout status "$d" --timeout 20m; done
 failed=$("${kube[@]}" get jobs -l "$release_selector" -o json | jq -r '[.items[]|select((.status.failed // 0) > 0 and (.status.succeeded // 0) == 0)|.metadata.name]|join(",")')
 [ -z "$failed" ] || { say "   failed Jobs: $failed"; false; }
+if $admin_jobs_created; then
+  # Keep the old revision's keys until the new Helm revision, all of its Jobs,
+  # and every Deployment have succeeded. A failed upgrade can therefore use
+  # the printed rollback command without first reconstructing credentials.
+  # A resumed durable-actors phase may skip Helm after its previous process
+  # applied the release but before that process observed Job completion. Wait
+  # for the currently observable release Jobs to become terminal; an empty
+  # list is safe because Helm either rendered none or TTL cleanup removed jobs
+  # that had already completed.
+  if [ -n "$rta_phase" ]; then wait_release_jobs_quiescent; fi
+  if ! remove_legacy_long_lived_keys; then
+    say "   deployment succeeded, but administrator-key cleanup is incomplete; do not roll back"
+    say "   hoopdb-admin-jobs was retained. Fix cluster access and rerun this same upgrade; key removal is idempotent"
+    admin_jobs_created=false
+    trap - ERR
+    exit 1
+  fi
+  if ! "${rds_env[@]}" "$here/rds-setup.sh" delete-admin-jobs; then
+    say "   deployment and long-lived-key cleanup succeeded, but hoopdb-admin-jobs could not be deleted"
+    say "   run: NAMESPACE=$namespace KUBE_CONTEXT=$context STATE_DIR=$state_dir $here/rds-setup.sh delete-admin-jobs"
+    admin_jobs_created=false
+    trap - ERR
+    exit 1
+  fi
+  admin_jobs_created=false
+fi
 trap - ERR
 if [ -n "$rta_phase" ]; then
   say ""; say "Relaycast durable-actors $rta_phase phase done in $release (chart $chart_version). Snapshot kept: $snapshot"

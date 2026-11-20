@@ -76,9 +76,12 @@ If `scripts/selfhost/rds-setup.sh` bootstrapped the databases, set
 self-hosted runner holding the files `rds-setup.sh pre` wrote, so the apply
 job must run on that runner. A first install then runs `rds-setup.sh post`
 after the migration and restarts the read API, ingest edge and search indexer;
-every later upgrade runs `rds-setup.sh refresh-admin` and updates the two
-admin-derived Secret keys before `helm upgrade`. If an external secret
-controller owns those Secrets, leave `rds-setup` off and refresh them there.
+an existing administrator-owned install runs `rds-setup.sh refresh-admin`,
+creates temporary `hoopdb-admin-jobs` for the migration/bootstrap Jobs, and
+deletes it after Helm, Jobs and Deployments succeed. It also removes the two
+old administrator-derived keys from the long-lived Secrets after that first
+successful upgrade. Never publish the administrator URL back into those
+Secrets. A fresh dedicated-owner install needs no administrator refresh.
 
 ### The state directory holds database passwords
 

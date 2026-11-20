@@ -39,7 +39,7 @@ flowchart TB
   router -.->|"4 · /v1/check before every Slack post<br/>(withheld if denied)"| gate
   router -.->|"ingest: /v1/check, then append"| kb
   host -.->|"read-only search"| kb
-  host -.->|"session upload: planned (headless uploader)"| sessions
+  host -.->|"session upload via relaygate, as the agent"| sessions
   local -.->|"may write into the pit · can't read it"| gate
   host --> anthropic
   gate -.-> anthropic

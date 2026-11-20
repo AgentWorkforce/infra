@@ -47,3 +47,13 @@ variable "allowed_regions" {
   type        = list(string)
   default     = ["us-east-1", "us-west-2"]
 }
+
+variable "dev_read_role_arn" {
+  description = "Read-only dev-cluster role the broker may vend (created by ../dev, applied by that account's owner). Must equal broker/allowlist.json accounts.<dev account>.roles.elevated."
+  type        = string
+  default     = "arn:aws:iam::154551280135:role/agent-broker-dev-read"
+  validation {
+    condition     = can(regex("^arn:aws:iam::\\d{12}:role/[\\w+=,.@/-]+$", var.dev_read_role_arn))
+    error_message = "dev_read_role_arn must be an exact IAM role ARN."
+  }
+}

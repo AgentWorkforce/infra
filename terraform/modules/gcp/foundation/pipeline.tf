@@ -97,6 +97,7 @@ resource "google_redis_instance" "pipeline" {
   reserved_ip_range       = google_compute_global_address.private_services.name
   transit_encryption_mode = "SERVER_AUTHENTICATION"
   auth_enabled            = true
+  customer_managed_key    = var.kms.redis
   deletion_protection     = var.redis.deletion_protection
   labels                  = local.labels
   maintenance_policy {
@@ -110,7 +111,7 @@ resource "google_redis_instance" "pipeline" {
       }
     }
   }
-  depends_on = [google_service_networking_connection.private_services]
+  depends_on = [google_service_networking_connection.private_services, google_kms_crypto_key_iam_member.service_agent]
   # auth_string is populated into provider state even though it is not output.
   # Never use this resource when the state must contain zero service credentials.
 }

@@ -34,6 +34,13 @@ global:
       svg: ""
       existingConfigMap: ""
       key: ""
+  # Only the key defaults: the Secrets relay-control and relaygate share for a
+  # Control-owned relaygate policy, set on the umbrella
+  # (global.relaygate.controlPolicy; see docs/self-hosted-relaygate.md).
+  relaygate:
+    controlPolicy:
+      adminToken: { key: token }
+      policySecret: { key: secret }
 existingSecret: ""
 # null preserves existing extraEnv selection; [] explicitly selects core only.
 # Managed names: flows, relayfile, chief, usage, launch, usage_people. No
@@ -316,6 +323,11 @@ services:
   relayauthEnabled: true
   relayauthUrl: ""
   relaycastUrl: ""
+  # With global.relaygate.gateOnly.enabled (agent-relay umbrella) this is also
+  # SELFHOST_RELAYGATE_PUBLIC_URL: the cast host is relaygate's public origin,
+  # so /resolve returns urls.relaygateUrl and withholds the shared Relaycast
+  # key, and events-shim temp workspaces are refused (relay-control cc361ed or
+  # later). Unset when gate-only is off.
   relaycastPublicUrl: ""
   relayhistoryUrl: ""
   relayhistoryPublicUrl: ""
@@ -330,8 +342,9 @@ services:
   # image with it is 0.5.1). Set together with secretKeys.sessionReadApiSecret,
   # or leave all three empty. Internal HTTP(S) origin of the read API Service.
   # With global.relaygate.gateOnly.enabled (agent-relay umbrella) Control's
-  # SESSION_READ_API_URL is relaygate's Sessions proxy instead
-  # (http://<relaygate>:8080/sessions), which passes
+  # SESSION_READ_API_URL is relaygate's internal Sessions listener instead
+  # (http://<relaygate>-sessions.<ns>.svc.cluster.local:8081, an origin:
+  # Control refuses a path), which passes
   # Control's calls to this Service; keep this set to the read API.
   sessionReadApiUrl: ""
   # Bare public HTTPS origin of the read API, returned to clients.

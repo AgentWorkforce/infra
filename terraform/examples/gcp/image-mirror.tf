@@ -16,13 +16,14 @@ locals {
 }
 
 resource "google_artifact_registry_repository" "mirror" {
-  #checkov:skip=CKV_GCP_84:Holds copies of the public, digest-pinned release images; Google-managed encryption is the default.
+  #checkov:skip=CKV_GCP_84:Holds copies of the public, digest-pinned release images; Google-managed encryption is the default. Set image_mirror_kms_key_name for CMEK.
   count = local.image_mirror_enabled ? 1 : 0
 
   project       = var.project_id
   location      = var.region
   repository_id = var.image_mirror_repository
   format        = "DOCKER"
+  kms_key_name  = var.image_mirror_kms_key_name
   description   = "Agent Relay release images, copied by digest (install guide step 5)"
   labels        = var.labels
 }

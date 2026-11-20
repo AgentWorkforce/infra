@@ -121,6 +121,10 @@ esac
 FAKE_KUBECTL = r"""#!/usr/bin/env bash
 echo "kubectl $*" >> "$FAKE/log"
 case "$*" in
+  *"--ignore-not-found"*)
+    # get <kind> <name> -n <ns> -o json --ignore-not-found: $FAKE/objects/<kind lowercased>-<name>.json, or nothing
+    f="$FAKE/objects/$(printf %s "$2" | tr '[:upper:]' '[:lower:]')-$3.json"; [ -f "$f" ] && cat "$f"; exit 0 ;;
+  *"delete job"*) rm -f "$FAKE/objects/job-$3.json" ;;
   *"get jobs"*)
     n=$(cat "$FAKE/jobs-calls" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE/jobs-calls"
     f="$FAKE/jobs-$n.json"; [ -f "$f" ] || f="$FAKE/jobs.json"; [ -f "$f" ] && cat "$f" || echo '{"items": []}' ;;
@@ -219,6 +223,69 @@ class ScriptTest(unittest.TestCase):
         (self.bundle / "env/allow-drop.txt").write_text("value agent-relay feature\n")
         p, _ = self.run_script("plan")
         self.assertEqual(p.returncode, 0, p.stderr)
+
+    # replace-orphans.txt: a hash-named Job made outside Helm blocks the upgrade that renders the same name.
+    JOB = "---\napiVersion: batch/v1\nkind: Job\nmetadata: {name: boot-1, namespace: ns}\nspec: {}\n"
+
+    def live(self, kind, name, owner=None, complete=True):
+        d = self.fake / "objects"
+        d.mkdir(exist_ok=True)
+        meta = {"name": name, "namespace": "ns"}
+        if owner:
+            meta["annotations"] = {"meta.helm.sh/release-name": owner}
+        status = {"conditions": [{"type": "Complete", "status": "True"}]} if complete else {}
+        (d / f"{kind.lower()}-{name}.json").write_text(json.dumps({"kind": kind, "metadata": meta, "status": status}))
+
+    def orphan_setup(self, listed=True, complete=True):
+        self.render({"a": 2}, DEPLOY + self.JOB)
+        self.live("Deployment", "web", owner="agent-relay")
+        self.live("Job", "boot-1", complete=complete)
+        if listed:
+            (self.bundle / "env/replace-orphans.txt").write_text("job agent-relay ns/boot-1   # made by hand; approved in test\n")
+
+    def test_no_orphan_list_keeps_the_plain_dry_run(self):
+        p, _ = self.run_script("plan")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("--take-ownership", self.log())
+
+    def test_plan_reports_a_listed_orphan(self):
+        self.orphan_setup()
+        p, report = self.run_script("plan")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("--dry-run=server --take-ownership", self.log())
+        self.assertEqual((report / "orphans-agent-relay.txt").read_text(), "ns/boot-1\n")
+        self.assertNotIn("delete job", self.log())  # the plan never writes
+
+    def test_plan_refuses_an_unlisted_unowned_object(self):
+        self.orphan_setup()
+        self.live("Deployment", "web")  # now unowned too, and not listed
+        p, _ = self.run_script("plan")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("Deployment ns/web exists without Helm ownership", p.stderr)
+
+    def test_plan_refuses_an_unfinished_listed_job(self):
+        self.orphan_setup(complete=False)
+        p, _ = self.run_script("plan")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("listed but not finished", p.stderr)
+
+    def test_apply_deletes_the_orphan_before_the_upgrade(self):
+        self.orphan_setup()
+        p, _ = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        log = self.log()
+        self.assertLess(log.index("kubectl delete job boot-1 -n ns"), log.index("--wait --timeout"))
+        self.assertFalse((self.fake / "objects/job-boot-1.json").exists())
+        upgrade = [l for l in log.splitlines() if "--wait --timeout" in l]
+        self.assertTrue(upgrade and "--take-ownership" not in upgrade[0])  # the real upgrade never takes ownership
+
+    def test_an_owned_listed_job_is_left_alone(self):
+        self.orphan_setup()
+        self.live("Job", "boot-1", owner="agent-relay")
+        p, report = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual((report / "orphans-agent-relay.txt").read_text(), "")
+        self.assertNotIn("delete job", self.log())
 
     def test_apply_noop_does_not_upgrade(self):
         p, _ = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7")

@@ -7,6 +7,9 @@
  *    <root>/<agent>/<request-id>.json. For requesters on the broker's own
  *    node (its workers). Use it with
  *    `credential_process = cat <path>` in ~/.aws/config.
+ *  - encrypted: sealed to a public key the requester sent (envelope.ts) and
+ *    returned in the reply. Nothing is stored; the lead relays ciphertext it
+ *    can't open. For requesters on any node (linuyc, Macs, cloud).
  *  - 1password: an API Credential item in a vault the requester's 1Password
  *    service account can read, created with the template on stdin (never on
  *    the command line). For requesters on another node (linuyc).
@@ -17,12 +20,15 @@ import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Delivery } from "./policy.ts";
+import { seal, type Envelope } from "./envelope.ts";
 import type { SessionCredentials } from "./sts.ts";
 
 export interface DeliveryRef {
   kind: Delivery["kind"];
-  /** Where the requester reads it: a path, or op://<vault>/<item id>. Not a secret. */
+  /** Where the requester reads it: a path, op://<vault>/<item id>, or "inline" (the envelope is in the reply). Not a secret. */
   ref: string;
+  /** encrypted: the credentials sealed to the requester's key (envelope.ts). Only its private key opens it. */
+  envelope?: Envelope;
 }
 
 export interface Deliverer {
@@ -76,10 +82,13 @@ export function defaultDeliverer(fileRoot: string, op: OpRunner = opCli()): Deli
   return {
     planned(d, agent, requestId) {
       if (!SAFE.test(agent) || !SAFE.test(requestId)) throw new Error("delivery: unsafe agent or request id");
+      if (d.kind === "encrypted") return { kind: "encrypted", ref: "inline" };
       return d.kind === "file" ? { kind: "file", ref: filePath(agent, requestId) } : { kind: "1password", ref: `op://${d.vault}/${onePasswordTitle(requestId)}` };
     },
     async deliver(d, agent, requestId, creds) {
       if (!SAFE.test(agent) || !SAFE.test(requestId)) throw new Error("delivery: unsafe agent or request id");
+      // Nothing written anywhere: the sealed envelope travels in the reply, and only the requester can open it.
+      if (d.kind === "encrypted") return { kind: "encrypted", ref: "inline", envelope: seal(credentialProcessJson(creds).trim(), d.publicKey, requestId) };
       if (d.kind === "file") {
         const dir = join(fileRoot, agent);
         mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -96,6 +105,7 @@ export function defaultDeliverer(fileRoot: string, op: OpRunner = opCli()): Deli
       return { kind: "1password", ref: `op://${d.vault}/${id}` };
     },
     async remove(ref) {
+      if (ref.kind === "encrypted") return; // nothing stored
       if (ref.kind === "file") {
         for (const p of [ref.ref, `${ref.ref}.tmp`]) if (existsSync(p)) rmSync(p);
         return;

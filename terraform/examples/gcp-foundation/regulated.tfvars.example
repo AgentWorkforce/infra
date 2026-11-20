@@ -1,0 +1,32 @@
+# Regulated profile for the foundation root: customer-managed keys for
+# everything this root creates, and Binary Authorization. Pass it after your
+# own tfvars:
+#
+#   terraform plan -var-file=terraform.tfvars -var-file=regulated.tfvars
+#
+# Replace every key name. The keys must already exist, in the cluster's
+# region, and are never created, rotated or destroyed here. See
+# docs/gcp-install/REGULATED-PROFILE.md for what each one covers and which can
+# be turned on for an existing cluster.
+kms = {
+  # Kubernetes Secrets in etcd (application-layer secrets encryption).
+  # Can be turned on, and the key changed, on an existing cluster.
+  secrets = "projects/my-security-project/locations/us-central1/keyRings/agent-relay/cryptoKeys/gke-secrets"
+  # Node boot disks. Changing it replaces the node pools.
+  node_disks = "projects/my-security-project/locations/us-central1/keyRings/agent-relay/cryptoKeys/gke-disks"
+  # Managed Redis at rest (only with redis.enabled). Set at creation.
+  redis = "projects/my-security-project/locations/us-central1/keyRings/agent-relay/cryptoKeys/data"
+  # true: this root grants the GKE, Compute Engine and Redis service agents
+  # roles/cloudkms.cryptoKeyEncrypterDecrypter on their key. Set false when
+  # the key's owner grants it (it must then exist before apply).
+  grant_service_agents = true
+}
+
+# Pub/Sub topics of the native pipeline (only with pipeline.enabled). Grant the
+# Pub/Sub service agent on the key first. Merge kms_key_name into your own
+# pipeline = { ... } value; a later -var-file replaces the whole object.
+# pipeline = { enabled = true, kms_key_name = "projects/my-security-project/locations/us-central1/keyRings/agent-relay/cryptoKeys/data" }
+
+# Admission enforces the project's Binary Authorization policy. Import a policy
+# that admits your image mirror first (REGULATED-PROFILE.md), or no pod starts.
+binary_authorization_enforce = true

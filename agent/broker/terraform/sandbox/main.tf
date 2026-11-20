@@ -31,9 +31,16 @@ provider "aws" {
 }
 
 locals {
-  scoped_role_name = "agent-broker-sandbox-scoped"
-  scoped_role_arn  = "arn:aws:iam::${var.sandbox_account_id}:role/${local.scoped_role_name}"
+  # Approval-tier sessions in the broker's own account (the agent hosts'):
+  # every one needs Khaliq's approval. The infra-ops host already has
+  # administrator access here, so this adds no new reach (DESIGN.md).
+  agent_hosts_elevated_role_arn = "arn:aws:iam::${var.broker_account_id}:role/agent-broker-elevated"
+  scoped_role_name              = "agent-broker-sandbox-scoped"
+  scoped_role_arn               = "arn:aws:iam::${var.sandbox_account_id}:role/${local.scoped_role_name}"
 }
+
+# The dev account's read-only role is created by that account's owner, by hand
+# (../dev), not here: this root only lets the broker assume it.
 
 module "broker_role" {
   source    = "../modules/broker-role"
@@ -41,7 +48,15 @@ module "broker_role" {
 
   account_id             = var.broker_account_id
   trusted_principal_arns = [var.broker_host_role_arn]
-  target_role_arns       = [local.scoped_role_arn]
+  target_role_arns       = [local.scoped_role_arn, local.agent_hosts_elevated_role_arn, var.dev_read_role_arn]
+  audit_log_group_arn    = module.audit_log.arn
+}
+
+# The audit log's copy in CloudWatch, in the broker's account and region (the
+# host ships to it every minute: broker/src/ship.ts, setup-lane.sh).
+module "audit_log" {
+  source    = "../modules/audit-log"
+  providers = { aws = aws.broker }
 }
 
 module "sandbox_scoped_role" {
@@ -49,6 +64,14 @@ module "sandbox_scoped_role" {
   providers = { aws = aws.sandbox }
 
   name            = local.scoped_role_name
+  broker_role_arn = module.broker_role.role_arn
+  allowed_regions = var.allowed_regions
+}
+
+module "agent_hosts_elevated_role" {
+  source    = "../modules/elevated-role"
+  providers = { aws = aws.broker }
+
   broker_role_arn = module.broker_role.role_arn
   allowed_regions = var.allowed_regions
 }

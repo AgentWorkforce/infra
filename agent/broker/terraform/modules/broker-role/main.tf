@@ -1,8 +1,9 @@
 # The credential broker's role, in the layered-infra-ops host's account. Only
 # the host role (exact ARN, via aws:PrincipalArn) may assume it, and it may do
-# exactly one thing: assume the listed target roles with session tags and a
-# source identity. It has no other permission, so a leaked broker session can
-# mint sandbox sessions (bounded by the target roles) and nothing else.
+# exactly two things: assume the listed target roles with session tags and a
+# source identity, and (when audit_log_group_arn is set) append to the audit
+# log group. It has no other permission, so a leaked broker session can mint
+# sessions (bounded by the target roles) and add audit lines, and nothing else.
 
 locals {
   trust_policy = {
@@ -18,12 +19,23 @@ locals {
 
   permissions_policy = {
     Version = "2012-10-17"
-    Statement = [{
-      Sid      = "VendIntoTargetRoles"
-      Effect   = "Allow"
-      Action   = ["sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"]
-      Resource = var.target_role_arns
-    }]
+    Statement = concat(
+      [{
+        Sid      = "VendIntoTargetRoles"
+        Effect   = "Allow"
+        Action   = ["sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"]
+        Resource = var.target_role_arns
+      }],
+      # Audit shipping (broker/src/ship.ts): create a stream in the audit group
+      # and append to it. No read, delete, retention or policy change.
+      var.audit_log_group_arn == null ? [] : [{
+        Sid    = "ShipAuditLog"
+        Effect = "Allow"
+        Action = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        # CreateLogStream is checked against the group (ARN, or ARN:*), PutLogEvents against its streams.
+        Resource = [var.audit_log_group_arn, "${var.audit_log_group_arn}:*"]
+      }],
+    )
   }
 }
 

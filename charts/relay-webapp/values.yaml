@@ -53,10 +53,11 @@ runtime:
 # See the README "Customer profile" section.
 customerProfile: {}
 
-# A leaf Ingress can proxy /cloud/api to this Service. The GKE proof uses the
-# umbrella Ingress instead and leaves this ingress disabled. Required when
-# ingress.enabled=true: the relay-control Service name in this namespace,
-# i.e. its fullname (<release>-relay-control unless fullnameOverride is set).
+# A leaf Ingress can proxy /cloud/api, /login and /relay-node to this Service.
+# The GKE proof uses the umbrella Ingress instead and leaves this ingress
+# disabled. Required when ingress.enabled=true: the relay-control Service name
+# in this namespace, i.e. its fullname (<release>-relay-control unless
+# fullnameOverride is set).
 api:
   serviceName: ""
   servicePort: 80
@@ -64,6 +65,11 @@ api:
 ingress:
   enabled: false
   className: ""
+  # The Ingress also carries the relay-node WebSocket (GET /relay-node/v1/ws)
+  # and the flows worker SSE stream to relay-control; raise the controller's
+  # read timeout above their keepalive interval, e.g. for ingress-nginx:
+  #   nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+  #   nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
   annotations: {}
   # Derived from global.singleHost.host in single-host mode.
   host: ""

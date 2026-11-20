@@ -26,6 +26,8 @@ module "foundation" {
   node_image_registry_projects = var.node_image_registry_projects
   pipeline                     = var.pipeline
   redis                        = var.redis
+  kms                          = var.kms
+  binary_authorization_enforce = var.binary_authorization_enforce
   deletion_protection          = var.deletion_protection
   labels                       = var.labels
 }

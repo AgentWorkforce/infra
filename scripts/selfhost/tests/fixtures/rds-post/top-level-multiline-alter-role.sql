@@ -1,0 +1,4 @@
+BEGIN;
+ALTER ROLE
+  bulls96_read_api LOGIN;
+COMMIT;
