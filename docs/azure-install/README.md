@@ -317,8 +317,8 @@ By default the search indexer indexes a session whole only up to 64 MiB and
 100,000 events. A larger session is recorded as partial. A workspace search that
 would include it then answers 501 `session_partial`, unless the read API is set
 to skip partial sessions. These settings need **agent-relay-2026.11.11 or
-later** (chart 0.7.25+); release 2026.11.5, which this guide installs, does not
-render them, so upgrade first.
+later** (chart 0.7.25+). This guide installs 2026.11.16, which supports them.
+If you run an older release, upgrade first.
 
 All are unset by default. When it renders, the chart checks only the format of
 `maxScopeBytes` (bytes, or a MiB/GiB size), not its numeric range, so keep it
@@ -351,7 +351,8 @@ sessions-pipeline:
 
 ```sh
 helm upgrade agent-relay "$CHART" --namespace agent-relay \
-  -f release/agent-relay/values-eks.yaml -f values.yaml -f release-images.values.yaml --timeout 25m
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
 kubectl -n agent-relay rollout status deploy/agent-relay-search-indexer --timeout=10m
 ```
 
