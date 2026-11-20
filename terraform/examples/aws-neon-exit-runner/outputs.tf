@@ -4,7 +4,7 @@ output "instance_id" {
 }
 
 output "runner_role_arn" {
-  description = "Instance role: SSM core plus read of the target secret."
+  description = "Instance role: SSM core plus read of the two exit secrets."
   value       = aws_iam_role.runner.arn
 }
 
@@ -16,6 +16,16 @@ output "db_owner_secret_arn" {
 output "db_owner_secret_name" {
   description = "Secrets Manager name of the target credential."
   value       = aws_secretsmanager_secret.db_owner.name
+}
+
+output "copy_urls_secret_arn" {
+  description = "Secrets Manager ARN of the empty Cloud copy URLs secret."
+  value       = aws_secretsmanager_secret.copy_urls.arn
+}
+
+output "copy_urls_secret_name" {
+  description = "Secrets Manager name of the Cloud copy URLs secret."
+  value       = aws_secretsmanager_secret.copy_urls.name
 }
 
 output "private_subnet_id" {

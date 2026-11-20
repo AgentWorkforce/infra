@@ -109,6 +109,17 @@ resource "aws_secretsmanager_secret" "db_owner" {
   recovery_window_in_days = 0
 }
 
+# Connection URLs for the Cloud copy (source and target). Created empty and
+# written out of band; the runner reads them on the box so that no URL appears
+# in SSM command history.
+resource "aws_secretsmanager_secret" "copy_urls" {
+  #checkov:skip=CKV_AWS_149:Short-lived container read by one instance role in the same account; the AWS-managed Secrets Manager key, no extra KMS lifecycle.
+  #checkov:skip=CKV2_AWS_57:The value is written out of band by whoever holds the URLs; there is no rotation function to attach.
+  name                    = var.copy_urls_secret_name
+  description             = "Connection URLs for the Cloud database copy, read on the runner (written out of band)"
+  recovery_window_in_days = 0
+}
+
 data "aws_iam_policy_document" "assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -121,7 +132,7 @@ data "aws_iam_policy_document" "assume" {
 
 resource "aws_iam_role" "runner" {
   name               = var.name
-  description        = "Neon exit runner: SSM core plus read of the one target secret"
+  description        = "Neon exit runner: SSM core plus read of the two exit secrets"
   assume_role_policy = data.aws_iam_policy_document.assume.json
 }
 
@@ -135,6 +146,12 @@ data "aws_iam_policy_document" "secret_read" {
     sid       = "ReadTargetOwnerSecret"
     actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
     resources = [aws_secretsmanager_secret.db_owner.arn]
+  }
+
+  statement {
+    sid       = "ReadCopyUrlsSecret"
+    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    resources = [aws_secretsmanager_secret.copy_urls.arn]
   }
 }
 

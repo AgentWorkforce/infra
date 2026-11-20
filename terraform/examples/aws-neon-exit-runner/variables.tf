@@ -61,6 +61,12 @@ variable "db_owner_secret_name" {
   default     = "neon-exit/relayhistory-legacy/postgres-owner"
 }
 
+variable "copy_urls_secret_name" {
+  description = "Secrets Manager name of the Cloud copy connection URLs. Created empty; written out of band and read on the runner."
+  type        = string
+  default     = "neon-exit/cloud/copy-urls"
+}
+
 variable "tags" {
   description = "Tags applied to every resource."
   type        = map(string)
