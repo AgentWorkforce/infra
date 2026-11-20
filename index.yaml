@@ -2044,6 +2044,31 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-20T23:18:34.337882168Z"
+    description: Static self-hosted Agent Relay sessions and messaging dashboard
+    digest: a2195431a579137e5ae025ae0b6d9fd2991feb9ebbb151b55ab371879d9dfce2
+    home: https://github.com/AgentWorkforce/relay-webapp
+    keywords:
+    - agent-relay
+    - dashboard
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relay-webapp
+    sources:
+    - https://github.com/AgentWorkforce/relay-webapp
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-webapp-0.2.8/relay-webapp-0.2.8.tgz
+    version: 0.2.8
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-16T22:22:48.491577162Z"
     description: Static self-hosted Agent Relay sessions and messaging dashboard
     digest: bc256ffa09be83ccba3bbaf220f29d874c413652f89e852f854a2e304ccc5bce
@@ -8729,4 +8754,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-19T16:37:11.714147875Z"
+generated: "2026-11-20T23:18:34.338686675Z"
