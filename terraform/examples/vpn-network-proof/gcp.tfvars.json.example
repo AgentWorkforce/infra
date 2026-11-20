@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "name": "REPLACE_RUN_PREFIX",
+  "project_id": "REPLACE_NEW_APPROVED_PROJECT_ID",
+  "expected_project_number": "REPLACE_IMMUTABLE_PROJECT_NUMBER",
+  "region": "us-central1",
+  "network_name": "REPLACE_OWNED_PROOF_VPC",
+  "connector_cidr": "REPLACE_UNUSED_RFC1918_/28",
+  "existing_network_cidrs": [
+    "REPLACE_ALL_OTHER_ROUTED_IPV4_RANGES"
+  ],
+  "allow_iap_ssh": true,
+  "create_ingress_ip": true,
+  "enforce_deny_rules": false,
+  "labels": {
+    "app": "agent-relay",
+    "purpose": "vpn-proof",
+    "owner": "REPLACE_OWNER",
+    "expires": "REPLACE_EXPIRY_LABEL"
+  },
+  "outbound_rules": {}
+}

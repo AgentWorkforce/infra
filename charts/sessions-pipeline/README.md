@@ -103,7 +103,7 @@ The digest narrative model (`sessionReadApi.digest.narrative.model`) stays
 unset by default, so the read API makes no model call and no session content
 leaves the cluster. The digest statistics are still served; the narrative is
 `provider_not_configured`. See
-[the session read API guide](../../docs/self-hosted-session-read-api.md#output-and-the-daily-digest)
+[the session read API guide](https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-session-read-api.md#output-and-the-daily-digest)
 before setting a model.
 
 **Database prerequisites.** None beyond the profile's normal install. The
@@ -170,7 +170,7 @@ returns a non-null `complete_since` and `incomplete = 0`.
 
 `nativeConsumer` supplies a dedicated canonical pointer/Postgres-search consumer
 and optional owner bootstrap Job after qualifying the merged source/image and
-migration generation. See [the operator contract](../../docs/self-hosted-native-consumer.md)
+migration generation. See [the operator contract](https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-native-consumer.md)
 for its two-pool TLS requirements, separate owner/runtime Secrets, indexer drain
 and prepare/serve bootstrap order. No install profile enables it.
 

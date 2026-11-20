@@ -28,7 +28,7 @@ Fail early on missing required values (render time, not crash-loop time).
 {{- if and $idx.enabled (gt (int $idx.replicas) 1) }}{{ fail "sessions-pipeline-worker: components.hoopdb-indexer.replicas must be 1 (manifest reconcile is not leader-elected)" }}{{ end -}}
 {{- /* Phase 2 role verify must run in migrate: with it off, readiness never passes
 unless a separate mark_pass step runs, which this chart does not have. */ -}}
-{{- $reserved := list "HOOPDB_ROLE_VERIFY" "HOOPDB_ROLE_BOOTSTRAP" "HOOPDB_DB_MODE" "HOOPDB_SUPABASE_SHIM" "HOOPDB_RUNTIME_ROLE" "HOOPDB_RUNTIME_ROLE_LOGIN" "HOOPDB_RUNTIME_WORKLOAD_ROLE" "HOOPDB_FUNCTION_BOUNDARY_MODE" "HOOPDB_FUNCTION_BOUNDARY_APPROVED" "HOOPDB_ALLOW_BLOCKING_INDEX_BUILD" -}}
+{{- $reserved := list "HOOPDB_ROLE_VERIFY" "HOOPDB_ROLE_BOOTSTRAP" "HOOPDB_DB_MODE" "HOOPDB_RDS_LAYOUT" "HOOPDB_SUPABASE_SHIM" "HOOPDB_RUNTIME_ROLE" "HOOPDB_RUNTIME_ROLE_LOGIN" "HOOPDB_RUNTIME_WORKLOAD_ROLE" "HOOPDB_FUNCTION_BOUNDARY_MODE" "HOOPDB_FUNCTION_BOUNDARY_APPROVED" "HOOPDB_ALLOW_BLOCKING_INDEX_BUILD" -}}
 {{- range .Values.extraEnv }}{{ if has (.name | default "") $reserved }}{{ fail (printf "sessions-pipeline-worker: extraEnv must not set %s: it is a migrations.* value, rendered into migrate only" .name) }}{{ end }}{{ end -}}
 {{- range $n, $c := .Values.components }}{{ range ($c.env | default list) }}{{ if has (.name | default "") $reserved }}{{ fail (printf "sessions-pipeline-worker: components.%s.env must not set %s: it is a migrations.* value, rendered into migrate only" $n .name) }}{{ end }}{{ end }}{{ end -}}
 {{- if .Values.migrations.enabled }}{{ include "sessions-pipeline-worker.validateProfile" . }}{{ end -}}
@@ -270,16 +270,21 @@ Role names follow the migrator's pattern exactly.
 {{- if not (or (kindIs "invalid" $m.runtimeRoleLogin) (kindIs "bool" $m.runtimeRoleLogin)) }}{{ fail "sessions-pipeline-worker: migrations.runtimeRoleLogin must be true or false" }}{{ end -}}
 {{- if not (or (kindIs "invalid" $m.allowBlockingIndexBuild) (kindIs "bool" $m.allowBlockingIndexBuild)) }}{{ fail "sessions-pipeline-worker: migrations.allowBlockingIndexBuild must be true or false" }}{{ end -}}
 {{- if eq $m.databaseMode "supabase" }}
+{{- if $m.rdsLayout }}{{ fail "sessions-pipeline-worker: migrations.rdsLayout is supported only in rds mode" }}{{ end -}}
 {{- if eq $m.supabaseShim true }}{{ fail "sessions-pipeline-worker: migrations.supabaseShim must not be true in supabase mode (the plain-Postgres role shim never runs there)" }}{{ end -}}
 {{- if $m.waitForRole.enabled }}{{ fail "sessions-pipeline-worker: migrations.waitForRole must be disabled in supabase mode (the roles are operator steps; the migrator verifies them)" }}{{ end -}}
 {{- if eq $m.roleBootstrap true }}{{ fail "sessions-pipeline-worker: migrations.roleBootstrap must not be true in supabase mode (the privileged role bootstrap never runs from the migrator there)" }}{{ end -}}
 {{- else if eq $m.databaseMode "rds" }}
+{{- if and $m.rdsLayout (not (has $m.rdsLayout (list "master-owner" "separate-database"))) }}{{ fail "sessions-pipeline-worker: migrations.rdsLayout must be master-owner or separate-database" }}{{ end -}}
 {{- if eq $m.supabaseShim true }}{{ fail "sessions-pipeline-worker: migrations.supabaseShim must not be true in rds mode (supabase/bootstrap/rds_migration_roles.sql replaces it)" }}{{ end -}}
 {{- if eq $m.roleBootstrap true }}{{ fail "sessions-pipeline-worker: migrations.roleBootstrap must not be true in rds mode (the operator runs the rds_*.sql bootstrap as the master)" }}{{ end -}}
 {{- if $m.waitForRole.enabled }}{{ fail "sessions-pipeline-worker: migrations.waitForRole must be disabled in rds mode (psql and the migrator cannot share a TLS URL there; the migrator verifies the roles)" }}{{ end -}}
 {{- if $m.runtimeWorkloadRole }}{{ fail "sessions-pipeline-worker: migrations.runtimeWorkloadRole is not supported in rds mode; the runtime role must log in itself" }}{{ end -}}
 {{- if and (kindIs "bool" $m.runtimeRoleLogin) (not $m.runtimeRoleLogin) }}{{ fail "sessions-pipeline-worker: migrations.runtimeRoleLogin must be true in rds mode" }}{{ end -}}
-{{- else if kindIs "invalid" $m.supabaseShim }}{{ fail (printf "sessions-pipeline-worker: migrations.supabaseShim must be set (true or false) in %s mode" $m.databaseMode) }}{{ end -}}
+{{- else }}
+{{- if $m.rdsLayout }}{{ fail "sessions-pipeline-worker: migrations.rdsLayout is supported only in rds mode" }}{{ end -}}
+{{- if kindIs "invalid" $m.supabaseShim }}{{ fail (printf "sessions-pipeline-worker: migrations.supabaseShim must be set (true or false) in %s mode" $m.databaseMode) }}{{ end -}}
+{{- end -}}
 {{- if not (regexMatch $ident ($m.runtimeRole | default "")) }}{{ fail "sessions-pipeline-worker: migrations.runtimeRole is required: the role the services connect as (HOOPDB_RUNTIME_ROLE)" }}{{ end -}}
 {{- if eq $m.runtimeRole "session_directory_search_worker" }}{{ fail "sessions-pipeline-worker: migrations.runtimeRole must not be the search Worker role" }}{{ end -}}
 {{- if and (ne $m.databaseMode "local") (kindIs "invalid" $m.runtimeRoleLogin) }}{{ fail (printf "sessions-pipeline-worker: migrations.runtimeRoleLogin must be set (true or false) in %s mode" $m.databaseMode) }}{{ end -}}
@@ -298,6 +303,10 @@ The migrate container's profile env, each name exactly once (context: migrations
 {{- define "sessions-pipeline-worker.profileEnv" -}}
 - name: HOOPDB_DB_MODE
   value: {{ .databaseMode | quote }}
+{{- with .rdsLayout }}
+- name: HOOPDB_RDS_LAYOUT
+  value: {{ . | quote }}
+{{- end }}
 - name: HOOPDB_SUPABASE_SHIM
   value: {{ ternary "true" "false" (eq .supabaseShim true) | quote }}
 - name: HOOPDB_RUNTIME_ROLE

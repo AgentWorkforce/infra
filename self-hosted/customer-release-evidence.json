@@ -34,9 +34,9 @@
       },
       {
         "decision": "approved",
-        "evidence": "Owner decision (Khaliq, 2026-11-03): Apache-2.0. The canonical LICENSE and package.json license landed on sessions-pipeline main in https://github.com/AgentWorkforce/sessions-pipeline/pull/172 (merge 51b38ff). The release image will be built from main at or after that commit; the older revision recorded in customer-images.yaml predates the LICENSE file.",
+        "evidence": "Owner decision (Khaliq, 2026-11-19): FSL-1.1-ALv2 approved for self-hosted distribution. The pinned services image is built from relayhistory-pipeline efdd4bb2896e067124280c9068c6df69011fcfff, whose LICENSE is FSL-1.1-ALv2: https://github.com/AgentWorkforce/relayhistory-pipeline/blob/efdd4bb2896e067124280c9068c6df69011fcfff/LICENSE (earlier images from before the license change were Apache-2.0).",
         "id": "sessions-services",
-        "spdx": "Apache-2.0"
+        "spdx": "FSL-1.1-ALv2"
       },
       {
         "decision": "approved",
@@ -111,7 +111,7 @@
       "protected": false,
       "requiredApprovals": 0
     },
-    "imageManifestSha256": "sha256:6a2f5967b675b36690e8993fc5a23600e042a242e0be3221d6c48126ff953ac2",
+    "imageManifestSha256": "sha256:5fe8ae878f8c3ebeb735c6b995c11dd3d214c0fabe7453c527f7153ec68686df",
     "valuesFile": "charts/agent-relay/values-gcp.yaml"
   },
   "releaseDecision": "blocked",

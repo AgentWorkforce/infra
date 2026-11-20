@@ -6,14 +6,15 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { createServer } from "node:http";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Broker } from "../broker/src/broker.ts";
 import { defaultDeliverer } from "../broker/src/deliver.ts";
 import type { Allowlist } from "../broker/src/policy.ts";
-import { decisionFromText, dmChannelId, relaycastApi, requestFromText, type RelayAgent, type RelayApi, type RelayMessage } from "../broker/src/relay.ts";
+import { decisionFromText, dmChannelId, relaycastApi, requestFromText, whois, type RelayAgent, type RelayApi, type RelayMessage } from "../broker/src/relay.ts";
 import type { StsClient } from "../broker/src/sts.ts";
 
 const base = JSON.parse(readFileSync(new URL("../broker/allowlist.json", import.meta.url), "utf8")) as Allowlist;
@@ -207,4 +208,52 @@ test("the CLI in relay mode takes only a message id: identity flags and a missin
   assert.match(run(["approve", "--message-id", "1"], { BROKER_RELAY_TOKEN_FILE: tokenFile }), /approve is not a command/);
   assert.match(run(["request"], { BROKER_RELAY_TOKEN_FILE: tokenFile }), /--message-id is required/);
   assert.match(run(["request", "--message-id", "1"], { BROKER_RELAY_TOKEN_FILE: join(dir, "missing") }), /token file is missing/);
+});
+
+test("whois: a read-only lookup of one agent's id and type, nothing else", async () => {
+  const relay = fakeRelay([]);
+  assert.deepEqual(await whois(relay, "khaliq-gant"), { name: "khaliq-gant", agentId: "229221621257396224", type: "human" });
+  assert.deepEqual(Object.keys(await whois(relay, BROKER)), ["name", "agentId", "type"], "no workspace id or other fields");
+  await assert.rejects(whois(relay, "nobody-here"), /Relay has no agent nobody-here/);
+  for (const bad of ["", "../v1/messages/1", "a b", "x?y=1", "-leading"]) await assert.rejects(whois(relay, bad), /bad Relay agent name/, bad);
+  const renamed: RelayApi = { message: async () => undefined, agentByName: async () => ({ id: "1", name: "someone-else", type: "agent", workspaceId: WS }) };
+  await assert.rejects(whois(renamed, "neon-exit-lead"), /different agent/);
+});
+
+test("the CLI whois: relay mode only, --name only, prints id and type from the Relay API, never the token", async () => {
+  const seen: { url: string; auth: string | undefined }[] = [];
+  const server = createServer((req, res) => {
+    seen.push({ url: req.url ?? "", auth: req.headers.authorization });
+    if (req.url === "/v1/agents/neon-exit-lead") return void res.end(JSON.stringify({ ok: true, data: { id: "248000000000000001", name: "neon-exit-lead", type: "agent", workspace_id: "rw_secretish" } }));
+    res.statusCode = 404;
+    res.end("{}");
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as { port: number }).port;
+  const dir = mkdtempSync(join(tmpdir(), "broker-whois-"));
+  const tokenFile = join(dir, "token");
+  writeFileSync(tokenFile, "obs_whois_token\n");
+  const cli = new URL("../broker/src/cli.ts", import.meta.url).pathname;
+  const run = (args: string[], env: Record<string, string> = { BROKER_RELAY_TOKEN_FILE: tokenFile }) =>
+    new Promise<{ code: number; out: string }>((resolve) => {
+      execFile(process.execPath, ["--no-warnings", cli, ...args], { env: { ...process.env, BROKER_STATE_DIR: join(dir, "state"), BROKER_DELIVERY_DIR: join(dir, "creds"), BROKER_RELAY_API: `http://127.0.0.1:${port}`, ...env }, encoding: "utf8" }, (err, stdout) => resolve({ code: err ? (err as { code?: number }).code ?? 1 : 0, out: stdout }));
+    });
+  try {
+    const ok = await run(["whois", "--name", "neon-exit-lead"]);
+    assert.equal(ok.code, 0, ok.out);
+    assert.deepEqual(JSON.parse(ok.out), { name: "neon-exit-lead", agentId: "248000000000000001", type: "agent" });
+    assert.ok(!ok.out.includes("obs_whois_token") && !ok.out.includes("rw_secretish"), "neither the token nor the workspace is printed");
+    assert.deepEqual(seen, [{ url: "/v1/agents/neon-exit-lead", auth: "Bearer obs_whois_token" }]);
+    assert.match((await run(["whois", "--name", "nobody"])).out, /Relay has no agent nobody/);
+    assert.match((await run(["whois"])).out, /--name is required/);
+    assert.match((await run(["whois", "--name", "neon-exit-lead", "--message-id", "1"])).out, /whois takes only --name/);
+    assert.match((await run(["whois", "--name", "neon-exit-lead", "--from-name", "khaliq-gant"])).out, /pass only --message-id/);
+    assert.match((await run(["request", "--message-id", "1", "--name", "x"])).out, /--name is only for whois/);
+    assert.match((await run(["whois", "--name", "neon-exit-lead"], { BROKER_RELAY_TOKEN_FILE: join(dir, "missing") })).out, /token file is missing/);
+    assert.match((await run(["whois", "--name", "neon-exit-lead"], { BROKER_RELAY_TOKEN_FILE: "" })).out, /needs relay mode/);
+    assert.equal(seen.length, 2, "only the two lookups that got that far reached the API");
+    assert.ok(!existsSync(join(dir, "state", "audit.jsonl")), "whois writes nothing to the audit log");
+  } finally {
+    server.close();
+  }
 });

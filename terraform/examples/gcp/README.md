@@ -60,6 +60,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | Name | Source | Version |
 | ---- | ------ | ------- |
 | desktop\_feed\_bucket | ../../modules/gcp/object-storage | n/a |
+| edge\_security | ../../modules/gcp/edge-security | n/a |
 | functions | ../../modules/gcp/functions | n/a |
 | postgres | ../../modules/gcp/postgres | n/a |
 | search | ../../modules/gcp/search | n/a |
@@ -95,15 +96,23 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | project\_id | GCP project. | `string` | n/a | yes |
 | region | GCP region. | `string` | n/a | yes |
 | sessions\_bucket\_name | Globally unique GCS bucket name for session objects. | `string` | n/a | yes |
+| admin\_secret\_kms\_key\_name | CMEK key for the Secret Manager secret that holds the Cloud SQL admin password (null: Google-managed, automatic replication). The key must be in var.region; the secret is then replicated to that region only. Grant the Secret Manager service agent (service-<project number>@gcp-sa-secretmanager.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: a secret's replication cannot be changed afterwards. | `string` | `null` | no |
 | deletion\_protection | Prevent deletion of Cloud SQL, Memorystore and Pub/Sub data resources. Disable only for a disposable proof environment. | `bool` | `true` | no |
 | desktop\_feed\_bucket\_name | Globally unique bucket for relay-control's signed Desktop feed (SELFHOST\_DESKTOP\_FEED\_GCS\_BUCKET). Empty disables it. | `string` | `""` | no |
+| desktop\_feed\_has\_signing\_keys | Whether relay-control has the feed's file signer (relay-control.desktopFeed.signingKeys in your values). true: chart\_values and desktop\_feed carry the SELFHOST\_DESKTOP\_FEED\_STORAGE env. Set false to create the bucket and service account before the signing keys exist: the env is left out, because relay-control exits when storage is set without a signer. Once the keys are in place set it back to true, apply (outputs change only on apply), and save chart\_values again. | `bool` | `true` | no |
 | desktop\_feed\_service\_account\_id | account\_id of the Google service account relay-control uses for the Desktop feed bucket (6-30 characters). | `string` | `"agent-relay-control"` | no |
+| edge\_max\_advanced\_rules | Rules with an expression one Cloud Armor policy may hold (modules/gcp/edge-security max\_advanced\_rules). Google fixes it at 20; a plan that needs more is refused. | `number` | `20` | no |
+| edge\_max\_subexpressions | Subexpressions per Cloud Armor rule expression (modules/gcp/edge-security max\_subexpressions). 10 is what the API accepts; lower it only if your project refuses a rule. | `number` | `10` | no |
+| edge\_origin\_secret\_header | Shared-secret request header a fronting proxy adds; requests without one of the accepted values (1-3, for rotation) are denied (modules/gcp/edge-security origin\_secret\_header). Stored in state. | ```object({ name = string values = list(string) })``` | `null` | no |
+| edge\_security\_policy | Cloud Armor policy for every GKE Ingress backend (modules/gcp/edge-security security\_policy: create, waf, rate\_limits, source\_ip\_allowlist, cloudflare, client\_ip\_header, client\_ip\_rules). Off unless create = true. It is exported as gkeIngress.securityPolicy in output.edge, not in chart\_values, because the chart then also needs the dashboard Service's backend-config annotation. | `any` | `{}` | no |
+| edge\_ssl\_policy | Compute SSL policy for the GKE Ingress HTTPS listener, exported as gkeIngress.sslPolicy in chart\_values. create = false leaves Google's default policy (TLS 1.0 and later). | ```object({ create = optional(bool, true) profile = optional(string, "MODERN") min_tls_version = optional(string, "TLS_1_2") })``` | `{}` | no |
 | enable\_functions | Create the optional event-driven pipeline (Cloud Run functions). | `bool` | `false` | no |
 | enable\_search | Install the optional OpenSearch cluster on GKE. | `bool` | `false` | no |
 | gke\_cluster\_location | Its region or zone. | `string` | `null` | no |
 | gke\_cluster\_name | Existing GKE cluster that runs agent-relay (only for enable\_search). | `string` | `null` | no |
 | gke\_node\_service\_account | Email of the GKE node pool's service account, granted roles/artifactregistry.reader on the mirror. Empty: the project's default Compute Engine service account (a node pool whose serviceAccount is "default"). | `string` | `""` | no |
 | gke\_use\_private\_endpoint | Reach the control plane on its private endpoint. | `bool` | `true` | no |
+| image\_mirror\_kms\_key\_name | CMEK key for the image mirror repository (null: Google-managed). Grant the Artifact Registry service agent (service-<project number>@gcp-sa-artifactregistry.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: changing it replaces the repository. | `string` | `null` | no |
 | image\_mirror\_repository | Artifact Registry repository for the release images (guide step 5), created in var.region. Empty: no repository and no grant. | `string` | `""` | no |
 | kms\_key\_name | CMEK key for Cloud SQL and the bucket (null: Google-managed). Grant the service agents on it first. | `string` | `null` | no |
 | labels | Labels for every resource that supports them. | `map(string)` | `{}` | no |
@@ -112,6 +121,7 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | notification\_channels | Cloud Monitoring notification channels for the pipeline alerts. | `list(string)` | `[]` | no |
 | pipeline\_message\_retention | Pub/Sub topic and subscription retention for the native Sessions pipeline. | `string` | `"604800s"` | no |
 | pipeline\_pubsub\_kms\_key\_name | Optional CMEK key for the native Sessions pipeline Pub/Sub topics. | `string` | `null` | no |
+| pipeline\_redis\_kms\_key\_name | CMEK key for the pipeline Redis instance at rest (null: Google-managed). Same region as the instance; grant the Memorystore service agent (service-<project number>@cloud-redis.iam.gserviceaccount.com) roles/cloudkms.cryptoKeyEncrypterDecrypter on it first. Set at creation: changing it replaces the instance. | `string` | `null` | no |
 | pipeline\_redis\_memory\_size\_gb | Memorystore capacity for the native Sessions pipeline. | `number` | `5` | no |
 | pipeline\_redis\_reserved\_ip\_range | Optional PSA allocated range name for Memorystore. null lets Google choose from the connection. | `string` | `null` | no |
 | pipeline\_redis\_version | Memorystore Redis version. | `string` | `"REDIS_7_2"` | no |
@@ -128,7 +138,8 @@ Terraform or OpenTofu >= 1.11 (the Cloud SQL admin password is write-only).
 | Name | Description |
 | ---- | ----------- |
 | chart\_values | Complete non-secret managed-service overlay for values-gcp.yaml plus values-gcp-native.yaml. Save with: terraform output -json chart\_values > managed-values.json. |
-| desktop\_feed | Values for relay-control's signed Desktop feed on GCS (null unless desktop\_feed\_bucket\_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys. |
+| desktop\_feed | Values for relay-control's signed Desktop feed on GCS (null unless desktop\_feed\_bucket\_name is set). Put env into relay-control.extraEnv and annotations into relay-control.serviceAccount.annotations; signing keys go through relay-control.desktopFeed.signingKeys. env is empty with desktop\_feed\_has\_signing\_keys = false: relay-control exits when the storage env is set without a signer. |
+| edge | Edge policy names (edge.tf). rule\_counts is what the Cloud Armor policy needs against the project's quotas (advanced: SECURITY\_POLICY\_CEVAL\_RULES, default 20; total: SECURITY\_POLICY\_RULES, default 100). security\_policy is null unless edge\_security\_policy.create is set; put it in gkeIngress.securityPolicy together with the backend-config annotation the chart asks for. client\_ip\_header set means a proxy fronts the load balancer: relay-control.auth.trustedProxies is 3 instead of 2. |
 | functions | Pipeline function, topics and secret (null unless enable\_functions). |
 | image\_mirror\_root | MIRROR\_ROOT for install guide step 5 (null unless image\_mirror\_repository is set). |
 | pipeline | Native Sessions pipeline values. The Redis CA is public certificate material, not a credential. |
@@ -147,5 +158,13 @@ for `relay-control.extraEnv` and the two annotations for
 `relay-control.serviceAccount.annotations`
 (`iam.gke.io/gcp-service-account` and `iam.gke.io/return-principal-id-as-email`).
 The feed's signing keys go through `relay-control.desktopFeed.signingKeys`.
+relay-control exits when the storage env is set without a signer
+(`SELFHOST_DESKTOP_FEED_SIGNER and SELFHOST_DESKTOP_FEED_STORAGE must be set together`),
+so to create the bucket before the signing keys exist, also set
+`desktop_feed_has_signing_keys = false`: `chart_values` and
+`output.desktop_feed` then leave the three `extraEnv` entries out. Once the
+keys are in place, remove it, run `terraform apply` (outputs are read from the
+state, so they change only on apply; the plan shows output changes and no
+resource change), and save `chart_values` again.
 Off by default: an install without it plans no change.
 

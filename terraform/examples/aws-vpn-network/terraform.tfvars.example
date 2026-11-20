@@ -1,0 +1,17 @@
+# Documentation-only values: replace every identity, ID, range and destination.
+# No resource is created until explicitly enabled in a reviewed plan.
+enabled                = false
+name                   = "agent-relay"
+connector_cidr         = "10.60.2.0/28"
+existing_network_cidrs = ["10.60.0.0/24", "10.60.1.0/24"]
+outbound_rules = {
+  vpn  = { cidr = "203.0.113.9/32", protocol = "tcp", port = 443 }
+  edge = { cidr = "203.0.113.20/32", protocol = "tcp", port = 443 }
+  # Add the approved resolver and management destinations/ports as required.
+}
+account_id           = "123456789012"
+region               = "us-east-1"
+vpc_id               = "vpc-0123456789abcdef0"
+availability_zone    = "us-east-1a"
+nat_public_subnet_id = "subnet-0123456789abcdef0"
+tags                 = { app = "agent-relay" }

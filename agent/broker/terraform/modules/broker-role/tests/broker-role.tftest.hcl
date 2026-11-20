@@ -39,6 +39,33 @@ run "may_only_vend_into_target_roles" {
   }
 }
 
+run "audit_shipping_appends_to_one_group_and_nothing_more" {
+  command = plan
+  variables {
+    audit_log_group_arn = "arn:aws:logs:us-east-1:111122223333:log-group:/aws-cred-broker/audit"
+  }
+  assert {
+    condition     = length(output.permissions_policy.Statement) == 2 && output.permissions_policy.Statement[0].Sid == "VendIntoTargetRoles"
+    error_message = "the vend statement, then the audit statement"
+  }
+  assert {
+    condition     = output.permissions_policy.Statement[1].Effect == "Allow" && toset(output.permissions_policy.Statement[1].Action) == toset(["logs:CreateLogStream", "logs:PutLogEvents"])
+    error_message = "only create a stream and append"
+  }
+  assert {
+    condition     = output.permissions_policy.Statement[1].Resource == ["arn:aws:logs:us-east-1:111122223333:log-group:/aws-cred-broker/audit", "arn:aws:logs:us-east-1:111122223333:log-group:/aws-cred-broker/audit:*"]
+    error_message = "only the audit group's streams"
+  }
+}
+
+run "rejects_an_audit_group_outside_the_prefix" {
+  command = plan
+  variables {
+    audit_log_group_arn = "arn:aws:logs:us-east-1:111122223333:log-group:*"
+  }
+  expect_failures = [var.audit_log_group_arn]
+}
+
 run "rejects_a_wildcard_principal" {
   command = plan
   variables {

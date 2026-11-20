@@ -73,7 +73,9 @@ Patches to upstream files (report upstream; drop when fixed there):
    `seccompProfile: {type: RuntimeDefault}`, like the other charts here.
 9. `README.md`: links to upstream docs that are not vendored
    (`docs/self-hosting.md`, `docs/reference/configuration.md`) point at the
-   upstream tag, and the per-actor CPU default reads 250 millicores (the
+   upstream tag, the link to this repository's
+   `docs/self-hosted-durable-actors.md` is an absolute GitHub URL (relative
+   links break in the packaged chart), and the per-actor CPU default reads 250 millicores (the
    rendered `actors.cpuMillis` default; upstream says 500).
 
 10. AWS: S3 storage, AWS zones and sandbox scheduling (`values.yaml`,

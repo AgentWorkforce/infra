@@ -101,3 +101,16 @@ run "cross_project_pool_uses_pool_project" {
     error_message = "The principal names the pool project's number."
   }
 }
+
+run "customer_managed_key_is_the_default_object_key" {
+  command = apply
+
+  variables {
+    kms_key_name = "projects/proj/locations/us-central1/keyRings/relay/cryptoKeys/data"
+  }
+
+  assert {
+    condition     = google_storage_bucket.this.encryption[0].default_kms_key_name == "projects/proj/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    error_message = "kms_key_name must be the bucket's default encryption key."
+  }
+}

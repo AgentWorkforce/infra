@@ -5,6 +5,73 @@
   "humanApprovers": [
     "khaliq-gant"
   ],
+  "delegatedApprovers": [
+    {
+      "$comment": "A standing delegation: this agent may approve requests that name it as delegate and fall entirely inside one capability, until expiresAt. Never delegable whatever is listed here: IAM, identity and audit controls, never-issue actions, deletes, wildcard actions or resources, accounts not on this allowlist. Every delegated approval is audited with the delegate, request id, digest and capability. See broker/DESIGN.md.",
+      "agent": "neon-exit-lead-2",
+      "agentId": "248345546605203456",
+      "$agentIdComment": "neon-exit-lead-2's Relaycast agent_id, read with the broker's observer token (GET /v1/agents/neon-exit-lead-2) on 2026-11-17; its address is neon-exit-lead-2@sf-mac-mini-desktop. Re-pinned from neon-exit-lead (agent_id 247865646017380352), which stood down at the lead handover on 2026-11-17. A different agent later registered under this name has a different id and is refused.",
+      "expiresAt": "2026-11-23T00:00:00Z",
+      "grantedBy": "khaliq-gant",
+      "reason": "Khaliq asked (2026-11-15) to let the neon-exit lead drive the Neon exit without blocking on him. Moved to neon-exit-lead-2 when it took over as lead (2026-11-17). Expiry extended from 2026-11-19 to 2026-11-21 by Khaliq (2026-11-17), then to 2026-11-23 (window moved to 2026-11-20 19:00Z; covers the 24-48 h rollback horizon).",
+      "requesters": [
+        "legacy-copy",
+        "cloud-db-rehearsal",
+        "cloud-db-driver",
+        "cloud-db-driver-sites",
+        "turns-gates",
+        "sessions-edges"
+      ],
+      "capabilities": [
+        {
+          "id": "neon-exit",
+          "accounts": [
+            "500268966557"
+          ],
+          "regions": [
+            "us-east-1"
+          ],
+          "readOnlyRules": [
+            "read-describe",
+            "ssm-command-reads"
+          ],
+          "grants": [
+            {
+              "id": "neon-exit-secrets",
+              "actions": [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:PutSecretValue"
+              ],
+              "secretPrefixes": [
+                "neon-exit/"
+              ],
+              "secretNames": [
+                "infra-ops/supabase-management-token"
+              ]
+            },
+            {
+              "id": "neon-exit-ssm",
+              "actions": [
+                "ssm:StartSession",
+                "ssm:SendCommand"
+              ],
+              "instanceIds": [
+                "i-0887caee00ca9029a"
+              ],
+              "instanceTag": {
+                "key": "project",
+                "value": "neon-exit"
+              },
+              "ssmDocuments": [
+                "AWS-RunShellScript",
+                "SSM-SessionManagerRunShell"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
   "duration": {
     "minMinutes": 15,
     "maxMinutes": 60,
@@ -21,6 +88,27 @@
       ],
       "roles": {
         "scoped": "arn:aws:iam::805532413586:role/agent-broker-sandbox-scoped"
+      }
+    },
+    "500268966557": {
+      "label": "agent-hosts",
+      "tier": "prod",
+      "regions": [
+        "us-east-1",
+        "us-west-2"
+      ],
+      "roles": {
+        "elevated": "arn:aws:iam::500268966557:role/agent-broker-elevated"
+      }
+    },
+    "154551280135": {
+      "label": "agentrelay-dev",
+      "tier": "prod",
+      "regions": [
+        "us-west-2"
+      ],
+      "roles": {
+        "elevated": "arn:aws:iam::154551280135:role/agent-broker-dev-read"
       }
     }
   },
@@ -69,6 +157,18 @@
         "cloudwatch:ListMetrics",
         "tag:GetResources"
       ]
+    },
+    {
+      "id": "ssm-command-reads",
+      "scope": "any",
+      "actions": [
+        "ssm:GetCommandInvocation",
+        "ssm:ListCommandInvocations",
+        "ssm:ListCommands",
+        "ssm:DescribeSessions",
+        "ssm:DescribeInstanceInformation"
+      ],
+      "delegationOnly": true
     },
     {
       "id": "sqs-create",
@@ -274,5 +374,76 @@
         "secretsmanager:DeleteSecret"
       ]
     }
-  ]
+  ],
+  "workspaceAuto": {
+    "$comment": "Issued with NO approval to any agent the Relay server verifies as a member of this workspace, when the request falls wholly inside one capability (same checks as a delegation: never IAM, identity or audit controls, deletes, wildcards). Khaliq chose this scope (2026-11-16, option A). Widening it is an allowlist PR. See broker/AGENTS.md.",
+    "workspaceId": "rw_7ccfea89",
+    "grantedBy": "khaliq-gant",
+    "reason": "Khaliq (2026-11-16): workspace agents shouldn't need his approval for routine project access.",
+    "capabilities": [
+      {
+        "id": "project-neon-exit",
+        "accounts": [
+          "500268966557"
+        ],
+        "regions": [
+          "us-east-1"
+        ],
+        "readOnlyRules": [
+          "read-describe",
+          "ssm-command-reads"
+        ],
+        "grants": [
+          {
+            "id": "neon-exit-secrets",
+            "actions": [
+              "secretsmanager:GetSecretValue",
+              "secretsmanager:PutSecretValue"
+            ],
+            "secretPrefixes": [
+              "neon-exit/"
+            ]
+          },
+          {
+            "id": "neon-exit-ssm",
+            "actions": [
+              "ssm:StartSession",
+              "ssm:SendCommand"
+            ],
+            "instanceIds": [
+              "i-0887caee00ca9029a"
+            ],
+            "instanceTag": {
+              "key": "project",
+              "value": "neon-exit"
+            },
+            "ssmDocuments": [
+              "AWS-RunShellScript",
+              "SSM-SessionManagerRunShell"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "dev-cluster-read",
+        "accounts": [
+          "154551280135"
+        ],
+        "regions": [
+          "us-west-2"
+        ],
+        "grants": [
+          {
+            "id": "dev-cluster-describe",
+            "actions": [
+              "eks:DescribeCluster"
+            ],
+            "eksClusters": [
+              "agent-relay-dev"
+            ]
+          }
+        ]
+      }
+    ]
+  }
 }

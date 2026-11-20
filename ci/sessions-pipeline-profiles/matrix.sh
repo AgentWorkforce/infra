@@ -85,12 +85,12 @@ done
 # they do not qualify a native artifact or assert its provenance/final pin.
 GHCR="ghcr.io/agentworkforce/96bulls-services@sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2"
 ECR="500268966557.dkr.ecr.us-west-2.amazonaws.com/96bulls-services@sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9"
-RDS_GHCR="ghcr.io/agentworkforce/96bulls-services@sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821"
+RDS_GHCR="ghcr.io/agentworkforce/sessions-pipeline@sha256:fd2efd61dca4761dfb55256aa4797cb7f61c3434cc8af4833287e0e7bb7b59a9"
 RDS_NATIVE_CI="ghcr.io/agentworkforce/96bulls-services@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 pins_of() { yq -r '[.worker.image.tag, .worker.image.digest, .alleyoop.image.tag, .alleyoop.image.digest, .privilegedSql.sqlImage.digest, .searchWorkerRole.bootstrapJob.sqlImage.digest, .runtimeRole.bootstrapJob.sqlImage.digest, .functionDefaultRevoke.bootstrapJob.sqlImage.digest] | map(select(. != null and . != "")) | join(",")' "$1"; }
 # Rendered image refs of every services container (workloads, migrate, the SQL Jobs' sql copy).
 services_refs() {
-  render "$@" | yq -r 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec | ((.initContainers // []) + .containers)[] | select(.image | test("96bulls-services")) | .image' | grep -v '^---$' | sort -u
+  render "$@" | yq -r 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec | ((.initContainers // []) + .containers)[] | select(.image | test("(96bulls-services|sessions-pipeline)")) | .image' | grep -v '^---$' | sort -u
 }
 # The chart defaults are the final GHCR image.
 for v in "$ROOT/charts/sessions-pipeline-worker/values.yaml" "$ROOT/charts/session-ingest-api/values.yaml"; do
@@ -108,7 +108,7 @@ for pair in "profiles/selfhost-postgres.yaml|$GHCR" "profiles/migration.yaml|$GH
 done
 
 ROLE_SQL="CREATE ROLE session_directory_search_worker NOLOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION"
-PROFILE_ENV="HOOPDB_DB_MODE HOOPDB_SUPABASE_SHIM HOOPDB_ROLE_BOOTSTRAP HOOPDB_RUNTIME_ROLE HOOPDB_RUNTIME_ROLE_LOGIN HOOPDB_RUNTIME_WORKLOAD_ROLE HOOPDB_FUNCTION_BOUNDARY_MODE"
+PROFILE_ENV="HOOPDB_DB_MODE HOOPDB_RDS_LAYOUT HOOPDB_SUPABASE_SHIM HOOPDB_ROLE_BOOTSTRAP HOOPDB_RUNTIME_ROLE HOOPDB_RUNTIME_ROLE_LOGIN HOOPDB_RUNTIME_WORKLOAD_ROLE HOOPDB_FUNCTION_BOUNDARY_MODE"
 count() { yq "select($1)" <<<"$out" | yq -N 'select(. != null) | .kind' | grep -c . || true; }
 has() { [ "$(count "$1")" -ge 1 ]; }
 none() { [ "$(count "$1")" -eq 0 ]; }
@@ -157,7 +157,7 @@ for row in "${MATRIX[@]}"; do
   # Every services image this row renders is a final 7d7229b image: GHCR, or
   # ECR on the AWS path only. Any other digest or tag (e.g. the old db2663d
   # default) fails.
-  imgs=$(yq -r 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec | ((.initContainers // []) + .containers)[] | select(.image | test("96bulls-services")) | .image' <<<"$out" | grep -v '^---$' | sort -u)
+  imgs=$(yq -r 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.spec | ((.initContainers // []) + .containers)[] | select(.image | test("(96bulls-services|sessions-pipeline)")) | .image' <<<"$out" | grep -v '^---$' | sort -u)
   [ -n "$imgs" ] || err "$label: no services image rendered"
   while read -r img; do
     [ -z "$img" ] && continue
@@ -199,7 +199,7 @@ for row in "${MATRIX[@]}"; do
   case $dbmode in
     selfhosted) want=$'HOOPDB_DB_MODE=selfhosted\nHOOPDB_FUNCTION_BOUNDARY_MODE=global-default-revoke\nHOOPDB_RUNTIME_ROLE=sessions_pipeline_runtime\nHOOPDB_RUNTIME_ROLE_LOGIN=true\nHOOPDB_SUPABASE_SHIM=true' ;;
     cloudsql)   want=$'HOOPDB_DB_MODE=cloudsql\nHOOPDB_FUNCTION_BOUNDARY_MODE=global-default-revoke\nHOOPDB_ROLE_BOOTSTRAP=false\nHOOPDB_RUNTIME_ROLE=sessions_pipeline_runtime\nHOOPDB_RUNTIME_ROLE_LOGIN=true\nHOOPDB_SUPABASE_SHIM=false' ;;
-    rds)        want=$'HOOPDB_DB_MODE=rds\nHOOPDB_FUNCTION_BOUNDARY_MODE=global-default-revoke\nHOOPDB_RUNTIME_ROLE=sessions_pipeline_runtime\nHOOPDB_RUNTIME_ROLE_LOGIN=true\nHOOPDB_SUPABASE_SHIM=false' ;;
+    rds)        want=$'HOOPDB_DB_MODE=rds\nHOOPDB_FUNCTION_BOUNDARY_MODE=global-default-revoke\nHOOPDB_RDS_LAYOUT=separate-database\nHOOPDB_RUNTIME_ROLE=sessions_pipeline_runtime\nHOOPDB_RUNTIME_ROLE_LOGIN=true\nHOOPDB_SUPABASE_SHIM=false' ;;
     supabase)   want=$'HOOPDB_DB_MODE=supabase\nHOOPDB_RUNTIME_ROLE=sessions_pipeline_runtime\nHOOPDB_RUNTIME_ROLE_LOGIN=true\nHOOPDB_SUPABASE_SHIM=false' ;;
   esac
   # The external-Supabase profile selects the event-trigger boundary (#125).
@@ -497,6 +497,17 @@ if [ "$mode" = static ]; then
   expect_fail "functionDefaultRevoke.bootstrapJob is for the in-cluster CNPG HoopDb only" "${GCP[@]}" --set functionDefaultRevoke.bootstrapJob.enabled=true
   expect_fail "runtimeRoleLogin must be set (true or false) in supabase mode" "${SB[@]}" --set worker.migrations.runtimeRoleLogin=null
   RDS=(-f "$CHART/profiles/external-rds.yaml" "${REQUIRED[@]}" "${RUNTIME[@]}")
+  for profile in external-rds aws-rds-native; do
+    [ "$(yq -r '.worker.migrations.rdsLayout // ""' "$CHART/profiles/$profile.yaml")" = separate-database ] || continue
+    for component in worker alleyoop; do
+      digest=$(yq -r ".$component.image.digest // \"\"" "$CHART/profiles/$profile.yaml")
+      case $digest in
+        sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2|\
+        sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821)
+          err "$profile: separate-database selects unsupported $component services digest $digest" ;;
+      esac
+    done
+  done
   expect_fail "waitForRole must be disabled in rds mode" "${RDS[@]}" --set worker.migrations.waitForRole.enabled=true
   expect_fail "supabaseShim must not be true in rds mode" "${RDS[@]}" --set worker.migrations.supabaseShim=true
   expect_fail "roleBootstrap must not be true in rds mode" "${RDS[@]}" --set worker.migrations.roleBootstrap=true
@@ -504,7 +515,7 @@ if [ "$mode" = static ]; then
   expect_fail "runtimeRoleLogin must be true in rds mode" "${RDS[@]}" --set worker.migrations.runtimeRoleLogin=false
   # The RDS profile with a CA bundle: every app workload and migrate gets it.
   out=$(render "${RDS[@]}" --set worker.postgresCa.enabled=true --set worker.postgresCa.configMap=rds-ca --set alleyoop.postgresCa.enabled=true --set alleyoop.postgresCa.configMap=rds-ca) || err "rds + postgresCa did not render"
-  ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | contains("96bulls-services"))) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$out" | grep -v '^---$' || true)
+  ca_gaps=$(yq 'select((.kind == "Deployment" or (.kind == "Job" and (.metadata.name | contains("migrate")))) and (.spec.template.spec.containers[0].image | test("(96bulls-services|sessions-pipeline)"))) | select(([.spec.template.spec.containers[0].env[] | select(.name == "NODE_EXTRA_CA_CERTS")] | length) != 1) | .metadata.name' <<<"$out" | grep -v '^---$' || true)
   [ -z "$ca_gaps" ] || err "rds + postgresCa: no CA in $ca_gaps"
   [ "$(yq 'select(.kind == "Job" and (.metadata.name | contains("migrate"))) | .kind' <<<"$out" | grep -c Job)" = 1 ] || err "rds + postgresCa: expected one migrate Job"
   ! render "${RDS[@]}" | grep -q NODE_EXTRA_CA_CERTS || err "rds profile must not set NODE_EXTRA_CA_CERTS by default"

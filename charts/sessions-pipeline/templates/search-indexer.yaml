@@ -36,6 +36,39 @@
 {{- if or (lt (int64 $v) (int64 (index $bounds 0))) (gt (int64 $v) (int64 (index $bounds 1))) (ne (float64 $v) (float64 (int64 $v))) }}{{ fail (printf "searchIndexer.limits.%s must be an integer from %v to %v" $field (index $bounds 0) (index $bounds 1)) }}{{ end -}}
 {{- end -}}
 {{- end -}}
+{{- $streaming := $c.streaming | default dict -}}
+{{- if not (kindIs "map" $streaming) }}{{ fail "searchIndexer.streaming must be a map" }}{{ end -}}
+{{- $streamingOn := $streaming.enabled -}}
+{{- if not (or (kindIs "invalid" $streamingOn) (kindIs "bool" $streamingOn)) }}{{ fail "searchIndexer.streaming.enabled must be null, true or false" }}{{ end -}}
+{{- if and (kindIs "bool" $streamingOn) (not $streamingOn) (or $streaming.maxReadBytes $streaming.maxReadEvents) }}{{ fail "searchIndexer.streaming.maxReadBytes and maxReadEvents have no effect with searchIndexer.streaming.enabled=false; unset them" }}{{ end -}}
+{{- if not (or (kindIs "invalid" $c.stagedReconcile) (kindIs "map" $c.stagedReconcile)) }}{{ fail "searchIndexer.stagedReconcile must be a map" }}{{ end -}}
+{{- $stagedCfg := $c.stagedReconcile | default dict -}}
+{{- $stagedOn := $stagedCfg.enabled -}}
+{{- if not (or (kindIs "invalid" $stagedOn) (kindIs "bool" $stagedOn)) }}{{ fail "searchIndexer.stagedReconcile.enabled must be null, true or false" }}{{ end -}}
+{{- if and (eq $stagedOn true) (eq $streamingOn false) }}{{ fail "searchIndexer.stagedReconcile.enabled=true needs streaming on; it cannot be combined with searchIndexer.streaming.enabled=false (the consumer refuses to start)" }}{{ end -}}
+{{- if and (eq $streamingOn true) (dig "outputFacts" "enabled" false $c) (eq $stagedOn false) }}{{ fail "searchIndexer.streaming.enabled=true cannot be combined with searchIndexer.outputFacts.enabled=true while searchIndexer.stagedReconcile.enabled=false (the consumer refuses to start); leave stagedReconcile unset or true so the staged run carries the facts" }}{{ end -}}
+{{- if or $streaming.maxReadBytes $streaming.maxReadEvents -}}
+{{- $mib := 1048576 -}}
+{{- $scopeBytes := mul 64 $mib -}}
+{{- with $limits.maxScopeBytes -}}
+{{- $n := regexReplaceAll "(MiB|GiB)$" (toString .) "" | int64 -}}
+{{- $scopeBytes = ternary (mul $n 1024 $mib) (ternary (mul $n $mib) $n (hasSuffix "MiB" (toString .))) (hasSuffix "GiB" (toString .)) -}}
+{{- end -}}
+{{- $scopeEvents := int64 ($limits.maxScopeEvents | default 100000) -}}
+{{- $minBytes := min (mul 4 $scopeBytes) (mul 2048 $mib) -}}
+{{- $minEvents := min (mul 4 $scopeEvents) 2000000 -}}
+{{- with $streaming.maxReadBytes -}}
+{{- $raw := toString . -}}
+{{- if not (regexMatch "^[1-9][0-9]{0,12}(MiB|GiB)?$" $raw) }}{{ fail "searchIndexer.streaming.maxReadBytes must be bytes or a MiB/GiB size" }}{{ end -}}
+{{- $n := regexReplaceAll "(MiB|GiB)$" $raw "" | int64 -}}
+{{- $b := ternary (mul $n 1024 $mib) (ternary (mul $n $mib) $n (hasSuffix "MiB" $raw)) (hasSuffix "GiB" $raw) -}}
+{{- if or (lt $b $minBytes) (gt $b (mul 2048 $mib)) }}{{ fail (printf "searchIndexer.streaming.maxReadBytes must be from %dMiB (4x limits.maxScopeBytes) to 2GiB" (div $minBytes $mib)) }}{{ end -}}
+{{- end -}}
+{{- with $streaming.maxReadEvents -}}
+{{- if not (or (kindIs "int" .) (kindIs "int64" .) (kindIs "float64" .)) }}{{ fail "searchIndexer.streaming.maxReadEvents must be an integer" }}{{ end -}}
+{{- if or (lt (int64 .) $minEvents) (gt (int64 .) 2000000) (ne (float64 .) (float64 (int64 .))) }}{{ fail (printf "searchIndexer.streaming.maxReadEvents must be an integer from %d (4x limits.maxScopeEvents) to 2000000" $minEvents) }}{{ end -}}
+{{- end -}}
+{{- end -}}
 {{- $gcsNames := list "CLOUD_SQL_CONNECTION_NAME" "REDIS_HOST" "REDIS_PORT" "REDIS_AUTH_ENABLED" "REDIS_TRANSIT_ENCRYPTION" "REDIS_TLS_CA_PEM" "PUBSUB_TOPIC" "PUBSUB_SUBSCRIPTION" -}}
 {{- $seen := dict -}}
 {{- range $entry := $c.extraEnv -}}
@@ -166,7 +199,7 @@ spec:
 {{- $bootstrapGuardName := printf "%s-bootstrap-guard-%s" ($name | trunc 35 | trimSuffix "-") ($bootstrapGuard | sha256sum | trunc 8) }}
 {{- /* The shared scrub contract renders into this Job outside $c. Keep it in
       the content address so each rollout phase creates a new immutable Job. */}}
-{{- $bootstrapInputs := dict "searchIndexer" (omit $c "outputFacts" "limits") "scrubEngine" (.Values.global.scrubEngine | default dict) "guardSha256" ($bootstrapGuard | sha256sum) }}
+{{- $bootstrapInputs := dict "searchIndexer" (omit $c "outputFacts" "limits" "streaming" "stagedReconcile") "scrubEngine" (.Values.global.scrubEngine | default dict) "guardSha256" ($bootstrapGuard | sha256sum) }}
 ---
 apiVersion: v1
 kind: ConfigMap

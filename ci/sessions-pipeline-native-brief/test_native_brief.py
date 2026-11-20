@@ -147,7 +147,7 @@ class NativeBrief(unittest.TestCase):
         env={e['name']:e for e in main['env']};self.assertEqual(len(env),len(main['env']))
         self.assertNotIn('READER_MAX_RULESET',env)
         self.assertEqual(env['SESSION_BRIEF_WORKSPACE_IDS']['value'],'default-workspace')
-        self.assertEqual(env['SESSION_BRIEF_BATCH']['value'],'1');self.assertEqual(env['SESSION_BRIEF_GLOBAL_DAILY_CAP']['value'],'20');self.assertEqual(env['SESSION_BRIEF_SESSION_DAILY_CAP']['value'],'3');self.assertEqual(env['PIPELINE_KEY_PREFIX']['value'],'96bulls');self.assertEqual(env['PIPELINE_ORG_FROM_PREFIX']['value'],'true')
+        self.assertEqual(env['SESSION_BRIEF_BATCH']['value'],'1');self.assertEqual(env['SESSION_BRIEF_GLOBAL_DAILY_CAP']['value'],'2000');self.assertEqual(env['SESSION_BRIEF_SESSION_DAILY_CAP']['value'],'10');self.assertEqual(env['PIPELINE_KEY_PREFIX']['value'],'96bulls');self.assertEqual(env['PIPELINE_ORG_FROM_PREFIX']['value'],'true')
         self.assertEqual(env['OPENAI_API_KEY']['valueFrom']['secretKeyRef'],{'name':'brief-model-key','key':'OPENAI_API_KEY'})
         self.assertIn('readinessProbe',main)
         init=pod['initContainers'][0];self.assertEqual(init['command'],['bun','-e']);self.assertEqual(init['image'],main['image']);self.assertTrue(main['image'].endswith('@sha256:'+'b'*64))

@@ -7,6 +7,8 @@
 //                is written to the ledger and never asked again
 //   4. deliver   post to the relay thread for that Slack thread, addressed to
 //                the owning agent, with its session and the roster
+//   0. ack       an :eyes: reaction on the human's message as soon as the
+//                router takes it, fire-and-forget (never delays routing)
 //   5. return    an agent's reply in that relay thread goes back to the Slack
 //                thread the ledger maps it to
 //
@@ -16,7 +18,7 @@ import { sessionIdFor } from "./session-id.ts";
 import type { Ledger, ThreadKey } from "./ledger.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import { dataOf, replyOf, type InboundData, type RelayEventLike, type RelayMessageLike, type RosterEntry } from "./protocol.ts";
-import type { SlackInbound, SlackWebLike } from "./slack.ts";
+import { SlackApiError, type SlackInbound, type SlackWebLike } from "./slack.ts";
 
 export interface RouterRelay {
   message?(id: string): Promise<RelayMessageLike>;
@@ -36,6 +38,8 @@ export class Router {
   readonly #chains = new Map<string, Promise<unknown>>();
   readonly #retryDelaysMs: number[];
   readonly #egress: ((ref: { team: string; channel: string; thread_ts: string }, text: string) => Promise<void>) | undefined;
+  /** Reaction name for step 0; empty when off (or after Slack said the token lacks reactions:write). */
+  #ackReaction: string;
 
   constructor(opts: {
     ledger: Ledger;
@@ -52,6 +56,8 @@ export class Router {
      * rejects to withhold. Absent: posts go straight out.
      */
     egress?: (ref: { team: string; channel: string; thread_ts: string }, text: string) => Promise<void>;
+    /** Reaction added to each message the router takes (default "eyes"); "" turns it off. */
+    ackReaction?: string;
   }) {
     this.#ledger = opts.ledger;
     this.#relay = opts.relay;
@@ -62,6 +68,7 @@ export class Router {
     this.#log = opts.log ?? (() => {});
     this.#retryDelaysMs = opts.retryDelaysMs ?? [500, 2000, 5000];
     this.#egress = opts.egress;
+    this.#ackReaction = (opts.ackReaction ?? "eyes").trim().replace(/^:|:$/g, "");
   }
 
   /**
@@ -74,6 +81,10 @@ export class Router {
 
   /** Steps 1-4 for one Slack message. Serialized per Slack thread. */
   fromSlack(m: SlackInbound & { team: string }): Promise<string | null> {
+    // Every message reaching here is one the router routes (the caller has
+    // already dropped ignored ones), so acknowledge it now, before it waits
+    // behind earlier messages in its thread or for the orchestrator.
+    this.#ack(m.channel, m.ts);
     const key: ThreadKey = { team: m.team, channel: m.channel, threadTs: m.threadTs };
     const chainKey = `${key.team}/${key.channel}/${key.threadTs}`;
     const prior = this.#chains.get(chainKey) ?? Promise.resolve();
@@ -149,6 +160,33 @@ export class Router {
     }
     this.#log(`slack ${m.kind} ${m.channel}:${m.ts} -> relay ${relayId} @${agentName}${resume ? " (resume)" : ""}`);
     return relayId;
+  }
+
+  /**
+   * Step 0: react to the human's message. Fire-and-forget: routing never waits
+   * on it or fails with it. Only Slack's error code is logged, never the text.
+   * A token without reactions:write is reported once and not asked again.
+   */
+  #ack(channel: string, ts: string): void {
+    const name = this.#ackReaction;
+    if (!name || !this.#slack.addReaction) return;
+    let pending: Promise<void>;
+    try {
+      pending = this.#slack.addReaction({ channel, timestamp: ts, name });
+    } catch (err) {
+      pending = Promise.reject(err);
+    }
+    pending.catch((err: unknown) => {
+      const code = err instanceof SlackApiError ? err.code : "request_failed";
+      if (code === "already_reacted") return;
+      if (code === "missing_scope") {
+        if (!this.#ackReaction) return;
+        this.#ackReaction = "";
+        this.#log(`ack reaction off: the bot token lacks reactions:write (add reactions:write and reinstall the app)`);
+        return;
+      }
+      this.#log(`ack reaction failed for ${channel}:${ts} (${code})`);
+    });
   }
 
   /** Step 5: an agent's reply in a relay thread goes back to its Slack thread. */

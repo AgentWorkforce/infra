@@ -40,6 +40,8 @@ export interface AuditEvent {
   expiration?: string;
   delivery?: { kind: string; ref: string };
   reasons?: string[];
+  /** On an approval by a delegated approver: who, under which capability and grants, until when. */
+  delegation?: { delegate: string; capability: string; grants: string[]; expiresAt: string };
 }
 
 export interface AuditLine extends AuditEvent {
@@ -64,9 +66,25 @@ function lastLine(path: string): AuditLine | undefined {
   return last ? (JSON.parse(last) as AuditLine) : undefined;
 }
 
+/** Bounds on one line, so every line stays well under CloudWatch's 256 KiB event limit (ship.ts). */
+export const MAX_AUDIT_STRING = 2_000;
+export const MAX_AUDIT_LIST = 100;
+
+/** Caps long strings and lists, saying how much was cut. Applied before hashing, so the chain covers what's stored. */
+export function boundAuditEvent(event: AuditEvent): AuditEvent {
+  const s = (v: string) => (v.length > MAX_AUDIT_STRING ? `${v.slice(0, MAX_AUDIT_STRING)}… (${v.length - MAX_AUDIT_STRING} more characters)` : v);
+  const list = (v: unknown[]) => {
+    const kept = v.slice(0, MAX_AUDIT_LIST).map((x) => (typeof x === "string" ? s(x) : x));
+    return v.length > MAX_AUDIT_LIST ? [...kept, `… (${v.length - MAX_AUDIT_LIST} more)`] : kept;
+  };
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(event)) out[k] = typeof v === "string" ? s(v) : Array.isArray(v) ? list(v) : v;
+  return out as unknown as AuditEvent;
+}
+
 export function appendAudit(path: string, event: AuditEvent, now: Date, forbidden: string[] = []): AuditLine {
   const prev = lastLine(path);
-  const body: Omit<AuditLine, "hash"> = { seq: (prev?.seq ?? 0) + 1, ts: now.toISOString(), prev: prev?.hash ?? GENESIS, ...event };
+  const body: Omit<AuditLine, "hash"> = { seq: (prev?.seq ?? 0) + 1, ts: now.toISOString(), prev: prev?.hash ?? GENESIS, ...boundAuditEvent(event) };
   const line: AuditLine = { ...body, hash: lineHash(body.prev, body) };
   const text = JSON.stringify(line);
   if (CREDENTIAL_KEY.test(text) || forbidden.some((s) => s.length >= 16 && text.includes(s))) {
@@ -79,10 +97,15 @@ export function appendAudit(path: string, event: AuditEvent, now: Date, forbidde
 /** Returns the problems found: an empty list means the chain is intact. */
 export function verifyAudit(path: string): string[] {
   if (!existsSync(path)) return [];
+  return verifyAuditText(readFileSync(path, "utf8"));
+}
+
+/** verifyAudit on text already read (ship.ts checks the exact snapshot it ships). */
+export function verifyAuditText(text: string): string[] {
   const problems: string[] = [];
   let prev = GENESIS;
   let seq = 0;
-  for (const [i, raw] of readFileSync(path, "utf8").split("\n").filter(Boolean).entries()) {
+  for (const [i, raw] of text.split("\n").filter(Boolean).entries()) {
     let line: AuditLine;
     try {
       line = JSON.parse(raw) as AuditLine;

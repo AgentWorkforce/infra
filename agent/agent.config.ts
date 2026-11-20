@@ -23,7 +23,7 @@ export default defineLayeredAgent({
   stage,
   accountId: process.env.LAYERED_AGENT_ACCOUNT_ID,
   arch: "x64",
-  instanceType: "m7i.xlarge",
+  instanceType: "t3.medium",
   // Pinned (Canonical 24.04, serial 20261023, as relay-app), so Canonical's
   // moving "current" pointer does not make every deploy full. A new image is
   // a deliberate change of this id: a full deploy, dispatched with allow_restart.
@@ -101,6 +101,17 @@ export default defineLayeredAgent({
           "Add a podDisruptionBudget option to the relaycast chart and open a PR",
           "Expose the bucket ARN as an output of the object storage module",
           "Bump the relayfile chart's image digest to the one in this release and open a PR",
+        ],
+      },
+      {
+        id: "aws-credentials",
+        name: "Short-lived AWS credentials for agents",
+        description:
+          "The AWS credential broker: DM me a request whose whole text is the JSON in agent/broker/AGENTS.md (AgentWorkforce/infra) and I return 15-60 minute credentials sealed to your own key. Workspace agents get the sandbox and neon-exit project access with no approval; anything else waits for Khaliq. Never send or ask for plaintext keys over Relay.",
+        tags: ["aws", "credentials", "broker"],
+        examples: [
+          "30 minutes of read access to the neon-exit/runner secret in 500268966557 (us-east-1), encrypted to my key",
+          "How do I get AWS credentials for the sandbox without SSO?",
         ],
       },
       {

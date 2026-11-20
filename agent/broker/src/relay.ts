@@ -76,9 +76,11 @@ export async function verifiedMessage(api: RelayApi, messageId: string, now: Dat
   if (!broker || !broker.workspaceId) throw new RelayVerificationError(`the broker's Relay identity ${brokerName} isn't known to Relay`);
   if (agent.id === broker.id) throw new RelayVerificationError("a message the broker sent itself doesn't count");
   if (m.channelId !== dmChannelId(broker.workspaceId, agent.id, broker.id)) throw new RelayVerificationError(`the message wasn't sent to ${brokerName}: only a direct message to the broker counts`);
+  // Only agents of the broker's own workspace: workspace auto-issue (policy.ts checkWorkspaceAuto) relies on it.
+  if (agent.workspaceId !== broker.workspaceId) throw new RelayVerificationError("the sender isn't in the broker's Relay workspace");
   const kind = agent.type === "human" ? "human" : agent.type === "agent" ? "agent" : undefined;
   if (!kind) throw new RelayVerificationError(`unknown Relay agent type ${JSON.stringify(agent.type)}`);
-  return { principal: { name: agent.name, address: m.agentAddress ?? agent.name, kind }, text: m.text, messageId };
+  return { principal: { name: agent.name, address: m.agentAddress ?? agent.name, kind, agentId: agent.id, workspaceId: agent.workspaceId }, text: m.text, messageId };
 }
 
 /** A request body: the whole message is the JSON object (a ```json fence around it is allowed). */
@@ -103,6 +105,22 @@ export function decisionFromText(text: string): Decision {
   m = /^refuse\s+(cb-[0-9a-f]{12})$/i.exec(t);
   if (m) return { verb: "refuse", requestId: m[1]!.toLowerCase() };
   throw new RelayVerificationError('the message must be exactly "approve <request id> <digest>" or "refuse <request id>"');
+}
+
+/** Relay agent names: what whois accepts (no path or query characters reach the API). */
+const AGENT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/;
+
+/**
+ * Read-only lookup of one agent's Relay identity, for pinning a delegated
+ * approver's agentId: only the name, agent id and type. Never the workspace,
+ * the token, or anything else the record holds.
+ */
+export async function whois(api: RelayApi, name: string): Promise<{ name: string; agentId: string; type: string }> {
+  if (!AGENT_NAME_RE.test(name)) throw new RelayVerificationError(`bad Relay agent name ${JSON.stringify(name)}`);
+  const a = await api.agentByName(name);
+  if (!a || !a.id) throw new RelayVerificationError(`Relay has no agent ${name}`);
+  if (a.name !== name) throw new RelayVerificationError(`Relay returned a different agent for ${name}`);
+  return { name: a.name, agentId: a.id, type: a.type };
 }
 
 /** A named client: the API edge rejects some default library User-Agents (Cloudflare 1010). */
