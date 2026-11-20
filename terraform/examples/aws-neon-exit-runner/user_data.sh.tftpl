@@ -1,0 +1,34 @@
+#!/bin/bash
+# Neon exit runner bootstrap (Amazon Linux 2023).
+set -euxo pipefail
+
+# Tooling: Postgres 17 client, zstd, git, jq, node 22. AL2023 ships postgresql17;
+# fall back to the PGDG repository if the package set is older.
+dnf -y install zstd git jq nodejs22 nvme-cli xfsprogs
+dnf -y install postgresql17 postgresql17-contrib || {
+  dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+  dnf -y install postgresql17
+}
+
+# Local NVMe instance store -> /scratch (nitro-encrypted, lost at stop/terminate).
+dev=""
+for d in /dev/nvme*n1; do
+  if nvme id-ctrl "$d" 2>/dev/null | grep -q 'Amazon EC2 NVMe Instance Storage'; then dev="$d"; break; fi
+done
+if [ -n "$dev" ]; then
+  blkid "$dev" >/dev/null 2>&1 || mkfs.xfs -f -L scratch "$dev"
+  mkdir -p /scratch
+  # Label-based fstab entry so /scratch survives a reboot (nofail: the store is
+  # wiped on stop/start and a fresh instance store needs a new mkfs).
+  grep -q '^LABEL=scratch ' /etc/fstab || echo 'LABEL=scratch /scratch xfs defaults,noatime,nofail 0 2' >> /etc/fstab
+  systemctl daemon-reload
+  mount /scratch
+  chmod 1777 /scratch
+fi
+
+# Helper for the operator: prints the target DSN components to the shell only.
+cat > /usr/local/bin/target-secret <<'EOS'
+#!/bin/bash
+exec aws secretsmanager get-secret-value --region ${region} --secret-id '${secret_name}' --query SecretString --output text
+EOS
+chmod 0755 /usr/local/bin/target-secret

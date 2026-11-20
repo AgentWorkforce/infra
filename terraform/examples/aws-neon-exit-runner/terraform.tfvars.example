@@ -1,0 +1,5 @@
+account_id          = "123456789012"
+vpc_id              = "vpc-0123456789abcdef0"
+public_subnet_id    = "subnet-0123456789abcdef0"
+availability_zone   = "us-east-1a"
+private_subnet_cidr = "172.31.96.0/20"
