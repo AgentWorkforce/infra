@@ -191,22 +191,29 @@ EOF
 
 host "$DOMAIN"
 flows_routes /cloud/api/v1
+# Keep in step with relay-webapp.controlPaths and the Azure dashboard rule.
+control_paths=(/cloud/api /login /relay-node
+  /mcp /cloud/mcp
+  /.well-known/oauth-protected-resource
+  /.well-known/oauth-authorization-server
+  /.well-known/openid-configuration
+  /cloud/.well-known /cloud/oauth)
 if [[ -n "$CHIEF_SVC" ]]; then
-  route /cloud/api "$CONTROL_SVC" 80 Exact
-  route /login "$CONTROL_SVC" 80 Exact
-  route /relay-node "$CONTROL_SVC" 80 Exact
+  for path in "${control_paths[@]}"; do
+    route "$path" "$CONTROL_SVC" 80 Exact
+  done
   for prefix in /cloud/api/v1 /api/v1; do
     route "\"$prefix/workspaces/*/chiefs\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
     route "\"$prefix/workspaces/*/chiefs/*\"" "$CHIEF_SVC" "$CHIEF_PORT" ImplementationSpecific
   done
-  route '"/cloud/api/*"' "$CONTROL_SVC" 80 ImplementationSpecific
-  route '"/login/*"' "$CONTROL_SVC" 80 ImplementationSpecific
-  route '"/relay-node/*"' "$CONTROL_SVC" 80 ImplementationSpecific
+  for path in "${control_paths[@]}"; do
+    route "\"$path/*\"" "$CONTROL_SVC" 80 ImplementationSpecific
+  done
   route '"/*"' "$WEBAPP_SVC" 8080 ImplementationSpecific
 else
-  route /cloud/api "$CONTROL_SVC" 80
-  route /login "$CONTROL_SVC" 80
-  route /relay-node "$CONTROL_SVC" 80
+  for path in "${control_paths[@]}"; do
+    route "$path" "$CONTROL_SVC" 80
+  done
   route / "$WEBAPP_SVC" 8080
 fi
 

@@ -51,7 +51,8 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
 ---
-# Dashboard leaf ingress already handles /cloud/api, /login and /relay-node.
+# Dashboard leaf ingress uses relay-webapp.controlPaths for /cloud/api,
+# /login, /relay-node, MCP and OAuth discovery/consent paths.
 # Route the Desktop and integration /api entry point to the same control plane
 # as well.
 apiVersion: networking.k8s.io/v1

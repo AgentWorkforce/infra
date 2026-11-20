@@ -287,3 +287,14 @@ hyphens, so no empty label ("a..b") and no label starting or ending with "-". */
 {{- end -}}
 {{- if $ok }}true{{ end -}}
 {{- end }}
+
+{{- /* Compatibility default for upgrades whose saved values predate eksIngress.
+Keep in step with values.yaml; the script/chart equivalence tests exercise both
+normal defaults and the missing/null-key fallback, with Chief off and on. */ -}}
+{{- define "agent-relay.eksDefaultControlPaths" -}}
+{{- list "/cloud/api" "/login" "/relay-node" "/mcp" "/cloud/mcp"
+  "/.well-known/oauth-protected-resource"
+  "/.well-known/oauth-authorization-server"
+  "/.well-known/openid-configuration"
+  "/cloud/.well-known" "/cloud/oauth" | toJson -}}
+{{- end -}}

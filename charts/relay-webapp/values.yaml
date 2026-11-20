@@ -53,7 +53,9 @@ runtime:
 # See the README "Customer profile" section.
 customerProfile: {}
 
-# A leaf Ingress can proxy /cloud/api, /login and /relay-node to this Service.
+# A leaf Ingress proxies /cloud/api, /login, /relay-node, /mcp, /cloud/mcp,
+# /.well-known/{oauth-protected-resource,oauth-authorization-server,
+# openid-configuration}, /cloud/.well-known and /cloud/oauth to this Service.
 # The GKE proof uses the umbrella Ingress instead and leaves this ingress
 # disabled. Required when ingress.enabled=true: the relay-control Service name
 # in this namespace, i.e. its fullname (<release>-relay-control unless

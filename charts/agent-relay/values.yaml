@@ -245,6 +245,13 @@ eksIngress:
     - /cloud/api
     - /login
     - /relay-node
+    - /mcp
+    - /cloud/mcp
+    - /.well-known/oauth-protected-resource
+    - /.well-known/oauth-authorization-server
+    - /.well-known/openid-configuration
+    - /cloud/.well-known
+    - /cloud/oauth
 
 # Child values are intentionally not populated with credentials or image
 # placeholders here. Every leaf chart fails closed until its existingSecret,

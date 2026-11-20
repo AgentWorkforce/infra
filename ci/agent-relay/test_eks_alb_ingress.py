@@ -21,6 +21,19 @@ NAMESPACE = 'relay-eks'
 BASE_ENV = {'EKS_ALB_DOMAIN': 'relay.example.com',
             'EKS_ALB_CERT_ARN': 'arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000'}
 
+DEFAULT_CONTROL_PATHS = [
+    '/cloud/api',
+    '/login',
+    '/relay-node',
+    '/mcp',
+    '/cloud/mcp',
+    '/.well-known/oauth-protected-resource',
+    '/.well-known/oauth-authorization-server',
+    '/.well-known/openid-configuration',
+    '/cloud/.well-known',
+    '/cloud/oauth',
+]
+
 # Script variable -> eksIngress option path.
 OPTIONS = {
     'EKS_ALB_INGRESS_NAME': 'name',
@@ -195,13 +208,36 @@ class EksAlbIngress(unittest.TestCase):
     def test_control_paths_default_is_the_script_list(self):
         for env in ({}, {'EKS_ALB_CHIEF_SERVICE': 'relaychief-control'}):
             with self.subTest(env=env):
-                self.assert_same(env, {'controlPaths': ['/cloud/api', '/login', '/relay-node']})
+                self.assert_same(env, {'controlPaths': DEFAULT_CONTROL_PATHS})
+
+    def test_control_paths_missing_or_null_use_defaults(self):
+        for env in ({}, {'EKS_ALB_CHIEF_SERVICE': 'relaychief-control'}):
+            with self.subTest(env=env):
+                self.assert_same(env)
+                # Helm removes the null key during coalescing, just as older
+                # saved defaults lack it when upgrading with --reuse-values.
+                self.assert_same(env, {'controlPaths': None})
+                result = helm(chart_values(env), extra=['--set', 'eksIngress.controlPaths=null'])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(comparable(ingress(result.stdout)), comparable(ingress(script(env).stdout)))
+
+    def test_control_paths_can_be_empty(self):
+        for env in ({}, {'EKS_ALB_CHIEF_SERVICE': 'relaychief-control'}):
+            with self.subTest(env=env):
+                want = ingress(script(env).stdout)
+                result = helm({**chart_values(env), 'controlPaths': []})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                removed = {path for p in DEFAULT_CONTROL_PATHS for path in (p, p + '/*')}
+                for rule in want['spec']['rules']:
+                    if rule['host'] == 'relay.example.com':
+                        rule['http']['paths'] = [p for p in rule['http']['paths'] if p['path'] not in removed]
+                self.assertEqual(comparable(ingress(result.stdout)), comparable(want))
 
     def test_control_paths_drop_only_the_relay_node_rules(self):
         for env in ({}, {'EKS_ALB_CHIEF_SERVICE': 'relaychief-control'}, {'EKS_ALB_RELAYFILE_CONTROL': 'true'}):
             with self.subTest(env=env):
                 want = ingress(script(env).stdout)
-                result = helm({**chart_values(env), 'controlPaths': ['/cloud/api', '/login']})
+                result = helm({**chart_values(env), 'controlPaths': [p for p in DEFAULT_CONTROL_PATHS if p != '/relay-node']})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 got = ingress(result.stdout)
                 for rule in want['spec']['rules']:
@@ -210,6 +246,19 @@ class EksAlbIngress(unittest.TestCase):
                                                  if not p['path'].startswith('/relay-node')]
                 self.assertEqual(comparable(got), comparable(want))
                 self.assertFalse([p for p in paths(got, 'relay.example.com') if 'relay-node' in p[0]])
+
+    def test_control_paths_can_pin_legacy_lists(self):
+        for pinned in (DEFAULT_CONTROL_PATHS[:3], DEFAULT_CONTROL_PATHS[:2]):
+            for env in ({}, {'EKS_ALB_CHIEF_SERVICE': 'relaychief-control'}, {'EKS_ALB_RELAYFILE_CONTROL': 'true'}):
+                with self.subTest(pinned=pinned, env=env):
+                    want = ingress(script(env).stdout)
+                    result = helm({**chart_values(env), 'controlPaths': pinned})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    removed = {path for p in DEFAULT_CONTROL_PATHS if p not in pinned for path in (p, p + '/*')}
+                    for rule in want['spec']['rules']:
+                        if rule['host'] == 'relay.example.com':
+                            rule['http']['paths'] = [p for p in rule['http']['paths'] if p['path'] not in removed]
+                    self.assertEqual(comparable(ingress(result.stdout)), comparable(want))
 
     def test_control_paths_extend_in_order(self):
         result = helm({**chart_values({}), 'controlPaths': ['/cloud/api', '/login', '/relay-node', '/mcp', '/.well-known/openid-configuration']})

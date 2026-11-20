@@ -3,8 +3,10 @@
 # with EKS_ALB_INGEST=true) and GKE Ingress.
 #
 #   __HOST_ROOT__     dashboard, with /cloud/api, /login and /relay-node routed to
-#                     the control API (/relay-node/v1/* carries Desktop node
-#                     enrolment and the node WebSocket; it has no /cloud alias)
+#                     the control API, plus MCP and OAuth discovery/consent
+#                     prefixes (keep in step with relay-webapp.controlPaths).
+#                     /relay-node/v1/* carries Desktop node
+#                     enrolment and the node WebSocket; it has no /cloud alias
 #   __HOST_API__      control API
 #   __HOST_CAST__     Relaycast
 #   __HOST_HISTORY__  native History: ingest edge for uploads, read API for reads
@@ -48,6 +50,13 @@ spec:
           - { path: /cloud/api, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
           - { path: /login, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
           - { path: /relay-node, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+          - { path: /mcp, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+          - { path: /cloud/mcp, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+          - { path: /.well-known/oauth-protected-resource, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+          - { path: /.well-known/oauth-authorization-server, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+          - { path: /.well-known/openid-configuration, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+          - { path: /cloud/.well-known, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+          - { path: /cloud/oauth, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
           - { path: /, pathType: Prefix, backend: { service: { name: relay-webapp, port: { number: 8080 } } } }
     - host: __HOST_API__
       http:

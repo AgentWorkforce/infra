@@ -13,7 +13,7 @@ dependencies:
   version: 0.4.22
 - name: relay-webapp
   repository: file://../relay-webapp
-  version: 0.2.7
+  version: 0.2.8
 - name: relayflows
   repository: file://../relayflows
   version: 0.2.5
@@ -35,5 +35,5 @@ dependencies:
 - name: relaygate
   repository: file://../relaygate
   version: 0.1.10
-digest: sha256:5ecc32b3b39aed5ff642ed7b00101409c7f0081bbf01f18f4b214d46de24d636
-generated: "2026-11-19T07:44:50.985407885-08:00"
+digest: sha256:ad3504a7f5e142fccd57d6512c8936dbfd9ce0647d8a65b647c5ab88ede640ea
+generated: "2026-11-19T19:13:06.938977005Z"

@@ -13,6 +13,7 @@ TEST_BASH="${TEST_BASH:-bash}"
 python3 -m unittest discover -s "${TEST_DIR}" -p 'test_prepare_gcp_edge.py' -v
 # The Node helper uses injected API responses; it never contacts a cluster.
 node --test "${TEST_DIR}/operator-device-login.test.mjs"
+bash "${TEST_DIR}/eks-alb-ingress-test.sh"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
 

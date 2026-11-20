@@ -60,7 +60,19 @@ gkeIngress:
 #     enabled: true
 #     domain: relay.example.com                 # REQUIRED OVERRIDE
 #     certificateArn: arn:aws:acm:...           # REQUIRED OVERRIDE (covers all four names)
-#     controlPaths: [/cloud/api, /login, /relay-node]   # pin the live ALB's list
+#     # Pin the live ALB's list; the current default is:
+#     controlPaths:
+#       - /cloud/api
+#       - /login
+#       - /relay-node
+#       - /mcp
+#       - /cloud/mcp
+#       - /.well-known/oauth-protected-resource
+#       - /.well-known/oauth-authorization-server
+#       - /.well-known/openid-configuration
+#       - /cloud/.well-known
+#       - /cloud/oauth
+#     # An explicit earlier three-path list keeps its existing listener rules.
 eksIngress:
   enabled: false
 

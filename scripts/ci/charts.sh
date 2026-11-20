@@ -108,6 +108,9 @@ for chart in "${charts[@]}"; do
     fi
     add_repos "charts/$chart/Chart.yaml"
     helm dependency build "charts/$chart" >/dev/null || { err "$chart: helm dependency build failed"; continue; }
+    if [ "$mode" = static ] && [ "$chart" = agent-relay ]; then
+      python3 ci/agent-relay/test_ingress_routes.py || err "$chart: dashboard ingress route contract failed"
+    fi
   fi
   values=(charts/"$chart"/ci/*-values.yaml)
   [ -e "${values[0]}" ] || values=("")
@@ -1175,7 +1178,7 @@ for chart in "${charts[@]}"; do
         # and opens GET /relay-node/v1/ws there; relay-control serves the
         # relay-node routes only at the root path, so the root host must send
         # /relay-node to relay-control, not the dashboard.
-        [ "$(routes gcp-proof.agentrelay.com)" = "/cloud/api Prefix relay-control;/login Prefix relay-control;/relay-node Prefix relay-control;/ Prefix relay-webapp;" ] \
+        [ "$(routes gcp-proof.agentrelay.com)" = "/cloud/api Prefix relay-control;/login Prefix relay-control;/relay-node Prefix relay-control;/mcp Prefix relay-control;/cloud/mcp Prefix relay-control;/.well-known/oauth-protected-resource Prefix relay-control;/.well-known/oauth-authorization-server Prefix relay-control;/.well-known/openid-configuration Prefix relay-control;/cloud/.well-known Prefix relay-control;/cloud/oauth Prefix relay-control;/ Prefix relay-webapp;" ] \
           || err "$chart: gate-only root routes must send /relay-node to relay-control: $(routes gcp-proof.agentrelay.com)"
         [ "$(yq "select(.kind == \"Service\" and .metadata.name == \"$gate\") | .spec.selector[\"app.kubernetes.io/name\"] + \" \" + .metadata.annotations[\"cloud.google.com/backend-config\"]" <<<"$out" | sed '/^---$/d;/^$/d')" = "relaygate {\"default\": \"$gate\"}" ] || err "$chart: gate edge Service must select relaygate with its BackendConfig"
         [ "$(yq "select(.kind == \"BackendConfig\" and .metadata.name == \"$gate\") | .spec.healthCheck.requestPath + \" \" + (.spec.timeoutSec | tostring)" <<<"$out" | sed '/^---$/d;/^$/d')" = "/healthz 3600" ] || err "$chart: gate edge BackendConfig must check /healthz with the cast timeout"

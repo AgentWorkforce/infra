@@ -251,10 +251,28 @@ of the durable-actors, Relayfile and flows proof overlays.
 One umbrella GKE Ingress reserves a global static address
 (`gkeIngress.staticIpName`), uses one Google ManagedCertificate for all
 four hosts, and enables HTTP-to-HTTPS redirect through a FrontendConfig.
+The dashboard host routes `/mcp`, `/cloud/mcp`,
+`/.well-known/oauth-protected-resource`,
+`/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`,
+`/cloud/.well-known` and `/cloud/oauth` to Control before the `/` dashboard
+catch-all. These cover MCP, OAuth discovery, JWKS and browser consent for the
+pinned Control 0.5.24 image (source `edad6432`). Token, registration and
+revocation already use `/cloud/api`. Only the named root discovery prefixes
+are claimed; `/.well-known/acme-challenge` remains available for ACME.
+The leaf and GKE Ingress share `relay-webapp.controlPaths`; app-prefixed paths
+are derived from the parent of `runtime.apiBasePath` (default `/cloud`).
+With `/api` at the root, only named root discovery prefixes are routed;
+the broad `/.well-known` route is omitted.
+
+The GKE dashboard rule has 11 Prefix paths in split-host mode and 12 in
+single-host mode. All Control paths reuse the `api` backend and its
+BackendConfig timeout (`gkeIngress.backends.api.timeoutSec`, default 3600).
+
 For a base domain `relay.example.com`:
 
 - `relay.example.com`: `/cloud/api`, `/login` and `/relay-node` to the
-  control API, then `/` to the dashboard. `/relay-node/v1/*` (Desktop node
+  control API, plus the MCP and OAuth prefixes above, then `/` to the dashboard.
+  `/relay-node/v1/*` (Desktop node
   enrolment and the `GET /relay-node/v1/ws` node WebSocket) is served only at
   the root path, never under `/cloud`, and Desktop calls it on this sign-in
   origin.
@@ -429,7 +447,7 @@ eksIngress:
 | `eksIngress.chief.serviceName`, `servicePort` | `EKS_ALB_CHIEF_SERVICE`, `_PORT` | empty (off), `3200` |
 | `eksIngress.control.serviceName` | `EKS_ALB_CONTROL_SERVICE` | `relay-control` |
 | `eksIngress.webapp.serviceName` | `EKS_ALB_WEBAPP_SERVICE` | `relay-webapp` |
-| `eksIngress.controlPaths` | none | `[/cloud/api, /login, /relay-node]` |
+| `eksIngress.controlPaths` | none | `[/cloud/api, /login, /relay-node, /mcp, /cloud/mcp, /.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server, /.well-known/openid-configuration, /cloud/.well-known, /cloud/oauth]` |
 
 The render refuses what the script refuses: no domain or certificate; read-only
 without the history host or with ingest on; ingest off on a history host that is
@@ -441,7 +459,9 @@ name, a certificate that is not an ARN, and malformed `controlPaths`.
 `controlPaths` is the list of dashboard-host (`<domain>`) paths sent to the
 control API ahead of the dashboard catch-all, in order (Prefix paths; with Chief
 on, each becomes Exact plus `<path>/*` after the Chief wildcards). The script has
-no such option; the default is the list it emits. Pin the list your live ALB has
+no such option; the default is the list it emits, including the MCP and OAuth
+discovery/consent prefixes. Only the named root discovery prefixes are routed;
+`/.well-known/acme-challenge` stays available. Pin the list your live ALB has
 so that a chart upgrade which changes the default does not change your
 listener rules unannounced.
 
@@ -644,7 +664,8 @@ helm template agent-relay . -n agent-relay -f values-gcp.yaml -f values-single-h
 For `global.singleHost.host: relay.example.com`:
 
 - `relay.example.com`: `/cloud/api`, `/login`, `/relay-node` and `/api` to
-  the control API, then `/` to the dashboard. `/api` carries the flows worker endpoints and the
+  the control API, along with the MCP and OAuth prefixes listed above, then
+  `/` to the dashboard. `/api` carries the flows worker endpoints and the
   integrations OAuth callback, which relaycontrol hands out as
   `<publicUrl>/api/v1/...`; it is not routed in the default mode, where the
   api host serves them.
