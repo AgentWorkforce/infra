@@ -82,8 +82,11 @@ published and not read-only. */ -}}
 {{- /* Dashboard-host paths sent to the control API. The default is the list
 the script emits; a path here is a Prefix route (Exact plus "<path>/*" with
 Chief on), so it may not be "/", end in "/", or hold "*" or "//". */ -}}
-{{- /* The default list lives in values.yaml; keep no second copy here. */ -}}
-{{- $controlPaths := $e.controlPaths -}}
+{{- /* Old saved values may lack this key. Use the compatibility helper for
+an absent or null key, but preserve an explicitly empty list. */ -}}
+{{- $defaultControlPaths := include "agent-relay.eksDefaultControlPaths" . | fromJsonArray -}}
+{{- $controlPaths := dig "controlPaths" $defaultControlPaths $e -}}
+{{- if kindIs "invalid" $controlPaths }}{{ $controlPaths = $defaultControlPaths }}{{ end -}}
 {{- if not (kindIs "slice" $controlPaths) }}{{ fail "eksIngress.controlPaths must be a list of paths" }}{{ end -}}
 {{- range $p := $controlPaths }}
 {{- if not (and (kindIs "string" $p) (regexMatch "^(/[-A-Za-z0-9._~%!$&'()+,;=:@]+)+$" $p)) }}{{ fail (printf "eksIngress.controlPaths entry %v must be an absolute path such as /cloud/api: not \"/\", no trailing \"/\", \"//\", \"*\" or spaces" $p) }}{{ end -}}

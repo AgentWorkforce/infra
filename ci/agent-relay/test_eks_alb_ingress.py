@@ -210,6 +210,29 @@ class EksAlbIngress(unittest.TestCase):
             with self.subTest(env=env):
                 self.assert_same(env, {'controlPaths': DEFAULT_CONTROL_PATHS})
 
+    def test_control_paths_missing_or_null_use_defaults(self):
+        for env in ({}, {'EKS_ALB_CHIEF_SERVICE': 'relaychief-control'}):
+            with self.subTest(env=env):
+                self.assert_same(env)
+                # Helm removes the null key during coalescing, just as older
+                # saved defaults lack it when upgrading with --reuse-values.
+                self.assert_same(env, {'controlPaths': None})
+                result = helm(chart_values(env), extra=['--set', 'eksIngress.controlPaths=null'])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(comparable(ingress(result.stdout)), comparable(ingress(script(env).stdout)))
+
+    def test_control_paths_can_be_empty(self):
+        for env in ({}, {'EKS_ALB_CHIEF_SERVICE': 'relaychief-control'}):
+            with self.subTest(env=env):
+                want = ingress(script(env).stdout)
+                result = helm({**chart_values(env), 'controlPaths': []})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                removed = {path for p in DEFAULT_CONTROL_PATHS for path in (p, p + '/*')}
+                for rule in want['spec']['rules']:
+                    if rule['host'] == 'relay.example.com':
+                        rule['http']['paths'] = [p for p in rule['http']['paths'] if p['path'] not in removed]
+                self.assertEqual(comparable(ingress(result.stdout)), comparable(want))
+
     def test_control_paths_drop_only_the_relay_node_rules(self):
         for env in ({}, {'EKS_ALB_CHIEF_SERVICE': 'relaychief-control'}, {'EKS_ALB_RELAYFILE_CONTROL': 'true'}):
             with self.subTest(env=env):
