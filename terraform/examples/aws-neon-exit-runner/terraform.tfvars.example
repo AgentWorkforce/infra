@@ -3,3 +3,11 @@ vpc_id              = "vpc-0123456789abcdef0"
 public_subnet_id    = "subnet-0123456789abcdef0"
 availability_zone   = "us-east-1a"
 private_subnet_cidr = "172.31.96.0/20"
+
+# Alerting: leave unset until the on-call endpoint is known. With https, the
+# value is a PagerDuty Events v2 CloudWatch integration URL.
+# alert_protocol = "https"
+# alert_endpoint = "https://events.pagerduty.com/integration/<key>/enqueue"
+
+# In the apply that starts the eraser on the runner (not before):
+# heartbeat_enabled = true
