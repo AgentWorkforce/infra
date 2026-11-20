@@ -7,7 +7,7 @@ Flows and Chief are separate releases, and a read-only history host may name
 a read API Service this release does not install, so nothing here requires a
 component of this release to be enabled. */ -}}
 {{- $e := .Values.eksIngress -}}
-{{- if dig "enabled" false (.Values.gkeIngress | default dict) }}{{ fail "eksIngress.enabled and gkeIngress.enabled are exclusive: an install has one edge" }}{{ end -}}
+{{- include "agent-relay.validate" . -}}
 {{- $label := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" -}}
 {{- $subdomain := "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" -}}
 {{- $port := "^[1-9][0-9]{0,4}$" -}}

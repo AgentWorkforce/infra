@@ -12,6 +12,7 @@
 {{- if and (kindIs "map" $brand) (or $brand.svg $brand.existingConfigMap) (dig "control" true (.Values.components | default dict)) (not (dig "webapp" true (.Values.components | default dict))) (not (dig "login" "logoUrl" "" (index .Values "relay-control" | default dict))) }}
 {{- fail "global.branding.logo is hosted by relay-webapp, but components.webapp=false: the sign-in page would link a logo nothing serves. Enable components.webapp, or host the logo yourself and set relay-control.login.logoUrl" }}
 {{- end }}
+{{- if and (dig "enabled" false (.Values.eksIngress | default dict)) (dig "enabled" false (.Values.gkeIngress | default dict)) }}{{ fail "eksIngress.enabled and gkeIngress.enabled are exclusive: an install has one edge" }}{{ end }}
 {{- include "agent-relay.validateRemovedHistory" . }}
 {{- include "agent-relay.validateDurableActors" . }}
 {{- include "agent-relay.validateSingleHost" . }}
