@@ -600,7 +600,7 @@ secrets:
   makes the agent the session's owner, in the agent's group (the pit, gid 22).
   Who can read it comes from the relaygate policy's `sessionDefaults` for that
   group. For example, `{"gid": 22, "mode": "660", "acl": [{"gid": 11, "perm": "w"}, {"gid": 33, "perm": "r"}]}`
-  lets the pit and the groups in the ACL read it. A per-session
+  lets the pit and group 33 read it; group 11 can only write. A per-session
   `sessionOverrides` entry shares one session more widely.
 - **When.** The upload runs after every turn (thread message or DM), and at
   startup for every known agent. Only complete transcript lines past a
