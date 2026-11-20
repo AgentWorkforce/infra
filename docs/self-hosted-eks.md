@@ -34,7 +34,7 @@ Files:
 | File | What it is |
 | --- | --- |
 | [`charts/agent-relay/values-eks.yaml`](../charts/agent-relay/values-eks.yaml) | Customer-neutral EKS values. Replace every `REQUIRED OVERRIDE`. |
-| [`scripts/selfhost/eks-alb-ingress.sh`](../scripts/selfhost/eks-alb-ingress.sh) | Prints the ALB Ingress (one ALB, four hosts, ACM TLS, edge denials). The chart ships only the GKE edge. |
+| [`scripts/selfhost/eks-alb-ingress.sh`](../scripts/selfhost/eks-alb-ingress.sh) | Prints the ALB Ingress (one ALB, four hosts, ACM TLS, edge denials). The documented way; the chart's opt-in `eksIngress` renders the same Ingress from the release ([EKS ALB Ingress](../charts/agent-relay/README.md#eks-alb-ingress)). |
 | [`scripts/selfhost/eks-proof-dns.sh`](../scripts/selfhost/eks-proof-dns.sh) | ACM certificate (request, wait, delete) and the DNS records (validation CNAMEs, host CNAMEs to the ALB) in the parent Cloudflare zone, removed by recorded id. |
 | [`scripts/selfhost/eks-proof-sandbox.sh`](../scripts/selfhost/eks-proof-sandbox.sh) | The proof substrate: VPC, EKS Auto Mode cluster, IAM roles, S3 bucket, Pod Identity, StorageClass/IngressClass. Pippen conventions. |
 | `scripts/selfhost/eks-proof-install.sh` (removed in agent-relay 0.7.0; see git history) | The 0.3.x/0.4.x proof installer: CNPG operator, the control-API and RelayHistory Postgres, generated Secret, Helm install, Ingress, installation org, HoopDb role bootstrap, uninstall. It only installed published charts that shipped the standalone RelayHistory, so it was removed with that component. |
@@ -45,7 +45,7 @@ Files:
 
 | GKE (`values-gcp.yaml`) | EKS (`values-eks.yaml`) |
 | --- | --- |
-| `gkeIngress` (GCE Ingress, ManagedCertificate, FrontendConfig, static IP) | `gkeIngress.enabled=false`; one ALB Ingress from `eks-alb-ingress.sh` (EKS Auto Mode's built-in ALB controller, IngressClass `alb`; the AWS Load Balancer Controller takes the same annotations): host rules for `<domain>` (dashboard, with `/cloud/api`, `/login` and `/relay-node` to the control API), `api.`, `cast.`, `history.`; HTTPS 443 with an ACM certificate for the four names, HTTP 80 redirects (301). Edge denials (`/internal`, `//internal*`, Relaycast workspace create) are ALB fixed-response 404 actions. |
+| `gkeIngress` (GCE Ingress, ManagedCertificate, FrontendConfig, static IP) | `gkeIngress.enabled=false`; one ALB Ingress from `eks-alb-ingress.sh`, or the same Ingress from the chart with `eksIngress.enabled=true` (EKS Auto Mode's built-in ALB controller, IngressClass `alb`; the AWS Load Balancer Controller takes the same annotations): host rules for `<domain>` (dashboard, with `/cloud/api`, `/login` and `/relay-node` to the control API), `api.`, `cast.`, `history.`; HTTPS 443 with an ACM certificate for the four names, HTTP 80 redirects (301). Edge denials (`/internal`, `//internal*`, Relaycast workspace create) are ALB fixed-response 404 actions. |
 | ManagedCertificate | ACM certificate, DNS-validated |
 | NEG annotations, BackendConfig | `alb.ingress.kubernetes.io/healthcheck-path` on each Service; ALB idle timeout 3600 s for WebSocket/SSE |
 | GKE Workload Identity | The pinned 0.3.11 proof uses `<release>-worker` and `<release>-alleyoop` (one IAM role with S3 access to the bucket). New descriptive-name charts use `<release>-session-ingest-api`; retain the actual legacy identity through a deliberate cutover. No IRSA/OIDC provider needed. |
@@ -80,7 +80,9 @@ Steps (any DNS provider; with Route 53 create the same records there):
 2. Create the validation CNAMEs (`eks-proof-dns.sh cf-validation`) and wait
    for `ISSUED` (`cert-wait`; about 2 minutes in the proof).
 3. Install, then apply the Ingress with `EKS_ALB_DOMAIN` and
-   `EKS_ALB_CERT_ARN` (`eks-proof-install.sh install` does both).
+   `EKS_ALB_CERT_ARN` (`eks-proof-install.sh install` did both). Alternatively
+   set `eksIngress.enabled`, `eksIngress.domain` and
+   `eksIngress.certificateArn` and the release renders the Ingress.
 4. Point the four names at the ALB's DNS name (CNAMEs, unproxied, or Route 53
    alias records): `eks-proof-dns.sh alb`, then `cf-hosts`.
 
@@ -218,9 +220,13 @@ adapt `ROLE_PATH`, `BOUNDARY` and `TAG_KEY` for your account.
 
 ## Gaps and follow-ups
 
-1. **The chart has no EKS edge.** `gkeIngress` is GKE-only; the ALB Ingress
-   lives in `scripts/selfhost/eks-alb-ingress.sh`. An `albIngress` block in
-   the umbrella would make it one install.
+1. **The EKS edge is opt-in in the chart.** `scripts/selfhost/eks-alb-ingress.sh`
+   stays the documented way. `eksIngress.enabled=true` renders the same
+   Ingress from the release (deep-equal to the script for the same options,
+   `ci/agent-relay/test_eks_alb_ingress.py`), plus `eksIngress.controlPaths`
+   to pin the dashboard-host control routes. An Ingress applied with the script
+   can be adopted by the release without a new ALB: see
+   [Adopting an Ingress that was applied with the script](../charts/agent-relay/README.md#adopting-an-ingress-that-was-applied-with-the-script).
 2. **ALB rule order.** The controller orders a host's rules Exact, then
    Prefix, then ImplementationSpecific. `//internal*` must be an
    ImplementationSpecific path (Kubernetes refuses `//` in Exact/Prefix

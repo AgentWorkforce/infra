@@ -10,12 +10,15 @@
 # backend, the Sessions read API and the ingest edge on one history origin; no
 # RelayAuth. Enable sessions-pipeline.sessionReadApi and .ingestEdge in the
 # site values (docs/self-hosted-native-ingest.md), and publish the ALB with
-# scripts/selfhost/eks-alb-ingress.sh and EKS_ALB_INGEST=true.
+# scripts/selfhost/eks-alb-ingress.sh and EKS_ALB_INGEST=true (the documented
+# way), or render the same Ingress from this release with eksIngress below
+# (README: EKS ALB Ingress; adopting a script-applied Ingress is described there).
 # values-eks-native.yaml is now an empty compatibility overlay.
 #
 # AWS mapping of the GCP profile:
 #   GKE Ingress + ManagedCertificate  -> one ALB Ingress with host rules and an
-#                                        ACM certificate (scripts/selfhost/eks-alb-ingress.sh);
+#                                        ACM certificate (scripts/selfhost/eks-alb-ingress.sh,
+#                                        or eksIngress.enabled=true);
 #                                        EKS Auto Mode's built-in ALB controller
 #                                        or the AWS Load Balancer Controller
 #   GKE Workload Identity             -> EKS Pod Identity associations
@@ -48,6 +51,17 @@ global:
     orgId: example-org
 
 gkeIngress:
+  enabled: false
+
+# Off: the edge is applied with scripts/selfhost/eks-alb-ingress.sh. To render
+# it from the release instead, set in the site values (options and defaults in
+# values.yaml mirror the script's variables):
+#   eksIngress:
+#     enabled: true
+#     domain: relay.example.com                 # REQUIRED OVERRIDE
+#     certificateArn: arn:aws:acm:...           # REQUIRED OVERRIDE (covers all four names)
+#     controlPaths: [/cloud/api, /login, /relay-node]   # pin the live ALB's list
+eksIngress:
   enabled: false
 
 relaycast:
