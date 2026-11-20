@@ -418,8 +418,9 @@ export function readLinesFrom(
         lines.push({ text: buf.subarray(start, i).toString("utf8"), start: offset + start, end: offset + i + 1 });
         start = i + 1;
       }
-      // No complete line in the window: a longer line, or the tail Claude is still writing.
-      if (lines.length || offset + got >= size) return { lines, end: offset + start, dev, ino, readEnd: offset + got };
+      // No complete line in the window: a longer line, or the tail Claude is still writing. A short read means the
+      // file ends before `size` (it was truncated after the fstat): stop there, a bigger window would read no more.
+      if (lines.length || got < len || offset + got >= size) return { lines, end: offset + start, dev, ino, readEnd: offset + got };
     }
   } finally {
     closeSync(fd);

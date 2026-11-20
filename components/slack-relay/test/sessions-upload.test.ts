@@ -1,8 +1,9 @@
 // The headless session uploader against a fake relaygate Sessions proxy
 // (POST /sessions/v1/delivery/batches, relaygate docs/contract.md "Session uploads").
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import fs, { appendFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -497,4 +498,31 @@ test("readLinesFrom rejects a window that is not a positive integer, instead of 
   writeFileSync(f, "abc\n");
   for (const bad of [0, -1, 1.5, NaN, Infinity]) assert.throws(() => readLinesFrom(f, 0, bad), { name: "RangeError", message: /positive integer/ });
   assert.equal(readLinesFrom(f, 0, 1).lines.length, 1);
+});
+
+test("readLinesFrom stops at a short read when the file shrank after its size was taken", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sr-read-"));
+  const f = join(dir, "t.jsonl");
+  writeFileSync(f, "abc\ndef");
+  // A truncation between fstat and read, made deterministic: fstat reports more bytes than the file holds.
+  const real = fs.fstatSync;
+  fs.fstatSync = ((fd: number) => {
+    const st = real(fd);
+    st.size += 1000;
+    return st;
+  }) as typeof real;
+  syncBuiltinESMExports();
+  try {
+    // "def" has no newline and the read comes back short of the reported size: return, do not grow the window forever.
+    const r = readLinesFrom(f, 4, 2);
+    assert.deepEqual([r.lines.length, r.end, r.readEnd], [0, 4, 7]);
+    // At the real end of the file the read returns nothing at all.
+    const r0 = readLinesFrom(f, 7, 2);
+    assert.deepEqual([r0.lines.length, r0.end, r0.readEnd], [0, 7, 7]);
+    // Complete lines before the short tail are still returned.
+    assert.deepEqual(readLinesFrom(f, 0, 64).lines.map((l) => l.text), ["abc"]);
+  } finally {
+    fs.fstatSync = real;
+    syncBuiltinESMExports();
+  }
 });
