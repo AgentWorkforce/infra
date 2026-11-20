@@ -1,4 +1,8 @@
-{{- if dig "enabled" false (.Values.eksIngress | default dict) }}
+{{- /* Checked before the gate: a string "false" is truthy in a template and
+would otherwise render the edge. */ -}}
+{{- $eksEnabled := dig "enabled" false (.Values.eksIngress | default dict) -}}
+{{- if not (kindIs "bool" $eksEnabled) }}{{ fail "eksIngress.enabled must be true or false" }}{{ end -}}
+{{- if $eksEnabled }}
 {{- /* The EKS ALB edge as a release object: the same Ingress that
 scripts/selfhost/eks-alb-ingress.sh prints, option for option (README: EKS ALB
 Ingress). The script stays the documented way; ci/agent-relay/test_eks_alb_ingress.py
@@ -9,7 +13,6 @@ component of this release to be enabled. */ -}}
 {{- $e := .Values.eksIngress -}}
 {{- include "agent-relay.validate" . -}}
 {{- $label := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" -}}
-{{- $subdomain := "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" -}}
 {{- $port := "^[1-9][0-9]{0,4}$" -}}
 {{- $bool := dict -}}
 {{- range $key := list "history.enabled" "history.readOnly" "flows.enabled" }}
@@ -18,12 +21,13 @@ component of this release to be enabled. */ -}}
 {{- $_ := set $bool $key $v -}}
 {{- end -}}
 {{- $name := dig "name" "agent-relay" $e | toString -}}
-{{- if not (regexMatch $subdomain $name) }}{{ fail "eksIngress.name must be a DNS subdomain name" }}{{ end -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $name "max" 253)) }}{{ fail "eksIngress.name must be a DNS subdomain name" }}{{ end -}}
 {{- $class := dig "className" "alb" $e | toString -}}
-{{- if not (regexMatch $subdomain $class) }}{{ fail "eksIngress.className must be an IngressClass name" }}{{ end -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $class "max" 253)) }}{{ fail "eksIngress.className must be an IngressClass name" }}{{ end -}}
 {{- $domain := dig "domain" "" $e | toString -}}
 {{- if not $domain }}{{ fail "eksIngress.domain (the base domain) is required" }}{{ end -}}
-{{- if not (regexMatch $subdomain $domain) }}{{ fail "eksIngress.domain must be a lowercase DNS name (the base domain, no scheme or path)" }}{{ end -}}
+{{- /* history.<domain> must stay within 253 characters. */ -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $domain "max" 245)) }}{{ fail "eksIngress.domain must be a lowercase DNS name (the base domain, no scheme or path): dot-separated labels of 1-63 letters, digits and inner hyphens, at most 245 characters" }}{{ end -}}
 {{- $cert := dig "certificateArn" "" $e | toString -}}
 {{- if not $cert }}{{ fail "eksIngress.certificateArn (the ACM certificate ARN) is required" }}{{ end -}}
 {{- if not (regexMatch "^arn:[^\\s'\"]+$" $cert) }}{{ fail "eksIngress.certificateArn must be an ACM certificate ARN (arn:...)" }}{{ end -}}

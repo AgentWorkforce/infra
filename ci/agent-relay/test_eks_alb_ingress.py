@@ -163,6 +163,15 @@ class EksAlbIngress(unittest.TestCase):
         self.assertFalse([d for d in docs if d['kind'] == 'Ingress' and d['spec'].get('ingressClassName') == 'alb'])
         self.assertNotIn('templates/eks-alb-ingress.yaml', result.stdout)
 
+    def test_enabled_must_be_a_boolean(self):
+        # A string is truthy in a template: "false" would otherwise render the edge.
+        for value in ('false', 'true', 'no'):
+            with self.subTest(enabled=value):
+                result = helm(chart_values({}), extra=['--set-string', f'eksIngress.enabled={value}'])
+                self.assertNotEqual(result.returncode, 0, f'chart accepted enabled={value!r}')
+                self.assertIn('eksIngress.enabled must be true or false', result.stderr)
+                self.assertNotIn('kind: Ingress', result.stdout)
+
     def test_chart_only_labels_differ(self):
         got = ingress(helm(chart_values({})).stdout)
         self.assertEqual(got['metadata']['labels'],
@@ -230,6 +239,13 @@ class EksAlbIngress(unittest.TestCase):
             'control path repeated': ({'controlPaths': ['/login', '/login']}, [], 'must not repeat'),
             'control paths not a list': ({'controlPaths': '/login'}, [], 'must be a list'),
             'domain with scheme': ({'domain': 'https://relay.example.com'}, [], 'lowercase DNS name'),
+            'domain with an empty label': ({'domain': 'relay..example.com'}, [], 'lowercase DNS name'),
+            'domain label starting with a hyphen': ({'domain': 'relay.-example.com'}, [], 'lowercase DNS name'),
+            'domain label ending with a hyphen': ({'domain': 'relay-.example.com'}, [], 'lowercase DNS name'),
+            'domain label over 63': ({'domain': 'a' * 64 + '.example.com'}, [], 'lowercase DNS name'),
+            'domain over 245': ({'domain': '.'.join(['a' * 60] * 4) + '.com'}, [], 'lowercase DNS name'),
+            'name with an empty label': ({'name': 'agent..relay'}, [], 'eksIngress.name must be a DNS subdomain name'),
+            'class label starting with a hyphen': ({'className': 'alb.-x'}, [], 'eksIngress.className must be an IngressClass name'),
         }
         for name, (values, extra, message) in bad.items():
             with self.subTest(case=name):
