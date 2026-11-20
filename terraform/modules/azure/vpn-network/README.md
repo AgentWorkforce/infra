@@ -17,10 +17,11 @@ Provider-schema validated and covered by mock-provider tests. One live run in
 a disposable fixture is recorded in the
 [2026-11-19 receipt](../../../../docs/handoff/evidence/vpn-network-azure-20261119.md);
 read it with the [review addendum](../../../../docs/handoff/evidence/vpn-network-20261119-review.md#azure).
-It is an operator-reported pass for the proxy path with findings and
-deviations, for connector networking only. No application, IPv6, private
-load-balancer, vendor-VPN or full customer-profile qualification is implied.
-No HA claim.
+It is a functional pass for the tested connector proxy path, based on the
+operator's receipt, with recorded deviations, for connector networking only.
+It predates the proof packet and is not a qualification under it. No
+application, IPv6, private load-balancer, vendor-VPN or full customer-profile
+qualification is implied. No HA claim.
 
 Each outbound rule requires a stable, unique `priority` from 100 to 4095.
 Keep those values when adding/removing rule keys; do not renumber rules by

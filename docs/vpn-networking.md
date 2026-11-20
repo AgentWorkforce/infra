@@ -156,7 +156,7 @@ disposition and the gaps in the record.
 | Cloud | Live evidence | Standing |
 | --- | --- | --- |
 | GCP | [receipt](handoff/evidence/vpn-network-gcp-20261119.md), [review addendum](handoff/evidence/vpn-network-20261119-review.md) | One assertion failed its first pass on the test guests and that failure is retained. After a guest-only correction the run is a functional pass of the connector module with disclosed deviations. It is not a clean first-pass qualification |
-| Azure | [receipt](handoff/evidence/vpn-network-azure-20261119.md), [review addendum](handoff/evidence/vpn-network-20261119-review.md#azure) | Operator-reported pass for the proxy path, with findings and deviations. The run predates the [proof packet](../terraform/examples/vpn-network-proof/README.md) and uses its own test list |
+| Azure | [receipt](handoff/evidence/vpn-network-azure-20261119.md), [review addendum](handoff/evidence/vpn-network-20261119-review.md#azure) | Functional pass for the tested connector proxy path, based on the operator's receipt, with recorded deviations. The run predates the [proof packet](../terraform/examples/vpn-network-proof/README.md) and uses its own test list, so it is not a qualification under that packet |
 | AWS | none | No live run. Mock-provider tests only |
 
 Those runs cover connector networking only. They do not qualify the Agent Relay

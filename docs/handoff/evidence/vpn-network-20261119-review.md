@@ -131,9 +131,19 @@ until the packet is next edited.
   findings and four deviations. The deviations include a temporary bootstrap
   rule, and one private key that was first placed in cloud-init custom data and
   replaced before any test.
-- No packet-owner disposition of the Azure run is recorded in this file. Until
-  one is added, read the receipt as operator-reported evidence for the paths
-  it tested, not as a qualification under the packet.
+
+Disposition, decided by the packet owner on 2026-11-20:
+
+- **Functional PASS for the tested connector proxy path**, based on the
+  operator's receipt, with the deviations recorded there (the bootstrap rule,
+  the key handling and the others).
+- **Not granted:** qualification under the later ten-assertion packet, and
+  qualification of a full customer or application profile.
+- The packet owner reviewed the receipt and checked the stored hash and the
+  tree ids above. The packet owner did not re-run the tests or inspect the raw
+  records.
+- The run keeps its own test numbering (G1 to G5, L1 to L11) and its own
+  stated limitations.
 
 ## Limits that still stand
 
