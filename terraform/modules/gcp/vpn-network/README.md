@@ -13,8 +13,15 @@ ownership, forwarding/SNAT, required inputs and live acceptance checks.
 The [standalone example](../../../examples/gcp-vpn-network) supplies the
 provider configuration. The customer supplies the VM, VPN software and credentials.
 
-Provider-schema validated and covered by mock-provider tests only; no live
-VPN or application qualification is implied. No HA claim.
+Provider-schema validated and covered by mock-provider tests. One live run in
+a disposable fixture is recorded in the
+[2026-11-19 receipt](../../../../docs/handoff/evidence/vpn-network-gcp-20261119.md);
+read it with the [review addendum](../../../../docs/handoff/evidence/vpn-network-20261119-review.md).
+One assertion failed its first pass on the test guests and that failure is
+retained; the corrected run is a functional pass of this module with disclosed
+deviations, for connector networking only. No application, IPv6, private
+load-balancer, vendor-VPN or full customer-profile qualification is implied.
+No HA claim.
 
 GCP's explicit ingress/egress catch-all deny rules are separately opt-in with
 `enforce_deny_rules = true`. The default uses the existing network firewall

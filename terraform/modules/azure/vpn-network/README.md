@@ -13,8 +13,14 @@ ownership, forwarding/SNAT, required inputs and live acceptance checks.
 The [standalone example](../../../examples/azure-vpn-network) supplies the
 provider configuration. The customer supplies the VM, VPN software and credentials.
 
-Provider-schema validated and covered by mock-provider tests only; no live
-VPN or application qualification is implied. No HA claim.
+Provider-schema validated and covered by mock-provider tests. One live run in
+a disposable fixture is recorded in the
+[2026-11-19 receipt](../../../../docs/handoff/evidence/vpn-network-azure-20261119.md);
+read it with the [review addendum](../../../../docs/handoff/evidence/vpn-network-20261119-review.md#azure).
+It is an operator-reported pass for the proxy path with findings and
+deviations, for connector networking only. No application, IPv6, private
+load-balancer, vendor-VPN or full customer-profile qualification is implied.
+No HA claim.
 
 Each outbound rule requires a stable, unique `priority` from 100 to 4095.
 Keep those values when adding/removing rule keys; do not renumber rules by

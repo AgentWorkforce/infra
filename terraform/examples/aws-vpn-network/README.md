@@ -24,7 +24,10 @@ terraform plan -out=connector.tfplan
 
 The VM goes in the output subnet without a public IP. Cloudflare/DNS and edge
 allowlists stay separately owned; `egress_cidr` supplies the staff-source value.
-All three clouds have static/mock validation only, not live tunnel qualification.
+GCP and Azure each have one dated live connector-network run; AWS has
+static/mock validation only. None is an application, IPv6, private
+load-balancer or vendor-VPN qualification: see the
+[evidence and its limits](../../../docs/vpn-networking.md#verification-and-lifecycle).
 
 <!-- BEGIN_TF_DOCS -->
 ### Requirements

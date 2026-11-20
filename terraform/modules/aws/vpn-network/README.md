@@ -14,7 +14,9 @@ The [standalone example](../../../examples/aws-vpn-network) supplies the
 provider configuration. The customer supplies the VM, VPN software and credentials.
 
 Provider-schema validated and covered by mock-provider tests only; no live
-VPN or application qualification is implied. No HA claim.
+VPN or application qualification is implied. No HA claim. This module has had
+no live run: the [2026-11-19 live runs](../../../../docs/vpn-networking.md#verification-and-lifecycle)
+covered GCP and Azure only.
 
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
