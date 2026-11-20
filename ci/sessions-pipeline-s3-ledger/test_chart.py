@@ -102,6 +102,86 @@ class S3Ledger(unittest.TestCase):
         self.render(merge(s3, {"ingestEdge": {"s3TenantLimit": False, "admission": {"asyncMaxPerOrg": 4}}}),
                     fail="ingestEdge.admission.asyncMaxPerOrg requires s3TenantLimit=true")
 
+    def test_replicas(self):
+        s3 = load(S3_FIXTURE)
+        replicas = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")["spec"]["replicas"]
+        self.assertEqual(replicas(self.render(s3)), 1)
+        self.assertEqual(replicas(self.render(load(SQL_FIXTURE))), 1)
+        self.assertEqual(replicas(self.render(merge(s3, {"ingestEdge": {"replicas": 2}}))), 2)
+        for value in (0, 9, "x"):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"replicas": value}}),
+                            fail="ingestEdge.replicas must be an integer from 1 to 8")
+        self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"replicas": 2}}),
+                    fail="ingestEdge.replicas above 1 requires ingestEdge.ledger=s3")
+
+    def test_await_authority(self):
+        s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
+        self.assertNotIn("SELFHOST_ADMISSION_AWAIT_AUTHORITY", self.ingest_env(self.render(s3)))
+        self.assertNotIn("SELFHOST_ADMISSION_AWAIT_AUTHORITY",
+                         self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"awaitAuthority": False}}}))))
+        for mode in ("async", "drain"):
+            with self.subTest(mode=mode):
+                env = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"mode": mode, "awaitAuthority": True}}})))
+                self.assertEqual(env["SELFHOST_ADMISSION_AWAIT_AUTHORITY"]["value"], "on")
+        for value in ("on", "true", 1):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"admission": {"awaitAuthority": value}}}),
+                            fail="ingestEdge.admission.awaitAuthority must be a boolean")
+        requires = "ingestEdge.admission.awaitAuthority requires ingestEdge.ledger=s3 and admission.mode async or drain"
+        self.render(merge(s3, {"ingestEdge": {"admission": {"mode": "sync", "awaitAuthority": True}}}), fail=requires)
+        sql = merge(load(SQL_FIXTURE), {"ingestEdge": {"admission": {"mode": "async", "awaitAuthority": True}}})
+        self.render(sql, fail=requires)
+
+    def test_admission_spread(self):
+        s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
+        for docs in (self.render(s3), self.render(load(SQL_FIXTURE))):
+            env = self.ingest_env(docs)
+            self.assertNotIn("SELFHOST_ADMISSION_SPREAD", env)
+            self.assertNotIn("SELFHOST_ADMISSION_SPREAD_GRACE_MS", env)
+        self.assertNotIn("SELFHOST_ADMISSION_SPREAD",
+                         self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"spread": False}}}))))
+        for mode in ("async", "drain"):
+            with self.subTest(mode=mode):
+                env = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"mode": mode, "spread": True}}})))
+                self.assertEqual(env["SELFHOST_ADMISSION_SPREAD"]["value"], "on")
+                self.assertNotIn("SELFHOST_ADMISSION_SPREAD_GRACE_MS", env)
+        sql = merge(load(SQL_FIXTURE), {"ingestEdge": {"admission": {"mode": "async", "spread": True}}})
+        self.assertEqual(self.ingest_env(self.render(sql))["SELFHOST_ADMISSION_SPREAD"]["value"], "on")
+        for grace in (1000, 120000, 3600000, 86400000):
+            with self.subTest(grace=grace):
+                env = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"spread": True, "spreadGraceMs": grace}}})))
+                self.assertEqual(env["SELFHOST_ADMISSION_SPREAD"]["value"], "on")
+                self.assertEqual(env["SELFHOST_ADMISSION_SPREAD_GRACE_MS"]["value"], str(grace))
+        self.assertNotIn("SELFHOST_ADMISSION_SPREAD",
+                         self.ingest_env(self.render(merge(s3, {"ingestEdge": {"admission": {"spread": None}}}))))
+        for value in ("on", "true", 1):
+            with self.subTest(spread=value):
+                self.render(merge(s3, {"ingestEdge": {"admission": {"spread": value}}}),
+                            fail="ingestEdge.admission.spread must be a boolean")
+        for grace in (0, 999, 86400001, -1, 1500.5, "120000", "2m", True):
+            with self.subTest(grace=grace):
+                self.render(merge(s3, {"ingestEdge": {"admission": {"spread": True, "spreadGraceMs": grace}}}),
+                            fail="ingestEdge.admission.spreadGraceMs must be an integer from 1000 to 86400000")
+        self.render(merge(s3, {"ingestEdge": {"admission": {"spreadGraceMs": 120000}}}),
+                    fail="ingestEdge.admission.spreadGraceMs requires ingestEdge.admission.spread=true")
+        self.render(merge(s3, {"ingestEdge": {"admission": {"mode": "sync", "spread": True}}}),
+                    fail="ingestEdge.admission.spread requires admission.mode async or drain")
+
+    def test_liveness_timeout_seconds(self):
+        s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
+        c = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(c(self.render(s3))["livenessProbe"]["timeoutSeconds"], 2)
+        for value in (2, 10, 30):
+            with self.subTest(value=value):
+                probe = c(self.render(merge(s3, {"ingestEdge": {"livenessTimeoutSeconds": value}})))["livenessProbe"]
+                self.assertEqual(probe["timeoutSeconds"], value)
+                self.assertEqual(probe["httpGet"]["path"], "/healthz")
+        for value in (0, 1, 31, -1, 2.5, "ten", True):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"livenessTimeoutSeconds": value}}),
+                            fail="ingestEdge.livenessTimeoutSeconds must be an integer from 2 to 30")
+
     def test_probe_timeout_seconds(self):
         s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})
         c = lambda docs: next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "ci-ingest-edge")["spec"]["template"]["spec"]["containers"][0]
@@ -129,6 +209,38 @@ class S3Ledger(unittest.TestCase):
                             fail="ingestEdge.ledgerParallel must be an integer from 1 to 64")
         self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"ledgerParallel": 8}}),
                     fail="ingestEdge.ledgerParallel requires ingestEdge.ledger=s3")
+
+    def test_ledger_bucket(self):
+        s3 = load(S3_FIXTURE)
+        env = self.ingest_env(self.render(s3))
+        self.assertNotIn("INGEST_LEDGER_BUCKET", env)
+        self.assertNotIn("INGEST_LEDGER_REGION", env)
+        self.assertEqual(helm(s3).stdout, helm(merge(s3, {"ingestEdge": {"ledgerBucket": {"bucket": "", "region": ""}}})).stdout)
+        moved = merge(s3, {"ingestEdge": {"ledgerBucket": {"bucket": "ci-ledger", "region": "us-west-2"}}})
+        env = self.ingest_env(self.render(moved))
+        self.assertEqual(env["INGEST_LEDGER_BUCKET"]["value"], "ci-ledger")
+        self.assertEqual(env["INGEST_LEDGER_REGION"]["value"], "us-west-2")
+        sweeper_env = lambda docs: {e["name"]: e.get("value") for e in self.cronjob(docs)["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["env"]}
+        sw = sweeper_env(self.render(moved))
+        self.assertEqual((sw["INGEST_REARM_LEDGER_BUCKET"], sw["INGEST_REARM_LEDGER_REGION"]), ("ci-ledger", "us-west-2"))
+        self.assertNotIn("INGEST_REARM_LEDGER_BUCKET", sweeper_env(self.render(s3)))
+        default_region = self.ingest_env(self.render(merge(s3, {"ingestEdge": {"ledgerBucket": {"bucket": "ci-ledger"}}})))
+        self.assertEqual(default_region["INGEST_LEDGER_REGION"]["value"], self.ingest_env(self.render(s3))["LOCKER_REGION"]["value"])
+        self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"ledgerBucket": {"bucket": "ci-ledger"}}}),
+                    fail="ingestEdge.ledgerBucket requires ingestEdge.ledger=s3")
+        self.render(merge(s3, {"ingestEdge": {"ledgerBucket": {"bucket": s3["ingestEdge"]["locker"]["bucket"]}}}),
+                    fail="ingestEdge.ledgerBucket.bucket must differ from ingestEdge.locker.bucket")
+        self.render(merge(s3, {"ingestEdge": {"ledgerBucket": {"bucket": "Bad_Bucket"}}}),
+                    fail="ingestEdge.ledgerBucket.bucket must be an S3 bucket name")
+        self.render(merge(s3, {"ingestEdge": {"ledgerBucket": {"region": "us-west-2"}}}),
+                    fail="ingestEdge.ledgerBucket.region requires ingestEdge.ledgerBucket.bucket")
+        self.assertNotIn("INGEST_LEDGER_HOME_GUARD", self.ingest_env(self.render(s3)))
+        self.assertEqual(self.ingest_env(self.render(merge(s3, {"ingestEdge": {"ledgerHomeGuard": True}})))["INGEST_LEDGER_HOME_GUARD"]["value"], "on")
+        self.render(merge(load(SQL_FIXTURE), {"ingestEdge": {"ledgerHomeGuard": True}}), fail="ingestEdge.ledgerHomeGuard requires ingestEdge.ledger=s3")
+        for value in (0, "", [], "yes", "true"):
+            with self.subTest(value=value):
+                self.render(merge(s3, {"ingestEdge": {"ledgerHomeGuard": value}}), fail="ingestEdge.ledgerHomeGuard must be a boolean")
+        self.assertNotIn("INGEST_LEDGER_HOME_GUARD", self.ingest_env(self.render(merge(s3, {"ingestEdge": {"ledgerHomeGuard": None}}))))
 
     def test_startup_failure_threshold(self):
         s3 = merge(load(S3_FIXTURE), {"ingestEdge": {"admission": {"mode": "async"}}})

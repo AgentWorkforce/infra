@@ -37,6 +37,10 @@ spec:
         {{- if dig "hosts" "actors" "" (.Values.gkeIngress | default dict) }}
         - ipBlock: { cidr: 35.191.0.0/16 }
         - ipBlock: { cidr: 130.211.0.0/22 }
+        {{- if eq (dig "mode" "external" (.Values.gkeIngress | default dict) | toString) "internal" }}
+        # The internal load balancer's proxies (gkeIngress.internal.proxyOnlySubnetCidr).
+        - ipBlock: { cidr: {{ dig "internal" "proxyOnlySubnetCidr" "" (.Values.gkeIngress | default dict) | quote }} }
+        {{- end }}
         {{- end }}
         {{- range dig "extraIngressFrom" (list) $policy }}
         - {{- toYaml . | nindent 10 }}

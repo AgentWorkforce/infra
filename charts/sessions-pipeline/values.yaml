@@ -421,12 +421,19 @@ searchIndexer:
   # enabled is tri-state: null (default) renders nothing and keeps the image
   # default; true renders "true"; false renders "false" explicitly (an image
   # whose default is on needs the explicit "false" to turn it off).
-  # true together with outputFacts.enabled is refused (the consumer refuses it).
+  # true together with outputFacts.enabled is refused only with
+  # stagedReconcile.enabled=false; otherwise the staged run carries the facts
+  # (images from relayhistory-pipeline efdd4bb2 on; older images refuse it).
   # A scope streams only when four times its size fits BOTH budgets; at their
   # defaults every streamed scope is still refused and the consumer warns at
-  # startup, so raise the budget(s) the scope exceeds. Memory: up to one 512 MiB
-  # scope plus about 1 KB per record read; raise the indexer's memory limit by
-  # about 0.5 GB where streaming is on, or set enabled: false.
+  # startup, so raise the budget(s) the scope exceeds. Memory: the non-streaming
+  # sizing plus about 2 GB at the default budgets: one decompressed chunk (at
+  # most 16 MiB) plus about 3 KB per record of the scope (measured: +0.6 GB at
+  # 100000 records, +3.3 GB at 1000000; 500000 records at the default budgets).
+  # It scales with SEARCH_INDEX_STREAM_MAX_READ_EVENTS.
+  # resources below defaults to a 3Gi limit for this; raise it where streaming
+  # is on with larger budgets, or set enabled: false. The staged reconcile
+  # (SEARCH_INDEX_STAGED_RECONCILE_ENABLED) needs the same sizing.
   streaming:
     # SEARCH_INDEX_STREAMING_ENABLED: null | true | false.
     enabled: null
@@ -436,6 +443,22 @@ searchIndexer:
     maxReadBytes: ""
     # SEARCH_INDEX_STREAM_MAX_READ_EVENTS: 4x limits.maxScopeEvents..2000000.
     maxReadEvents: null
+  # Staged reconcile (issue 610 Phase 3), consumer only:
+  # SEARCH_INDEX_STAGED_RECONCILE_ENABLED. Tri-state like streaming.enabled:
+  # null (default) renders nothing and keeps the image default, which is ON
+  # from the first services image built from relayhistory-pipeline efdd4bb2 or
+  # later (off in older images); true or false render explicitly, and false
+  # keeps the pre-staged path. true with streaming.enabled=false is refused;
+  # left unset with streaming.enabled=false it resolves to off (the consumer
+  # logs one info line), so streaming-off installs need no override.
+  # On needs migration 20261105062110 (and 20261105062140 with outputFacts
+  # enabled) and the same memory as streaming (see above).
+  # Upgrade note: the migrate Job is a plain Job, not a hook, so on an upgrade
+  # to a default-on image the indexer pod restarts until migrate has applied
+  # those migrations, then starts; this is expected. Set enabled: false to
+  # stay on the pre-staged path.
+  stagedReconcile:
+    enabled: null
   # GCS readiness settings (Cloud SQL, Memorystore and Pub/Sub). Empty for S3.
   extraEnv: []
   postgres:
@@ -500,9 +523,14 @@ searchIndexer:
   tolerations: []
   affinity: {}
   podAnnotations: {}
+  # Sized for streaming reconcile at the default budgets (see streaming above).
+  # Upgrading from 0.8.48 or earlier: Helm merges these keys with your values,
+  # so a values file that sets only limits.memory below 1Gi now also gets the
+  # 1Gi request and the pod is refused (request above limit). Set
+  # requests.memory with it, or replace the whole resources block.
   resources:
-    requests: { cpu: 50m, memory: 256Mi }
-    limits: { memory: 1Gi }
+    requests: { cpu: 50m, memory: 1Gi }
+    limits: { memory: 3Gi }
 
 # Per-session operator hard-delete composition. Every switch is off by default.
 # The chart renders only Secret references; create the Secrets separately and
@@ -559,6 +587,13 @@ ingestEdge:
     caConfigMap: "" # optional public CA bundle, added to OS trust
     caKey: ca.crt
   enabled: false
+  # Ingest edge Deployment replicas, integer 1..8 (strategy stays Recreate). Above 1 requires
+  # ledger=s3. Tenant caps are enforced per replica, so halve per-replica caps when raising this.
+  replicas: 1
+  # Liveness /healthz timeoutSeconds, integer 2..30. Unset keeps 2. Under heavy async admission the
+  # event loop can answer /healthz in more than 2 s; three misses restart the pod and drop its claims,
+  # and the first scan after a start is slow. Raise it (for example to admission.probeTimeoutSeconds).
+  livenessTimeoutSeconds: null
   # Requires an image implementing SELFHOST_INGEST_ADMISSION. Sync preserves
   # the existing request path. Async acknowledges durable object storage and
   # defers admission SQL; drain consumes the inbox but accepts new work sync.
@@ -570,6 +605,18 @@ ingestEdge:
     # INGEST_ASYNC_MAX_PER_ORG: the async consumer's per-org cap with s3TenantLimit=true,
     # 1..concurrency. Unset (default) renders nothing: the image uses max(1, concurrency/2).
     asyncMaxPerOrg: null
+    # SELFHOST_ADMISSION_AWAIT_AUTHORITY: true renders "on", so async admission defers uploads for
+    # orgs with no fence-authority marker yet (they wait in S3 for the marker) instead of retrying or
+    # refusing them. Requires ledger=s3 and admission.mode async or drain. Default false renders nothing.
+    awaitAuthority: false
+    # SELFHOST_ADMISSION_SPREAD: true renders "on". Work younger than the grace is ordered by a
+    # per-process salted hash, so replicas sharing one inbox mostly start on different items instead of all
+    # claiming the oldest; work older than the grace stays strict oldest-first. Meant for
+    # ingestEdge.replicas > 1. Requires admission.mode async or drain. Default false renders nothing.
+    spread: false
+    # SELFHOST_ADMISSION_SPREAD_GRACE_MS, integer 1000..86400000; requires spread=true. Unset (default)
+    # renders nothing: the image uses max(120000, 4 x scanIntervalMs).
+    spreadGraceMs: null
     # Async/drain startup and readiness exec probes: timeoutSeconds, 3..30. The probe's own /readyz fetch
     # aborts 1 s earlier. Unset keeps 3 s and the 1500 ms fetch. Raise it when long upload scans
     # (large uploadDirect.scanBatch) make /readyz slow, so a busy single replica stays in the Service.
@@ -608,6 +655,23 @@ ingestEdge:
   # Unset (default) renders nothing (the image uses 32). Lower it when admissions x parallel
   # over-subscribes the process's sockets (fetch-level ledger_store_transient).
   ledgerParallel: null
+  # INGEST_LEDGER_BUCKET / INGEST_LEDGER_REGION (relayhistory-pipeline docs/ledger-relocation.md):
+  # the S3 ledger's own objects (each user's ledger/ and the ledger-home marker) in
+  # a separate bucket, e.g. one in the cluster's region; everything else, fences
+  # included, stays in locker.bucket. Requires ledger=s3, locker.provider=s3 and a
+  # services image with ledger-store.ts; same endpoint and credentials as locker.
+  # Empty bucket (default) renders nothing. Moving an existing ledger is an offline
+  # relocation (stop, copy, verify, switch the ledger-home marker), never just a
+  # values change: with this set, no claim admits until the marker names the bucket.
+  # INGEST_LEDGER_HOME_GUARD=on: every claim also reads the ledger-home marker in
+  # locker.bucket and refuses when it names another bucket (a relocated ledger).
+  # Requires ledger=s3. false (default) renders nothing. Turn it on before a
+  # relocation starts (relayhistory-pipeline docs/ledger-relocation.md step 0).
+  ledgerHomeGuard: false
+  ledgerBucket:
+    bucket: ""
+    # Empty: locker.region.
+    region: ""
   fullnameOverride: ""
   image:
     repository: ghcr.io/agentworkforce/96bulls-services

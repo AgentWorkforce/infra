@@ -7,7 +7,7 @@ dependencies:
   version: 0.1.5
 - name: sessions-pipeline
   repository: file://../sessions-pipeline
-  version: 0.8.43
+  version: 0.8.52
 - name: relay-control
   repository: file://../relay-control
   version: 0.4.22
@@ -31,9 +31,9 @@ dependencies:
   version: 0.1.0
 - name: slack-relay
   repository: file://../slack-relay
-  version: 0.3.5
+  version: 0.3.11
 - name: relaygate
   repository: file://../relaygate
-  version: 0.1.8
-digest: sha256:c85f934fcea0a7eb872df2756cd395322294951f944947839ff8a70a95d7c30b
-generated: "2026-11-16T14:08:51.064343-08:00"
+  version: 0.1.10
+digest: sha256:5ecc32b3b39aed5ff642ed7b00101409c7f0081bbf01f18f4b214d46de24d636
+generated: "2026-11-19T07:44:50.985407885-08:00"

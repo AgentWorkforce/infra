@@ -48,6 +48,17 @@ sessions:
     #  - leave relayControlUrl empty: relaygate forwards its own
     #    SESSIONS_TOKEN (which must then be set on relaygate).
     relayControlUrl: ""
+  # Agent session reads (needs relaygate.url): each agent gets read-only
+  # Sessions tools (mcp__sessions: list_sessions, get_session,
+  # get_session_turns, search_sessions). Every read goes to relaygate's
+  # Sessions proxy with the agent's own rg_ token, so relaygate decides as the
+  # agent (the pit): it sees only sessions its group may read. The read
+  # credential is minted by the host as the uploader user and never reaches an
+  # agent. Reuses sessions.upload's orgId, workspaceId, baseUrl and
+  # relayControlUrl and secrets.sessionsEnrollmentKey (all REQUIRED here, even
+  # with upload off); the uploader user needs rth:read in the workspace.
+  mcp:
+    enabled: false
 
 # Secrets are referenced, never created by this chart. Each entry names an
 # existing Secret and the key inside it.
@@ -87,6 +98,10 @@ slack:
   # Refuse channels shared outside the workspace (Slack Connect), for answers
   # and ingest. Unknown sharing state counts as shared.
   refuseSharedChannels: true
+  # Reaction the router adds to each message it routes to an agent, as soon as
+  # it takes it (before the agent starts). Needs the bot scope reactions:write;
+  # without it the router logs once and carries on. Empty turns it off.
+  ackReaction: eyes
 
 # Remote MCP servers behind OAuth client credentials, e.g. a gbrain company
 # brain. Agents get the ones listed in host.mcpServers as tools (add
@@ -132,21 +147,44 @@ ingest:
 # Bash. Needs egress from the namespace to the GitHub host.
 repos:
   enabled: false
-  # REQUIRED when enabled: an existing Secret with a GitHub token. Use a
-  # fine-grained personal access token limited to the listed repositories,
-  # with read-only Contents and Metadata permissions and an expiry.
+  # REQUIRED when enabled: exactly one of app.privateKey.name (recommended)
+  # and token.name.
+  #
+  # A GitHub App with read-only Contents and Metadata permissions, installed
+  # on the repositories' owner (docs/self-hosted-slack-relay.md). The sidecar
+  # mints a one-hour installation token (contents:read, metadata:read) from
+  # the private key and renews it before it expires; the key is mounted only
+  # in the sidecar.
+  app:
+    # The app's numeric ID (or client ID). Empty: read from appIdKey in the
+    # privateKey Secret.
+    appId: ""
+    # The installation to use. Empty: read from installationIdKey in the
+    # privateKey Secret (the key must exist); with installationIdKey empty
+    # too, the app's only installation.
+    installationId: ""
+    # An existing Secret with the app's private key (PEM), by default also
+    # holding app-id and installation-id, e.g. slack-relay-github-app.
+    privateKey: { name: "", key: private-key }
+    appIdKey: app-id
+    installationIdKey: installation-id
+  # Or an existing Secret with a GitHub token: a fine-grained personal access
+  # token limited to the repositories, with read-only Contents and Metadata
+  # permissions and an expiry.
   token: { name: "", key: token }
   # Repositories to check out: "owner/name" (the default branch), or
   # { repo: owner/name, ref: <branch, tag or commit> }. Empty: every repo the
-  # token can read (GET /user/repos), listed again on every refresh, so with a
-  # fine-grained token its repository selection is the only list to keep.
+  # app installation (GET /installation/repositories) or the token
+  # (GET /user/repos) can read, listed again on every refresh, so the
+  # installation's (or fine-grained token's) repository selection is the only
+  # list to keep.
   # Checkouts of repos no longer listed (or no longer readable) are removed.
   list: []
   refreshMinutes: 15
   # github.com, or a GitHub Enterprise Server host (ghe.example.com) or base
   # URL (https://ghe.example.com). Clones use <base>/<owner>/<name>.git.
   host: github.com
-  # API base for listing repos when list is empty. Default: api.github.com
+  # GitHub API base (app tokens, and listing repos when list is empty). Default: api.github.com
   # for github.com, <host base>/api/v3 for GitHub Enterprise Server.
   apiUrl: ""
   # Caps the checkouts' emptyDir; the pod is evicted past it.
@@ -196,12 +234,23 @@ host:
   permissionMode: dontAsk
   # Give each agent a Relaycast MCP bound to its own token (DMs, channels).
   relaycastMcp: true
+  # Behind relaygate, agents see the relay's agents with mcp__relay_agents
+  # (list_agents, get_agent) as themselves: Relaycast's agent.list needs a
+  # workspace key, which only relaygate holds. Read-only; which agents show is
+  # relaygate's policy (r on relaycast:agent/<name>, or r/w on the inbox).
+  relayAgentsMcp: true
   # Names from the top-level mcpServers list agents get as tools. Empty: every
   # read-scoped one (write-scoped servers, e.g. ingest writers, only when named).
   mcpServers: []
   turnTimeoutSeconds: 600
   # An agent leaves the relay after this long idle; the next message wakes it.
   idleReleaseMinutes: 15
+  # Agents outside the pit (another relaygate group) may DM a thread agent, but
+  # behind relaygate the host never sends them anything back: a DM is answered
+  # only if relaygate's /v1/check allows this agent to write to the sender's
+  # inbox, and a denial or gate error withholds it. This value can't turn that
+  # off; true only keeps today's behavior on installs without relaygate.
+  replyToOutside: false
   persistence:
     storageClassName: ""
     size: 10Gi

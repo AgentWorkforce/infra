@@ -1,6 +1,6 @@
 # relay-webapp
 
-Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
+Public chart names and existing-release compatibility: [Control/Webapp rename](https://github.com/AgentWorkforce/infra/blob/main/docs/control-webapp-chart-rename.md).
 
 Deploys the self-hosted Agent Relay dashboard container. The image digest is
 required; this chart never follows a tag and does not create Secrets. Runtime

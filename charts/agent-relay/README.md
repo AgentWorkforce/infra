@@ -1,6 +1,6 @@
 # agent-relay
 
-Public chart names and existing-release compatibility: [Control/Webapp rename](../../docs/control-webapp-chart-rename.md).
+Public chart names and existing-release compatibility: [Control/Webapp rename](https://github.com/AgentWorkforce/infra/blob/main/docs/control-webapp-chart-rename.md).
 
 Umbrella chart for the self-hosted messaging and Sessions proof:
 
@@ -63,6 +63,7 @@ before installing. The required value overrides are:
 | `global.imageRegistry` | Artifact Registry hostname for the selected region, such as `us-central1-docker.pkg.dev`. |
 | `global.tenant.orgId` | Stable customer organization ID. Do not change it after data has been written. |
 | `gkeIngress.name`, `staticIpName`, `managedCertificateName`, `frontendConfigName` | Customer-selected names. `staticIpName` must name a reserved global external IPv4 address; the chart creates the other resources. |
+| `gkeIngress.sslPolicy` | Recommended. Name of a Compute SSL policy with a TLS 1.2 minimum; see [GKE edge hardening](#gke-edge-hardening). |
 | `gkeIngress.hosts.{root,api,cast,history}` | Four customer-controlled public DNS names whose A records point at the reserved address. |
 | `relaycast.image.{repository,digest}` | Customer-accessible Relaycast image mirror and its real immutable digest. |
 | `sessions-pipeline.worker.image.{repository,digest}` and `sessions-pipeline.alleyoop.image.{repository,digest}` | Repository path under `global.imageRegistry` and the same immutable Sessions services digest. |
@@ -108,6 +109,19 @@ The referenced Secret must provide these keys:
 The read API, ingest edge and search indexer read their database settings from
 their own Secrets (`agent-relay-read-api`, `agent-relay-ingest-edge-runtime`,
 `search-indexer-runtime`, `search-indexer-owner` in `values-gcp.yaml`).
+On fresh Cloud SQL, RDS and Azure installs, both migration/bootstrap keys use
+the dedicated `hoopdb_owner` URL, never a provider administrator URL. Legacy
+administrator-owned installs copy the URL into `hoopdb-admin-jobs` while the
+relevant Jobs run. Upgrade flows retain the old keys until Helm, Jobs and
+Deployments succeed for rollback safety, then remove the old keys and delete
+the temporary Secret.
+
+> **RDS upgrade note:** the shared `external-rds.yaml` and
+> `aws-rds-native.yaml` profiles default to `rdsLayout: separate-database` for
+> fresh `hoopdb_owner` installs. Before upgrading an administrator-owned RDS
+> install with either profile, run the setup classifier and pass its layout
+> overlay, which selects `rdsLayout: master-owner`. Without that override the
+> migrator intentionally refuses the legacy layout before changing anything.
 
 With RelayAuth on, `relayauth-api-key` and `relayauth-bootstrap-api-key` must
 contain the same value. `selfhost-bootstrap-token` must be at least 32 bytes.
@@ -155,9 +169,10 @@ image from relaycontrol #13 or later.
   so the bootstrap admin can sign in once with the setup key (24 hours, single
   use) and set a password, then hand out temporary passwords to members.
   `relay-control.auth.trustedProxies` (default `1` with password sign-in)
-  must equal the number of proxies in front of the API. Both need a
+  must equal the number of `X-Forwarded-For` entries the proxies in front of
+  the API append: `2` behind the GKE Ingress, whose load balancer appends two. Both need a
   relay-control image from source `bd1c9a03` or later. See the
-  [relay-control chart](../relay-control/README.md#first-admin-without-smtp-or-sso-the-setup-key).
+  [relay-control chart](https://github.com/AgentWorkforce/infra/blob/main/charts/relay-control/README.md#first-admin-without-smtp-or-sso-the-setup-key).
 
 The admin signs in at `https://<root host>/login`. Owners and admins then
 invite teammates from Settings → Members. Invite links are single use and
@@ -251,6 +266,91 @@ For a base domain `relay.example.com`:
 Leaf ingresses are disabled and each ClusterIP backend uses a GKE standalone
 NEG. Sensitive Relaycast paths still route to an endpoint-less deny Service.
 
+## GKE edge hardening
+
+Three optional `gkeIngress` values, each empty by default. Each names
+something the chart cannot create, which must exist before the upgrade;
+[`terraform/modules/gcp/edge-security`](https://github.com/AgentWorkforce/infra/blob/main/terraform/modules/gcp/edge-security)
+creates the two policies. The operator steps and checks are in
+[`docs/gcp-install/3-EDGE-HARDENING.md`](https://github.com/AgentWorkforce/infra/blob/main/docs/gcp-install/3-EDGE-HARDENING.md).
+
+| Value | Effect |
+| --- | --- |
+| `gkeIngress.sslPolicy` | Compute SSL policy for the HTTPS listener (`FrontendConfig.spec.sslPolicy`). Without it Google's default policy applies, which still accepts TLS 1.0 and 1.1. Use a policy with `min_tls_version = TLS_1_2`. |
+| `gkeIngress.securityPolicy` | Cloud Armor backend security policy, set as `spec.securityPolicy.name` on the BackendConfig of **every** backend behind the Ingress. |
+| `gkeIngress.tlsSecretName` | A `kubernetes.io/tls` Secret served instead of the ManagedCertificate (which is then not rendered). For an edge whose DNS points at a proxy or CDN, where Google cannot issue a managed certificate. The certificate must cover every host. |
+
+The chart leaves `sslPolicy` empty by default because a name that does not
+exist in the project stops the Ingress from syncing. `terraform/examples/gcp`
+creates the policy and exports it in `chart_values`, so an install made from
+the GKE guide has it set.
+
+With `securityPolicy`, the api, cast, history, actors and relaygate
+BackendConfigs gain the policy, and the chart renders policy-only BackendConfigs
+for the backends that had none: `<gkeIngress.name>-dashboard`,
+`<gkeIngress.name>-edge-deny` and, with `gkeIngress.hosts.files`,
+`<gkeIngress.name>-files`. The dashboard and Relayfile Services belong to child
+charts, so bind them in values (the render fails with the exact value
+otherwise):
+
+```yaml
+gkeIngress:
+  sslPolicy: agent-relay-tls
+  securityPolicy: agent-relay-edge
+relay-webapp:
+  service:
+    annotations:
+      cloud.google.com/neg: '{"ingress": true}'
+      cloud.google.com/backend-config: '{"default": "agent-relay-dashboard"}'
+```
+
+Behind a proxy that fronts the load balancer (Cloudflare), also raise
+`relay-control.auth.trustedProxies` by one (the Google load balancer alone
+needs 2; the guide shows how to check).
+
+## Internal-only GKE edge
+
+For an install that must not be reachable from the internet, set
+`gkeIngress.mode: internal` (start from `values-gcp-internal.yaml`). GKE then
+creates a regional **internal** Application Load Balancer: a private address,
+HTTPS only, reachable from the VPC and from the networks routed to it (VPN,
+Interconnect). It is the GKE counterpart of an internal-scheme ALB on EKS.
+Hosts, routes, backends and timeouts are the same as on the external edge.
+
+| | External (default) | Internal |
+| --- | --- | --- |
+| Ingress class | `gce` | `gce-internal` |
+| `gkeIngress.staticIpName` | a global external address | a **regional internal** address |
+| Certificate | ManagedCertificate, or `tlsSecretName` | `tlsSecretName`, or `internal.preSharedCerts` (regional self-managed certificates). A Google-managed certificate is not possible |
+| HTTP | redirected to HTTPS | closed (`allow-http: "false"`) |
+| `sslPolicy`, `securityPolicy` | optional | refused: GKE Ingress supports neither FrontendConfig nor Cloud Armor on an internal load balancer |
+| Sources the pods see | Google front ends | the VPC's **proxy-only subnet** |
+
+Before the install, the VPC needs a proxy-only subnet in the cluster's region,
+a reserved regional internal address, and a firewall rule from that subnet to
+the nodes;
+[`terraform/modules/gcp/internal-edge`](https://github.com/AgentWorkforce/infra/blob/main/terraform/modules/gcp/internal-edge)
+creates the three. Then:
+
+- `gkeIngress.internal.proxyOnlySubnetCidr` is the subnet's range, and every
+  backend's `networkPolicy` must allow it next to the two health-check ranges.
+  The render fails, naming the backend, when one does not.
+  `values-gcp-internal.yaml` restates all five lists.
+- DNS: A records for every host, pointing at the private address, in a zone
+  your VPN clients resolve (a private zone, or your corporate DNS). The public
+  URLs in the values stay `https://<host>`.
+- Certificate: with `tlsSecretName`, cert-manager with a DNS-01 challenge
+  issues and renews a publicly trusted certificate without the hosts being
+  reachable from the internet. If the DNS zone is in another Google Cloud
+  project, grant cert-manager's Workload Identity `roles/dns.admin` on that
+  zone's project. A private CA works if every desktop, CLI and agent trusts it.
+- Agents and desktops outside the VPN cannot upload sessions or connect. Plan
+  for that before choosing this mode.
+- Pass the overlay on every `helm upgrade`, or merge it into your site values.
+  An upgrade without it renders the external edge again.
+
+Rendered and tested in CI; not yet proven on a live cluster.
+
 ## Customer-neutral EKS with RDS native History
 
 `values-eks-rds-native.yaml` is the reusable EKS overlay for the supported
@@ -313,7 +413,7 @@ Run `scripts/selfhost/rds-setup.sh pre` before Helm and `post` only after the
 Sessions migration Job succeeds. On a populated database, build the two
 coordination-reader partial indexes concurrently before the migration; a fresh
 database builds them directly. The exact SQL and verification steps are in
-[`docs/self-hosted-session-read-api.md`](../../docs/self-hosted-session-read-api.md).
+[`docs/self-hosted-session-read-api.md`](https://github.com/AgentWorkforce/infra/blob/main/docs/self-hosted-session-read-api.md).
 After each workspace has sessions, run the output-facts bootstrap with a new
 `searchIndexer.outputFacts.bootstrap.runId`; the reusable overlay deliberately
 leaves that one-shot Job off.
@@ -332,6 +432,121 @@ For existing data, this is reader-first: the base EKS values set
 be Ready, then apply `values-scrub-wasm-bindgen.yaml` in a second Helm revision.
 A fresh install with an empty Sessions database may include that strict overlay
 in its first revision.
+
+### Secrets from AWS SSM Parameter Store (or another external store)
+
+By default the chart renders no Secret and you create the named Secrets
+yourself. If they live in AWS SSM Parameter Store, AWS Secrets Manager or any
+other [External Secrets Operator](https://external-secrets.io) provider, set
+`externalSecrets` instead. The chart then renders one ExternalSecret per
+Secret. ESO creates each Kubernetes Secret under the name the components already
+read, so nothing else in your values changes.
+
+Prerequisites: ESO (with the `external-secrets.io/v1` CRDs) installed in the
+cluster, and IAM for its controller (Pod Identity or IRSA) that can read the
+parameters: `ssm:GetParameter`, `ssm:GetParameters` and
+`ssm:GetParametersByPath` on the parameter paths, plus `kms:Decrypt` on the key
+for SecureString parameters.
+
+```yaml
+externalSecrets:
+  enabled: true
+  store:
+    create: true      # or leave false and set secretStoreRef.name to an existing (Cluster)SecretStore
+    provider: { aws: { service: ParameterStore, region: us-east-1 } }
+  secrets:
+    agent-relay-secrets:
+      data:
+        database-url: /agent-relay/relaycontrol/runtime-url
+        database-migrations-url: /agent-relay/relaycontrol/owner-url
+        HOOPDB_URL: /agent-relay/hoopdb/runtime-url
+        # ...one line per key of the Secret
+    agent-relay-ingest-edge-runtime:
+      data:
+        database-url: /agent-relay/hoopdb/ingest-url
+        introspect-secret: /agent-relay/relaycontrol-introspect-secret
+```
+
+Map every Secret and key your install's Secrets table lists. A value that a
+component reads as JSON (`RELAYHISTORY_READ_API_SECRET`,
+`RELAYHISTORY_PIPELINE_CONSUMER_SECRET`) is stored as that JSON in the
+parameter, or built with an entry's `template`. Each `data` value is a
+parameter name, or a full ESO `remoteRef` map (`key`, `property`, `version`,
+...). An entry can also use ESO's `dataFrom` to load every parameter under a
+path (`find: {path: /agent-relay/x/, name: {regexp: ".*"}}`; the SSM provider
+needs the `name` or `tags` matcher).
+
+#### Google Secret Manager on GKE
+
+The same block works with the `gcpsm` provider. ESO authenticates as a
+Kubernetes ServiceAccount through GKE Workload Identity, so there is no
+service account key:
+
+```yaml
+externalSecrets:
+  enabled: true
+  store:
+    create: true
+    provider:
+      gcpsm:
+        projectID: my-project
+        auth:
+          workloadIdentity:
+            clusterProjectID: my-project
+            clusterLocation: us-central1
+            clusterName: my-cluster
+            serviceAccountRef:
+              name: agent-relay-external-secrets   # a ServiceAccount in the release namespace
+  secrets:
+    agent-relay-secrets:
+      data:
+        database-url: agent-relay--agent-relay-secrets--database-url   # the Secret Manager secret's name
+        HOOPDB_URL: { key: agent-relay--agent-relay-secrets--HOOPDB_URL, version: latest }
+        # ...one line per key of the Secret
+```
+
+Grant that ServiceAccount's Workload Identity principal
+(`principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<project>.svc.id.goog/subject/ns/<namespace>/sa/agent-relay-external-secrets`)
+`roles/secretmanager.secretAccessor` on each secret. A `data` value is the
+secret's name, or a `remoteRef` map (`key`, `version`, and `property` for one
+field of a JSON secret). Secret Manager names cannot contain `/`. With
+regional secrets or CMEK, add `location: <region>` under `gcpsm`.
+[`docs/gcp-install/external-secrets-values.yaml`](https://github.com/AgentWorkforce/infra/blob/main/docs/gcp-install/external-secrets-values.yaml)
+maps all five install Secrets, and step 10 d of the GKE guide has the
+commands. The render is tested against the ESO schemas; it has not yet been
+proven on a live GKE cluster.
+
+Notes:
+
+- Keep `externalSecrets` in a values file that every `helm upgrade` of the
+  release uses. Helm does not carry values over from the previous command, so
+  an upgrade without the block removes the ExternalSecrets, and ESO then
+  deletes the Secrets it owns (`creationPolicy: Owner`).
+- Pods that start before ESO writes their Secret wait in
+  `CreateContainerConfigError` and start once it exists. Check
+  `kubectl get externalsecret -n <namespace>` reports every entry `Ready`.
+- `creationPolicy: Owner` (the default) means the release owns each Secret and
+  `helm uninstall` deletes it. For Secrets created by hand before switching,
+  set `creationPolicy: Merge` on those entries or delete the Secrets first.
+- A rotated parameter updates the Secret within `refreshInterval`; running pods
+  see it only after a restart (`kubectl rollout restart`). Fresh installs store
+  the dedicated `hoopdb_owner` URL, never the RDS administrator URL. There is
+  no supported `hoopdb_owner` rotation helper yet; do not change its password
+  until [#480](https://github.com/AgentWorkforce/infra/issues/480) provides the
+  coordinated database, saved-state and Secret update. That flow must update
+  both owner URL parameters (`HOOPDB_MIGRATION_URL` and
+  `RELAYHISTORY_PIPELINE_CONSUMER_SECRET`), force both resources to sync
+  (`kubectl annotate externalsecret agent-relay-secrets search-indexer-owner -n <namespace> force-sync=$(date +%s) --overwrite`),
+  confirm each ExternalSecret's `status.refreshTime` is later than the update
+  (`kubectl get externalsecret agent-relay-secrets search-indexer-owner -n <namespace>
+  -o custom-columns='NAME:.metadata.name,REFRESHED:.status.refreshTime,READY:.status.conditions[0].status'`;
+  `Ready=True` alone does not prove it), and only then run `helm upgrade`.
+- Existing administrator-owned installs use `hoopdb-admin-jobs` temporarily.
+  When removing their old long-lived keys, never patch an ESO-owned Secret.
+  Remove each key's mapping from the Helm values used for every upgrade and
+  from the live ExternalSecret, delete its backing-store value, wait for
+  reconciliation, and then delete `hoopdb-admin-jobs`.
+- The `rds-ca` ConfigMap is not a Secret; create it as before.
 
 ## Single-host mode
 
@@ -463,8 +678,10 @@ It also needs the Secrets `actors-credentials` (`postgres-url`,
 
 `selfhost-bootstrap-token` must be at least 32 bytes.
 `selfhost-encryption-key` must encode exactly 32 bytes as 64 hex characters or
-base64. Runtime database URLs should use least-privilege roles; migration URLs
-must use the corresponding migration-owner roles.
+base64. Runtime database URLs should use least-privilege roles. The HoopDb
+`HOOPDB_MIGRATION_URL` and search bootstrap credential use the plain
+`hoopdb_owner` role, not a cloud administrator; Relay Control's
+`database-migrations-url` instead uses `control_owner` on `relaycontrol`.
 
 The portable shape additionally needs `HOOPDB_URL`, `HOOPDB_MIGRATION_URL`,
 `SUMMARY_MASTER_KEYS` and the native History keys named in

@@ -37,6 +37,12 @@ policy:
     - { prefix: "relaycast:channel/pit-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
     - { prefix: "relaycast:inbox/pit-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
     - { prefix: "relaycast:inbox/slack-", gid: 22, mode: "660", acl: [{ gid: 11, perm: "w" }] }
+    # The agent directory: the pit sees every agent on the relay (names,
+    # status, persona, card), local agents' view is unchanged. Visibility
+    # only: messaging still needs w on the inbox, which the pit doesn't have
+    # outside its group. relaygate with "The agent directory" (relaygate#41);
+    # older images ignore it.
+    - { prefix: "relaycast:agent/", gid: 22, mode: "040" }
     # The Slack app's routing channel (slack-relay relaycast.channel, default
     # "slack"): pit only. Local agents reach thread agents by DM, not here.
     - { prefix: "relaycast:channel/slack", gid: 22, mode: "660" }
@@ -44,6 +50,20 @@ policy:
     - { prefix: "slack:", gid: 22, mode: "660", classify: true }
     - { prefix: "kb:", gid: 22, mode: "660", classify: true }
   streamOverrides: []
+  # Inboxes no prefix covers (Desktop agents enrolled with a device token are
+  # named cursor-, claude-, codex-...) follow the registered agent: owned by it,
+  # in its gid, with a per-gid mode/ACL from inboxDefaults (else 660, no ACL).
+  # relaygate#43; older images ignore it.
+  # Left unset, the chart renders the default below, mirroring the local- inbox
+  # rule (local agents DM each other, the pit may read, never write), and
+  # leaves it out when policy.groups lacks gid 11 or 22. A policy override
+  # that doesn't set inboxDefaults gets this default, including its 22:r ACL,
+  # even if the override's local- rule drops that ACL: set inboxDefaults to
+  # match your own groups, or [] to opt out (desktop inboxes then get 660,
+  # same group only). An inboxDefaults you set that names a gid
+  # policy.groups doesn't define fails the render.
+  # inboxDefaults:
+  #   - { gid: 11, mode: "660", acl: [{ gid: 22, perm: "r" }] }
   # Sessions (with the Sessions proxy): local sessions readable by the pit,
   # pit sessions private to the pit. Overrides can't change a session's group.
   sessionDefaults:

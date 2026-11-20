@@ -1,0 +1,26 @@
+{
+  "edge": {
+    "mode": "google-managed",
+    "require_single_level_zone": false,
+    "gate_only": false
+  },
+  "hosts": {
+    "root": "<root hostname>",
+    "api": "<api hostname>",
+    "cast": "<cast hostname>",
+    "history": "<history hostname>"
+  },
+  "desktop": {
+    "profile": "<production profile id>",
+    "url_scheme": "<desktop URL scheme>",
+    "product_name": "Agent Relay",
+    "bundle_id": "<desktop bundle identifier>",
+    "feed_public_key": "<base64 Ed25519 public key>"
+  },
+  "feed": {
+    "bucket": "<production desktop feed bucket>",
+    "prefix": "desktop-feed",
+    "key_label": "f1",
+    "existing_secret": "desktop-feed-keys"
+  }
+}

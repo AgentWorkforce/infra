@@ -11,10 +11,13 @@ import { ClaudeOrchestrator, DeterministicOrchestrator, ThreadPolicy, type Known
 import type { RelayEventLike } from "./protocol.ts";
 import { connectAgent, ensureChannel } from "./relay.ts";
 import { Router } from "./router.ts";
-import { checkWithRetry, kbStreamId, RelaygateClient, slackStreamId } from "./gate.ts";
+import { checkWithRetry, inboxStreamId, kbStreamId, RelaygateClient, slackStreamId } from "./gate.ts";
 import { oauthServersFromEnv, TokenSource } from "./mcp.ts";
 import { ingestFromEnv } from "./ingest-config.ts";
 import { EnrollmentCredential, SessionUploader } from "./sessions-upload.ts";
+import { MemberDirectory, SessionReadCredential, SessionsReadProxy } from "./sessions-read.ts";
+import { sessionsMcpServer } from "./sessions-mcp.ts";
+import { agentsMcpServer, GATED_RELAYCAST_DENIED } from "./agents-mcp.ts";
 import { channelMessageOf, ChannelDirectory, normalizeSlackEvent, SlackWeb, SocketModeClient, verifySlackSignature, type SlackEventEnvelope } from "./slack.ts";
 
 const env = process.env;
@@ -113,6 +116,7 @@ async function runRouter(): Promise<void> {
     channel,
     selfName: routerName,
     log,
+    ackReaction: env.SLACK_ACK_REACTION ?? "eyes",
     // Slack posts don't pass through relaygate, so each one is asked about first.
     egress: gate ? (ref, text) => checkWithRetry(gate, routerToken, { op: "w", resource: { kind: "stream", id: slackStreamId(ref) }, content: text }) : undefined,
   });
@@ -246,20 +250,27 @@ async function runRouter(): Promise<void> {
   });
 }
 
-/**
- * Session upload (opt-in, relaygate only): each agent's Claude session goes to relaygate's Sessions proxy with the
- * agent's rg_ token, so the agent owns it and it takes the agent's group. The Sessions credential is either the
- * host's own (a Desktop enrollment key exchanged at relay-control) or relaygate's SESSIONS_TOKEN.
- */
-function sessionUploader(dataDir: string, hostName: string): SessionUploader | undefined {
-  if (env.SESSIONS_UPLOAD !== "true") return undefined;
+/** What session upload and session reads share: the Sessions proxy, the account, and the uploader user's session. */
+interface SessionsSettings {
+  baseUrl: string;
+  orgId: string;
+  workspaceId: string;
+  controlUrl: string;
+  /** The uploader user's relay-control session (from a Desktop enrollment key); one instance, so refreshes never race. */
+  credential?: EnrollmentCredential;
+}
+
+function sessionsSettings(dataDir: string, hostName: string): SessionsSettings | undefined {
+  const upload = env.SESSIONS_UPLOAD === "true";
+  const reads = env.SESSIONS_MCP === "true";
+  if (!upload && !reads) return undefined;
   if (!gateUrl) {
-    log("sessions: upload needs relaygate (RELAYGATE_URL); off");
+    log("sessions: upload and agent reads need relaygate (RELAYGATE_URL); off");
     return undefined;
   }
   const orgId = (env.SESSIONS_ORG_ID ?? "").trim();
   const workspaceId = (env.SESSIONS_WORKSPACE_ID ?? "").trim();
-  if (!orgId || !workspaceId) throw new Error("SESSIONS_UPLOAD needs SESSIONS_ORG_ID and SESSIONS_WORKSPACE_ID");
+  if (!orgId || !workspaceId) throw new Error("SESSIONS_UPLOAD and SESSIONS_MCP need SESSIONS_ORG_ID and SESSIONS_WORKSPACE_ID");
   const baseUrl = (env.SESSIONS_BASE_URL ?? "").trim() || `${gateUrl.replace(/\/$/, "")}/sessions`;
   const controlUrl = (env.RELAY_CONTROL_URL ?? "").trim();
   const credential = controlUrl
@@ -271,8 +282,39 @@ function sessionUploader(dataDir: string, hostName: string): SessionUploader | u
         hostName,
       })
     : undefined;
-  log(`sessions: upload on (${baseUrl}; credential: ${credential ? "host enrollment" : "relaygate SESSIONS_TOKEN"})`);
-  return new SessionUploader({ baseUrl, stateDir: join(dataDir, "sessions-upload", "cursors"), home: join(dataDir, "home"), orgId, workspaceId, credential, instance: hostName, log });
+  return { baseUrl, orgId, workspaceId, controlUrl, credential };
+}
+
+/**
+ * Session upload (opt-in, relaygate only): each agent's Claude session goes to relaygate's Sessions proxy with the
+ * agent's rg_ token, so the agent owns it and it takes the agent's group. The Sessions credential is either the
+ * host's own (a Desktop enrollment key exchanged at relay-control) or relaygate's SESSIONS_TOKEN.
+ */
+function sessionUploader(s: SessionsSettings | undefined, dataDir: string, hostName: string): SessionUploader | undefined {
+  if (!s || env.SESSIONS_UPLOAD !== "true") return undefined;
+  log(`sessions: upload on (${s.baseUrl}; credential: ${s.credential ? "host enrollment" : "relaygate SESSIONS_TOKEN"})`);
+  return new SessionUploader({ baseUrl: s.baseUrl, stateDir: join(dataDir, "sessions-upload", "cursors"), home: join(dataDir, "home"), orgId: s.orgId, workspaceId: s.workspaceId, credential: s.credential, instance: hostName, log });
+}
+
+/**
+ * Agent session reads (opt-in, relaygate only): a loopback proxy that adds a read credential minted for the uploader
+ * user and forwards each agent's reads to relaygate with the agent's own rg_ token, so relaygate decides as the
+ * agent. The credential never reaches an agent (sessions-read.ts).
+ */
+async function sessionsReadProxy(s: SessionsSettings | undefined, isAgentToken: (t: string) => boolean): Promise<SessionsReadProxy | undefined> {
+  if (!s || env.SESSIONS_MCP !== "true") return undefined;
+  if (!s.credential) throw new Error("SESSIONS_MCP needs RELAY_CONTROL_URL and SESSIONS_ENROLLMENT_KEY (read credentials are minted as the uploader user)");
+  const proxy = new SessionsReadProxy({
+    baseUrl: s.baseUrl,
+    workspaceId: s.workspaceId,
+    credential: new SessionReadCredential({ controlUrl: s.controlUrl, workspaceId: s.workspaceId, control: s.credential }),
+    members: new MemberDirectory({ controlUrl: s.controlUrl, orgId: s.orgId, control: s.credential }),
+    isAgentToken,
+    log,
+  });
+  await proxy.listen();
+  log(`sessions: agent reads on (mcp__sessions, through ${s.baseUrl})`);
+  return proxy;
 }
 
 async function runHost(): Promise<void> {
@@ -305,8 +347,28 @@ async function runHost(): Promise<void> {
   // Path-scoped: an agent reads only its own workdir (./**). With dontAsk,
   // anything else (other agents' workdirs, /proc, env) is refused.
   const tools = (env.AGENT_ALLOWED_TOOLS ?? "Read(./**) Glob(./**) Grep(./**) mcp__relaycast").split(/[\s,]+/).filter(Boolean);
+  const settings = sessionsSettings(dataDir, hostName);
+  // The rg_ token each hosted agent holds now: only these may read through the proxy.
+  const agentTokens = new Map<string, string>();
+  const readProxy = await sessionsReadProxy(settings, (t) => [...agentTokens.values()].includes(t));
+  if (readProxy && !tools.includes("mcp__sessions")) tools.push("mcp__sessions");
+  const sessionsMcpEntry = join(dirname(fileURLToPath(import.meta.url)), "sessions-mcp.ts");
   const denied = (env.AGENT_DISALLOWED_TOOLS ?? "Bash WebFetch WebSearch Read(//proc/**)").split(/[\s,]+/).filter(Boolean);
-  const uploader = sessionUploader(dataDir, hostName);
+  // Behind relaygate there is no workspace key (relaygate holds it), so relaycast's agent.list and workspace tools
+  // can only fail. The agents see the relay's agents through relaygate as themselves instead (agents-mcp.ts).
+  const agentsTools = Boolean(gateUrl) && env.RELAY_AGENTS_MCP !== "false";
+  const agentsMcpEntry = join(dirname(fileURLToPath(import.meta.url)), "agents-mcp.ts");
+  if (agentsTools) {
+    if (!tools.includes("mcp__relay_agents")) tools.push("mcp__relay_agents");
+    for (const t of GATED_RELAYCAST_DENIED) if (!denied.includes(t)) denied.push(t);
+    log("relay agents: on (mcp__relay_agents, through relaygate as each agent)");
+  }
+  const uploader = sessionUploader(settings, dataDir, hostName);
+  // Behind relaygate every DM answer is checked first, so an agent never even
+  // attempts a write the gate hasn't allowed (its proxy checks the send again,
+  // against the same policy). REPLY_TO_OUTSIDE can't turn that off: it only
+  // means something without relaygate, where there are no groups.
+  if (gate && env.REPLY_TO_OUTSIDE === "true") log("host.replyToOutside ignored: behind relaygate a DM is answered only if the gate allows it");
   const host = new AgentHost({
     routerName,
     channel,
@@ -314,12 +376,15 @@ async function runHost(): Promise<void> {
     persona: env.AGENT_PERSONA,
     idleMs: int("IDLE_RELEASE_MINUTES", 15) * 60_000,
     gated: Boolean(gateUrl),
+    agentsTools,
+    dmCheck: gate ? (token, to, content) => checkWithRetry(gate, token, { op: "w", resource: { kind: "stream", id: inboxStreamId(to) }, content }) : undefined,
     log,
     sessionUpload: uploader ? (u) => uploader.upload(u) : undefined,
     getMessage: (id) => hostAgent.message(id) as never,
     connect: async (name) => {
       const { agent, token } = await connectAgent({ baseUrl: relayBase, workspaceKey, name, persona: "Slack thread agent", proofSecret, log, gate });
       await ensureChannel(agent, channel, "Slack threads routed to agents");
+      agentTokens.set(name, token);
       return { client: agent, token };
     },
     // Relay tools bound to the agent's own token, plus any OAuth MCP servers
@@ -333,7 +398,18 @@ async function runHost(): Promise<void> {
           env: { RELAY_BASE_URL: relayBase, RELAY_AGENT_TOKEN: token, RELAY_AGENT_NAME: name, RELAY_SKIP_BOOTSTRAP: "1", RELAYCAST_TELEMETRY_DISABLED: "1" },
         };
       }
+      if (agentsTools) mcpServers.relay_agents = agentsMcpServer({ entry: agentsMcpEntry, baseUrl: gateUrl, token });
+      if (readProxy) {
+        // Read-only Sessions tools as this agent. Only the proxy URL and the agent's own rg_ token go here: the
+        // read credential stays in the host process.
+        mcpServers.sessions = sessionsMcpServer({ entry: sessionsMcpEntry, proxyUrl: readProxy.url, token });
+      }
       for (const [s, tokens] of agentServers) {
+        // The built-in sessions and relay_agents servers keep their names: an OAuth server can't replace them.
+        if ((s.name === "sessions" || s.name === "relay_agents") && mcpServers[s.name]) {
+          log(`agent MCP server ${s.name}: name taken by a built-in server; skipped`);
+          continue;
+        }
         try {
           mcpServers[s.name] = { type: "http", url: s.url, headers: { Authorization: `Bearer ${await tokens.get()}` } };
         } catch (err) {

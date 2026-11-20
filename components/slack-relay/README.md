@@ -35,3 +35,23 @@ RELAYCAST_E2E_URL=http://localhost:8787 RELAYCAST_E2E_KEY=$KEY npm test
 
 `manifest/` holds the Slack app manifest the customer creates the app from,
 and `render-manifest.py` to name it and pick socket or http mode.
+It also holds the read-only GitHub App manifest for `repos.app` and
+`register-github-app.mts`, which registers the app from it, stores the app ID,
+private key and installation ID (Kubernetes Secret, Secret Manager or files)
+and verifies them (docs/self-hosted-slack-relay.md, "GitHub repos").
+
+## Publish
+
+A merge to main publishes `:sha-<short>` and `:main` through
+`.github/workflows/slack-relay.yml` on GitHub-hosted runners. When that queue
+is too slow, the infra fast path runs the same tests and image build on
+Blacksmith, after Khaliq approves the `fast-path` environment:
+
+```sh
+gh workflow run fast-path.yml -R AgentWorkforce/infra \
+  -f stage=slack-relay-image -f ref=main -f reason="<why>"
+```
+
+`ref` may be any branch or commit. It pushes `:fast-<sha>` and
+`:sha-<short sha>` with the same provenance and SBOM, never `:main`, and prints
+the digest to pin (`image.digest`) in the run summary.

@@ -62,6 +62,9 @@ ALTER ROLE bulls96_session_erase_search LOGIN PASSWORD :'p1';
 ALTER ROLE bulls96_session_erase_search SET statement_timeout='5s';
 ALTER ROLE bulls96_session_erase_search SET lock_timeout='2s';
 ALTER ROLE bulls96_session_erase_search SET idle_in_transaction_session_timeout='10s';
-GRANT CONNECT ON DATABASE hoopdb TO bulls96_session_erase_search;
+-- current_database(), not a fixed name: operators may give HoopDb any name.
+DO $grant$ BEGIN
+ EXECUTE format('GRANT CONNECT ON DATABASE %I TO bulls96_session_erase_search', current_database());
+END $grant$;
 \endif
 COMMIT;

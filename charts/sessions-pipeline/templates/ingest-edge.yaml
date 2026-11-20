@@ -11,6 +11,19 @@
 {{- if ne $ledger "s3" }}{{ fail "ingestEdge.ledgerParallel requires ingestEdge.ledger=s3" }}{{ end -}}
 {{- if or (not (regexMatch "^[0-9]+$" (toString $c.ledgerParallel))) (lt (int $c.ledgerParallel) 1) (gt (int $c.ledgerParallel) 64) }}{{ fail "ingestEdge.ledgerParallel must be an integer from 1 to 64" }}{{ end -}}
 {{- end -}}
+{{- if and (not (kindIs "invalid" $c.ledgerHomeGuard)) (not (kindIs "bool" $c.ledgerHomeGuard)) }}{{ fail "ingestEdge.ledgerHomeGuard must be a boolean" }}{{ end -}}
+{{- if and $c.ledgerHomeGuard (ne $ledger "s3") }}{{ fail "ingestEdge.ledgerHomeGuard requires ingestEdge.ledger=s3" }}{{ end -}}
+{{- $lb := $c.ledgerBucket | default dict -}}
+{{- if not (kindIs "map" $lb) }}{{ fail "ingestEdge.ledgerBucket must be an object" }}{{ end -}}
+{{- if $lb.bucket -}}
+{{- if ne $ledger "s3" }}{{ fail "ingestEdge.ledgerBucket requires ingestEdge.ledger=s3" }}{{ end -}}
+{{- if ne $c.locker.provider "s3" }}{{ fail "ingestEdge.ledgerBucket requires ingestEdge.locker.provider=s3" }}{{ end -}}
+{{- if or (not (kindIs "string" $lb.bucket)) (not (regexMatch "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" $lb.bucket)) }}{{ fail "ingestEdge.ledgerBucket.bucket must be an S3 bucket name" }}{{ end -}}
+{{- if eq $lb.bucket $c.locker.bucket }}{{ fail "ingestEdge.ledgerBucket.bucket must differ from ingestEdge.locker.bucket (leave it empty to keep the ledger there)" }}{{ end -}}
+{{- if and $lb.region (not (regexMatch "^[a-z0-9-]{1,63}$" (toString $lb.region))) }}{{ fail "ingestEdge.ledgerBucket.region must be a region name" }}{{ end -}}
+{{- else if $lb.region -}}
+{{- fail "ingestEdge.ledgerBucket.region requires ingestEdge.ledgerBucket.bucket" -}}
+{{- end -}}
 {{- if not (kindIs "map" $c.admission) }}{{ fail "ingestEdge.admission must be an object" }}{{ end -}}
 {{- $admission := $c.admission -}}
 {{- if or (not (kindIs "string" $admission.mode)) (not (has $admission.mode (list "sync" "async" "drain"))) }}{{ fail "ingestEdge.admission.mode must be sync, async or drain" }}{{ end -}}
@@ -23,6 +36,17 @@
 {{- if or (not $c.s3TenantLimit) (eq $admission.mode "sync") }}{{ fail "ingestEdge.admission.asyncMaxPerOrg requires s3TenantLimit=true and admission.mode async or drain" }}{{ end -}}
 {{- if or (not (regexMatch "^[0-9]+$" (toString $admission.asyncMaxPerOrg))) (lt (int $admission.asyncMaxPerOrg) 1) (gt (int $admission.asyncMaxPerOrg) (int $admission.concurrency)) }}{{ fail "ingestEdge.admission.asyncMaxPerOrg must be an integer from 1 to admission.concurrency" }}{{ end -}}
 {{- end -}}
+{{- if not (kindIs "bool" $admission.awaitAuthority) }}{{ fail "ingestEdge.admission.awaitAuthority must be a boolean" }}{{ end -}}
+{{- if and $admission.awaitAuthority (or (ne $ledger "s3") (eq $admission.mode "sync")) }}{{ fail "ingestEdge.admission.awaitAuthority requires ingestEdge.ledger=s3 and admission.mode async or drain" }}{{ end -}}
+{{- if not (or (kindIs "invalid" $admission.spread) (kindIs "bool" $admission.spread)) }}{{ fail "ingestEdge.admission.spread must be a boolean" }}{{ end -}}
+{{- if and $admission.spread (eq $admission.mode "sync") }}{{ fail "ingestEdge.admission.spread requires admission.mode async or drain" }}{{ end -}}
+{{- if not (kindIs "invalid" $admission.spreadGraceMs) -}}
+{{- if not $admission.spread }}{{ fail "ingestEdge.admission.spreadGraceMs requires ingestEdge.admission.spread=true" }}{{ end -}}
+{{- if or (not (or (kindIs "int" $admission.spreadGraceMs) (kindIs "int64" $admission.spreadGraceMs) (kindIs "float64" $admission.spreadGraceMs))) (ne (float64 $admission.spreadGraceMs) (float64 (int64 $admission.spreadGraceMs))) (lt (int64 $admission.spreadGraceMs) 1000) (gt (int64 $admission.spreadGraceMs) 86400000) }}{{ fail "ingestEdge.admission.spreadGraceMs must be an integer from 1000 to 86400000" }}{{ end -}}
+{{- end -}}
+{{- if and (not (kindIs "invalid" $c.livenessTimeoutSeconds)) (or (not (regexMatch "^[0-9]+$" (toString $c.livenessTimeoutSeconds))) (lt (int $c.livenessTimeoutSeconds) 2) (gt (int $c.livenessTimeoutSeconds) 30)) }}{{ fail "ingestEdge.livenessTimeoutSeconds must be an integer from 2 to 30" }}{{ end -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $c.replicas))) (lt (int $c.replicas) 1) (gt (int $c.replicas) 8) }}{{ fail "ingestEdge.replicas must be an integer from 1 to 8" }}{{ end -}}
+{{- if and (gt (int $c.replicas) 1) (ne $ledger "s3") }}{{ fail "ingestEdge.replicas above 1 requires ingestEdge.ledger=s3" }}{{ end -}}
 {{- if not (kindIs "bool" $c.createServiceAccount) }}{{ fail "ingestEdge.createServiceAccount must be a boolean" }}{{ end -}}
 {{- if and $c.createServiceAccount (or (not $c.serviceAccountName) (gt (len $c.serviceAccountName) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $c.serviceAccountName))) }}{{ fail "ingestEdge.createServiceAccount requires a DNS-label serviceAccountName" }}{{ end -}}
 {{- $upload := $c.uploadDirect -}}
@@ -137,7 +161,10 @@ metadata:
     app.kubernetes.io/component: ingest-edge
     helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
 spec:
-  replicas: 1
+  {{- /* ingestEdge.replicas (default 1). Above 1 requires ledger=s3: the S3-ledger
+  multi-writer proof passed locally (two processes, exactly-once); it does not
+  cover the SQL ledger. Tenant caps are per replica, so halve per-replica caps. */}}
+  replicas: {{ int $c.replicas }}
   # This does not order schema changes: an operator drain/migrate/verify barrier
   # is still required before changing the image/generation.
   strategy: { type: Recreate }
@@ -250,6 +277,13 @@ spec:
             {{- if not (kindIs "invalid" $c.ledgerParallel) }}
             - { name: INGEST_LEDGER_PARALLEL, value: {{ $c.ledgerParallel | quote }} }
             {{- end }}
+            {{- if $c.ledgerHomeGuard }}
+            - { name: INGEST_LEDGER_HOME_GUARD, value: "on" }
+            {{- end }}
+            {{- with ($c.ledgerBucket | default dict).bucket }}
+            - { name: INGEST_LEDGER_BUCKET, value: {{ . | quote }} }
+            - { name: INGEST_LEDGER_REGION, value: {{ ($c.ledgerBucket.region | default $c.locker.region) | quote }} }
+            {{- end }}
             {{- end }}
             - { name: INGEST_MAX_PER_USER, value: {{ $c.maxPerUser | quote }} }
             - { name: INGEST_MAX_PER_ORG, value: {{ $c.maxPerOrg | quote }} }
@@ -263,6 +297,15 @@ spec:
             - { name: SELFHOST_ADMISSION_MAX_ATTEMPTS, value: {{ $admission.maxAttempts | quote }} }
             {{- if not (kindIs "invalid" $admission.asyncMaxPerOrg) }}
             - { name: INGEST_ASYNC_MAX_PER_ORG, value: {{ $admission.asyncMaxPerOrg | quote }} }
+            {{- end }}
+            {{- if $admission.awaitAuthority }}
+            - { name: SELFHOST_ADMISSION_AWAIT_AUTHORITY, value: "on" }
+            {{- end }}
+            {{- if $admission.spread }}
+            - { name: SELFHOST_ADMISSION_SPREAD, value: "on" }
+            {{- if not (kindIs "invalid" $admission.spreadGraceMs) }}
+            - { name: SELFHOST_ADMISSION_SPREAD_GRACE_MS, value: {{ int64 $admission.spreadGraceMs | toString | quote }} }
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- if ne $upload.mode "off" }}
@@ -306,7 +349,7 @@ spec:
             periodSeconds: 5
           livenessProbe:
             httpGet: { path: /healthz, port: http }
-            timeoutSeconds: 2
+            timeoutSeconds: {{ $c.livenessTimeoutSeconds | default 2 }}
             periodSeconds: 10
           resources:
             {{- toYaml $c.resources | nindent 12 }}

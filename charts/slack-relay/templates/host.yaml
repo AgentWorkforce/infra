@@ -2,8 +2,12 @@
 {{- $full := include "slack-relay.fullname" . }}
 {{- $repos := list }}
 {{- $reposOn := .Values.repos.enabled }}
+{{- $reposApp := and $reposOn ((.Values.repos.app | default dict).privateKey | default dict).name }}
 {{- if $reposOn }}{{ $repos = include "slack-relay.repos" . | fromJsonArray }}{{ end }}
 {{- $allowed := .Values.host.allowedTools }}
+{{- if and .Values.sessions.mcp.enabled (not (has "mcp__sessions" $allowed)) }}
+{{- $allowed = append $allowed "mcp__sessions" }}
+{{- end }}
 {{- $persona := .Values.host.persona }}
 {{- if $reposOn }}
 {{- /* Absolute-path rules ("//" is the filesystem root in Claude Code's
@@ -41,7 +45,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
         {{- if $reposOn }}
-        checksum/repo-sync: {{ print (.Files.Get "files/repo-sync.sh") (.Files.Get "files/repo-list.mts") | sha256sum }}
+        checksum/repo-sync: {{ print (.Files.Get "files/repo-sync.sh") (.Files.Get "files/repo-list.mts") (.Files.Get "files/github-app.mts") | sha256sum }}
         {{- end }}
       {{- end }}
     spec:
@@ -78,10 +82,14 @@ spec:
               value: {{ .Values.host.permissionMode | quote }}
             - name: RELAYCAST_MCP
               value: {{ .Values.host.relaycastMcp | quote }}
+            - name: RELAY_AGENTS_MCP
+              value: {{ ne .Values.host.relayAgentsMcp false | quote }}
             - name: TURN_TIMEOUT_SECONDS
               value: {{ .Values.host.turnTimeoutSeconds | quote }}
             - name: IDLE_RELEASE_MINUTES
               value: {{ .Values.host.idleReleaseMinutes | quote }}
+            - name: REPLY_TO_OUTSIDE
+              value: {{ .Values.host.replyToOutside | default false | quote }}
             - name: DATA_DIR
               value: /data
             {{- include "slack-relay.mcpEnv" . | nindent 12 }}
@@ -91,9 +99,15 @@ spec:
             {{- end }}
             {{- include "slack-relay.secretEnv" (dict "env" "ANTHROPIC_API_KEY" "ref" .Values.secrets.anthropicApiKey) | nindent 12 }}
             {{- with .Values.sessions.upload }}
+            {{- if or .enabled $.Values.sessions.mcp.enabled }}
             {{- if .enabled }}
             - name: SESSIONS_UPLOAD
               value: "true"
+            {{- end }}
+            {{- if $.Values.sessions.mcp.enabled }}
+            - name: SESSIONS_MCP
+              value: "true"
+            {{- end }}
             - name: SESSIONS_ORG_ID
               value: {{ .orgId | quote }}
             - name: SESSIONS_WORKSPACE_ID
@@ -126,8 +140,9 @@ spec:
             - { name: repos, mountPath: /repos, readOnly: true }
             {{- end }}
         {{- if $reposOn }}
-        # Keeps /repos current. The GitHub token is in this container's
-        # environment only; the host container and the agents never get it.
+        # Keeps /repos current. The GitHub token (or the GitHub App's private
+        # key and the installation tokens minted from it) is in this container
+        # only; the host container and the agents never get it.
         - name: repo-sync
           image: {{ include "slack-relay.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -148,7 +163,33 @@ spec:
             - name: REPOS_LIST
               {{- $lines := list }}{{ range $repos }}{{ $lines = append $lines (trim (printf "%s %s" .repo .ref)) }}{{ end }}
               value: {{ join "\n" $lines | quote }}
+            {{- if $reposApp }}
+            {{- $app := .Values.repos.app }}
+            - name: REPOS_AUTH
+              value: app
+            - name: GITHUB_APP_PRIVATE_KEY_FILE
+              value: /etc/repo-sync-app/private-key
+            {{- $appId := include "slack-relay.reposAppId" . }}
+            {{- $installId := include "slack-relay.reposInstallationId" . }}
+            - name: GITHUB_APP_ID
+              {{- if $appId }}
+              value: {{ $appId | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef: { name: {{ $app.privateKey.name | quote }}, key: {{ $app.appIdKey | quote }} }
+              {{- end }}
+            - name: GITHUB_APP_INSTALLATION_ID
+              {{- if $installId }}
+              value: {{ $installId | quote }}
+              {{- else if $app.installationIdKey }}
+              valueFrom:
+                secretKeyRef: { name: {{ $app.privateKey.name | quote }}, key: {{ $app.installationIdKey | quote }} }
+              {{- else }}
+              value: ""
+              {{- end }}
+            {{- else }}
             {{- include "slack-relay.secretEnv" (dict "env" "GITHUB_TOKEN" "ref" .Values.repos.token) | nindent 12 }}
+            {{- end }}
           resources:
             {{- toYaml .Values.repos.resources | nindent 12 }}
           volumeMounts:
@@ -156,6 +197,9 @@ spec:
             - { name: repos-cache, mountPath: /var/cache/repo-sync }
             - { name: repo-sync-tmp, mountPath: /tmp }
             - { name: repo-sync-script, mountPath: /etc/repo-sync, readOnly: true }
+            {{- if $reposApp }}
+            - { name: repo-sync-app-key, mountPath: /etc/repo-sync-app, readOnly: true }
+            {{- end }}
         {{- end }}
       volumes:
         - name: tmp
@@ -173,6 +217,15 @@ spec:
         - name: repo-sync-script
           configMap:
             name: {{ $full }}-repo-sync
+        {{- if $reposApp }}
+        # The GitHub App's private key, mounted only in the repo-sync sidecar.
+        - name: repo-sync-app-key
+          secret:
+            secretName: {{ .Values.repos.app.privateKey.name }}
+            defaultMode: 0440
+            items:
+              - { key: {{ .Values.repos.app.privateKey.key | quote }}, path: private-key }
+        {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -232,4 +285,6 @@ data:
     {{- .Files.Get "files/repo-sync.sh" | nindent 4 }}
   repo-list.mts: |
     {{- .Files.Get "files/repo-list.mts" | nindent 4 }}
+  github-app.mts: |
+    {{- .Files.Get "files/github-app.mts" | nindent 4 }}
 {{- end }}

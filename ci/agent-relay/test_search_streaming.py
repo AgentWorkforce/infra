@@ -65,7 +65,7 @@ class SearchStreaming(unittest.TestCase):
             ({'streaming': {'enabled': 'yes'}}, 'searchIndexer.streaming.enabled must be null, true or false'),
             ({'streaming': {'enabled': False, 'maxReadBytes': '1GiB'}}, 'have no effect with searchIndexer.streaming.enabled=false'),
             ({'streaming': {'maxReadEvents': 100}}, 'maxReadEvents must be an integer from 400000'),
-            ({'streaming': {'enabled': True}, 'outputFacts': {'enabled': True}}, 'cannot be combined with searchIndexer.outputFacts.enabled=true'),
+            ({'streaming': {'enabled': True}, 'outputFacts': {'enabled': True}, 'stagedReconcile': {'enabled': False}}, 'cannot be combined with searchIndexer.outputFacts.enabled=true'),
             ({'streaming': {'enabled': True, 'maxReadBytes': '10TB'}}, 'maxReadBytes must be bytes or a MiB/GiB size'),
             ({'streaming': {'enabled': True, 'maxReadBytes': '3GiB'}}, 'maxReadBytes must be from 256MiB'),
             ({'streaming': {'enabled': True, 'maxReadBytes': '200MiB'}}, 'maxReadBytes must be from 256MiB'),

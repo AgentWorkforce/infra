@@ -5,11 +5,12 @@ Public chart names and existing-release compatibility: [Control/Webapp rename](c
 Terraform modules and Helm charts for customer-owned Agent Relay installations on AWS and GCP. Terraform provisions cloud foundations and managed services; Helm installs the application workloads.
 
 - [Terraform modules and examples](../terraform/README.md): network, Kubernetes, PostgreSQL, object storage, optional search and functions.
+- [Optional VPN connector networking](vpn-networking.md): default-off AWS, GCP and Azure network prerequisites for an existing corporate VPN, with separate state and explicit routing/edge integration.
 - [Helm charts](#charts): application configuration, deployment and versioned dependencies under `charts/<service-name>/`.
 - [Local code loop](kind-development.md): `make dev` on an existing Kind stack, frontend HMR and backend code-watch rebuilds.
 - [Full application proof](terraform-helm-application-proof.md): required lifecycle evidence and current gaps.
 - [Enterprise AWS installation and first-user guide](enterprise-aws-install.md): customer roles, SSO, Desktop downloads, device approval and acceptance; release preparation with explicit remaining gates.
-- [GCP (GKE) install guide](gcp-install/0-START-HERE.md): customer-neutral, tested copy-paste install of agent-relay-2026.11.1 on an existing GKE cluster (Terraform or bring-your-own Cloud SQL, GCS, Memorystore, Pub/Sub, Workload Identity), with what is not yet qualified on GKE.
+- [GCP customer setup](gcp-install/README.md): confirm inputs, review/apply Terraform and configure DNS; Agent Relay completes application setup with the approved operator. The [operator reference](gcp-install/0-START-HERE.md) holds the detailed commands, alternatives and recovery procedures.
 - [Enterprise operator controls](enterprise-customer-controls.md): generic operator controls, profile-specific downloads and disabled-Flows acceptance.
 - [Slack app](self-hosted-slack-relay.md) (optional): people talk to agents in Slack; each thread gets its own long-running, resumable agent on the install's relay.
 - [relaygate](self-hosted-relaygate.md) (optional): the governance gate between agents and Relaycast/Sessions: groups, mode bits and a classifier on everything that crosses a group boundary or leaves through Slack. [Diagram](diagrams/slack-relay-relaygate.png).
@@ -43,6 +44,8 @@ and the release gate’s `helm-charts` license-decision ID retain their original
 | [telemetry-collector](../charts/telemetry-collector) | Default-off analytics intake for Control events, internal TLS and file storage; installed durability is unverified |
 | [session-ingest-api](../charts/session-ingest-api) | Receives session manifests and chunks and stores them in S3-compatible object storage |
 | [relayauth](../charts/relayauth) | Self-hosted RelayAuth issuer: immutable image, externally managed keys, single-writer SQLite, and optional JWKS ingress |
+
+Outside the charts, `runners/macos-fleet/` holds the company's own macOS CI runners (ephemeral JIT runners on Apple-silicon Macs with a Cloudflare Worker broker); see its [README](../runners/macos-fleet/README.md).
 
 ## Self-hosted requirements registry
 
@@ -457,7 +460,7 @@ Set `nativeBrief.workspaceIds` to the explicit workspace IDs that may incur mode
 calls, `nativeBrief.keyPrefix` to the writer/reader's **bare** root (for example,
 `96bulls`), and `nativeBrief.openaiSecret.name/key` to an existing API-key Secret.
 Only the brief process receives that key. The managed defaults are one claimed
-wakeup per tick, twenty model calls globally per UTC day and three per session
+wakeup per tick, 2000 model calls globally per UTC day and ten per session
 per UTC day (`batch`, `globalDailyCap`, `sessionDailyCap`); these positive bounded
 values are configurable. The worker keeps the existing leases,
 provider transport, prompt/input bounds, scrubbing and model-call budgets. It

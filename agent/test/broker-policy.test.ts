@@ -36,7 +36,7 @@ const req = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
 });
 
 test("the shipped allowlist: auto only in the sandbox, the agent-hosts account approval-only, Khaliq the only approver, 15 to 60 minutes", () => {
-  assert.deepEqual(Object.keys(allowlist.accounts), [SANDBOX, "500268966557"]);
+  assert.deepEqual(Object.keys(allowlist.accounts), [SANDBOX, "500268966557", "154551280135"]);
   assert.equal(allowlist.accounts[SANDBOX]!.tier, "sandbox");
   assert.equal(allowlist.accounts[SANDBOX]!.roles.scoped, `arn:aws:iam::${SANDBOX}:role/agent-broker-sandbox-scoped`);
   assert.equal(allowlist.accounts[SANDBOX]!.roles.elevated, undefined, "no approval-tier role in the sandbox");
@@ -44,6 +44,11 @@ test("the shipped allowlist: auto only in the sandbox, the agent-hosts account a
   const hosts = allowlist.accounts["500268966557"]!;
   assert.equal(hosts.tier, "prod");
   assert.deepEqual(hosts.roles, { elevated: "arn:aws:iam::500268966557:role/agent-broker-elevated" });
+  // The dev account: approval-tier role only, us-west-2 only (the role itself is read-only, terraform/dev).
+  const dev = allowlist.accounts["154551280135"]!;
+  assert.equal(dev.tier, "prod");
+  assert.deepEqual(dev.regions, ["us-west-2"]);
+  assert.deepEqual(dev.roles, { elevated: "arn:aws:iam::154551280135:role/agent-broker-dev-read" });
   assert.deepEqual(allowlist.humanApprovers, ["khaliq-gant"]);
   assert.deepEqual(allowlist.duration, { minMinutes: 15, maxMinutes: 60, autoMaxMinutes: 60 });
   for (const r of allowlist.autoRules) for (const a of r.actions) {

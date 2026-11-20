@@ -71,6 +71,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail "slack-relay: sessions.upload.relayControlUrl needs secrets.sessionsEnrollmentKey.name (a Desktop enrollment key)" }}
 {{- end }}
 {{- end }}
+{{- if .Values.sessions.mcp.enabled }}
+{{- if not (.Values.relaygate.url | default "" | trim) }}
+{{- fail "slack-relay: sessions.mcp.enabled needs relaygate.url (agents read sessions as themselves through the gate)" }}
+{{- end }}
+{{- if or (not .Values.sessions.upload.orgId) (not .Values.sessions.upload.workspaceId) (not .Values.sessions.upload.relayControlUrl) (not .Values.secrets.sessionsEnrollmentKey.name) }}
+{{- fail "slack-relay: sessions.mcp.enabled needs sessions.upload.orgId, workspaceId, relayControlUrl and secrets.sessionsEnrollmentKey.name (read credentials are minted as the uploader user)" }}
+{{- end }}
+{{- end }}
 {{- if not .Values.secrets.slackBotToken.name }}
 {{- fail "slack-relay: secrets.slackBotToken.name is required" }}
 {{- end }}
@@ -121,8 +129,25 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail "slack-relay: router.orchestrator must be claude or deterministic" }}
 {{- end }}
 {{- if .Values.repos.enabled }}
-{{- if not .Values.repos.token.name }}
-{{- fail "slack-relay: repos.enabled needs repos.token.name (a Secret with a read-only GitHub token)" }}
+{{- $app := .Values.repos.app | default dict }}
+{{- $appKey := ($app.privateKey | default dict).name }}
+{{- if and $appKey .Values.repos.token.name }}
+{{- fail "slack-relay: set one of repos.app.privateKey.name and repos.token.name, not both" }}
+{{- end }}
+{{- if not (or $appKey .Values.repos.token.name) }}
+{{- fail "slack-relay: repos.enabled needs repos.app.privateKey.name (a GitHub App, recommended) or repos.token.name (a Secret with a read-only GitHub token)" }}
+{{- end }}
+{{- if $appKey }}
+{{- $id := include "slack-relay.reposAppId" . }}
+{{- if not (or (regexMatch "^([0-9]+|Iv[0-9A-Za-z.]+)$" $id) (and (eq $id "") $app.appIdKey)) }}
+{{- fail "slack-relay: repos.app.appId must be the GitHub App's numeric ID or client ID (or empty with repos.app.appIdKey)" }}
+{{- end }}
+{{- if not (regexMatch "^[0-9]*$" (include "slack-relay.reposInstallationId" .)) }}
+{{- fail "slack-relay: repos.app.installationId must be a number" }}
+{{- end }}
+{{- if not ($app.privateKey.key | default "") }}
+{{- fail "slack-relay: repos.app.privateKey.key is required" }}
+{{- end }}
 {{- end }}
 {{- $seen := dict }}
 {{- range (include "slack-relay.repos" . | fromJsonArray) }}
@@ -148,6 +173,16 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail "slack-relay: repos.refreshMinutes must be a whole number of minutes, at least 1" }}
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{/* repos.app.appId / installationId as strings (YAML numbers render as floats otherwise); a fractional number stays as written, so validation refuses it. */}}
+{{- define "slack-relay.reposAppId" -}}
+{{- $v := (.Values.repos.app | default dict).appId | default "" }}
+{{- if or (kindIs "int64" $v) (kindIs "int" $v) (and (kindIs "float64" $v) (eq (float64 (int64 $v)) $v)) }}{{ int64 $v }}{{ else }}{{ $v | toString | trim }}{{ end }}
+{{- end }}
+{{- define "slack-relay.reposInstallationId" -}}
+{{- $v := (.Values.repos.app | default dict).installationId | default "" }}
+{{- if or (kindIs "int64" $v) (kindIs "int" $v) (and (kindIs "float64" $v) (eq (float64 (int64 $v)) $v)) }}{{ int64 $v }}{{ else }}{{ $v | toString | trim }}{{ end }}
 {{- end }}
 
 {{/* repos.list as JSON [{repo, ref}], strings and maps alike. */}}

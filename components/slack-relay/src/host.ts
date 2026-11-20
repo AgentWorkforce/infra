@@ -11,7 +11,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { isGateDenial } from "./gate.ts";
+import { GateDenied, isGateDenial } from "./gate.ts";
 import { sessionIdFor } from "./session-id.ts";
 import { dataOf, inboundOf, type InboundData, type RelayEventLike, type RelayMessageLike, type ReplyData } from "./protocol.ts";
 
@@ -84,6 +84,19 @@ export interface HostOptions {
   /** Behind relaygate: a 403 on a reply is the gate's final denial, never retried. */
   gated?: boolean;
   /**
+   * Behind relaygate: asks whether the agent (by its token) may write `content`
+   * into `to`'s DM inbox. Resolves only on allow; anything else (a denial, an
+   * unknown recipient, the gate down) rejects. When set, a DM is answered only
+   * after it resolves for the exact text sent, so an agent never even attempts
+   * to send to a recipient outside its group. Unset: DMs are answered as before.
+   */
+  dmCheck?: (token: string, to: string, content: string) => Promise<void>;
+  /**
+   * Behind relaygate, agents see the relay's agents with mcp__relay_agents (agents-mcp.ts): the system prompt says
+   * what they can see and whom they can message.
+   */
+  agentsTools?: boolean;
+  /**
    * Called after each turn (and for every known agent on rejoin) so the agent's Claude session can be uploaded
    * as the agent. Fire and forget: it never delays or fails a turn.
    */
@@ -91,7 +104,7 @@ export interface HostOptions {
   log?: (m: string) => void;
 }
 
-type HostConfig = Required<Omit<HostOptions, "mcpConfig" | "getMessage" | "sessionUpload">> & Pick<HostOptions, "mcpConfig" | "getMessage" | "sessionUpload">;
+type HostConfig = Required<Omit<HostOptions, "mcpConfig" | "getMessage" | "sessionUpload" | "dmCheck">> & Pick<HostOptions, "mcpConfig" | "getMessage" | "sessionUpload" | "dmCheck">;
 
 interface Live {
   session: AgentSession;
@@ -112,6 +125,7 @@ export class AgentHost {
       persona: DEFAULT_PERSONA,
       idleMs: 15 * 60_000,
       gated: false,
+      agentsTools: false,
       log: () => {},
       ...o,
     } as HostConfig;
@@ -194,7 +208,9 @@ export class AgentHost {
   /**
    * A DM to a hosted agent: one turn in the agent's own session. A normal DM
    * is answered by DM; an automatic answer from another agent is taken in
-   * without replying, so two agents can't ping-pong forever.
+   * without replying, so two agents can't ping-pong forever. With `dmCheck`,
+   * a sender the agent may not write to (outside its relaygate group) gets no
+   * answer at all: the turn still runs, nothing is sent back.
    */
   async onDm(name: string, dm: DmEvent): Promise<string | null> {
     if (dm.from === name || dm.from === this.#o.routerName) return null;
@@ -230,6 +246,10 @@ export class AgentHost {
     const run = live.queue.catch(() => undefined).then(async () => {
       live.busy++;
       try {
+        // Before the turn, so the agent knows whether its answer can go back
+        // at all. Only the check of the exact answer text (below) allows a send.
+        const sendable = !isAnswer && Boolean(live.session.client.dm);
+        const canReply = sendable && (await this.#mayReply(name, live, dm.from, ""));
         const workdir = join(this.#o.dataDir, "agents", name);
         mkdirSync(workdir, { recursive: true });
         const marker = join(workdir, ".session-started");
@@ -242,13 +262,17 @@ export class AgentHost {
           resume: started,
           prompt: isAnswer
             ? `${dm.from} answered your direct message on the relay:\n\n${dm.text}\n\n(Take this into account; no reply is sent for this turn.)`
-            : `Direct message on the relay from ${dm.from}:\n\n${dm.text}\n\n(Your answer is sent back to ${dm.from} as a direct message.)`,
-          system: [`You are ${name}, an agent on Agent Relay.`, this.#o.persona].join("\n\n"),
+            : canReply || !sendable
+              ? `Direct message on the relay from ${dm.from}:\n\n${dm.text}\n\n(Your answer is sent back to ${dm.from} as a direct message.)`
+              : `Direct message on the relay from ${dm.from}:\n\n${dm.text}\n\n(Nothing is sent back to ${dm.from}: they're outside your group, and you can't answer or message them. Don't promise them a reply. You can still work inside your group.)`,
+          system: [`You are ${name}, an agent on Agent Relay.`, this.#o.persona, this.#o.agentsTools ? GATED_AGENTS_NOTE : "", this.#o.dmCheck ? OUTSIDE_NOTE : ""].filter(Boolean).join("\n\n"),
           mcpConfigPath: await this.#mcpPath(name, workdir, live),
         });
         if (!result.error) writeFileSync(marker, result.sessionId);
         this.#upload({ agent: name, token: live.session.token, sessionId: result.sessionId, workdir });
-        if (isAnswer || !live.session.client.dm) return null;
+        if (!canReply || !live.session.client.dm) return null;
+        // The gate must allow exactly the text that is sent.
+        if (!(await this.#mayReply(name, live, dm.from, result.text))) return null;
         await live.session.client.dm(dm.from, result.text, { data: { kind: DM_REPLY, session_id: result.sessionId } });
         this.#o.log(`${name} answered a DM from ${dm.from}`);
         return dm.from;
@@ -259,6 +283,25 @@ export class AgentHost {
     });
     live.queue = run;
     return run;
+  }
+
+  /**
+   * Whether `name` may send `content` to `to`'s inbox. Without `dmCheck` (no
+   * relaygate) always yes. With it, only an allow is a yes: a denial, an
+   * unknown recipient or a gate error withholds the reply (fail closed).
+   * Logs names only, never message text.
+   */
+  async #mayReply(name: string, live: Live, to: string, content: string): Promise<boolean> {
+    const check = this.#o.dmCheck;
+    if (!check) return true;
+    try {
+      await check(live.session.token, to, content);
+      return true;
+    } catch (err) {
+      const why = err instanceof GateDenied ? "denied" : "gate unavailable";
+      this.#o.log(`${name}: reply withheld: recipient outside group (${to}; ${why})`);
+      return false;
+    }
   }
 
   /** Uploads what an agent's session has past its cursor (after a restart), if it has one. */
@@ -326,7 +369,7 @@ export class AgentHost {
         sessionId: inbound.session.id,
         resume: started,
         prompt: promptFor(inbound, text),
-        system: systemFor(name, this.#o.persona, inbound),
+        system: systemFor(name, this.#o.persona, inbound, Boolean(this.#o.dmCheck), this.#o.agentsTools),
         mcpConfigPath,
       });
       if (!result.error) writeFileSync(join(workdir, ".session-started"), result.sessionId);
@@ -349,9 +392,17 @@ export class AgentHost {
   }
 }
 
+/** Behind relaygate: agents outside the group can reach this agent, but nothing goes back to them. */
+export const OUTSIDE_NOTE =
+  "Agents outside your group can send you direct messages, but you can't answer them: no reply, direct message or post reaches them from you. Never promise such a sender a reply or tell them you'll follow up.";
+
+/** Behind relaygate: what a hosted agent can see and whom it can message (agents-mcp.ts, relaygate's policy). */
+export const GATED_AGENTS_NOTE =
+  "You can see every agent on the relay that relaygate's policy shows you, including agents outside your group such as people's local, desktop or editor agents: list them with mcp__relay_agents__list_agents and read one's status, persona and card with mcp__relay_agents__get_agent. You can message agents in your own group with the relaycast tools. You can't message agents outside your group: relaygate refuses it (relaygate_denied), and that is final. If someone asks you to contact one, say it is outside your group and that a person in the thread can reach it instead. Never say a workspace key is missing or needed: behind relaygate there is none by design.";
+
 const DEFAULT_PERSONA = "You are a helpful generalist working for the team. Be accurate and concise.";
 
-export function systemFor(name: string, persona: string, inbound: InboundData): string {
+export function systemFor(name: string, persona: string, inbound: InboundData, outsideNote = false, agentsTools = false): string {
   const others = inbound.roster.length
     ? inbound.roster.map((r) => `- ${r.name} (${r.status}): ${r.summary ?? "no summary yet"}; ${r.threads} thread(s)`).join("\n")
     : "- none yet";
@@ -360,7 +411,10 @@ export function systemFor(name: string, persona: string, inbound: InboundData): 
     persona,
     `Your reply is posted to the Slack thread as-is: write Slack-ready text (short paragraphs, *bold*, \`code\`), no preamble.`,
     `Other agents on the relay right now (from the routing ledger):\n${others}`,
-    `You can see and message them with the relaycast tools when another agent's work is relevant; never paste another thread's private content into this one.`,
+    agentsTools
+      ? `${GATED_AGENTS_NOTE} Reach for another agent when its work is relevant; never paste another thread's private content into this one.`
+      : `You can see and message them with the relaycast tools when another agent's work is relevant; never paste another thread's private content into this one.`,
+    outsideNote ? OUTSIDE_NOTE : "",
     inbound.brief ? `Orchestrator brief for this thread: ${inbound.brief}` : "",
   ]
     .filter(Boolean)

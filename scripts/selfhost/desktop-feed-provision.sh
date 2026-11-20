@@ -21,7 +21,7 @@
 # for the candidate key check, hdiutil (macOS).
 set -euo pipefail
 
-DESKTOP_REPO="${DESKTOP_REPO:-AgentWorkforce/relay-desktop}"
+DESKTOP_REPO="${DESKTOP_REPO:-AgentWorkforce/relay-app}"
 site="" org="" profile="" workspace="" prefix="" run="" version="" apply=0
 while [ $# -gt 0 ]; do
   case "$1" in
