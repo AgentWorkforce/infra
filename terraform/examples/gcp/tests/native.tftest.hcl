@@ -152,11 +152,127 @@ run "desktop_feed_bucket_and_identity" {
     error_message = "The output must carry both Workload Identity annotations and the gcs storage setting."
   }
   assert {
-    condition     = output.chart_values["relay-control"].serviceAccount.annotations["iam.gke.io/gcp-service-account"] == output.desktop_feed.service_account && length(output.chart_values["relay-control"].extraEnv) == 3
+    condition     = output.chart_values["relay-control"].serviceAccount.annotations["iam.gke.io/gcp-service-account"] == output.desktop_feed.service_account && length(output.chart_values["relay-control"].extraEnv) == 3 && output.chart_values["relay-control"].extraEnv == output.desktop_feed.env && output.desktop_feed.env[1] == { name = "SELFHOST_DESKTOP_FEED_GCS_BUCKET", value = "example-agent-relay-desktop-feed" } && output.desktop_feed.env[2] == { name = "SELFHOST_DESKTOP_FEED_GCS_PREFIX", value = "desktop-feed" }
     error_message = "managed-values.json must carry the feed env and KSA annotations for relay-control."
   }
   assert {
     condition     = module.desktop_feed_bucket[0].google_service_account_email != null && contains(keys(output.chart_values["relay-control"]), "postgresCa")
     error_message = "Enabling the feed must keep relay-control's Cloud SQL CA values."
+  }
+}
+
+# relay-control exits when the storage env is set without a signer, so the
+# bucket and identity can be created before the signing keys exist.
+run "desktop_feed_without_signing_keys_has_no_storage_env" {
+  command = apply
+
+  variables {
+    desktop_feed_bucket_name      = "example-agent-relay-desktop-feed"
+    desktop_feed_has_signing_keys = false
+  }
+
+  assert {
+    condition     = !contains(keys(output.chart_values["relay-control"]), "extraEnv") && length(output.desktop_feed.env) == 0
+    error_message = "Without signing keys neither output may carry the feed storage env."
+  }
+  assert {
+    condition     = module.desktop_feed_bucket[0].bucket_name == "example-agent-relay-desktop-feed" && output.chart_values["relay-control"].serviceAccount.annotations["iam.gke.io/gcp-service-account"] == output.desktop_feed.service_account && contains(keys(output.chart_values["relay-control"]), "postgresCa")
+    error_message = "The bucket, the service account annotations and the Cloud SQL CA values must not depend on the signing keys."
+  }
+}
+
+run "cmek_is_off_by_default" {
+  command = apply
+
+  assert {
+    condition     = google_redis_instance.pipeline.customer_managed_key == null && google_pubsub_topic.pipeline.kms_key_name == null
+    error_message = "Without key inputs every service uses Google-managed encryption."
+  }
+}
+
+# The regulated profile (regulated.tfvars.example): every key input reaches its resource.
+run "regulated_profile_wires_every_key" {
+  command = apply
+  variables {
+    kms_key_name                 = "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    pipeline_pubsub_kms_key_name = "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    pipeline_redis_kms_key_name  = "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    admin_secret_kms_key_name    = "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    image_mirror_kms_key_name    = "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    image_mirror_repository      = "agent-relay-mirror"
+    desktop_feed_bucket_name     = "example-agent-relay-desktop-feed"
+  }
+
+  # Cloud SQL, its admin-password secret and the buckets take the key inside
+  # their modules (main.tf passes kms_key_name and admin_user); the modules'
+  # own tests assert the resources. Module internals are not addressable here.
+  assert {
+    condition     = google_pubsub_topic.pipeline.kms_key_name == "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data" && google_pubsub_topic.pipeline_dead_letter.kms_key_name == "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    error_message = "Both Pub/Sub topics must use the key."
+  }
+  assert {
+    condition     = google_redis_instance.pipeline.customer_managed_key == "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    error_message = "Redis must use the key."
+  }
+  assert {
+    condition     = google_artifact_registry_repository.mirror[0].kms_key_name == "projects/example/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    error_message = "The image mirror must use the key."
+  }
+}
+
+run "edge_tls_policy_is_on_by_default" {
+  command = apply
+
+  assert {
+    condition     = output.chart_values.gkeIngress.sslPolicy == "agent-relay-tls" && output.edge.ssl_policy == "agent-relay-tls"
+    error_message = "managed-values.json must name the TLS 1.2 SSL policy for the GKE Ingress."
+  }
+  assert {
+    condition     = output.edge.security_policy == null && output.edge.client_ip_header == null
+    error_message = "Cloud Armor is off by default."
+  }
+}
+
+run "edge_tls_policy_opt_out" {
+  command = apply
+  variables {
+    edge_ssl_policy = { create = false }
+  }
+
+  assert {
+    condition     = output.chart_values.gkeIngress.sslPolicy == "" && output.edge.ssl_policy == null
+    error_message = "Opting out must leave the chart default (no sslPolicy)."
+  }
+}
+
+run "edge_cloud_armor_behind_cloudflare" {
+  command = apply
+  variables {
+    edge_security_policy      = { create = true, cloudflare = { enabled = true } }
+    edge_origin_secret_header = { name = "x-origin-auth", values = ["0123456789abcdef0123456789abcdef"] }
+  }
+
+  assert {
+    condition     = output.edge.security_policy == "agent-relay-edge" && output.edge.client_ip_header == "CF-Connecting-IP"
+    error_message = "The Cloud Armor policy and the client-address header must be reported."
+  }
+  # Default of 10 subexpressions: secret header, two WAF rules, and two sign-in
+  # throttles for Cloudflare's 15 ranges (nine per rule).
+  assert {
+    condition     = output.edge.rule_counts.advanced == 5 && output.edge.rule_counts.total == 8
+    error_message = "Behind Cloudflare the default policy needs 5 advanced rules and 8 in all."
+  }
+}
+
+run "edge_rule_counts_are_reported" {
+  command = apply
+  variables {
+    edge_security_policy = { create = true }
+  }
+
+  # Two WAF rules and the sign-in throttle have expressions; the default rule is basic.
+  assert {
+    condition     = output.edge.rule_counts.advanced == 3 && output.edge.rule_counts.total == 4
+    error_message = "The default Cloud Armor policy needs 3 advanced rules and 4 rules in all."
   }
 }

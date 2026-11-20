@@ -232,3 +232,96 @@ run "reserved_cluster_labels_cannot_be_overridden" {
     error_message = "The final cluster labels must preserve customer labels while reserved identity labels cannot be overwritten or omitted."
   }
 }
+run "no_customer_keys_or_binary_authorization_by_default" {
+  command = apply
+  assert {
+    condition     = length(google_container_cluster.this.database_encryption) == 0 && length(google_container_cluster.this.binary_authorization) == 0 && length(google_kms_crypto_key_iam_member.service_agent) == 0
+    error_message = "Secrets CMEK, Binary Authorization and KMS grants are opt-in."
+  }
+  assert {
+    condition     = google_container_node_pool.this["system"].node_config[0].boot_disk_kms_key == null && output.gke.secrets_encryption_key == null && output.gke.binary_authorization == "DISABLED"
+    error_message = "Defaults report Google-managed encryption and no admission enforcement."
+  }
+}
+run "regulated_profile_keys_and_binary_authorization" {
+  command = apply
+  variables {
+    actor_hosts = { enabled = true, zone = "us-central1-a" }
+    redis       = { enabled = true, acknowledge_auth_in_state = true, version = "REDIS_7_2" }
+    pipeline    = { enabled = true, kms_key_name = "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/data" }
+    kms = {
+      secrets    = "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets"
+      node_disks = "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/disks"
+      redis      = "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    }
+    binary_authorization_enforce = true
+  }
+  assert {
+    condition     = google_container_cluster.this.database_encryption[0].state == "ENCRYPTED" && google_container_cluster.this.database_encryption[0].key_name == "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets"
+    error_message = "Kubernetes Secrets must be encrypted with the customer key."
+  }
+  assert {
+    condition     = google_container_cluster.this.binary_authorization[0].evaluation_mode == "PROJECT_SINGLETON_POLICY_ENFORCE" && output.gke.binary_authorization == "PROJECT_SINGLETON_POLICY_ENFORCE"
+    error_message = "Binary Authorization must enforce the project policy."
+  }
+  assert {
+    condition     = alltrue([for p in google_container_node_pool.this : p.node_config[0].boot_disk_kms_key == "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/disks"]) && length(google_container_node_pool.this) == 2 && google_container_cluster.this.node_config[0].boot_disk_kms_key == "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/disks"
+    error_message = "Every node pool, and the temporary default pool, must use the disk key."
+  }
+  assert {
+    condition     = google_redis_instance.pipeline[0].customer_managed_key == "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/data" && google_pubsub_topic.pipeline[0].kms_key_name == "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/data" && google_pubsub_topic.dead_letter[0].kms_key_name == "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/data"
+    error_message = "Redis and both Pub/Sub topics must use their keys."
+  }
+  # Each service agent gets encrypt/decrypt on its own key and nothing else.
+  assert {
+    condition = { for k, m in google_kms_crypto_key_iam_member.service_agent : k => "${m.crypto_key_id}|${m.role}|${m.member}" } == {
+      secrets    = "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets|roles/cloudkms.cryptoKeyEncrypterDecrypter|serviceAccount:service-123456789012@container-engine-robot.iam.gserviceaccount.com"
+      node_disks = "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/disks|roles/cloudkms.cryptoKeyEncrypterDecrypter|serviceAccount:service-123456789012@compute-system.iam.gserviceaccount.com"
+      redis      = "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/data|roles/cloudkms.cryptoKeyEncrypterDecrypter|serviceAccount:service-123456789012@cloud-redis.iam.gserviceaccount.com"
+    }
+    error_message = "KMS grants: GKE, Compute Engine and Redis service agents, each on its own key."
+  }
+}
+run "key_owner_can_grant_instead" {
+  command = apply
+  variables {
+    kms = { secrets = "projects/security-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets", grant_service_agents = false }
+  }
+  assert {
+    condition     = length(google_kms_crypto_key_iam_member.service_agent) == 0 && google_container_cluster.this.database_encryption[0].key_name == "projects/security-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets"
+    error_message = "A key in another project is used without this module granting on it."
+  }
+}
+run "key_in_another_region_refused" {
+  command = plan
+  variables {
+    kms = { secrets = "projects/example-project/locations/europe-west1/keyRings/relay/cryptoKeys/gke-secrets" }
+  }
+  expect_failures = [var.kms]
+}
+run "key_version_or_short_name_refused" {
+  command = plan
+  variables {
+    kms = { node_disks = "gke-disks" }
+  }
+  expect_failures = [var.kms]
+}
+# Changing the Secrets key: the new key is granted, and the old key's grant is
+# kept (previous_secrets) because GKE still reads Secrets written under it.
+run "secrets_key_change_keeps_the_previous_grant" {
+  command = apply
+  variables {
+    kms = {
+      secrets          = "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets-2"
+      previous_secrets = ["projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets"]
+    }
+  }
+  assert {
+    condition     = google_container_cluster.this.database_encryption[0].key_name == "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets-2"
+    error_message = "The cluster encrypts with the new key."
+  }
+  assert {
+    condition     = toset([for m in google_kms_crypto_key_iam_member.service_agent : m.crypto_key_id]) == toset(["projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets", "projects/example-project/locations/us-central1/keyRings/relay/cryptoKeys/gke-secrets-2"]) && alltrue([for m in google_kms_crypto_key_iam_member.service_agent : m.member == "serviceAccount:service-123456789012@container-engine-robot.iam.gserviceaccount.com"])
+    error_message = "The GKE service agent keeps the previous key and gains the new one."
+  }
+}

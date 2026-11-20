@@ -6,7 +6,7 @@ name: slack-relay
 
 on:
   pull_request:
-    paths: ["components/slack-relay/**", "charts/relaygate/**", ".github/workflows/slack-relay.yml"]
+    paths: ["components/slack-relay/**", "charts/slack-relay/files/**", "charts/relaygate/**", ".github/workflows/slack-relay.yml"]
   push:
     branches: [main]
     paths: ["components/slack-relay/**", ".github/workflows/slack-relay.yml"]
@@ -64,6 +64,7 @@ jobs:
               {prefix: "relaycast:channel/pit-", gid: 22, mode: "660", acl: [{gid: 11, perm: "w"}]},
               {prefix: "relaycast:inbox/pit-", gid: 22, mode: "660", acl: [{gid: 11, perm: "w"}]},
               {prefix: "relaycast:inbox/slack-", gid: 22, mode: "660", acl: [{gid: 11, perm: "w"}]},
+              {prefix: "relaycast:agent/", gid: 22, mode: "040"},
               {prefix: "relaycast:channel/slack", gid: 22, mode: "660"},
               {prefix: "slack:", gid: 22, mode: "660", classify: true},
               {prefix: "kb:", gid: 22, mode: "660", classify: true}

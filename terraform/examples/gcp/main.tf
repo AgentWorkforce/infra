@@ -67,11 +67,13 @@ provider "helm" {
 module "postgres" {
   source = "../../modules/gcp/postgres"
 
-  project_id          = var.project_id
-  region              = var.region
-  name                = "${var.name}-pg"
-  network_self_link   = var.network_self_link
-  kms_key_name        = var.kms_key_name
+  project_id        = var.project_id
+  region            = var.region
+  name              = "${var.name}-pg"
+  network_self_link = var.network_self_link
+  kms_key_name      = var.kms_key_name
+  # CMEK for the admin password secret needs a replica in the key's region.
+  admin_user          = { secret_kms_key = var.admin_secret_kms_key_name, secret_locations = var.admin_secret_kms_key_name == null ? [] : [var.region] }
   databases           = ["relaycontrol", "relaycast", "hoopdb", "relayhistory"]
   deletion_protection = var.deletion_protection
   server_ca_mode      = "GOOGLE_MANAGED_CAS_CA"
@@ -82,6 +84,7 @@ module "postgres" {
 # that identity to the private address inside this VPC so every service can use
 # sslmode=verify-full without a proxy or public IP.
 resource "google_dns_managed_zone" "cloud_sql" {
+  labels      = var.labels
   project     = var.project_id
   name        = "${var.name}-cloud-sql"
   dns_name    = module.postgres.dns_name

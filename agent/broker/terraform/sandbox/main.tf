@@ -39,13 +39,24 @@ locals {
   scoped_role_arn               = "arn:aws:iam::${var.sandbox_account_id}:role/${local.scoped_role_name}"
 }
 
+# The dev account's read-only role is created by that account's owner, by hand
+# (../dev), not here: this root only lets the broker assume it.
+
 module "broker_role" {
   source    = "../modules/broker-role"
   providers = { aws = aws.broker }
 
   account_id             = var.broker_account_id
   trusted_principal_arns = [var.broker_host_role_arn]
-  target_role_arns       = [local.scoped_role_arn, local.agent_hosts_elevated_role_arn]
+  target_role_arns       = [local.scoped_role_arn, local.agent_hosts_elevated_role_arn, var.dev_read_role_arn]
+  audit_log_group_arn    = module.audit_log.arn
+}
+
+# The audit log's copy in CloudWatch, in the broker's account and region (the
+# host ships to it every minute: broker/src/ship.ts, setup-lane.sh).
+module "audit_log" {
+  source    = "../modules/audit-log"
+  providers = { aws = aws.broker }
 }
 
 module "sandbox_scoped_role" {

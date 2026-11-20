@@ -2,7 +2,9 @@
 # the same layout as the ALB Ingress (scripts/selfhost/eks-alb-ingress.sh
 # with EKS_ALB_INGEST=true) and GKE Ingress.
 #
-#   __HOST_ROOT__     dashboard, with /cloud/api and /login routed to the control API
+#   __HOST_ROOT__     dashboard, with /cloud/api, /login and /relay-node routed to
+#                     the control API (/relay-node/v1/* carries Desktop node
+#                     enrolment and the node WebSocket; it has no /cloud alias)
 #   __HOST_API__      control API
 #   __HOST_CAST__     Relaycast
 #   __HOST_HISTORY__  native History: ingest edge for uploads, read API for reads
@@ -45,6 +47,7 @@ spec:
         paths:
           - { path: /cloud/api, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
           - { path: /login, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
+          - { path: /relay-node, pathType: Prefix, backend: { service: { name: relay-control, port: { number: 80 } } } }
           - { path: /, pathType: Prefix, backend: { service: { name: relay-webapp, port: { number: 8080 } } } }
     - host: __HOST_API__
       http:

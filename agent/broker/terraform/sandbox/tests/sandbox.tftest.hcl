@@ -11,6 +11,11 @@ mock_provider "aws" {
     override_during = plan
     values          = { arn = "arn:aws:iam::500268966557:role/agent-broker-elevated" }
   }
+  override_resource {
+    target          = module.audit_log.aws_cloudwatch_log_group.audit
+    override_during = plan
+    values          = { arn = "arn:aws:logs:us-east-1:500268966557:log-group:/aws-cred-broker/audit" }
+  }
 }
 
 mock_provider "aws" {
@@ -50,8 +55,21 @@ run "wires_broker_to_its_roles_and_matches_the_allowlist" {
     condition = toset(module.broker_role.permissions_policy.Statement[0].Resource) == toset([
       jsondecode(file("${path.module}/../../allowlist.json")).accounts["805532413586"].roles.scoped,
       jsondecode(file("${path.module}/../../allowlist.json")).accounts["500268966557"].roles.elevated,
+      jsondecode(file("${path.module}/../../allowlist.json")).accounts["154551280135"].roles.elevated,
     ])
     error_message = "the broker may vend into exactly the allowlist's roles"
+  }
+  assert {
+    condition     = module.broker_role.permissions_policy.Statement[1].Sid == "ShipAuditLog" && module.broker_role.permissions_policy.Statement[1].Resource[0] == "arn:aws:logs:us-east-1:500268966557:log-group:/aws-cred-broker/audit"
+    error_message = "the broker role may append to the audit group this creates, in its own account"
+  }
+  assert {
+    condition     = output.audit_log_group_name == "/aws-cred-broker/audit"
+    error_message = "the group the host ships to"
+  }
+  assert {
+    condition     = strcontains(file("${path.module}/../../../setup-lane.sh"), "BROKER_AUDIT_LOG_REGION=${var.region}\n")
+    error_message = "setup-lane.sh ships to the region this creates the group in (not the host's own region)"
   }
   assert {
     condition     = output.broker_role_arn == "arn:aws:iam::500268966557:role/agent-cred-broker"

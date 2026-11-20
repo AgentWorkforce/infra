@@ -1,0 +1,15 @@
+{
+  "enforce_deny_rules": true,
+  "outbound_rules": {
+    "vpn": {
+      "cidr": "REPLACE_HUB_IPV4/32",
+      "protocol": "udp",
+      "port": 1194
+    },
+    "edge": {
+      "cidr": "REPLACE_OBSERVER_IPV4/32",
+      "protocol": "tcp",
+      "port": 443
+    }
+  }
+}

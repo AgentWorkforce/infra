@@ -1,0 +1,15 @@
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+relaycast:
+  baseUrl: http://relaycast:8787
+secrets:
+  relaycastWorkspaceKey: { name: slack-relay-relaycast, key: workspace-key }
+  slackBotToken: { name: slack-relay-slack, key: bot-token }
+  slackAppToken: { name: slack-relay-slack, key: app-token }
+  anthropicApiKey: { name: slack-relay-anthropic, key: api-key }
+repos:
+  enabled: true
+  # One Secret with app-id, private-key and installation-id;
+  # repos.list empty: the installation's repositories.
+  app:
+    privateKey: { name: slack-relay-github-app, key: private-key }

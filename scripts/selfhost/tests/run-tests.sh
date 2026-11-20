@@ -10,6 +10,7 @@ REPO_ROOT="$(cd -- "${SELFHOST_DIR}/../.." && pwd)"
 RECOVERY_DIR="${REPO_ROOT}/charts/agent-relay/scripts"
 # Run the scripts under TEST_BASH (for example /bin/bash 3.2 on macOS).
 TEST_BASH="${TEST_BASH:-bash}"
+python3 -m unittest discover -s "${TEST_DIR}" -p 'test_prepare_gcp_edge.py' -v
 # The Node helper uses injected API responses; it never contacts a cluster.
 node --test "${TEST_DIR}/operator-device-login.test.mjs"
 tmp_root="$(mktemp -d)"
@@ -205,10 +206,13 @@ scripts=(
   "${TEST_DIR}/agent-relay-upgrade-test.sh"
   "${SELFHOST_DIR}/cloud-sql-setup.sh"
   "${TEST_DIR}/cloud-sql-setup-test.sh"
+  "${TEST_DIR}/azure-postgres-setup-test.sh"
   "${SELFHOST_DIR}/desktop-feed-provision.sh"
   "${TEST_DIR}/desktop-feed-provision-test.sh"
   "${SELFHOST_DIR}/rds-setup.sh"
   "${TEST_DIR}/rds-setup-test.sh"
+  "${REPO_ROOT}/docs/gcp-install/first-admin.sh"
+  "${TEST_DIR}/gcp-first-admin-test.sh"
   "${SELFHOST_DIR}/verify-agent-relay.sh"
   "${SELFHOST_DIR}/pre-upgrade-check.sh"
   "${SELFHOST_DIR}/record-restore-drill.sh"
@@ -226,9 +230,11 @@ if command -v shellcheck >/dev/null 2>&1; then
   pass "shellcheck"
 fi
 "${TEST_BASH}" "${TEST_DIR}/cloud-sql-setup-test.sh"
+"${TEST_BASH}" "${TEST_DIR}/azure-postgres-setup-test.sh"
 "${TEST_BASH}" "${TEST_DIR}/desktop-feed-provision-test.sh"
 "${TEST_BASH}" "${TEST_DIR}/agent-relay-upgrade-test.sh"
 "${TEST_BASH}" "${TEST_DIR}/rds-setup-test.sh"
+"${TEST_BASH}" "${TEST_DIR}/gcp-first-admin-test.sh"
 
 reset_fixtures() {
   rm -rf "${fixtures}" "${gcs}"

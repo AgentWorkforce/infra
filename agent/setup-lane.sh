@@ -63,7 +63,11 @@ if [ -n "${AWS_ADMIN_ROLE_ARN:-}" ]; then
   sudo -H -u agent env ROLE="$AWS_ADMIN_ROLE_ARN" REGION="$AWS_REGION" bash -c '
     umask 077; mkdir -p ~/.aws
     printf "[default]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = layered-infra-ops\nregion = %s\n\n[profile instance]\nregion = %s\n" \
-      "$ROLE" "$REGION" "$REGION" > ~/.aws/config.new && mv -f ~/.aws/config.new ~/.aws/config'
+      "$ROLE" "$REGION" "$REGION" > ~/.aws/config.new
+    # Profiles the agent added itself (cross-account operator roles) live in
+    # config.local, which this script never writes, and are merged on every run.
+    if [ -f ~/.aws/config.local ]; then printf "\n" >> ~/.aws/config.new; cat ~/.aws/config.local >> ~/.aws/config.new; fi
+    mv -f ~/.aws/config.new ~/.aws/config'
 fi
 
 # The AWS credential broker (agent/broker, DESIGN.md), when credentialBroker
@@ -82,8 +86,12 @@ fi
 #    token the broker refuses everything (fail closed);
 #  - the agent user may run /usr/local/libexec/aws-cred-broker as credbroker
 #    (sudoers) only with request, decide, whois (read-only Relay lookup of
-#    an agent id), sweep and verify-audit, and nothing else; /usr/local/bin/aws-cred-broker wraps that.
+#    an agent id), sweep, verify-audit and ship-audit, and nothing else; /usr/local/bin/aws-cred-broker wraps that.
 BROKER_HOME=/var/lib/aws-cred-broker
+# Must match broker/terraform/sandbox (the group the broker role may write, and
+# its region: var.region, not this host's region).
+BROKER_AUDIT_LOG_GROUP=/aws-cred-broker/audit
+BROKER_AUDIT_LOG_REGION=us-east-1
 broker_ref=$(tr -d '[:space:]' < /opt/agent-host/broker.ref 2>/dev/null || true)
 if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '[0-9a-f]{40}'; then
   id credbroker >/dev/null 2>&1 || useradd --system --home-dir "$BROKER_HOME" --create-home --shell /usr/sbin/nologin credbroker
@@ -120,6 +128,7 @@ fi
 if [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '[0-9a-f]{40}' \
   && [ "$(readlink /opt/aws-cred-broker/current 2>/dev/null)" != "/opt/aws-cred-broker/$broker_ref" ]; then
   rm -f /etc/sudoers.d/aws-cred-broker
+  systemctl disable --now aws-cred-broker-ship-audit.timer >/dev/null 2>&1 || true
   echo "setup-lane: could not install the credential broker at $broker_ref; broker access is off until it installs" >&2
 elif [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE '[0-9a-f]{40}'; then
   # The observer token, from SSM straight into a credbroker-only file: never
@@ -141,13 +150,14 @@ elif [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE
     printf 'export HOME=%s AWS_CONFIG_FILE=%s/.aws/config AWS_REGION=%s AWS_PAGER=\n' "$BROKER_HOME" "$BROKER_HOME" "$AWS_REGION"
     printf 'export BROKER_STATE_DIR=%s/state BROKER_DELIVERY_DIR=%s/creds BROKER_AWS_PROFILE=aws-cred-broker\n' "$BROKER_HOME" "$BROKER_HOME"
     printf 'export BROKER_RELAY_TOKEN_FILE=%s/relay-observer-token BROKER_RELAY_API=https://cast.agentrelay.com BROKER_RELAY_NAME=%s\n' "$BROKER_HOME" "${RELAY_NAME:-layered-infra-ops}"
+    printf 'export BROKER_AUDIT_LOG_GROUP=%s BROKER_AUDIT_LOG_REGION=%s BROKER_AUDIT_LOG_STREAM=%s\n' "$BROKER_AUDIT_LOG_GROUP" "$BROKER_AUDIT_LOG_REGION" "${RELAY_NAME:-layered-infra-ops}"
     printf 'exec %s --experimental-strip-types --no-warnings /opt/aws-cred-broker/current/src/cli.ts "$@"\n' "$node_bin"
   } > /usr/local/libexec/aws-cred-broker.new
   install -m 0755 -o root -g root /usr/local/libexec/aws-cred-broker.new /usr/local/libexec/aws-cred-broker && rm -f /usr/local/libexec/aws-cred-broker.new
   printf '#!/bin/bash\nexec sudo -n -u credbroker /usr/local/libexec/aws-cred-broker "$@"\n' > /usr/local/bin/aws-cred-broker.new
   install -m 0755 -o root -g root /usr/local/bin/aws-cred-broker.new /usr/local/bin/aws-cred-broker && rm -f /usr/local/bin/aws-cred-broker.new
   b=/usr/local/libexec/aws-cred-broker
-  printf 'agent ALL=(credbroker) NOPASSWD: %s request *, %s decide *, %s whois *, %s sweep, %s verify-audit\n' "$b" "$b" "$b" "$b" "$b" > /etc/sudoers.d/aws-cred-broker.new
+  printf 'agent ALL=(credbroker) NOPASSWD: %s request *, %s decide *, %s whois *, %s sweep, %s verify-audit, %s ship-audit\n' "$b" "$b" "$b" "$b" "$b" "$b" > /etc/sudoers.d/aws-cred-broker.new
   if visudo -cf /etc/sudoers.d/aws-cred-broker.new >/dev/null; then
     install -m 0440 -o root -g root /etc/sudoers.d/aws-cred-broker.new /etc/sudoers.d/aws-cred-broker
   fi
@@ -156,4 +166,13 @@ elif [ -n "${CRED_BROKER_ROLE_ARN:-}" ] && printf '%s' "$broker_ref" | grep -qxE
     umask 077
     printf "[profile aws-cred-broker]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = layered-infra-ops-cred-broker\nregion = %s\n" \
       "$ROLE" "$REGION" > ~/.aws/config.new && mv -f ~/.aws/config.new ~/.aws/config'
+  # Audit shipping (broker/src/ship.ts): every minute, as credbroker, new audit
+  # lines go to CloudWatch Logs $BROKER_AUDIT_LOG_GROUP. Until the broker role
+  # may write there (broker/terraform/sandbox, applied with Khaliq's OK), a run
+  # fails with AccessDenied in the journal and ships nothing; requests are
+  # unaffected.
+  printf '[Unit]\nDescription=Ship the AWS credential broker audit log to CloudWatch\n\n[Service]\nType=oneshot\nUser=credbroker\nGroup=credbroker\nExecStart=/usr/local/libexec/aws-cred-broker ship-audit\nTimeoutStartSec=300\nNoNewPrivileges=yes\n' > /etc/systemd/system/aws-cred-broker-ship-audit.service
+  printf '[Unit]\nDescription=Ship the AWS credential broker audit log every minute\n\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=1min\nAccuracySec=10s\n\n[Install]\nWantedBy=timers.target\n' > /etc/systemd/system/aws-cred-broker-ship-audit.timer
+  systemctl daemon-reload
+  systemctl enable --now aws-cred-broker-ship-audit.timer >/dev/null 2>&1 || echo "setup-lane: could not start the audit shipping timer" >&2
 fi

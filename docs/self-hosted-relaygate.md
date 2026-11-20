@@ -37,6 +37,7 @@ is private to its owner's group:
 | `relaycast:channel/`, `relaycast:inbox/local-` | 11 | pit (22) may read |
 | `relaycast:channel/pit-`, `relaycast:inbox/pit-`, `relaycast:inbox/slack-` | 22 | local (11) may write |
 | `slack:`, `kb:` | 22 | none; classified |
+| `relaycast:agent/` (the agent directory) | 22 | none; mode `040`: the pit sees every agent, and seeing grants no write |
 
 Enrollment keys decide an agent's group at registration; give each a name
 prefix matching its streams (`local-`, `pit-`, `slack-`) so a key can't take
@@ -167,6 +168,26 @@ forwards the mint calls unchanged and remembers which user each token belongs
 to. Each Control user acts as `ctl:<userId>` (the `ctl:` prefix is reserved) and
 their own credential still reaches Sessions. Uploads need `rth:sync`, reads
 `rth:read`. See relaygate `docs/contract.md`.
+
+### Group badges in the dashboard
+
+To show a group's label on its sessions in the dashboard (a small badge on
+session rows and the session header, and a Group filter), give the group a
+label in the policy. With relaygate#39, relay-control#204 and relay-web#148 or
+later:
+
+```yaml
+# relaygate-values.yaml (or the Control-owned policy under Settings, Gate)
+policy:
+  groupLabels:
+    "22": { label: pit }   # key: gid in decimal; label: 1-24 letters, digits, space, . _ -
+```
+
+No group has a label by default. A label is display only: it grants nothing.
+relaygate adds `relaygate: {gid, label}` only to sessions the reader may already
+read, never names the owner, and drops any such key that comes from Sessions
+itself. The chart renders `policy` verbatim, so there is no other knob. See
+relaygate `docs/contract.md`, "Group labels".
 
 ### Desktop enrolment
 
@@ -311,6 +332,29 @@ Escape hatches, each of which reopens a direct path for that caller only:
 `/internal`, so Control can then read `/v1` without the gate), and
 `sessions-pipeline.ingestEdge.networkPolicy.gateOnlyFrom` (e.g. Control for the
 operator session erase API, which the ingest edge otherwise no longer admits).
+
+### Control-owned policy (opt-in)
+
+By default relaygate reads its policy from a file (the `relaygate.policy` values, rendered to a ConfigMap). With `global.relaygate.controlPolicy` the policy lives in relay-control instead: owners and admins edit it under Settings, Gate, every change is a new signed version, and relaygate pulls it (relaygate `docs/contract.md`, "Who decides, who enforces" and "Admin API for relay-control"; design in relaygate `docs/design/control-owned-policy.md`). It needs gate-only, **relaygate main at R1/R2 or later** (#33, #34) and **a relay-control image with C1** (the Control-owned policy storage and routes). The chart can't check either image.
+
+It is two steps, because relaygate with no policy applied or cached answers `503` everywhere:
+
+1. `enabled: true`. relay-control gets `SELFHOST_RELAYGATE_ADMIN_URL` (relaygate's in-cluster origin, `http://<relaygate>.<ns>.svc.cluster.local:8080`; the admin API is on the main port), `SELFHOST_RELAYGATE_ADMIN_TOKEN` and `SELFHOST_RELAYGATE_POLICY_SECRET`. relaygate's `RELAYGATE_ADMIN_TOKEN` comes from the same `adminToken` Secret. relaygate still reads its ConfigMap: import it into Control once (`POST /api/v1/relaygate/policy/import`, owner only; the key sha256s become key rows with no key material).
+2. `pull: true`. relaygate gets `RELAYCONTROL_POLICY_URL` (`http://<relay-control>.<ns>.svc.cluster.local:<port>/internal/v1/relaygate/policy`) and `RELAYCONTROL_POLICY_SECRET`, and the chart stops rendering `RELAYGATE_POLICY`, the policy ConfigMap and its volume. relaygate caches each applied version, so it keeps enforcing through a relay-control restart.
+
+```yaml
+global:
+  relaygate:
+    controlPolicy:
+      enabled: true
+      pull: false                                       # true after the import
+      adminToken: { name: relaygate-admin, key: token }  # >= 24 characters
+      policySecret: { name: relaygate-policy, key: secret }  # >= 32 characters, not the introspection secret
+      controlServiceName: relay-control                 # the relay-control Service (fullnameOverride); checked
+      controlServicePort: 80                            # relay-control.service.port; checked
+```
+
+Both Secrets are read by relaygate and relay-control from this one place, so they can't drift. Network paths: relaygate reaches relay-control on its Service port (relay-control's NetworkPolicy admits relaygate under gate-only when it lists `ingressFrom`, and the default admits the namespace), and relay-control reaches the admin API on relaygate's main port, which relaygate's policy leaves open; relaygate's internal Sessions listener stays relay-control-only. Rendering fails without gate-only or components.control, without either Secret, with `pull` but not `enabled`, with a Control Service name or port that doesn't match relay-control's, with the policy secret equal to the introspection secret, with a second `relaygate.secrets.adminToken`, and with `pull` plus `relaygate.existingConfigMap`. Every relay-control URL env, `SELFHOST_RELAYGATE_ADMIN_URL` included, is checked in CI to be a bare origin.
 
 ### Existing sessions: adopt them once
 

@@ -18,6 +18,7 @@
 {{- include "agent-relay.validateNativeHistory" . }}
 {{- include "agent-relay.validateOperatorSessionErase" . }}
 {{- include "agent-relay.validateGateOnly" . }}
+{{- include "agent-relay.validateControlPolicy" . }}
 {{- end }}
 
 {{- define "agent-relay.gateOnly" -}}
@@ -79,7 +80,10 @@ listener) and Relaycast under gate-only. */ -}}
 {{- if not $found }}{{ fail (printf "global.relaygate.gateOnly.enabled: %s must select relay-control's pods (app.kubernetes.io/name %s in podSelector matchLabels, or a matchExpressions In; from relay-control.nameOverride)" (index $want 0) $controlName) }}{{ end -}}
 {{- end }}
 {{- $cp := dig "control" dict $gate -}}
-{{- if and (not (dig "existingConfigMap" "" $gate)) (not (dig "policy" "controlPrincipals" (list) $gate)) }}{{ fail "global.relaygate.gateOnly.enabled requires relaygate.policy.controlPrincipals: relaygate refuses every dashboard and desktop caller no rule maps (docs/self-hosted-relaygate.md, Gate-only)" }}{{ end -}}
+{{- /* Inline rules matter only when relaygate reads the chart's ConfigMap:
+not with existingConfigMap, and not when it pulls its policy from relay-control. */ -}}
+{{- $pulls := and (dig "relaygate" "controlPolicy" "enabled" false (.Values.global | default dict)) (dig "relaygate" "controlPolicy" "pull" false (.Values.global | default dict)) -}}
+{{- if and (not (dig "existingConfigMap" "" $gate)) (not $pulls) (not (dig "policy" "controlPrincipals" (list) $gate)) }}{{ fail "global.relaygate.gateOnly.enabled requires relaygate.policy.controlPrincipals: relaygate refuses every dashboard and desktop caller no rule maps (docs/self-hosted-relaygate.md, Gate-only)" }}{{ end -}}
 {{- $introspect := dig "introspectUrl" "" $cp -}}
 {{- if or (not (dig "control" true $components)) (not (include "agent-relay.isService" (dict "root" . "url" $introspect "svc" $controlService))) (not (hasSuffix "/internal/v1/auth/introspect" $introspect)) }}{{ fail (printf "global.relaygate.gateOnly.enabled requires components.control and relaygate.control.introspectUrl=http://%s.%s.svc.cluster.local/internal/v1/auth/introspect (dashboard and desktop callers are mapped through Control)" $controlService .Release.Namespace) }}{{ end -}}
 {{- if ne (dig "sessionIngestAudience" "" $cp) $origin }}{{ fail (printf "relaygate.control.sessionIngestAudience must be the ingest origin %s (sessions-pipeline.ingestEdge.origin), the audience of the desktop's upload tokens" $origin) }}{{ end -}}
@@ -201,7 +205,7 @@ and its actor-mode consumers (relaycast, relayfile).
 
 {{/*
 Single-host mode (global.singleHost.host): the dashboard and the control API
-share one host (/ and /cloud/api, /login, /api). Relaycast, History,
+share one host (/ and /cloud/api, /login, /relay-node, /api). Relaycast, History,
 Relayfile and the durable-actors control plane cannot be served under a path
 prefix on that host without app changes, so they stay on their own hosts and
 the chart refuses to put them on the single host.
@@ -253,4 +257,20 @@ durable-actors: the control plane refuses a publicUrl with a path and issues act
 {{- end }}
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{- /* Control-owned relaygate policy: relaygate and relay-control read the
+shared Secrets from global.relaygate.controlPolicy; this checks what a parent
+can't derive for its children: the Control Service relaygate pulls from. */ -}}
+{{- define "agent-relay.validateControlPolicy" -}}
+{{- $cp := dig "relaygate" "controlPolicy" dict (.Values.global | default dict) | default dict -}}
+{{- if dig "enabled" false $cp -}}
+{{- if not (include "agent-relay.gateOnly" .) }}{{ fail "global.relaygate.controlPolicy.enabled requires global.relaygate.gateOnly.enabled: relay-control manages relaygate's policy only on gate-only installs" }}{{ end -}}
+{{- if not (dig "control" true (.Values.components | default dict)) }}{{ fail "global.relaygate.controlPolicy.enabled requires components.control" }}{{ end -}}
+{{- $control := index .Values "relay-control" | default dict -}}
+{{- $controlService := dig "fullnameOverride" "" $control | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $control | default "relay-control")) | trunc 63 | trimSuffix "-" -}}
+{{- $want := dig "controlServiceName" "" $cp | default (printf "%s-relay-control" .Release.Name | trunc 63 | trimSuffix "-") -}}
+{{- if ne $want $controlService }}{{ fail (printf "global.relaygate.controlPolicy.controlServiceName must be the relay-control Service %s (relaygate pulls the policy from it)" $controlService) }}{{ end -}}
+{{- if ne (int (dig "controlServicePort" 80 $cp)) (int (dig "service" "port" 80 $control)) }}{{ fail (printf "global.relaygate.controlPolicy.controlServicePort must equal relay-control.service.port (%v)" (dig "service" "port" 80 $control)) }}{{ end -}}
+{{- end -}}
 {{- end }}

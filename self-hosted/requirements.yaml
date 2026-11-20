@@ -80,7 +80,7 @@ profiles:
     services_image: ghcr-rds
     db: { hoopdb: external, db_mode: rds, boundary: global-default-revoke }
     install: helm install sessions-pipeline agentworkforce/sessions-pipeline -f profiles/external-rds.yaml --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=true
-    summary: No in-cluster SQL Jobs; the RDS master runs the rds_*.sql bootstrap before migrate.
+    summary: No in-cluster privileged SQL Jobs; the operator bootstrap creates a membership-free hoopdb_owner graph before migrate.
   - id: aws-rds-native
     title: AWS EKS native History with external RDS, S3 and OpenSearch
     chart: sessions-pipeline
@@ -92,7 +92,8 @@ profiles:
       Customer-neutral production shape. It fails closed until the release
       overlay supplies the approved services digest, customer resource IDs,
       origins, RDS CA hash and ALB subnet peers. No in-cluster database or
-      privileged SQL bootstrap Job is installed.
+      privileged SQL bootstrap Job is installed. Fresh installs migrate as
+      hoopdb_owner; legacy installs use one short-lived administrator Job Secret.
   - id: external-supabase
     title: External Supabase project as HoopDb (fail-closed)
     chart: sessions-pipeline
@@ -121,7 +122,7 @@ profiles:
     values_file: ci/gcp-cloudsql-values.yaml
     services_image: ghcr
     db: { hoopdb: external, db_mode: cloudsql, boundary: global-default-revoke }
-    summary: The stacks/gcp/config.ts shape. cloudsql mode, shim off, roleBootstrap false, a separate migration-owner URL; the operator runs the Cloud SQL bootstrap files as the migration owner.
+    summary: The stacks/gcp/config.ts shape. cloudsql mode, shim off, roleBootstrap false; the operator bootstrap creates a dedicated hoopdb_owner and stores only that migration-owner URL.
   # The other self-host charts: one install shape each.
   - id: relaycast
     title: Relaycast core (portable-single)
@@ -275,9 +276,10 @@ compatibility:
       digest: sha256:5bb6075240afa02a1b1797a81c07bffa029954eac7803d702ecba20db35d4db9
       built_by: publish-image-ecr run 41375747474
     ghcr-rds:
-      repository: ghcr.io/agentworkforce/96bulls-services
-      digest: sha256:b2b74a19375e86bbd5c70a30ea5edbd28cac3de103490bc428de007f4a38b821
-      built_by: publish-image run 42462161615
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:fd2efd61dca4761dfb55256aa4797cb7f61c3434cc8af4833287e0e7bb7b59a9
+      source_commit: b96e1e1e97185f212d86928dd1eff6b599000892
+      built_by: agent-relay-2026.11.17 release pin
   releases:
     - id: telemetry-collector-0.1.7
       status: unreleased
@@ -407,9 +409,289 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.42
+    - id: sessions-pipeline-0.8.52
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.52, sessions-pipeline-worker: 0.7.12, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.12, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: fresh PG16+ installs use the membership-free separate-database owner graph; legacy and PG15 installs remain master-owner }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: the administrator runs the one-time bootstrap and the migration Job uses hoopdb_owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.51. The searchIndexer streaming with outputFacts refusal now applies only with stagedReconcile.enabled=false: from relayhistory-pipeline efdd4bb2 (pinned by the native profiles in agent-relay 0.7.63) the staged run carries the output facts. Default renders are unchanged apart from chart versions.'
+    - id: sessions-pipeline-0.8.51
+      status: planned
+      charts: { sessions-pipeline: 0.8.51, sessions-pipeline-worker: 0.7.12, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.12, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: fresh PG16+ installs use the membership-free separate-database owner graph; legacy and PG15 installs remain master-owner }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: the administrator runs the one-time bootstrap and the migration Job uses hoopdb_owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.50. Adds migrations.rdsLayout to select the shipped name-agnostic RDS preflight. Fresh managed-database installs use the dedicated hoopdb_owner login; legacy installs can isolate the administrator URL in a short-lived Job Secret.'
+    - id: sessions-pipeline-0.8.50
+      status: planned
+      charts: { sessions-pipeline: 0.8.50, sessions-pipeline-worker: 0.7.11, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.11, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.49. Adds searchIndexer.stagedReconcile.enabled on the consumer only (issue 610 Phase 3): tri-state, unset by default so the image default applies (on in services images from relayhistory-pipeline efdd4bb2, off in the pinned images); true or false renders SEARCH_INDEX_STAGED_RECONCILE_ENABLED explicitly; true with streaming.enabled=false is refused. No image pin changes. Bootstrap Job names do not move. Default renders are unchanged apart from chart versions.'
+    - id: sessions-pipeline-0.8.49
+      status: planned
+      charts: { sessions-pipeline: 0.8.49, sessions-pipeline-worker: 0.7.11, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.11, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.48. searchIndexer.resources defaults to requests memory 1Gi and limits memory 3Gi (was 256Mi and 1Gi), sized for the streaming reconcile at the default budgets: about 3 KB per record of the scope, about 2 GB at 500000 records on top of the non-streaming sizing. searchIndexer is off by default; other default renders are unchanged apart from chart versions.'
+    - id: sessions-pipeline-0.8.48
+      status: planned
+      charts: { sessions-pipeline: 0.8.48, sessions-pipeline-worker: 0.7.11, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.11, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.47. ingestEdge.admission.spread (default false) renders SELFHOST_ADMISSION_SPREAD=on: work younger than the grace is ordered by a per-process salted hash, so replicas sharing one inbox mostly start on different items instead of all claiming the oldest (fewer contended claims, not none); work older than the grace stays strict oldest-first. Meant for ingestEdge.replicas above 1. Requires admission.mode async or drain. ingestEdge.admission.spreadGraceMs (default unset: the image uses max(120000, 4 x scanIntervalMs)), an integer 1000..86400000, renders SELFHOST_ADMISSION_SPREAD_GRACE_MS and requires spread=true. ingestEdge.livenessTimeoutSeconds (default unset keeps 2), an integer 2..30, sets the ingest edge /healthz liveness timeoutSeconds. Default renders are unchanged apart from the helm.sh/chart labels.'
+    - id: sessions-pipeline-0.8.47
+      status: planned
+      charts: { sessions-pipeline: 0.8.47, sessions-pipeline-worker: 0.7.11, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.11, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.46. ingestEdge.replicas (default 1, integer 1..8) sets the ingest-edge Deployment replicas; strategy stays Recreate. Above 1 requires ingestEdge.ledger=s3 (the S3-ledger multi-writer proof passed locally: two processes, exactly-once). Tenant caps are per replica, so halve per-replica caps when running 2. Default renders are unchanged apart from the helm.sh/chart labels.'
+    - id: sessions-pipeline-0.8.46
+      status: planned
+      charts: { sessions-pipeline: 0.8.46, sessions-pipeline-worker: 0.7.11, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.11, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.45. Opt-in ingestEdge.ledgerHomeGuard renders INGEST_LEDGER_HOME_GUARD=on (the relocation fork guard on the Locker bucket); opt-in ingestEdge.ledgerBucket.{bucket,region} renders INGEST_LEDGER_BUCKET / INGEST_LEDGER_REGION on the ingest edge and INGEST_REARM_LEDGER_BUCKET / _REGION on the re-arm sweeper (requires ledger=s3 and locker.provider=s3; must differ from locker.bucket; region defaults to locker.region; ledgerHomeGuard rejects non-boolean values). Needs a services image with ledger-store.ts and an offline ledger relocation first (relayhistory-pipeline docs/ledger-relocation.md). Default renders are unchanged apart from the helm.sh/chart labels.'
+    - id: sessions-pipeline-0.8.45
+      status: planned
+      charts: { sessions-pipeline: 0.8.45, sessions-pipeline-worker: 0.7.11, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.11, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.44. ingestEdge.admission.awaitAuthority (default false; requires ledger=s3 and async or drain admission) renders SELFHOST_ADMISSION_AWAIT_AUTHORITY=on, so async admission defers uploads for orgs with no fence-authority marker yet instead of retrying or refusing them. Default renders are unchanged apart from the helm.sh/chart labels.'
+    - id: sessions-pipeline-0.8.44
+      status: planned
+      charts: { sessions-pipeline: 0.8.44, sessions-pipeline-worker: 0.7.11, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.11, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.43 and sessions-pipeline-worker 0.7.11: nativeBrief.globalDailyCap 20 -> 2000 and sessionDailyCap 3 -> 10 so an install is no longer capped at 20 briefs a day; the validation maxima are unchanged. Renders with nativeBrief off differ only in the helm.sh/chart labels.'
+    - id: sessions-pipeline-0.8.43
+      status: planned
+      charts: { sessions-pipeline: 0.8.43, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: the RDS master runs the rds_*.sql bootstrap first }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: operator runs the Cloud SQL bootstrap files as the migration owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.42. ingestEdge.admission.startupFailureThreshold (unset keeps 30; 30..900) sets the ingest edge startup probe failureThreshold so the first admission scan on a large backlog fits. Default renders are unchanged apart from the helm.sh/chart labels.'
+    - id: sessions-pipeline-0.8.42
+      status: planned
       charts: { sessions-pipeline: 0.8.42, sessions-pipeline-worker: 0.7.10, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
       depends:
         sessions-pipeline: { worker: 0.7.10, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1760,9 +2042,321 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.38
+    - id: agent-relay-0.7.63
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.63, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.52, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.62 and sessions-pipeline 0.8.52. The GCP, EKS and EKS RDS-native profiles move the services image to relayhistory-pipeline efdd4bb2 (ghcr.io/agentworkforce/sessions-pipeline@sha256:e51749eb, publish run 44489159041; issue 610 Phase 3, staged reconcile and streaming on by default; with streaming.enabled=false and stagedReconcile unset the staged path resolves off). It vendors relayscrubber 0.5.0-alpha.9 under Khaliqs recorded OVERRIDE of the relayscrubber-lead security block (customer-images.yaml); alpha.10 replaces it when it passes. Upgrade pre-steps for an existing database: the bulls96_legacy_export_privacy role (re-run the modes migration-roles bootstrap from the image) and the 058000 index prebuild or one allowBlockingIndexBuild. 28 migrations plus HoopDb 0005/0006 run in the migrate Job; the indexer restarts until 062110 (and 062140 with output facts) are applied. License FSL-1.1-ALv2. No upgrade rehearsal from a 7e9b2f0f database yet.'
+    - id: agent-relay-0.7.62
+      status: planned
+      charts: { agent-relay: 0.7.62, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.51, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.61 and sessions-pipeline 0.8.51. RDS migrate Jobs can select the name-agnostic separate-database preflight; fresh managed-database installs use the dedicated hoopdb_owner login and legacy upgrades can point migration/bootstrap Jobs at one short-lived Secret.'
+    - id: agent-relay-0.7.61
+      status: planned
+      charts: { agent-relay: 0.7.61, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.50, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.60 and sessions-pipeline 0.8.50 (searchIndexer.stagedReconcile.enabled, issue 610 Phase 3; no image pin changes).'
+    - id: agent-relay-0.7.60
+      status: planned
+      charts: { agent-relay: 0.7.60, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.49, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.59. Internal-only GKE edge, opt-in: gkeIngress.mode=internal (default external) renders the Ingress with class gce-internal, a regional static internal address (gkeIngress.staticIpName) and HTTP closed, for a regional internal Application Load Balancer that answers only inside the VPC and the networks routed to it. No ManagedCertificate or FrontendConfig is rendered (GKE Ingress supports neither internally): the certificate is gkeIngress.tlsSecretName or gkeIngress.internal.preSharedCerts (regional certificates). gkeIngress.internal.proxyOnlySubnetCidr is required and every backend NetworkPolicy (and the durable-actors policy) must admit it; the render refuses otherwise, and also refuses sslPolicy or securityPolicy in internal mode and internal.* in external mode. values-gcp-internal.yaml is the overlay; terraform/modules/gcp/internal-edge creates the proxy-only subnet, the address and the firewall rule. Default renders differ only in the helm.sh/chart labels; images unchanged.'
+    - id: agent-relay-0.7.59
+      status: planned
+      charts: { agent-relay: 0.7.59, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.49, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.57 (0.7.58 is taken by another open change). GKE edge hardening, all opt-in and empty by default: gkeIngress.sslPolicy names a Compute SSL policy that the FrontendConfig applies to the HTTPS listener (without one Google''s default policy still accepts TLS 1.0 and 1.1); gkeIngress.securityPolicy names a Cloud Armor backend security policy set on the BackendConfig of every backend behind the Ingress (api, cast, both history edges, the actors and relaygate edges, and new policy-only BackendConfigs <name>-dashboard, <name>-edge-deny and <name>-files; the relay-webapp and relayfile Services need their backend-config annotation and the render fails with the exact value otherwise); gkeIngress.tlsSecretName serves a kubernetes.io/tls Secret instead of the ManagedCertificate, for an edge whose DNS points at a proxy or CDN. The resources come from terraform/modules/gcp/edge-security; terraform/examples/gcp now creates the TLS 1.2 SSL policy by default and exports it in chart_values. Default renders differ only in the helm.sh/chart labels (subdomain golden unchanged); images unchanged.'
+    - id: agent-relay-0.7.57
+      status: planned
+      charts: { agent-relay: 0.7.57, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.49, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.56. Opt-in externalSecrets (default off): renders one External Secrets Operator ExternalSecret (external-secrets.io/v1) per externalSecrets.secrets entry, targeting the Kubernetes Secret of that name, so install Secrets can come from AWS SSM Parameter Store, AWS Secrets Manager or another ESO provider without chart edits; store.create renders a namespaced SecretStore from store.provider. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.56
+      status: planned
+      charts: { agent-relay: 0.7.56, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.49, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries sessions-pipeline 0.8.49 (searchIndexer default memory sized for the streaming reconcile: request 1Gi, limit 3Gi).'
+    - id: agent-relay-0.7.55
+      status: planned
+      charts: { agent-relay: 0.7.55, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.48, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.54 and sessions-pipeline 0.8.48: opt-in ingestEdge.admission.spread, ingestEdge.admission.spreadGraceMs and ingestEdge.livenessTimeoutSeconds. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.54
+      status: planned
+      charts: { agent-relay: 0.7.54, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.47, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.53 and relaygate 0.1.10: the default policy gives inboxes no prefix covers (Desktop agents enrolled with a device token, named cursor-, claude-, codex-) the gid-11 inboxDefaults mirroring the local- rule, so local agents DM each other and the pit may read, never write. Needs relaygate with inboxDefaults (relaygate#43); older images ignore it. Still default-off (components.relaygate). Default renders differ in the relaygate policy ConfigMap and the helm.sh/chart labels.'
+    - id: agent-relay-0.7.53
+      status: planned
+      charts: { agent-relay: 0.7.53, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.47, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.9 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.52 and sessions-pipeline 0.8.47: ingestEdge.replicas (default 1; above 1 requires ledger=s3). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.52
+      status: planned
+      charts: { agent-relay: 0.7.52, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.46, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.9 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.51 and sessions-pipeline 0.8.46: opt-in ingestEdge.ledgerBucket and ingestEdge.ledgerHomeGuard. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.51
+      status: planned
+      charts: { agent-relay: 0.7.51, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.45, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.9 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.50 and sessions-pipeline 0.8.45: opt-in ingestEdge.admission.awaitAuthority. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.50
+      status: planned
+      charts: { agent-relay: 0.7.50, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.44, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.9 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.49 and slack-relay 0.3.11: the Slack router reacts :eyes: to each message it routes as soon as it takes it (slack.ackReaction, needs the bot scope reactions:write), still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.49
+      status: planned
+      charts: { agent-relay: 0.7.49, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.44, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.10, relaygate: 0.1.9 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.48 and sessions-pipeline 0.8.44: native brief default daily caps raised to 2000 per install and 10 per session (were 20 and 3). Renders with nativeBrief off differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.48
+      status: planned
+      charts: { agent-relay: 0.7.48, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.10, relaygate: 0.1.9 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.47 and slack-relay 0.3.10, relaygate 0.1.9: behind relaygate the Slack thread agents see every agent on the relay that the policy shows them (mcp__relay_agents list_agents and get_agent, read-only, as each agent), and the default policy shows the pit every agent (relaycast:agent/ r for gid 22; visibility only, needs relaygate with the agent directory). Still default-off (components.slackRelay, components.relaygate). Default renders gain RELAY_AGENTS_MCP and the relaycast:agent/ policy default, plus the helm.sh/chart labels.'
+    - id: agent-relay-0.7.47
+      status: planned
+      charts: { agent-relay: 0.7.47, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.9, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.46 and slack-relay 0.3.9: sessions.mcp paging fix (no items dropped to fit the output cap) and the built-in sessions MCP name kept, still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.46
+      status: planned
+      charts: { agent-relay: 0.7.46, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.8, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.45 and slack-relay 0.3.8: behind relaygate a Slack thread agent never answers a DM from outside its group (the host asks /v1/check first and fails closed), still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.45
+      status: planned
+      charts: { agent-relay: 0.7.45, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.7, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.44 and slack-relay 0.3.7: opt-in sessions.mcp (read-only Sessions tools for the Slack agents, each read decided by relaygate as the agent; the read credential stays in the host), still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.44
+      status: planned
+      charts: { agent-relay: 0.7.44, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.6, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.43 and slack-relay 0.3.6: repos.app, GitHub App auth for the repo-sync sidecar (installation tokens minted from the app private key, renewed before expiry), still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.43
+      status: planned
+      charts: { agent-relay: 0.7.43, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.5, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.42 and slack-relay 0.3.5: opt-in sessions.upload (each Slack agent''s Claude session uploaded to Sessions through relaygate, as the agent), still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.42
+      status: planned
+      charts: { agent-relay: 0.7.42, relay-control: 0.4.22, relay-webapp: 0.2.7 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.7, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.4, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.41. The sign-in host routes /relay-node (Prefix) to relay-control: Desktop calls the relay-node broker routes (POST /relay-node/v1/nodes, the GET /relay-node/v1/ws node WebSocket) on that origin and relay-control serves them only at the root path, never under /cloud, so they previously fell through to the dashboard. Added to the GKE Ingress root host (subdomain and single-host), the relay-webapp 0.2.7 leaf Ingress (kind uses it), scripts/selfhost/eks-alb-ingress.sh and docs/azure-install/ingress.yaml. The socket rides the existing api BackendConfig timeout (gkeIngress.backends.api.timeoutSec, default 3600). Default renders gain the /relay-node rule on the root host; images unchanged.'
+    - id: agent-relay-0.7.41
+      status: planned
+      charts: { agent-relay: 0.7.41, relay-control: 0.4.22, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.4, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.40 and slack-relay 0.3.4: opt-in repos (read-only GitHub repositories for the agents through a repo-sync sidecar), still default-off (components.slackRelay). Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.40
+      status: planned
+      charts: { agent-relay: 0.7.40, relay-control: 0.4.22, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.43, relay-control: 0.4.22, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.3, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.39 and sessions-pipeline 0.8.43: opt-in ingestEdge.admission.startupFailureThreshold. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.39
+      status: planned
+      charts: { agent-relay: 0.7.39, relay-control: 0.4.22, relay-webapp: 0.2.6 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.42, relay-control: 0.4.22, relay-webapp: 0.2.6, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.3, relaygate: 0.1.8 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.38. Opt-in global.relaygate.controlPolicy (opt.agent-relay.relaygate-control-policy): relay-control 0.4.22 gets SELFHOST_RELAYGATE_ADMIN_URL, _ADMIN_TOKEN and _POLICY_SECRET (needs a relay-control image with C1), and relaygate 0.1.8 can pull its policy from relay-control. Default renders differ only in the helm.sh/chart labels.'
+    - id: agent-relay-0.7.38
+      status: planned
       charts: { agent-relay: 0.7.38, relay-control: 0.4.21, relay-webapp: 0.2.6 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -3098,9 +3692,30 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
-    - id: relaygate-0.1.7
+    - id: relaygate-0.1.10
       status: unreleased
       current: true
+      charts: { relaygate: 0.1.10 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
+      notes: 'Carries 0.1.9. The default policy adds inboxDefaults for gid 11 (660, acl 22:r), mirroring the relaycast:inbox/local- rule: an inbox no prefix covers (Desktop agents named cursor-, claude-, codex-) follows its registered agent''s group, so local agents DM each other and the pit may read, never write. Needs relaygate with inboxDefaults (relaygate#43) for it to take effect; older images ignore it. Default renders differ in the policy ConfigMap and the helm.sh/chart label.'
+    - id: relaygate-0.1.9
+      status: planned
+      charts: { relaygate: 0.1.9 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
+      notes: 'Carries 0.1.8. The default policy adds the agent directory prefix relaycast:agent/ (gid 22, mode 040): the pit sees every agent in GET /v1/agents and /v1/agents/:name, local agents'' view is unchanged, and seeing grants no write (DMs still need w on the inbox). Needs relaygate with the agent directory (relaygate#41) for it to take effect; older images ignore it. Default renders differ in the policy ConfigMap and the helm.sh/chart label.'
+    - id: relaygate-0.1.8
+      status: planned
+      charts: { relaygate: 0.1.8 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
+      notes: 'Carries 0.1.7. global.relaygate.controlPolicy: RELAYGATE_ADMIN_TOKEN from the shared adminToken Secret; with pull, RELAYCONTROL_POLICY_URL (relay-control /internal/v1/relaygate/policy) and RELAYCONTROL_POLICY_SECRET instead of RELAYGATE_POLICY, the ConfigMap and its volume. Needs relaygate main at R1/R2 (#33, #34) or later. Default renders differ only in the helm.sh/chart label.'
+    - id: relaygate-0.1.7
+      status: planned
       charts: { relaygate: 0.1.7 }
       app_versions: { relaygate: 0.1.0 }
       images:
@@ -3155,9 +3770,65 @@ compatibility:
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
       notes: First registered chart, rendered only; default-off in the agent-relay umbrella (components.relaygate). Build 1 of the server (registration, mode check, /v1/check, classifier, audit); the Relaycast/Sessions proxy follows. Ships no default digest.
-    - id: slack-relay-0.3.3
+    - id: slack-relay-0.3.11
       status: unreleased
       current: true
+      charts: { slack-relay: 0.3.11 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.10. The router adds a reaction (slack.ackReaction, SLACK_ACK_REACTION, default eyes; empty turns it off) to each message it routes to an agent (a mention, a reply in a thread it holds, an allowed DM) as soon as it takes it, fire-and-forget: routing never waits on it, already_reacted is ignored and failures log Slack''s error code only. Needs the bot scope reactions:write (added to the manifest); without it the router logs once and stops trying until restarted. Needs a slack-relay image built from this revision or later (the router code that sends the reaction); with an older image.digest the env is rendered but nothing reacts. Existing installs move to that image, add reactions:write, reinstall the Slack app and restart the router. Default renders gain the SLACK_ACK_REACTION env. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.10
+      status: planned
+      charts: { slack-relay: 0.3.10 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.9. Behind relaygate each agent gets mcp__relay_agents (list_agents with paging and a name/persona filter, get_agent): read-only calls to relaygate GET /v1/agents and /v1/agents/:name with the agent''s own rg_ token, so it sees every agent the policy shows it. Relaycast''s agent.list and workspace tools, which need a workspace key no gated agent has, are refused. The system prompt says the agent sees all agents, messages only its own group, and never cites a workspace key. New host.relayAgentsMcp (RELAY_AGENTS_MCP, default true). Needs an image with src/agents-mcp.ts. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.9
+      status: planned
+      charts: { slack-relay: 0.3.9 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.8. sessions.mcp tools never drop items of a page to fit the output cap (the cursor points past all of them); only strings are cut, and a page that still does not fit asks for a smaller limit. An OAuth MCP server named sessions no longer replaces the built-in Sessions tools. Sessions carry user {id, name, email} from relay-control organization memberships (cached ten minutes) and list_sessions/search_sessions filter by person. Default renders differ only in the chart labels. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.8
+      status: planned
+      charts: { slack-relay: 0.3.8 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.7. Behind relaygate the agent host answers a DM only after /v1/check allows the agent to write the exact answer to the sender''s inbox (relaycast:inbox/<sender>); a denial, an unknown recipient or a gate error withholds it (logged as reply withheld: recipient outside group). The turn still runs and uploads, and the agent is told it can''t answer outside-group senders. New host.replyToOutside (REPLY_TO_OUTSIDE, default false) only applies without relaygate. Default renders gain the REPLY_TO_OUTSIDE env. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.7
+      status: planned
+      charts: { slack-relay: 0.3.7 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.6. Opt-in sessions.mcp: each agent gets read-only Sessions tools (mcp__sessions), every read sent to relaygate with the agent''s own rg_ token so relaygate decides as the agent; the host mints the read credential as the uploader user and keeps it in a loopback proxy the agent never sees. Reuses sessions.upload''s orgId, workspaceId, relayControlUrl and enrollment key. Needs an image with src/sessions-mcp.ts. Default renders differ only in the chart labels. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.6
+      status: planned
+      charts: { slack-relay: 0.3.6 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.5. Opt-in repos.app: the repo-sync sidecar authenticates as a GitHub App (private key from a Secret volume only the sidecar mounts; app and installation IDs from the same Secret or values), mints contents:read installation tokens and renews them before expiry, and lists GET /installation/repositories when repos.list is empty. repos.token stays supported; exactly one is required. Default renders differ only in the chart labels. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.5
+      status: planned
+      charts: { slack-relay: 0.3.5 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.4. Opt-in sessions.upload: after every turn and at startup the agent host uploads each agent''s Claude Code session past a per-session cursor on its volume to relaygate''s /sessions proxy (native delivery batches) with the agent''s own rg_ token, so the agent owns it in its group. The Sessions credential is a Desktop enrollment key (secrets.sessionsEnrollmentKey) the host exchanges once at relay-control, or relaygate''s SESSIONS_TOKEN. Default renders differ only in the chart labels. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.4
+      status: planned
+      charts: { slack-relay: 0.3.4 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.3. Opt-in repos: a repo-sync sidecar (same image, script from a ConfigMap) keeps read-only shallow checkouts of repos.list, or of every repo the token can read when the list is empty, at /repos; the host mounts it read-only and agents get Read/Glob/Grep on //repos/**. The GitHub token (repos.token) is only in the sidecar. Default renders differ only in the chart labels. Default-off in the agent-relay umbrella; ships no default digest.'
+    - id: slack-relay-0.3.3
+      status: shipped
       charts: { slack-relay: 0.3.3 }
       app_versions: { slack-relay: 0.1.0 }
       images:
@@ -3267,6 +3938,8 @@ internal_env:
   - { name: ROLE, chart: slack-relay, why: selects the router or host entry point of the one slack-relay image; fixed per workload }
   - { name: LEDGER_PATH, chart: slack-relay, why: fixed /data/ledger.sqlite on the router's ledger PVC }
   - { name: DATA_DIR, chart: slack-relay, why: fixed /data on the agent host's sessions volume }
+  - { name: REPOS_DIR, chart: slack-relay, why: "fixed /repos, the repo-sync sidecar's checkout volume (mounted read-only in the host)" }
+  - { name: REPOS_CACHE_DIR, chart: slack-relay, why: "fixed /var/cache/repo-sync, the sidecar-only volume of bare git caches" }
   - { name: RELAYGATE_POLICY, chart: relaygate, why: fixed /policy/policy.json, the mounted policy ConfigMap }
   - { name: RELAYGATE_DB, chart: relaygate, why: fixed /data/relaygate.db on the gate's PVC }
   - { name: SERVICE, chart: [sessions-pipeline-worker, session-ingest-api], why: selects the entry point of the one services image }
@@ -3365,7 +4038,7 @@ entries:
       aws-rds-native: { worker.locker.credentials.mode: podIdentity, alleyoop.locker.credentials.mode: podIdentity, worker.serviceAccount.name: agent-relay-worker, alleyoop.serviceAccount.name: agent-relay-session-ingest-api, sessionReadApi.serviceAccountName: agent-relay-session-read, ingestEdge.serviceAccountName: agent-relay-session-ingest-api, searchIndexer.serviceAccount.name: agent-relay-search-indexer }
     verify: aws eks list-pod-identity-associations --cluster-name <c> includes every enabled workload ServiceAccount; the worker, ingest edge and search indexer reach only their required bucket/index resources
     sources:
-      - "README.md:152"
+      - "docs/repository-guide.md:152"
       - "charts/sessions-pipeline-worker/values.yaml:60"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:77"
 
@@ -3376,8 +4049,14 @@ entries:
       externalSecrets.enabled renders an ExternalSecret (external-secrets.io/v1) whose
       target is existingSecret. The ESO CRDs and the named secretStoreRef must exist,
       and every consumed key must be mapped in externalSecrets.data.
-    chart: [sessions-pipeline-worker, session-ingest-api]
-    values: ["sessions-pipeline-worker:externalSecrets.*", "session-ingest-api:externalSecrets.*"]
+      On the agent-relay umbrella, externalSecrets.secrets maps each install Secret
+      name to its remote keys (for example AWS SSM Parameter Store paths) and renders
+      one ExternalSecret per Secret; store.create renders a namespaced SecretStore
+      from store.provider instead of using an existing secretStoreRef. The ESO
+      controller needs read access to the store (for SSM: ssm:GetParameter* and
+      kms:Decrypt for SecureString).
+    chart: [sessions-pipeline-worker, session-ingest-api, agent-relay]
+    values: ["sessions-pipeline-worker:externalSecrets.*", "session-ingest-api:externalSecrets.*", "agent-relay:externalSecrets.*"]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
@@ -3386,6 +4065,7 @@ entries:
       - "charts/sessions-pipeline-worker/values.yaml:248"
       - "charts/sessions-pipeline-worker/templates/externalsecret.yaml:20"
       - "charts/session-ingest-api/templates/externalsecret.yaml:11"
+      - "charts/agent-relay/templates/external-secrets.yaml:1"
 
   # =========================================================================
   # sessions-pipeline: Secrets
@@ -3400,7 +4080,7 @@ entries:
       The ECR path (EKS node role) needs none.
     chart: sessions-pipeline
     values: [worker.imagePullSecrets, alleyoop.imagePullSecrets]
-    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-supabase, gcp-cloudsql]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-supabase, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
     secrets:
@@ -3408,7 +4088,7 @@ entries:
         note: type kubernetes.io/dockerconfigjson with read access to ghcr.io/agentworkforce/96bulls-services
     verify: kubectl get secret <pull secret> -o jsonpath='{.type}' is kubernetes.io/dockerconfigjson; pods are not ImagePullBackOff
     sources:
-      - "README.md:128"
+      - "docs/repository-guide.md:128"
       - "charts/sessions-pipeline/values.yaml:24"
       - "charts/sessions-pipeline/templates/_privileged-sql-job.tpl:92"
 
@@ -3475,7 +4155,7 @@ entries:
           - { key: SUMMARY_MASTER_KEYS, key_path: worker.summaryEncryption.key }
     verify: kubectl exec deploy/<release>-worker-bob-costas -- test -r /var/run/secrets/sessions-pipeline/summary-master-keys; the Secret key parses as <id>:<64 hex>
     sources:
-      - "README.md:143"
+      - "docs/repository-guide.md:143"
       - "charts/sessions-pipeline-worker/values.yaml:45"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:102"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:30"
@@ -3524,7 +4204,9 @@ entries:
     description: |
       On Cloud SQL and RDS the services connect as the least-privilege runtime role and only
       the migrate Job (and its wait-for-role) connects as the migration owner, from
-      migrations.hoopdb.existingSecret/key.
+      migrations.hoopdb.existingSecret/key. Fresh managed-database installs use
+      hoopdb_owner. A legacy administrator-owned install instead points Jobs at the
+      short-lived hoopdb-admin-jobs Secret, which is deleted after the Jobs finish.
     chart: sessions-pipeline
     values: [worker.migrations.hoopdb.existingSecret, worker.migrations.hoopdb.key]
     profiles: [gcp-cloudsql, external-rds, aws-rds-native]
@@ -3537,8 +4219,8 @@ entries:
           - { key: HOOPDB_MIGRATION_URL, key_path: worker.migrations.hoopdb.key }
     verify:
       default: kubectl get secret 96bulls-gcp -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' connects as the migration owner (select current_user)
-      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is the RDS master
-      aws-rds-native: psql "$(kubectl get secret agent-relay-secrets -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is the RDS master
+      external-rds: psql "$(kubectl get secret sessions-pipeline-hoopdb -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is hoopdb_owner
+      aws-rds-native: psql "$(kubectl get secret agent-relay-secrets -o jsonpath='{.data.HOOPDB_MIGRATION_URL}' | base64 -d | sed -E 's/&?uselibpqcompat=true//; s/\?&/?/')" -Atc 'select current_user' is hoopdb_owner; a legacy install has no such long-lived key and uses hoopdb-admin-jobs only while Jobs run
     sources:
       - "charts/sessions-pipeline/ci/gcp-cloudsql-values.yaml:33"
       - "charts/sessions-pipeline-worker/values.yaml:93"
@@ -3793,8 +4475,8 @@ entries:
       The migrations GRANT to the Supabase roles. CNPG initdb creates them as
       superuser; on plain external Postgres the migrator's shim creates them
       (HOOPDB_SUPABASE_SHIM=true); on Cloud SQL the operator's
-      cloudsql_migration_roles.sql does (shim off); on RDS the master's
-      rds_migration_roles.sql does (shim off); Supabase has them natively.
+      cloudsql_migration_roles.sql does (shim off); on new RDS installs the
+      disposable infra role creator does (shim off); Supabase has them natively.
     chart: sessions-pipeline
     values: [hoopdb.cluster.initdb.postInitApplicationSQL, worker.migrations.supabaseShim]
     profiles: [selfhost-postgres, migration, aws-cnpg, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-supabase, gcp-cloudsql]
@@ -3830,15 +4512,15 @@ entries:
     verify:
       default: psql "$HOOPDB_URL" -Atc "select rolcanlogin, rolconfig from pg_roles where rolname='session_directory_search_worker'" is f|{statement_timeout=2s}
       external-selfhosted: run supabase/bootstrap/session_directory_search_worker.sql as a superuser; then the same query
-      external-rds: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
-      aws-rds-native: the master runs supabase/bootstrap/rds_migration_roles.sql; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
+      external-rds: the operator activation creates the role membership-free; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
+      aws-rds-native: rds-setup.sh pre creates the role membership-free; then, with uselibpqcompat=true removed from the URL (psql rejects it), the same query
       external-supabase: run supabase/bootstrap/session_directory_search_worker_supabase.sql as postgres; then the same query
       gcp-cloudsql: run supabase/bootstrap/session_directory_search_worker.sql as the migration owner; then the same query
     sources:
       - "charts/sessions-pipeline/values.yaml:131"
       - "charts/sessions-pipeline/values.yaml:218"
       - "charts/sessions-pipeline/templates/search-worker-role-bootstrap.yaml:7"
-      - "README.md:259"
+      - "docs/repository-guide.md:259"
       - "sessions-pipeline@7d7229b:supabase/bootstrap/session_directory_search_worker.sql:1"
       - "sessions-pipeline@7d7229b:runbooks/session-directory-search-worker-bootstrap.md:1"
 
@@ -3889,7 +4571,7 @@ entries:
       (-v migration_owner=hoop) and migrate waits for the exact default; external
       Postgres runs the same file as a superuser; Cloud SQL runs
       cloudsql_owner_function_default_revoke.sql as the migration owner; RDS runs
-      rds_owner_function_default_revoke.sql as the master.
+      rds_owner_function_default_revoke.sql during the one-time administrator bootstrap and installs the owner default as hoopdb_owner.
       event-trigger (Supabase only): hoopdb_sessions_function_boundary_supabase.sql as
       postgres (-v runtime_role=sessions_pipeline_runtime), then migrate.ts --activation-check
       must report event_trigger.verified true. Never run the default-revoke file on
@@ -4010,7 +4692,7 @@ entries:
     sources:
       - "charts/sessions-pipeline-worker/values.yaml:106"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:193"
-      - "README.md:167"
+      - "docs/repository-guide.md:167"
       - "sessions-pipeline@7d7229b:src/hoopdb/migrate.ts:117"
 
   - id: opt.sessions-pipeline.function-boundary-mode
@@ -4205,6 +4887,30 @@ entries:
     sources:
       - "charts/sessions-pipeline/values.yaml:56"
       - "charts/sessions-pipeline-worker/templates/_env.tpl:18"
+
+  - id: opt.hoopdb.rds-layout
+    kind: option
+    title: RDS HoopDb ownership layout
+    description: |
+      Selects the shipped migrator's RDS ownership preflight. Fresh PostgreSQL
+      16+ installs use separate-database with hoopdb_owner and no creator edges.
+      Existing administrator-owned installs remain master-owner; their
+      ownership transfer is a follow-up under infra #480.
+    chart: sessions-pipeline
+    values: [worker.migrations.rdsLayout]
+    env: [HOOPDB_RDS_LAYOUT]
+    profiles: [external-rds, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: master-owner
+    profile_default: { external-rds: separate-database, aws-rds-native: separate-database }
+    choices:
+      - { value: master-owner, note: interim existing-install layout }
+      - { value: separate-database, note: fresh PG16+ dedicated hoopdb_owner layout }
+    verify: the migrate Job alone renders HOOPDB_RDS_LAYOUT with the selected value
+    sources:
+      - "charts/sessions-pipeline-worker/values.yaml:162"
+      - "charts/sessions-pipeline-worker/templates/_env.tpl:79"
 
   # =========================================================================
   # sessions-pipeline: Locker, images, observability, identity
@@ -5301,6 +6007,90 @@ entries:
       - "charts/agent-relay/values-gcp-proof.yaml"
       - "ci/agent-relay/render.sh"
 
+  - id: opt.agent-relay.gke-edge-hardening
+    kind: option
+    title: GKE edge TLS policy, Cloud Armor and certificate from a Secret
+    description: |
+      Three optional gkeIngress settings, each empty by default and each
+      naming something that must exist before the upgrade.
+      gkeIngress.sslPolicy is a Compute SSL policy in the cluster's project;
+      the FrontendConfig applies it to the load balancer's HTTPS listener.
+      Without one Google's default policy applies, which still accepts TLS 1.0
+      and 1.1; a policy with min TLS 1.2 (profile MODERN or RESTRICTED) is
+      recommended. gkeIngress.securityPolicy is a Cloud Armor backend security
+      policy; it is set on the BackendConfig of every backend behind the
+      Ingress, including policy-only BackendConfigs for the dashboard
+      (<gkeIngress.name>-dashboard), Relayfile (<gkeIngress.name>-files) and
+      the edge-deny Service. The relay-webapp and relayfile Services belong to
+      child charts, so their cloud.google.com/backend-config annotation must be
+      set in values; the render fails with the exact value when it is missing.
+      gkeIngress.tlsSecretName is a kubernetes.io/tls Secret served instead of
+      the ManagedCertificate, for an edge whose public DNS points at a proxy or
+      CDN in front of the load balancer, where Google cannot issue a managed
+      certificate. terraform/modules/gcp/edge-security creates the SSL policy
+      and the Cloud Armor policy (OWASP rules, sign-in rate limit, source-IP
+      allowlist, Cloudflare origin lockdown).
+    chart: agent-relay
+    values:
+      - gkeIngress.sslPolicy
+      - gkeIngress.securityPolicy
+      - gkeIngress.tlsSecretName
+    profiles: [agent-relay]
+    status: shipped
+    provided_by: operator
+    default: none
+    choices:
+      - { value: none, note: "Google default TLS policy, no Cloud Armor, ManagedCertificate" }
+      - { value: sslPolicy, note: "recommended: TLS 1.2 minimum" }
+      - { value: securityPolicy, note: "Cloud Armor on every backend" }
+      - { value: tlsSecretName, note: "certificate from a Secret instead of ManagedCertificate" }
+    verify: render with the values set shows spec.sslPolicy on the FrontendConfig, spec.securityPolicy.name on every BackendConfig, every Ingress backend Service bound to one of them, and spec.tls without a ManagedCertificate
+    sources:
+      - "charts/agent-relay/templates/gke-ingress.yaml"
+      - "charts/agent-relay/values.yaml"
+      - "ci/agent-relay/render.sh"
+      - "terraform/modules/gcp/edge-security/main.tf"
+
+  - id: opt.agent-relay.gke-internal-edge
+    kind: option
+    title: Internal-only GKE edge (regional internal load balancer)
+    description: |
+      gkeIngress.mode=internal renders the umbrella Ingress for a regional
+      internal Application Load Balancer (Ingress class gce-internal): a
+      private address, reachable only from the VPC and the networks routed to
+      it (VPN, Interconnect), HTTPS only. It is the GKE counterpart of an
+      internal-scheme ALB on EKS. gkeIngress.staticIpName then names a regional
+      internal address. GKE Ingress supports neither ManagedCertificate,
+      FrontendConfig nor Cloud Armor on an internal load balancer, so neither
+      is rendered, the certificate comes from gkeIngress.tlsSecretName or
+      gkeIngress.internal.preSharedCerts (regional self-managed certificates),
+      and gkeIngress.sslPolicy and gkeIngress.securityPolicy are refused. The
+      load balancer's proxies connect to the pods from the VPC's proxy-only
+      subnet: gkeIngress.internal.proxyOnlySubnetCidr is required, and every
+      backend's networkPolicy must admit that range next to the two Google
+      health-check ranges (values-gcp-internal.yaml restates the lists).
+      terraform/modules/gcp/internal-edge creates the proxy-only subnet, the
+      address and the firewall rule from the subnet to the nodes.
+    chart: agent-relay
+    values:
+      - gkeIngress.mode
+      - gkeIngress.internal.proxyOnlySubnetCidr
+      - gkeIngress.internal.preSharedCerts
+      - gkeIngress.tlsSecretName
+    profiles: [agent-relay]
+    status: shipped
+    provided_by: operator
+    default: external
+    choices:
+      - { value: external, note: "global external Application Load Balancer" }
+      - { value: internal, note: "regional internal Application Load Balancer; values-gcp-internal.yaml" }
+    verify: render with values-gcp-internal.yaml shows one Ingress with class gce-internal, the regional-static-ip-name annotation and allow-http false, no ManagedCertificate or FrontendConfig, and the proxy-only subnet in every backend NetworkPolicy
+    sources:
+      - "charts/agent-relay/templates/gke-ingress.yaml"
+      - "charts/agent-relay/values-gcp-internal.yaml"
+      - "ci/agent-relay/render.sh"
+      - "terraform/modules/gcp/internal-edge/main.tf"
+
   - id: opt.agent-relay.relayflows
     kind: option
     title: Optional Relayflows component in the suite
@@ -5344,7 +6134,7 @@ entries:
     verify: helm status relaycast; curl <baseUrl>/health
     sources:
       - "docs/self-hosted-reference-architecture.md:11"
-      - "README.md:71"
+      - "docs/repository-guide.md:71"
 
   - id: opt.relaycast.service-backend-config
     kind: option
@@ -5424,7 +6214,7 @@ entries:
       - "charts/relaycast/values.yaml:47"
       - "charts/relaycast/templates/deployment.yaml:61"
       - "charts/relaycast/templates/_helpers.tpl:103"
-      - "README.md:62"
+      - "docs/repository-guide.md:62"
 
   - id: req.relaycast.base-url
     kind: requirement
@@ -7049,10 +7839,10 @@ entries:
   - id: opt.slack-relay.channels
     kind: option
     title: Slack channels, DMs and shared-channel refusal
-    description: slack.allowedChannels lists the channel IDs (C...) the app answers in; empty answers in every channel the bot is invited to, so restrict it for a first rollout. slack.allowDms answers direct messages. slack.refuseSharedChannels (default on, fail closed) refuses channels shared outside the workspace for answers and ingest.
+    description: slack.allowedChannels lists the channel IDs (C...) the app answers in; empty answers in every channel the bot is invited to, so restrict it for a first rollout. slack.allowDms answers direct messages. slack.refuseSharedChannels (default on, fail closed) refuses channels shared outside the workspace for answers and ingest. slack.ackReaction (default eyes, empty turns it off) is the reaction the router adds to each message it routes, as soon as it takes it; it needs the bot scope reactions:write, and without it the router logs once and routes as before.
     chart: slack-relay
-    values: [slack.allowedChannels, slack.allowDms, slack.refuseSharedChannels]
-    env: [SLACK_ALLOWED_CHANNELS, SLACK_ALLOW_DMS, SLACK_REFUSE_SHARED_CHANNELS]
+    values: [slack.allowedChannels, slack.allowDms, slack.refuseSharedChannels, slack.ackReaction]
+    env: [SLACK_ALLOWED_CHANNELS, SLACK_ALLOW_DMS, SLACK_REFUSE_SHARED_CHANNELS, SLACK_ACK_REACTION]
     profiles: [slack-relay]
     status: shipped
     provided_by: operator
@@ -7062,8 +7852,8 @@ entries:
       - { value: listed }
     verify: a mention in a channel outside slack.allowedChannels gets no answer and the router logs nothing for it
     sources:
-      - "charts/slack-relay/values.yaml:41-48"
-      - "charts/slack-relay/templates/router.yaml:65-78"
+      - "charts/slack-relay/values.yaml:89-104"
+      - "charts/slack-relay/templates/router.yaml:65-82"
 
   - id: opt.slack-relay.orchestrator
     kind: option
@@ -7087,10 +7877,10 @@ entries:
   - id: opt.slack-relay.agents
     kind: option
     title: Slack relay agent model, persona and tools
-    description: The agent host runs each thread's agent with headless Claude Code (host.agentModel, default claude-opus-5-5) and appends host.persona to its system prompt. By default agents get Read, Glob and Grep scoped to their own workdir plus the relay tools; Bash, WebFetch, WebSearch and /proc are always refused and permissionMode dontAsk refuses anything else. Each tool added to host.allowedTools is a new way for data to leave.
+    description: The agent host runs each thread's agent with headless Claude Code (host.agentModel, default claude-opus-5-5) and appends host.persona to its system prompt. By default agents get Read, Glob and Grep scoped to their own workdir plus the relay tools; Bash, WebFetch, WebSearch and /proc are always refused and permissionMode dontAsk refuses anything else. Each tool added to host.allowedTools is a new way for data to leave. Behind relaygate an agent never answers a DM from outside its group (the host checks the sender's inbox with /v1/check first and fails closed); host.replyToOutside only applies without relaygate. Behind relaygate agents see the relay's agents with mcp__relay_agents (host.relayAgentsMcp, read-only, as each agent; which agents show is relaygate's policy).
     chart: slack-relay
-    values: [host.agentName, host.agentModel, host.persona, host.allowedTools, host.disallowedTools, host.permissionMode, host.relaycastMcp, host.turnTimeoutSeconds, host.idleReleaseMinutes, host.resources]
-    env: [HOST_AGENT_NAME, AGENT_MODEL, AGENT_PERSONA, AGENT_ALLOWED_TOOLS, AGENT_DISALLOWED_TOOLS, AGENT_PERMISSION_MODE, RELAYCAST_MCP, TURN_TIMEOUT_SECONDS, IDLE_RELEASE_MINUTES]
+    values: [host.agentName, host.agentModel, host.persona, host.allowedTools, host.disallowedTools, host.permissionMode, host.relaycastMcp, host.relayAgentsMcp, host.turnTimeoutSeconds, host.idleReleaseMinutes, host.replyToOutside, host.resources]
+    env: [HOST_AGENT_NAME, AGENT_MODEL, AGENT_PERSONA, AGENT_ALLOWED_TOOLS, AGENT_DISALLOWED_TOOLS, AGENT_PERMISSION_MODE, RELAYCAST_MCP, RELAY_AGENTS_MCP, TURN_TIMEOUT_SECONDS, IDLE_RELEASE_MINUTES, REPLY_TO_OUTSIDE]
     profiles: [slack-relay]
     status: shipped
     provided_by: operator
@@ -7103,6 +7893,90 @@ entries:
       - "charts/slack-relay/values.yaml:106-131"
       - "charts/slack-relay/templates/host.yaml:44-73"
       - "docs/self-hosted-slack-relay.md:169-186"
+
+  - id: opt.slack-relay.repos
+    kind: option
+    title: Slack relay read-only GitHub repositories
+    description: 'Opt-in. repos.enabled adds a repo-sync sidecar to the agent host pod that shallow-fetches repos.list (owner/name or {repo, ref}), or every repository the token can read when the list is empty (GET /user/repos, re-listed every refresh; repos no longer listed are removed), every repos.refreshMinutes into /repos/<owner>/<name> without .git. The host mounts /repos read-only and agents get Read, Glob and Grep on //repos/** only. Credentials: a GitHub App (repos.app, recommended: the sidecar mints one-hour contents:read installation tokens from the app private key, mounted only in the sidecar, and lists GET /installation/repositories) or a fine-grained read-only token (repos.token); either way the token is only in the sidecar and reaches git through GIT_ASKPASS. repos.host and repos.apiUrl select GitHub Enterprise Server. Needs egress to github.com and api.github.com (or the GHE host).'
+    chart: slack-relay
+    values: ["repos.*"]
+    env: [GITHUB_TOKEN, REPOS_AUTH, GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY_FILE, REPOS_BASE_URL, REPOS_API_URL, REPOS_REFRESH_MINUTES, REPOS_LIST]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: "false"
+    choices:
+      - { value: "false" }
+      - { value: listed, note: repos.list pins the repositories (and refs) }
+      - { value: token selection, note: repos.list empty; the app installation's (or token's) repository access is the list }
+    secrets:
+      - name: "<repos.app.privateKey.name>"
+        keys:
+          - { key: private-key, key_path: repos.app.privateKey.key }
+          - { key: app-id, key_path: repos.app.appIdKey }
+          - { key: installation-id, key_path: repos.app.installationIdKey }
+        note: GitHub App mode (recommended); app-id and installation-id only when repos.app.appId / installationId are empty
+      - name: "<repos.token.name>"
+        keys:
+          - { key: token, key_path: repos.token.key }
+        note: token mode, instead of repos.app
+    verify: 'helm template with repos.enabled renders the GitHub credential (the repos.app private-key volume, or GITHUB_TOKEN) only in the repo-sync container, the host''s /repos mount readOnly and Read/Glob/Grep(//repos/**) in AGENT_ALLOWED_TOOLS; it fails without (or with both) repos.app.privateKey.name and repos.token.name; the sidecar logs "repo-sync: <owner>/<name> <sha> updated"'
+    sources:
+      - "charts/slack-relay/values.yaml"
+      - "charts/slack-relay/templates/host.yaml"
+      - "charts/slack-relay/files/repo-sync.sh"
+      - "charts/slack-relay/files/repo-list.mts"
+      - "charts/slack-relay/files/github-app.mts"
+      - "docs/self-hosted-slack-relay.md"
+
+  - id: opt.slack-relay.session-upload
+    kind: option
+    title: Slack relay session upload to Sessions
+    description: 'Opt-in, needs relaygate.url. sessions.upload.enabled makes the agent host upload each agent''s Claude Code session (after every turn, and at startup for anything not yet sent) to relaygate''s Sessions proxy (sessions.upload.baseUrl, default <relaygate.url>/sessions) as native delivery batches for the account of sessions.upload.orgId and workspaceId, with the agent''s own rg_ token, so relaygate makes the agent the owner in its group and the policy''s sessionDefaults decide who reads it. A per-session cursor on the host volume keeps restarts from re-uploading; a relaygate 403 is final. The Sessions credential is the host''s own: a Desktop enrollment key (secrets.sessionsEnrollmentKey) exchanged once at sessions.upload.relayControlUrl and refreshed; without relayControlUrl, relaygate must hold SESSIONS_TOKEN.'
+    chart: slack-relay
+    values: ["sessions.upload.*", "secrets.sessionsEnrollmentKey.*"]
+    env: [SESSIONS_UPLOAD, SESSIONS_ORG_ID, SESSIONS_WORKSPACE_ID, SESSIONS_BASE_URL, RELAY_CONTROL_URL, SESSIONS_ENROLLMENT_KEY]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: "false"
+    choices:
+      - { value: "false" }
+      - { value: host enrollment, note: sessions.upload.relayControlUrl and a Desktop enrollment key; the host holds and refreshes its own Sessions session }
+      - { value: relaygate SESSIONS_TOKEN, note: relayControlUrl empty; relaygate forwards its own SESSIONS_TOKEN }
+    secrets:
+      - name: "<secrets.sessionsEnrollmentKey.name>"
+        keys:
+          - { key: enrollment-key, key_path: secrets.sessionsEnrollmentKey.key }
+        note: only with sessions.upload.relayControlUrl
+    verify: 'helm template with sessions.upload.enabled renders SESSIONS_UPLOAD, SESSIONS_ORG_ID and SESSIONS_WORKSPACE_ID on the host and fails without relaygate.url, orgId or workspaceId; the host logs "sessions: upload on" and then "sessions: <agent> uploaded <n> event(s) of <session>"'
+    sources:
+      - "charts/slack-relay/values.yaml"
+      - "charts/slack-relay/templates/host.yaml"
+      - "components/slack-relay/src/sessions-upload.ts"
+      - "docs/self-hosted-slack-relay.md"
+
+  - id: opt.slack-relay.session-reads
+    kind: option
+    title: Slack relay agent session reads
+    description: 'Opt-in, needs relaygate.url and the sessions.upload settings (orgId, workspaceId, relayControlUrl, secrets.sessionsEnrollmentKey), even with upload off. sessions.mcp.enabled gives each agent read-only Sessions tools (mcp__sessions: list_sessions, get_session, get_session_turns, search_sessions). Every read goes to relaygate''s Sessions proxy with the agent''s own rg_ token in X-Relaygate-Token, so relaygate decides as the agent; the host mints a short-lived read token at relay-control as the uploader user (who needs rth:read) and adds it in a loopback proxy, so no agent ever holds it. A relaygate 403 is reported as not permitted.'
+    chart: slack-relay
+    values: ["sessions.mcp.*"]
+    env: [SESSIONS_MCP]
+    profiles: [slack-relay]
+    status: shipped
+    provided_by: operator
+    default: "false"
+    choices:
+      - { value: "false" }
+      - { value: "true", note: needs relaygate.url, sessions.upload.orgId, workspaceId, relayControlUrl and secrets.sessionsEnrollmentKey }
+    verify: 'helm template with sessions.mcp.enabled renders SESSIONS_MCP on the host and mcp__sessions in AGENT_ALLOWED_TOOLS, and fails without relaygate.url or the upload settings; the host logs "sessions: agent reads on"'
+    sources:
+      - "charts/slack-relay/values.yaml"
+      - "charts/slack-relay/templates/host.yaml"
+      - "components/slack-relay/src/sessions-read.ts"
+      - "components/slack-relay/src/sessions-mcp.ts"
+      - "docs/self-hosted-slack-relay.md"
 
   - id: opt.slack-relay.mcp-servers
     kind: option
@@ -7399,6 +8273,77 @@ entries:
       - "charts/sessions-pipeline/values.yaml"
       - "charts/sessions-pipeline/templates/ingest-edge.yaml"
       - "charts/sessions-pipeline/templates/native-routing.yaml"
+
+  - id: opt.agent-relay.relaygate-control-policy
+    kind: option
+    title: relaygate policy owned by relay-control
+    description: 'Off by default; needs gate-only, relaygate main at R1/R2 or later and a relay-control image with C1. global.relaygate.controlPolicy.enabled gives relay-control SELFHOST_RELAYGATE_ADMIN_URL (relaygate''s in-cluster origin), SELFHOST_RELAYGATE_ADMIN_TOKEN and SELFHOST_RELAYGATE_POLICY_SECRET, and relaygate RELAYGATE_ADMIN_TOKEN from the same adminToken Secret, while relaygate keeps its ConfigMap so the operator can import it into Control once. controlPolicy.pull then makes relaygate pull the signed policy (RELAYCONTROL_POLICY_URL = http://<relay-control>.<ns>.svc.cluster.local:<port>/internal/v1/relaygate/policy, RELAYCONTROL_POLICY_SECRET) and drops RELAYGATE_POLICY, the ConfigMap and its volume. Both Secrets come from this one place. Render fails when half-configured.'
+    chart: agent-relay
+    values: [global.relaygate.controlPolicy.enabled, global.relaygate.controlPolicy.pull, "global.relaygate.controlPolicy.adminToken.*", "global.relaygate.controlPolicy.policySecret.*", global.relaygate.controlPolicy.controlServiceName, global.relaygate.controlPolicy.controlServicePort]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices:
+      - { value: off }
+      - { value: enabled, note: "relay-control manages the policy; relaygate still reads its ConfigMap (import it)" }
+      - { value: pull, note: "relaygate pulls from relay-control; no policy file or ConfigMap" }
+    verify: 'scripts/ci/charts.sh static agent-relay renders both steps (shared Secrets, the admin origin and policy route, no RELAYGATE_POLICY, ConfigMap or volume when pulling), checks every relay-control URL env is a bare origin, and refuses each half-configuration'
+    sources:
+      - "charts/agent-relay/values.yaml"
+      - "charts/agent-relay/templates/_helpers.tpl"
+      - "charts/relaygate/templates/relaygate.yaml"
+      - "charts/relaygate/templates/_helpers.tpl"
+      - "charts/relay-control/templates/deployment.yaml"
+      - "charts/relay-control/templates/_helpers.tpl"
+
+  - id: opt.relay-control.relaygate-control-policy
+    kind: option
+    title: relay-control manages relaygate's policy
+    description: 'With global.relaygate.controlPolicy.enabled (agent-relay umbrella, gate-only) relay-control calls relaygate''s admin API at SELFHOST_RELAYGATE_ADMIN_URL (http://<relaygate>.<ns>.svc.cluster.local:8080, a bare origin) with SELFHOST_RELAYGATE_ADMIN_TOKEN and signs the policy it serves relaygate with SELFHOST_RELAYGATE_POLICY_SECRET; both Secrets are the ones relaygate uses. Needs a relay-control image with C1.'
+    chart: relay-control
+    values: [global.relaygate.controlPolicy.adminToken.name, global.relaygate.controlPolicy.policySecret.name]
+    env: [SELFHOST_RELAYGATE_ADMIN_URL, SELFHOST_RELAYGATE_ADMIN_TOKEN, SELFHOST_RELAYGATE_POLICY_SECRET]
+    profiles: [relay-control, agent-relay]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices: [{ value: off }, { value: on, note: global.relaygate.controlPolicy.enabled }]
+    secrets:
+      - name: "<relaygate admin token Secret>"
+        name_paths: ["relay-control:global.relaygate.controlPolicy.adminToken.name"]
+        keys:
+          - { key: token, key_path: "relay-control:global.relaygate.controlPolicy.adminToken.key" }
+      - name: "<relaygate policy Secret>"
+        name_paths: ["relay-control:global.relaygate.controlPolicy.policySecret.name"]
+        keys:
+          - { key: secret, key_path: "relay-control:global.relaygate.controlPolicy.policySecret.key" }
+    verify: scripts/ci/charts.sh static agent-relay renders the three envs from the shared Secrets with a bare-origin admin URL
+    sources:
+      - charts/relay-control/templates/deployment.yaml
+      - charts/relay-control/templates/_helpers.tpl
+
+  - id: opt.relaygate.control-policy-pull
+    kind: option
+    title: relaygate pulls its policy from relay-control
+    description: 'With global.relaygate.controlPolicy.pull (agent-relay umbrella) relaygate pulls the signed policy from RELAYCONTROL_POLICY_URL (relay-control /internal/v1/relaygate/policy) with RELAYCONTROL_POLICY_SECRET instead of reading RELAYGATE_POLICY; the chart renders no policy ConfigMap or volume. Needs relaygate main at R1/R2 or later.'
+    chart: relaygate
+    values: [global.relaygate.controlPolicy.policySecret.name]
+    env: [RELAYCONTROL_POLICY_URL, RELAYCONTROL_POLICY_SECRET]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: off
+    choices: [{ value: off }, { value: on, note: global.relaygate.controlPolicy.pull }]
+    secrets:
+      - name: "<relaygate policy Secret>"
+        name_paths: ["relaygate:global.relaygate.controlPolicy.policySecret.name"]
+        keys:
+          - { key: secret, key_path: "relaygate:global.relaygate.controlPolicy.policySecret.key" }
+    verify: scripts/ci/charts.sh static agent-relay renders the pull env and no RELAYGATE_POLICY, ConfigMap or policy volume
+    sources:
+      - charts/relaygate/templates/relaygate.yaml
+      - charts/relaygate/templates/_helpers.tpl
 
   - id: opt.relaygate.sessions-listener
     kind: option
@@ -7939,9 +8884,18 @@ entries:
       streaming off. A scope streams only when four times its size fits both read
       budgets; at their defaults every streamed scope is still refused and the
       consumer warns at startup, so raise the budget the scope exceeds. true with
-      searchIndexer.outputFacts.enabled is refused. Streaming holds up to one
-      512 MiB scope plus about 1 KB per record: raise the indexer's memory limit
-      by about 0.5 GB where it is on, or set false. Images that default streaming
+      searchIndexer.outputFacts.enabled is refused only while
+      searchIndexer.stagedReconcile.enabled is false (older images refuse it
+      always). Streaming needs the
+      non-streaming sizing plus about 2 GB at the default budgets: one
+      decompressed chunk (at most 16 MiB) plus about 3 KB per record of the
+      scope (measured: +0.6 GB at 100000 records, +3.3 GB at 1000000; 500000
+      records at the default budgets), scaling with
+      SEARCH_INDEX_STREAM_MAX_READ_EVENTS. The searchIndexer default memory
+      limit is 3Gi (request 1Gi) for this; raise it for larger budgets, or set
+      false. Upgrading from sessions-pipeline 0.8.48 or earlier: a values file
+      that sets only searchIndexer.resources.limits.memory below 1Gi must also
+      set requests.memory, or the pod is refused (request above limit). The staged reconcile needs the same sizing. Images that default streaming
       on validate the budgets at startup even when enabled is unset.
     chart: sessions-pipeline
     values: [searchIndexer.streaming.enabled, searchIndexer.streaming.maxReadBytes, searchIndexer.streaming.maxReadEvents]
@@ -7951,8 +8905,36 @@ entries:
     provided_by: operator
     default: null
     choices: [{ value: null }, { value: true }, { value: false }]
-    verify: Render no streaming variable by default; render SEARCH_INDEX_STREAMING_ENABLED "true" or "false" explicitly when set, on the session-pipeline-consumer Deployment only; render each budget only when set; refuse a non-boolean enabled, budgets with enabled=false, enabled=true with outputFacts.enabled, bytes outside 4x limits.maxScopeBytes..2GiB and events outside 4x limits.maxScopeEvents..2000000; bootstrap Job names do not move.
+    verify: Render no streaming variable by default; render SEARCH_INDEX_STREAMING_ENABLED "true" or "false" explicitly when set, on the session-pipeline-consumer Deployment only; render each budget only when set; refuse a non-boolean enabled, budgets with enabled=false, enabled=true with outputFacts.enabled and stagedReconcile.enabled=false, bytes outside 4x limits.maxScopeBytes..2GiB and events outside 4x limits.maxScopeEvents..2000000; bootstrap Job names do not move.
     sources: [charts/sessions-pipeline/templates/_search-indexer.tpl, charts/sessions-pipeline/templates/search-indexer.yaml, charts/sessions-pipeline/values.yaml, ci/agent-relay/test_search_streaming.py]
+
+  - id: opt.sessions-pipeline.search-index-staged-reconcile
+    kind: option
+    title: Search index staged reconcile
+    description: |
+      Tri-state, unset by default (the image default applies: on in services
+      images from relayhistory-pipeline efdd4bb2 or later, off in older
+      images). On, a large session's reconcile is staged in Postgres instead of
+      held in memory (issue 610 Phase 3). true or false renders an explicit
+      value; false keeps the pre-staged path. true with
+      searchIndexer.streaming.enabled=false is refused; left unset with
+      streaming.enabled=false it resolves to off (one info line), so
+      streaming-off installs need no override. On needs migration
+      20261105062110, and 20261105062140 with searchIndexer.outputFacts.enabled;
+      the consumer fails startup while either is missing. The migrate Job is not
+      a Helm hook, so on an upgrade to a default-on image the indexer pod
+      restarts until migrate has applied them, then starts. Needs the same
+      memory as streaming.
+    chart: sessions-pipeline
+    values: [searchIndexer.stagedReconcile.enabled]
+    env: [SEARCH_INDEX_STAGED_RECONCILE_ENABLED]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: null
+    choices: [{ value: null }, { value: true }, { value: false }]
+    verify: Render no staged variable by default; render SEARCH_INDEX_STAGED_RECONCILE_ENABLED "true" or "false" explicitly when set, on the session-pipeline-consumer Deployment only; refuse a non-boolean enabled and enabled=true with streaming.enabled=false; allow streaming with outputFacts unless stagedReconcile.enabled=false; bootstrap Job names do not move.
+    sources: [charts/sessions-pipeline/templates/_search-indexer.tpl, charts/sessions-pipeline/templates/search-indexer.yaml, charts/sessions-pipeline/values.yaml, ci/agent-relay/test_search_staged.py]
 
   - id: opt.session-read-api.search-partial-sessions
     kind: option
@@ -8085,8 +9067,8 @@ entries:
       ingestEdge.sessionSelection or the operator session erase. The database
       stays required (controls mirror deletions to SQL).
     chart: sessions-pipeline
-    values: [ingestEdge.ledger, ingestEdge.ledgerParallel]
-    env: [INGEST_LEDGER, INGEST_LEDGER_PARALLEL]
+    values: [ingestEdge.ledger, ingestEdge.ledgerParallel, ingestEdge.ledgerBucket, ingestEdge.ledgerHomeGuard]
+    env: [INGEST_LEDGER, INGEST_LEDGER_PARALLEL, INGEST_LEDGER_BUCKET, INGEST_LEDGER_REGION, INGEST_LEDGER_HOME_GUARD]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
     status: shipped
     provided_by: operator
@@ -8113,6 +9095,90 @@ entries:
     verify: Render default byte-identical; render true with ledger=s3 and confirm INGEST_S3_TENANT_LIMIT=on only on the ingest edge; confirm the refusal with ledger=sql.
     sources: ["charts/sessions-pipeline/templates/ingest-edge.yaml:1", "ci/sessions-pipeline-s3-ledger/test_chart.py:1"]
 
+  - id: opt.sessions-pipeline-await-authority
+    kind: option
+    title: Async admission waits for the fence-authority marker
+    description: |
+      Default false renders nothing. true renders SELFHOST_ADMISSION_AWAIT_AUTHORITY=on
+      on the ingest edge, so async admission defers uploads for orgs that have no
+      fence-authority marker yet (they wait in S3 for the marker) instead of retrying
+      or refusing them. Render fails unless ingestEdge.ledger is s3 and
+      ingestEdge.admission.mode is async or drain.
+    chart: sessions-pipeline
+    values: [ingestEdge.admission.awaitAuthority]
+    env: [SELFHOST_ADMISSION_AWAIT_AUTHORITY]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: false
+    choices: [{value: false}, {value: true, note: "Requires ledger=s3, admission.mode async or drain and a services image implementing SELFHOST_ADMISSION_AWAIT_AUTHORITY."}]
+    verify: Render default byte-identical; render true with ledger=s3 and async or drain admission and confirm SELFHOST_ADMISSION_AWAIT_AUTHORITY=on only on the ingest edge; confirm the refusals for a non-boolean, sync admission and ledger=sql.
+    sources: ["charts/sessions-pipeline/templates/ingest-edge.yaml:1", "ci/sessions-pipeline-s3-ledger/test_chart.py:1"]
+
+  - id: opt.sessions-pipeline-admission-spread
+    kind: option
+    title: Async admission spreads replicas across the inbox
+    description: |
+      Default false renders nothing (strict oldest-first, unchanged). true renders
+      SELFHOST_ADMISSION_SPREAD=on on the ingest edge: work younger than the grace is
+      ordered by a per-process salted hash, so replicas sharing one inbox mostly start on
+      different items instead of all claiming the oldest (fewer contended claims, not none). Work older than the grace
+      stays strict oldest-first, so nothing starves. Meant for ingestEdge.replicas
+      above 1. Must be a boolean; true requires ingestEdge.admission.mode async or
+      drain. spreadGraceMs unset renders nothing (the image uses
+      max(120000, 4 x scanIntervalMs)); an integer 1000..86400000 renders
+      SELFHOST_ADMISSION_SPREAD_GRACE_MS and requires spread=true, as the image refuses
+      a grace without spread.
+    chart: sessions-pipeline
+    values: [ingestEdge.admission.spread, ingestEdge.admission.spreadGraceMs]
+    env: [SELFHOST_ADMISSION_SPREAD, SELFHOST_ADMISSION_SPREAD_GRACE_MS]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: false
+    choices: [{value: false}, {value: true, note: "Requires admission.mode async or drain and a services image implementing SELFHOST_ADMISSION_SPREAD; meant for ingestEdge.replicas above 1."}]
+    verify: Render default byte-identical; render true with async or drain admission and confirm SELFHOST_ADMISSION_SPREAD=on only on the ingest edge, and SELFHOST_ADMISSION_SPREAD_GRACE_MS only when spreadGraceMs is set; confirm the refusals for a non-boolean spread, an out-of-range or non-integer spreadGraceMs, spreadGraceMs without spread and sync admission.
+    sources: ["charts/sessions-pipeline/templates/ingest-edge.yaml:1", "ci/sessions-pipeline-s3-ledger/test_chart.py:1"]
+
+  - id: opt.sessions-pipeline-ingest-edge-liveness-timeout
+    kind: option
+    title: Ingest edge liveness probe timeout
+    description: |
+      Unset (default) keeps the ingest edge /healthz liveness timeoutSeconds at 2.
+      Under heavy async admission the event loop can take longer than 2 s to answer;
+      three misses restart the pod, dropping its in-flight claims, and the first scan
+      after a start is slow. An integer 2..30 sets livenessProbe.timeoutSeconds.
+    chart: sessions-pipeline
+    values: [ingestEdge.livenessTimeoutSeconds]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: null
+    choices: [{value: null}, {value: 10, note: "Matches a raised admission.probeTimeoutSeconds for a busy single replica."}]
+    verify: Render default byte-identical (timeoutSeconds 2); render 2, 10 and 30 and confirm livenessProbe.timeoutSeconds; confirm the refusal for values outside 2..30 or not an integer.
+    sources: ["charts/sessions-pipeline/templates/ingest-edge.yaml:1", "ci/sessions-pipeline-s3-ledger/test_chart.py:1"]
+
+  - id: opt.sessions-pipeline-ingest-edge-replicas
+    kind: option
+    title: Ingest edge replica count
+    description: |
+      Default 1 renders replicas 1, as before. An integer 1..8 sets the ingest-edge
+      Deployment replicas; the strategy stays Recreate. Above 1 requires
+      ingestEdge.ledger=s3: the S3-ledger multi-writer proof passed locally (two
+      processes, exactly-once) and covers the S3 ledger only. Tenant caps
+      (maxPerUser, maxPerOrg, asyncMaxPerOrg) are enforced per replica, so halve the
+      per-replica caps when running 2.
+    chart: sessions-pipeline
+    values: [ingestEdge.replicas]
+    env: []
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    status: shipped
+    provided_by: operator
+    default: 1
+    choices: [{value: 1}, {value: 2, note: "Requires ledger=s3; halve per-replica tenant caps."}]
+    verify: Render default and confirm replicas 1 (byte-identical apart from chart labels); render 2 with ledger=s3 and confirm replicas 2; confirm the refusals for 0, 9, a non-integer and replicas 2 with ledger=sql.
+    sources: ["charts/sessions-pipeline/templates/ingest-edge.yaml:1", "ci/sessions-pipeline-s3-ledger/test_chart.py:1"]
+
   - id: opt.sessions-pipeline-rearm-sweeper
     kind: option
     title: S3 ledger re-arm sweeper CronJob
@@ -8125,7 +9191,7 @@ entries:
       needs a services image from pipeline 9be2ad8e or later). IRSA is refused.
     chart: sessions-pipeline
     values: [rearmSweeper.*]
-    env: [INGEST_REARM_SWEEPER_ENABLED, INGEST_REARM_BUCKET, INGEST_REARM_REGION, INGEST_REARM_ENDPOINT, INGEST_REARM_KEY_ROOT, INGEST_REARM_ORGS, INGEST_REARM_DRY_RUN, INGEST_REARM_CONCURRENCY, INGEST_REARM_MAX_MARKERS, INGEST_REARM_CREDENTIALS, INGEST_REARM_S3_ACCESS_KEY_ID_FILE, INGEST_REARM_S3_SECRET_ACCESS_KEY_FILE]
+    env: [INGEST_REARM_SWEEPER_ENABLED, INGEST_REARM_BUCKET, INGEST_REARM_REGION, INGEST_REARM_ENDPOINT, INGEST_REARM_KEY_ROOT, INGEST_REARM_ORGS, INGEST_REARM_DRY_RUN, INGEST_REARM_CONCURRENCY, INGEST_REARM_MAX_MARKERS, INGEST_REARM_CREDENTIALS, INGEST_REARM_S3_ACCESS_KEY_ID_FILE, INGEST_REARM_S3_SECRET_ACCESS_KEY_FILE, INGEST_REARM_LEDGER_BUCKET, INGEST_REARM_LEDGER_REGION]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
     status: shipped
     provided_by: operator

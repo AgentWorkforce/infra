@@ -31,6 +31,16 @@ variable "target_role_arns" {
   }
 }
 
+variable "audit_log_group_arn" {
+  description = "ARN of the broker's CloudWatch audit log group (modules/audit-log), without :*. Null: no audit shipping."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.audit_log_group_arn == null || can(regex("^arn:aws:logs:[a-z0-9-]+:\\d{12}:log-group:/aws-cred-broker/[\\w/.#-]+$", var.audit_log_group_arn))
+    error_message = "audit_log_group_arn must be the exact ARN of a log group under /aws-cred-broker/, without wildcards."
+  }
+}
+
 variable "tags" {
   description = "Tags on the role."
   type        = map(string)

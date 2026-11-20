@@ -1,4 +1,4 @@
-# What agent-relay-2026.11.6 does not yet qualify on GKE
+# What agent-relay-2026.11.16 does not yet qualify on GKE
 
 The steps in 0-START-HERE.md were run end to end on a private regional GKE
 cluster (Kubernetes 1.35, Workload Identity, IAP-only control plane) with the
@@ -6,7 +6,8 @@ release assets of agent-relay-2026.11.1, then again in a new Google Cloud
 project (regional GKE 1.36) on 2026.11.1. The first install was then upgraded
 through 2026.11.4 to 2026.11.6 and rechecked. These are the places where the GKE
 path differs from what the release itself qualifies. Read them before a
-production rollout.
+production rollout. The guide's values render against agent-relay-2026.11.16;
+that release was not installed on GKE.
 
 1. **GCS session reads: fixed in 2026.11.6; installs upgraded from
    2026.11.1–2026.11.5 must re-stamp once.** Before 2026.11.6 the services
@@ -20,7 +21,7 @@ production rollout.
    `gcs`, and the end-to-end cases for delivery, reads, durability and the
    sessions API (including `/turns`) passed. Upgrading from an earlier release:
    run "Re-stamp sessions uploaded before 2026.11.6" in 0-START-HERE.md. A
-   fresh 2026.11.6 install doesn't need it.
+   fresh install of 2026.11.6 or later doesn't need it.
 
    The end-to-end driver (`scripts/selfhost/e2e-gcp-proof.sh`) also runs an
    isolation case and a cleanup case that create a flow and list flow workers.
@@ -58,8 +59,8 @@ production rollout.
    export taken first.
 
 4. **`values-gcp.yaml` at the tag pins the previous release's images**
-   (sessions-pipeline `77022c5b`, relay-control 0.5.16). Only the release
-   overlay brings the 2026.11.6 images. Always apply
+   (sessions-pipeline `77022c5b`, relay-control 0.5.24). Only the release
+   overlay brings the 2026.11.16 images. Always apply
    `release-images.values.yaml` last; without it you would install older
    images.
 
@@ -69,13 +70,13 @@ production rollout.
    guide uses `search.backend: postgres`. Fine for a proof of concept; search
    at large scale on GKE isn't load tested.
 
-6. **`cloud-sql-setup.sh` at the tag has two defects** that this guide's copy
-   fixes (the repository fix is AgentWorkforce/infra#276):
-   - it rejects the Terraform output `admin_password_secret_id` (a full
-     `projects/…/secrets/…` name) with a 404;
-   - the CA bundle it writes has one more trailing newline than Terraform's,
-     so the `caSha256` pins in `managed-values.json` don't match and the read
-     API, ingest edge and search indexer fail with `PostgresTlsConfigError`.
+6. **Use this guide's `cloud-sql-setup.sh`, not the tag's
+   `scripts/selfhost/cloud-sql-setup.sh`.** The tag's copy writes `HOOPDB_URL`
+   without the CA file the session-brief worker needs
+   (`sslrootcert=/etc/postgres-ca/ca.crt`, AgentWorkforce/infra#359); this
+   guide's copy adds it. (The two defects fixed by AgentWorkforce/infra#276,
+   the `admin_password_secret_id` 404 and the CA bundle's extra trailing
+   newline, are fixed in both copies.)
 
    It also refuses to rerun `pre` after `post` (by design: nothing changes).
 
@@ -86,7 +87,7 @@ production rollout.
 8. **Not HA.** Relay control, the dashboard, Relaycast (PostgreSQL backend)
    and the search indexer each run one replica, as on EKS.
 
-9. **Release notes.** The GitHub release notes for agent-relay-2026.11.6, with
+9. **Release notes.** The GitHub release notes for agent-relay-2026.11.16, with
    `docs/releases/agent-relay-2026.11.5.md` and the 2026.11.2 notes before it,
    describe the changes; the published GitHub release and its signed assets
    are final.
@@ -97,7 +98,9 @@ production rollout.
    this install (the upload path was proven with the e2e driver).
 
 11. **Desktop builds for a GKE install update themselves only from relay-control
-   0.5.25.** That version stores the signed desktop feed in a GCS bucket
+   0.5.25.** agent-relay-2026.11.16 pins relay-control 0.5.34. From 0.5.25
+   relay-control stores the signed desktop feed in a GCS bucket
    (`desktop_feed_bucket_name`, step 4) and signs it with a key file
-   (`relay-control.desktopFeed.signingKeys`). Until a release pins it, a newer
-   desktop version means installing the new build over the old one.
+   (`relay-control.desktopFeed.signingKeys`). On a release that pins an older
+   relay-control, a newer desktop version means installing the new build over
+   the old one.

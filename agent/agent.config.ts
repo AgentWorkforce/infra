@@ -23,7 +23,7 @@ export default defineLayeredAgent({
   stage,
   accountId: process.env.LAYERED_AGENT_ACCOUNT_ID,
   arch: "x64",
-  instanceType: "m7i.xlarge",
+  instanceType: "t3.medium",
   // Pinned (Canonical 24.04, serial 20261023, as relay-app), so Canonical's
   // moving "current" pointer does not make every deploy full. A new image is
   // a deliberate change of this id: a full deploy, dispatched with allow_restart.

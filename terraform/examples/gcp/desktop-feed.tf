@@ -9,10 +9,23 @@
 # Kubernetes service account needs both annotations in output.desktop_feed.
 # The bucket holds only this feed, so bucket-wide object access is the
 # <prefix>/profiles/* scope relay-control needs.
+#
+# relay-control exits at start when the storage env is set without a signer
+# ("SELFHOST_DESKTOP_FEED_SIGNER and SELFHOST_DESKTOP_FEED_STORAGE must be set
+# together"), and the signer comes from the chart's
+# relay-control.desktopFeed.signingKeys, which Terraform cannot see. So
+# desktop_feed_has_signing_keys = false keeps the storage env out of the
+# outputs until the signing keys exist; the bucket, the service account and
+# the annotations do not depend on it.
 
 locals {
   desktop_feed_enabled = var.desktop_feed_bucket_name != ""
   relay_control_ksa    = var.relay_control_service_account
+  desktop_feed_env = [for e in [
+    { name = "SELFHOST_DESKTOP_FEED_STORAGE", value = "gcs" },
+    { name = "SELFHOST_DESKTOP_FEED_GCS_BUCKET", value = one(module.desktop_feed_bucket[*].bucket_name) },
+    { name = "SELFHOST_DESKTOP_FEED_GCS_PREFIX", value = "desktop-feed" },
+  ] : e if local.desktop_feed_enabled && var.desktop_feed_has_signing_keys]
 }
 
 module "desktop_feed_bucket" {

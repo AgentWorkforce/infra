@@ -61,6 +61,6 @@ jobs:
         working-directory: agent/broker/terraform
         run: |
           terraform fmt -recursive -check .
-          for d in modules/broker-role modules/scoped-role modules/elevated-role sandbox bootstrap-sandbox; do
+          for d in modules/broker-role modules/scoped-role modules/elevated-role modules/audit-log sandbox bootstrap-sandbox dev; do
             (cd "$d" && terraform init -backend=false -input=false && terraform validate && terraform test)
           done
