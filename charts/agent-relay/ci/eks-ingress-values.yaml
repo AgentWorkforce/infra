@@ -1,0 +1,23 @@
+# The EKS ALB edge rendered from the release (eksIngress) on the proof shape,
+# with every route family on: history (ingest), Flows and Chief. Layered on
+# values-gcp-proof.yaml by scripts/ci/charts.sh (lint --strict, kubeconform);
+# ci/agent-relay/test_eks_alb_ingress.py proves equality with the script.
+gkeIngress:
+  enabled: false
+eksIngress:
+  enabled: true
+  domain: relay.example.com
+  certificateArn: arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000
+  flows:
+    enabled: true
+  chief:
+    serviceName: relaychief-control
+# Render-only identities as in gcp-proof-values.yaml.
+relay-control:
+  image:
+    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+  encryption:
+    keyId: proof-1
+relay-webapp:
+  image:
+    digest: sha256:9bfc0c6b873411c7a0da60d746883bdef6aafd86a9b733c719500a603890b6fe

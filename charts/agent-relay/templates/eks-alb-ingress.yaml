@@ -249,4 +249,4 @@ spec:
             pathType: ImplementationSpecific
             {{ $deny }}
     {{- end }}
-{{- end }}
+{{- end -}}
