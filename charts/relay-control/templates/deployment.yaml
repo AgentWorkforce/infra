@@ -102,6 +102,14 @@ spec:
             {{- if .Values.sessionErasureApi.enabled }}
             {{- include "relay-control.sessionErasureApiEnv" . | nindent 12 }}
             {{- end }}
+            {{- with (.Values.sharing | default dict) }}
+            {{- with .defaultMode }}
+            - { name: SELFHOST_DEFAULT_SHARING_MODE, value: {{ . | quote }} }
+            {{- end }}
+            {{- with .overrideRoles }}
+            - { name: SELFHOST_SHARING_MODE_OVERRIDE_ROLES, value: {{ join "," . | quote }} }
+            {{- end }}
+            {{- end }}
             {{- if .Values.introspection.existingSecret }}
             - { name: RELAYCONTROL_INTROSPECT_SECRET_FILE, value: /var/run/agent-relay/introspection/secret }
             {{- end }}
