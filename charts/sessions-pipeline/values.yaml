@@ -421,7 +421,9 @@ searchIndexer:
   # enabled is tri-state: null (default) renders nothing and keeps the image
   # default; true renders "true"; false renders "false" explicitly (an image
   # whose default is on needs the explicit "false" to turn it off).
-  # true together with outputFacts.enabled is refused (the consumer refuses it).
+  # true together with outputFacts.enabled is refused only with
+  # stagedReconcile.enabled=false; otherwise the staged run carries the facts
+  # (images from relayhistory-pipeline efdd4bb2 on; older images refuse it).
   # A scope streams only when four times its size fits BOTH budgets; at their
   # defaults every streamed scope is still refused and the consumer warns at
   # startup, so raise the budget(s) the scope exceeds. Memory: the non-streaming
@@ -446,7 +448,9 @@ searchIndexer:
   # null (default) renders nothing and keeps the image default, which is ON
   # from the first services image built from relayhistory-pipeline efdd4bb2 or
   # later (off in older images); true or false render explicitly, and false
-  # keeps the pre-staged path. true with streaming.enabled=false is refused.
+  # keeps the pre-staged path. true with streaming.enabled=false is refused;
+  # left unset with streaming.enabled=false it resolves to off (the consumer
+  # logs one info line), so streaming-off installs need no override.
   # On needs migration 20261105062110 (and 20261105062140 with outputFacts
   # enabled) and the same memory as streaming (see above).
   # Upgrade note: the migrate Job is a plain Job, not a hook, so on an upgrade

@@ -50,7 +50,7 @@ CAST_SQL = """
 WITH roles AS (
  SELECT 'relaycast_owner'::text AS owner, 'relaycast_runtime'::text AS runtime
 ), objects AS (
- SELECT c.oid,c.relowner,c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+ SELECT c.oid,c.relname,c.relowner,c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
  WHERE n.nspname='public' AND c.relkind IN ('r','p','S','v','m','f')
  AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype='e')
 ), defaults AS (
@@ -81,7 +81,8 @@ SELECT json_build_object(
  'sequence_defaults', (SELECT count(DISTINCT privilege_type)=3 FROM defaults WHERE defaclobjtype='S' AND privilege_type IN ('SELECT','USAGE','UPDATE')),
  'objects', (SELECT count(*) FROM objects),
  'wrong_owners', (SELECT count(*) FROM objects WHERE pg_get_userbyid(relowner)<>owner),
- 'missing_table_grants', (SELECT count(*) FROM objects WHERE relkind<>'S' AND NOT (has_table_privilege(runtime,oid,'SELECT') AND has_table_privilege(runtime,oid,'INSERT') AND has_table_privilege(runtime,oid,'UPDATE') AND has_table_privilege(runtime,oid,'DELETE'))),
+ 'missing_table_grants', (SELECT count(*) FROM objects WHERE relkind<>'S' AND relname<>'_engine_migrations' AND NOT (has_table_privilege(runtime,oid,'SELECT') AND has_table_privilege(runtime,oid,'INSERT') AND has_table_privilege(runtime,oid,'UPDATE') AND has_table_privilege(runtime,oid,'DELETE'))),
+ 'ledger_runtime_read_only', (SELECT coalesce(bool_and(has_table_privilege(runtime,oid,'SELECT') AND NOT has_table_privilege(runtime,oid,'INSERT,UPDATE,DELETE,TRUNCATE')),true) FROM objects WHERE relname='_engine_migrations'),
  'missing_sequence_grants', (SELECT count(*) FROM objects WHERE relkind='S' AND NOT (has_sequence_privilege(runtime,oid,'SELECT') AND has_sequence_privilege(runtime,oid,'USAGE') AND has_sequence_privilege(runtime,oid,'UPDATE')))
 ) FROM roles;
 """
@@ -91,6 +92,65 @@ HOOP_SQL = """SELECT json_build_object(
  'btree_gin', EXISTS(SELECT 1 FROM pg_extension WHERE extname='btree_gin'),
  'sessions_schema', EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='sessions')
 );"""
+
+# Ingest proof: a desktop upload lands an object in S3 and a pointer row in
+# sessions.session_index. Only counts, an age and booleans leave the database
+# path; the latest bucket/key stay in memory for an optional S3 HEAD.
+INGEST_TABLE_SQL = """SELECT json_build_object(
+ 'present', to_regclass('sessions.session_index') IS NOT NULL,
+ 'forced_rls', coalesce((SELECT relforcerowsecurity FROM pg_class WHERE oid=to_regclass('sessions.session_index')), false)
+);"""
+INGEST_SQL = """SELECT json_build_object(
+ 'rows', (SELECT count(*) FROM sessions.session_index),
+ 'pointers', (SELECT count(*) FROM sessions.session_index WHERE bucket IS NOT NULL AND manifest_key IS NOT NULL AND deleted_at IS NULL),
+ 'latest_age_s', (SELECT floor(extract(epoch FROM now() - max(created_at)))::bigint FROM sessions.session_index),
+ 'latest', (SELECT json_build_object('bucket',bucket,'key',manifest_key) FROM sessions.session_index
+            WHERE bucket IS NOT NULL AND manifest_key IS NOT NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1)
+);"""
+
+
+def ingest_checks(options, credential, report):
+    table = psql(credential, INGEST_TABLE_SQL, options.timeout, options.ca_file)
+    if not table.get('present'):
+        report.unknown('ingest.pointers', 'session-index-missing')
+        return
+    if table.get('forced_rls'):
+        report.unknown('ingest.pointers', 'forced-row-level-security-hides-rows-from-owner')
+        return
+    data = psql(credential, INGEST_SQL, options.timeout, options.ca_file)
+    rows, pointers, age = int(data.get('rows') or 0), int(data.get('pointers') or 0), data.get('latest_age_s')
+    if not rows:
+        report.add('ingest.pointers', 'UNKNOWN', 'No sessions ingested yet.',
+                   'Sign in with the desktop app, start a Claude/Codex session, wait a few minutes, then rerun.')
+        return
+    when = (' Latest arrived '+(str(int(age)//60)+' min' if age is not None and int(age) >= 60 else str(age)+' s')+' ago.') if age is not None else ''
+    report.test('ingest.pointers', pointers > 0,
+                str(rows)+' session row(s), '+str(pointers)+' with an S3 object pointer.'+when,
+                'Rows without S3 pointers: check the ingest edge logs and its S3 (locker) bucket access.')
+    latest = data.get('latest') or {}
+    if not (latest.get('bucket') and latest.get('key')) or getattr(options, 'no_s3_check', False):
+        return
+    try:
+        result = subprocess.run(['aws', 's3api', 'head-object', '--bucket', latest['bucket'], '--key', latest['key'],
+                                 '--output', 'json'], text=True, capture_output=True, timeout=options.timeout)
+        err = result.stderr
+        if result.returncode == 0:
+            report.add('ingest.s3-object', 'PASS', 'The latest pointer\'s object exists in S3.')
+        elif '(404)' in err or 'Not Found' in err:
+            report.add('ingest.s3-object', 'FAIL', 'The latest pointer\'s object was not found in S3.',
+                       'Check the ingest edge S3 (locker) bucket and region; the pointer was written but the object is missing.')
+        elif '(403)' in err or 'Forbidden' in err or 'AccessDenied' in err:
+            report.unknown('ingest.s3-object', 'your-aws-identity-cannot-read-the-bucket')
+        elif 'credentials' in err.lower() or 'ExpiredToken' in err or 'token' in err.lower():
+            report.unknown('ingest.s3-object', 'no-valid-aws-credentials-on-this-machine')
+        else:
+            report.unknown('ingest.s3-object', 'aws-cli-error')
+    except FileNotFoundError:
+        report.unknown('ingest.s3-object', 'aws-cli-not-installed')
+    except subprocess.TimeoutExpired:
+        report.unknown('ingest.s3-object', 'timeout')
+    finally:
+        latest.clear()
 
 
 class DiagnosticError(Exception):
@@ -203,14 +263,17 @@ class Report:
                 'readOnly':True, 'summary':counts, 'checks':self.checks}
 
 
-def kube(options, resource, name=None, selector=False):
+def kube(options, resource, name=None, selector=False, probe=False):
+    if not options.context:
+        raise DiagnosticError('no-kube-context')
+    timeout = min(options.timeout, 8) if probe else options.timeout
     argv = ['kubectl','--context',options.context,'--namespace',options.namespace,
-            '--request-timeout='+str(options.timeout)+'s','get',resource]
+            '--request-timeout='+str(timeout)+'s','get',resource]
     if name:
         argv.append(name)
     if selector:
         argv += ['-l','app.kubernetes.io/instance='+options.release]
-    return run(argv+['-o','json'],options.timeout)
+    return run(argv+['-o','json'],timeout+2)
 
 
 def cluster_checks(options, report):
@@ -271,12 +334,143 @@ def cluster_checks(options, report):
             report.unknown('cluster.'+resource,str(exc) if isinstance(exc,DiagnosticError) else 'invalid-response')
 
 
+def _yaml_scalar(raw):
+    raw = raw.strip()
+    if raw[:1] == '"':
+        end = 1
+        while end < len(raw):
+            if raw[end] == '\\':
+                end += 2
+                continue
+            if raw[end] == '"':
+                break
+            end += 1
+        if end >= len(raw):
+            raise DiagnosticError('manifest-unterminated-quote')
+        return json.loads(raw[:end+1])
+    if raw[:1] == "'":
+        out, i = [], 1
+        while i < len(raw):
+            if raw[i] == "'":
+                if raw[i+1:i+2] == "'":
+                    out.append("'")
+                    i += 2
+                    continue
+                return ''.join(out)
+            out.append(raw[i])
+            i += 1
+        raise DiagnosticError('manifest-unterminated-quote')
+    return re.split(r'\s+#', raw, 1)[0].strip()
+
+
+def _parse_manifest_doc(lines):
+    """Minimal parser for Kubernetes Secret manifests (no PyYAML on operator machines)."""
+    kind = name = section = None
+    sections = {'stringData': {}, 'data': {}}
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip('\n')
+        i += 1
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        indent = len(line) - len(line.lstrip(' '))
+        key, sep, rest = line.strip().partition(':')
+        if not sep:
+            continue
+        if indent == 0:
+            section = key
+            if key == 'kind':
+                kind = _yaml_scalar(rest)
+            continue
+        if section == 'metadata' and key == 'name' and indent == 2:
+            name = _yaml_scalar(rest)
+        elif section in ('stringData', 'data') and indent == 2:
+            rest = rest.strip()
+            if rest[:1] in ('|', '>'):
+                block = []
+                while i < len(lines) and (not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip(' ')) > indent):
+                    block.append(lines[i].strip())
+                    i += 1
+                value = ('\n' if rest[0] == '|' else ' ').join(block).strip()
+            else:
+                value = _yaml_scalar(rest)
+            sections[section][key] = value
+    return kind, name, sections['stringData'], sections['data']
+
+
+def _secret_values(string_data, data):
+    """Kubernetes semantics: decoded data first, stringData wins regardless of field order."""
+    if not isinstance(string_data, dict) or not isinstance(data, dict):
+        raise DiagnosticError('manifest-invalid-fields')
+    if not all(isinstance(v, str) for v in list(string_data.values()) + list(data.values())):
+        raise DiagnosticError('manifest-invalid-fields')
+    values = {k: base64.b64decode(v, validate=True).decode() for k, v in data.items()}
+    values.update(string_data)
+    return values
+
+
+def load_secret_manifests(paths):
+    """Return {secret_name: {key: value}} from Secret manifest files or directories (YAML or kubectl JSON)."""
+    files = []
+    for path in paths:
+        if path.is_dir():
+            files += sorted(f for f in path.iterdir() if f.suffix in ('.yaml', '.yml', '.json') and f.is_file())
+        elif path.is_file():
+            files.append(path)
+        else:
+            raise DiagnosticError('manifest-path-missing')
+    secrets = {}
+    for f in files:
+        text = f.read_text()
+        if f.stat().st_mode & 0o077:
+            print('warning: '+f.name+' is readable by other users; chmod 600 it after this run.', file=sys.stderr)
+        docs = []
+        if text.lstrip()[:1] in ('{', '['):
+            obj = json.loads(text)
+            items = obj.get('items', [obj]) if isinstance(obj, dict) else None
+            if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+                raise DiagnosticError('manifest-invalid-fields')
+            for item in items:
+                metadata = item.get('metadata') or {}
+                docs.append((item.get('kind'), metadata.get('name') if isinstance(metadata, dict) else None,
+                             item.get('stringData') or {}, item.get('data') or {}))
+        else:
+            chunk = []
+            for line in text.splitlines(True) + ['---\n']:
+                if re.fullmatch(r'---(?:[ \t]+#.*)?', line.rstrip()):
+                    if chunk:
+                        docs.append(_parse_manifest_doc(chunk))
+                    chunk = []
+                else:
+                    chunk.append(line)
+        for kind, name, string_data, data in docs:
+            if kind == 'Secret' and isinstance(name, str) and name:
+                secrets.setdefault(name, {}).update(_secret_values(string_data, data))
+    return secrets
+
+
 def load_credentials(options, report):
     secrets = {}
     credentials = {}
+    manifests = None
+    if getattr(options, 'secret_manifests', None):
+        try:
+            manifests = load_secret_manifests(options.secret_manifests)
+        except DiagnosticError as exc:
+            manifests = exc
+        except (ValueError, OSError, TypeError, AttributeError):
+            manifests = DiagnosticError('manifest-unreadable')
     for slot,(secret,key,wrapper,role,group) in SLOTS.items():
         try:
-            if options.secret_dir:
+            if manifests is not None:
+                if isinstance(manifests, DiagnosticError):
+                    raise manifests
+                if secret not in manifests:
+                    raise DiagnosticError('manifest-secret-missing')
+                if key not in manifests[secret]:
+                    raise DiagnosticError('secret-key-missing')
+                value = manifests[secret][key].strip()
+            elif options.secret_dir:
                 path = options.secret_dir/secret/key
                 if not path.is_file():
                     raise DiagnosticError('credential-file-missing')
@@ -339,7 +533,9 @@ def database_checks(options, credentials, report):
                             'Login cannot assume the database owner role.', 'Have the DBA review inherited and SET-role membership paths; Relaycast migrations must own the public schema without owning the database.')
                 if SLOTS[slot][4]=='hoop':
                     report.test('database.'+slot+'.sessions-usage',identity['sessions_usage'],
-                                'Runtime has USAGE on the sessions schema.', 'Check migrations and post-migration phase 2 role activation/grants.')
+                                'Runtime has USAGE on the sessions schema.',
+                                'The search-indexer bootstrap Job grants this after it reaches OpenSearch: check that Job and the OpenSearch URL/access.'
+                                if slot=='search-runtime' else 'Check migrations and post-migration phase 2 role activation/grants.')
             if slot=='control-owner':
                 report.test('control.database-owner',identity['database_owner']==identity['user'],
                             'Control database is owned by its migration login.', 'Review the control database phase 1 bootstrap and the owner URL.')
@@ -367,6 +563,7 @@ def database_checks(options, credentials, report):
             if slot=='hoop-owner':
                 for check,value in psql(credential,HOOP_SQL,options.timeout,options.ca_file).items():
                     report.test('hoop.'+check,value is True,'HoopDb prerequisite: '+check+'.','Check phase 1 extensions and migration completion before phase 2 login activation.')
+                ingest_checks(options,credential,report)
         except (DiagnosticError,KeyError,TypeError,AttributeError) as exc:
             category = str(exc) if isinstance(exc,DiagnosticError) else 'invalid-response'
             if category in ('authentication','role-missing','database-missing'):
@@ -384,22 +581,173 @@ def database_checks(options, credentials, report):
         report.unknown('database.'+slot,'credential-not-available')
 
 
+EXAMPLE_CA_SHA = '9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a'
+EXAMPLE_MARKERS = ('selfhost-example', 'ar.example.com', 'org_example', 'example-agent-relay-sessions',
+                   'vpc-agent-relay-example', 'admin@example.com', 'Example Corp', 'abc123example')
+CA_NAMES = ('rds-ca.pem', 'database-ca.pem', 'global-bundle.pem')
+SECRET_NAMES = {s[0] for s in SLOTS.values()}
+
+
+def _is_ca(path):
+    try:
+        return path.is_file() and 'BEGIN CERTIFICATE' in path.read_text(errors='ignore')
+    except OSError:
+        return False
+
+
+def _yaml_files(folder):
+    try:
+        return sorted(f for f in folder.iterdir() if f.is_file() and f.suffix in ('.yaml', '.yml'))
+    except OSError:
+        return []
+
+
+def _secret_manifest_files(folders):
+    found = []
+    for folder in folders:
+        for f in _yaml_files(folder):
+            try:
+                text = f.read_text(errors='ignore')
+            except OSError:
+                continue
+            if re.search(r'^kind:\s*Secret\s*$', text, re.M) and any(n in text for n in SECRET_NAMES):
+                found.append(f)
+    return found
+
+
+def discover(options, notes):
+    """Fill in anything not passed explicitly; record what was used."""
+    cwd = Path.cwd()
+    home = Path.home()/'.agent-relay-install'
+    options.missing = {}
+    options.no_credentials = False
+    if not options.context and options.scope != 'database':
+        try:
+            out = subprocess.run(['kubectl', 'config', 'current-context'], text=True,
+                                 capture_output=True, timeout=10)
+            if out.returncode == 0 and out.stdout.strip():
+                options.context = out.stdout.strip()
+                notes.append('kube context: '+options.context+' (current context; pass --context to change)')
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if not options.context:
+            notes.append('kube context: none found; cluster checks will be UNKNOWN')
+            options.missing['context'] = ('No kube context. On the cluster VPN, run: aws eks update-kubeconfig '
+                                          '--name <cluster> --region <region>, or pass --context <name>. '
+                                          'On the database VPN this is expected; use --scope database.')
+    cluster_ok = False
+    if options.context and options.scope != 'database':
+        try:
+            kube(options, 'secret', 'agent-relay-secrets', probe=True)
+            cluster_ok = True
+        except DiagnosticError as exc:
+            notes.append('cluster: not reachable ('+str(exc)+'); on a split VPN, rerun on the cluster VPN for workload checks')
+    options.cluster_reachable = cluster_ok
+    if not options.secret_dir and not options.secret_manifests:
+        manifests = _secret_manifest_files([cwd, cwd/'secrets'])
+        if cluster_ok:
+            notes.append('credentials: deployed Kubernetes Secrets')
+        elif (home/'secret-files').is_dir():
+            options.secret_dir = home/'secret-files'
+            notes.append('credentials: '+str(options.secret_dir))
+        elif manifests:
+            options.secret_manifests = manifests
+            notes.append('credentials: '+str(len(manifests))+' Secret YAML file(s): '+', '.join(f.name for f in manifests))
+        else:
+            options.no_credentials = True
+            notes.append('credentials: none found')
+            options.missing['credentials'] = (
+                'No database credentials found. Looked for: the deployed Secrets (cluster not reachable), '
+                '~/.agent-relay-install/secret-files, and Secret YAMLs in '+str(cwd)+' or '+str(cwd/'secrets')+'. '
+                'Fix: copy the filled-in Secret YAMLs you applied (01-agent-relay-secrets.yaml ... '
+                '05-search-indexer-owner.yaml) into ./secrets, or pass --secret-manifests <folder>.')
+    if not options.ca_file:
+        for candidate in [cwd/n for n in CA_NAMES] + sorted(cwd.glob('*-bundle.pem')) + [home/'rds-ca.pem']:
+            if _is_ca(candidate):
+                options.ca_file = candidate
+                notes.append('database CA: '+str(candidate))
+                break
+        else:
+            notes.append('database CA: none found')
+            options.missing['ca'] = None  # filled in after credentials load (region from the RDS host)
+    if options.values is None:
+        options.values = [f for f in _yaml_files(cwd) if 'values' in f.name.lower()
+                          and f not in _secret_manifest_files([cwd])]
+        if options.values:
+            notes.append('values file(s): '+', '.join(f.name for f in options.values))
+        else:
+            notes.append('values file: none found')
+            options.missing['values'] = ('No *values*.yaml in '+str(cwd)+', so the values checks were skipped. '
+                                         'Fix: copy the values file you installed with (e.g. values-eks-poc.yaml) here, '
+                                         'or pass --values <path>.')
+    if not options.output:
+        stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+        options.output = cwd/('install-diagnostic-'+stamp+'.json')
+
+
+def values_checks(options, report):
+    """Line-based lint of filled-in Helm values for mistakes seen in real installs."""
+    import hashlib
+    ca_sha = None
+    if options.ca_file and _is_ca(Path(options.ca_file)):
+        ca_sha = hashlib.sha256(Path(options.ca_file).read_bytes()).hexdigest()
+    for f in options.values or []:
+        tag = 'values.'+re.sub(r'[^a-z0-9]+', '-', f.name.lower()).strip('-')
+        try:
+            lines = f.read_text().splitlines()
+        except OSError:
+            report.unknown(tag, 'values-file-unreadable')
+            continue
+        placeholders, scheme, bad_sha, example_sha = [], [], [], []
+        for n, line in enumerate(lines, 1):
+            body = line.split(' #', 1)[0]
+            if body.lstrip().startswith('#') or not body.strip():
+                continue
+            if any(m in body for m in EXAMPLE_MARKERS) or re.search(r'__[A-Z0-9_]+__|<[a-z][a-z0-9 _-]*>', body):
+                placeholders.append(n)
+            for host in re.findall(r'(?:^|[\s"\'=:,\[])((?:[a-z]+://)?[a-z0-9.-]+\.(?:es|aoss)\.amazonaws\.com)', body):
+                if not host.startswith('https://'):
+                    scheme.append(n)
+            m = re.search(r'\b(?:caSha256|sha256)\s*:\s*["\']?([0-9a-f]{64})', body)
+            if m and 'digest' not in body:
+                if m.group(1) == EXAMPLE_CA_SHA:
+                    example_sha.append(n)
+                elif ca_sha and m.group(1) != ca_sha:
+                    bad_sha.append(n)
+        lines_of = lambda xs: ', '.join(map(str, xs))
+        report.test(tag+'.placeholders', not placeholders,
+                    'Example/placeholder values remain on line(s) '+lines_of(placeholders)+'.' if placeholders else 'No example placeholders left.',
+                    'Replace them with your domain, org, bucket, OpenSearch endpoint and admin email, then helm upgrade.')
+        report.test(tag+'.opensearch-scheme', not scheme,
+                    'OpenSearch URL without https:// on line(s) '+lines_of(scheme)+'.' if scheme else 'OpenSearch URLs use https://.',
+                    'Prefix the OpenSearch endpoint with https:// (the search indexer fails without it).')
+        report.test(tag+'.ca-sha256', not (example_sha or bad_sha),
+                    (('Example CA hash on line(s) '+lines_of(example_sha)+'. ' if example_sha else '')
+                    + ('CA hash differs from the local CA file on line(s) '+lines_of(bad_sha)+'.' if bad_sha else '')).strip()
+                    or ('CA hashes match the local CA file.' if ca_sha else 'No example CA hash (no local CA file to compare).'),
+                    'Set every caSha256/sha256 under rds-ca to: shasum -a 256 rds-ca.pem')
+
+
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--context',help='Explicit kube context; required when reading the cluster.')
+    parser = argparse.ArgumentParser(description=__doc__+' With no flags, run it in the folder holding rds-ca.pem, your values file and Secret YAMLs; everything else is detected.')
+    parser.add_argument('--context',help='Kube context (default: the current context).')
     parser.add_argument('--namespace',default='agent-relay')
     parser.add_argument('--release',default='agent-relay')
     parser.add_argument('--scope',choices=('cluster','database','all'),default='all',
                         help='Split runs when cluster and database VPNs cannot coexist.')
     parser.add_argument('--secret-dir',type=Path,help='Existing secret-files tree from the setup script; no Secrets API reads.')
+    parser.add_argument('--secret-manifests',type=Path,nargs='+',
+                        help='Filled-in Secret manifest files or a directory of them (YAML or kubectl JSON); no Secrets API reads.')
     parser.add_argument('--ca-file',type=Path,help='Local DB CA bundle; replaces in-container CA paths for this process.')
     for group in ('control','cast','hoop'):
         parser.add_argument('--'+group+'-database',help='Expected database name, including custom names.')
+    parser.add_argument('--values',type=Path,nargs='*',help='Filled-in Helm values file(s) to lint (default: values*.yaml here).')
+    parser.add_argument('--no-s3-check',action='store_true',help='Skip the S3 HEAD of the latest ingested object.')
     parser.add_argument('--timeout',type=int,default=20)
-    parser.add_argument('--output',type=Path,help='New JSON report file, created mode 0600; never overwrites.')
+    parser.add_argument('--output',type=Path,help='New JSON report file, mode 0600; never overwrites (default: ./install-diagnostic-<time>.json).')
     options = parser.parse_args(argv)
-    if not options.context and (options.scope!='database' or not options.secret_dir):
-        parser.error('--context is required for cluster access; database-only offline input requires --secret-dir')
+    if options.secret_dir and options.secret_manifests:
+        parser.error('use either --secret-dir or --secret-manifests, not both')
     if not 1<=options.timeout<=120:
         parser.error('--timeout must be 1..120 seconds')
     return options
@@ -408,16 +756,48 @@ def parse_args(argv=None):
 def main(argv=None):
     options = parse_args(argv)
     report = Report()
+    notes = []
+    discover(options, notes)
+    print('Detected:')
+    for note in notes:
+        print('  '+note)
+    print()
+    values_checks(options,report)
     if options.scope in ('cluster','all'):
-        cluster_checks(options,report)
-    credentials = load_credentials(options,report)
-    if options.scope in ('database','all'):
+        if getattr(options,'cluster_reachable',True):
+            cluster_checks(options,report)
+        else:
+            report.unknown('cluster','not-reachable')
+    missing = getattr(options,'missing',{})
+    if getattr(options,'no_credentials',False):
+        credentials = {}
+        report.unknown('credentials','none-found')
+    else:
+        credentials = load_credentials(options,report)
+        absent = sorted({SLOTS[c['check'].split('.',1)[1]][0] for c in report.checks
+                         if c['check'].startswith('credential.') and c['detail']=='manifest-secret-missing'
+                         and c['check'].split('.',1)[1] in SLOTS})
+        if absent:
+            missing['secrets'] = ('These Secrets were not in the YAML files found: '+', '.join(absent)+
+                                  '. Add their filled-in YAMLs to ./secrets (see examples/aws/secrets/).')
+    if 'ca' in missing:
+        regions = sorted({m.group(1) for c in credentials.values()
+                          for m in [re.search(r'\.([a-z]{2}(?:-gov)?-[a-z]+-\d)\.rds\.amazonaws\.com$', c['host'])] if m})
+        region = regions[0] if len(regions)==1 else '<region>'
+        missing['ca'] = ('No database CA file (looked for rds-ca.pem, database-ca.pem, global-bundle.pem, *-bundle.pem here, '
+                         'then ~/.agent-relay-install/rds-ca.pem); TLS logins will fail. Fix: '
+                         'curl -fsS -o rds-ca.pem https://truststore.pki.rds.amazonaws.com/'+region+'/'+region+'-bundle.pem '
+                         '(or pass --ca-file <path>).')
+    if getattr(options,'no_credentials',False):
+        report.unknown('database','no-credentials')
+    elif options.scope in ('database','all'):
         database_checks(options,credentials,report)
     else:
         report.unknown('database','not-requested-cluster-only')
     result = report.result()
     result['scope'] = options.scope
-    result['credentialSource'] = 'local-files' if options.secret_dir else 'named-kubernetes-secrets'
+    result['missingInputs'] = sorted(missing)
+    result['credentialSource'] = 'local-manifests' if options.secret_manifests else 'local-files' if options.secret_dir else 'named-kubernetes-secrets'
     if options.output:
         try:
             with open(options.output,'x',opener=lambda path,flags:os.open(path,flags,0o600)) as output:
@@ -431,7 +811,22 @@ def main(argv=None):
         print(check['status']+' '+check['check']+resource+': '+check['detail'])
         if check['action']:
             print('  Next: '+check['action'])
+    failures = [c for c in result['checks'] if c['status']=='FAIL']
+    if failures:
+        print()
+        print('Likely problems (fix top to bottom):')
+        for c in failures:
+            where = ' ['+c['resource']+']' if 'resource' in c else ''
+            print('  - '+c['check']+where+': '+c['detail']+(' -> '+c['action'] if c['action'] else ''))
+    if missing:
+        print()
+        print('Missing files - how to fix:')
+        for key in ('credentials','secrets','ca','values','context'):
+            if key in missing:
+                print('  - '+missing[key])
+    print()
     print('Summary: '+json.dumps(result['summary'],sort_keys=True))
+    print('Report written to '+str(options.output)+' (share this file, never the Secret YAMLs).')
     return 1 if result['summary']['FAIL'] else 2 if result['summary']['UNKNOWN'] else 0
 
 

@@ -12,6 +12,7 @@
 {{- if and (kindIs "map" $brand) (or $brand.svg $brand.existingConfigMap) (dig "control" true (.Values.components | default dict)) (not (dig "webapp" true (.Values.components | default dict))) (not (dig "login" "logoUrl" "" (index .Values "relay-control" | default dict))) }}
 {{- fail "global.branding.logo is hosted by relay-webapp, but components.webapp=false: the sign-in page would link a logo nothing serves. Enable components.webapp, or host the logo yourself and set relay-control.login.logoUrl" }}
 {{- end }}
+{{- if and (eq (dig "enabled" false (.Values.eksIngress | default dict) | toString) "true") (dig "enabled" false (.Values.gkeIngress | default dict)) }}{{ fail "eksIngress.enabled and gkeIngress.enabled are exclusive: an install has one edge" }}{{ end }}
 {{- include "agent-relay.validateRemovedHistory" . }}
 {{- include "agent-relay.validateDurableActors" . }}
 {{- include "agent-relay.validateSingleHost" . }}
@@ -274,3 +275,26 @@ can't derive for its children: the Control Service relaygate pulls from. */ -}}
 {{- if ne (int (dig "controlServicePort" 80 $cp)) (int (dig "service" "port" 80 $control)) }}{{ fail (printf "global.relaygate.controlPolicy.controlServicePort must equal relay-control.service.port (%v)" (dig "service" "port" 80 $control)) }}{{ end -}}
 {{- end -}}
 {{- end }}
+
+{{- /* "true" when .name is a lowercase DNS name (RFC 1123 subdomain): at most
+.max characters, each dot-separated label 1-63 letters, digits and inner
+hyphens, so no empty label ("a..b") and no label starting or ending with "-". */ -}}
+{{- define "agent-relay.isDnsName" -}}
+{{- $name := toString .name -}}
+{{- $ok := and $name (le (len $name) (int .max)) -}}
+{{- range $l := splitList "." $name }}
+{{- if not (and (le (len $l) 63) (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $l)) }}{{ $ok = false }}{{ end -}}
+{{- end -}}
+{{- if $ok }}true{{ end -}}
+{{- end }}
+
+{{- /* Compatibility default for upgrades whose saved values predate eksIngress.
+Keep in step with values.yaml; the script/chart equivalence tests exercise both
+normal defaults and the missing/null-key fallback, with Chief off and on. */ -}}
+{{- define "agent-relay.eksDefaultControlPaths" -}}
+{{- list "/cloud/api" "/login" "/relay-node" "/mcp" "/cloud/mcp"
+  "/.well-known/oauth-protected-resource"
+  "/.well-known/oauth-authorization-server"
+  "/.well-known/openid-configuration"
+  "/cloud/.well-known" "/cloud/oauth" | toJson -}}
+{{- end -}}

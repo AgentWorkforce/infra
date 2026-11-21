@@ -20,7 +20,7 @@ SPEC.loader.exec_module(diag)
 
 def options(**kwargs):
     values = dict(context='isolated',namespace='agent-relay',release='agent-relay',
-                  timeout=5,ca_file=None,secret_dir=None,scope='all',
+                  timeout=5,ca_file=None,secret_dir=None,secret_manifests=None,scope='all',
                   control_database=None,cast_database=None,hoop_database=None)
     values.update(kwargs)
     return SimpleNamespace(**values)
@@ -86,6 +86,167 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(kube.call_count,5)
         self.assertNotIn('p@ss',json.dumps(report.result()))
         self.assertTrue(all(c['status']=='PASS' for c in report.checks))
+
+    def test_secret_manifests_from_examples(self):
+        examples = Path(__file__).resolve().parents[3]/'examples'/'aws'/'secrets'
+        report = diag.Report()
+        credentials = diag.load_credentials(options(secret_manifests=[examples]),report)
+        self.assertEqual(set(credentials), set(diag.SLOTS))
+        self.assertTrue(all(c['status']=='PASS' for c in report.checks if c['check'].startswith('credential.')))
+
+    def test_secret_manifest_quoting_data_and_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp)/'s.yaml'
+            enc = base64.b64encode(url('relaycast_runtime').encode()).decode()
+            f.write_text("# c\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: agent-relay-secrets\n"
+                         "stringData:\n  database-owner-url: '" + url('relaycast_owner') + "'  # note\n"
+                         "data:\n  database-runtime-url: " + enc + "\n---\nkind: ConfigMap\nmetadata:\n  name: x\n")
+            secrets = diag.load_secret_manifests([f])
+            self.assertEqual(secrets['agent-relay-secrets']['database-owner-url'], url('relaycast_owner'))
+            self.assertEqual(secrets['agent-relay-secrets']['database-runtime-url'], url('relaycast_runtime'))
+            report = diag.Report()
+            diag.load_credentials(options(secret_manifests=[f]),report)
+            text = json.dumps(report.result())
+            self.assertIn('manifest-secret-missing', text)
+            self.assertNotIn('p%40ss', text)
+
+    def test_secret_manifest_review_cases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old = base64.b64encode(url('relaycast_owner', db='old_db').encode()).decode()
+            new = url('relaycast_owner')
+            # ConfigMap with non-base64 data, commented separator, data after stringData.
+            (root/'a.yaml').write_text("kind: Secret\nmetadata:\n  name: agent-relay-secrets\n"
+                                        "stringData:\n  database-owner-url: '" + new + "'\n"
+                                        "data:\n  database-owner-url: " + old + "\n"
+                                        "--- # CA bundle\nkind: ConfigMap\nmetadata:\n  name: rds-ca\n"
+                                        "data:\n  ca.crt: |\n    -----BEGIN CERTIFICATE-----\n    AAAA\n")
+            (root/'b.json').write_text(json.dumps({'kind':'List','items':[
+                {'kind':'ConfigMap','metadata':{'name':'x'},'data':{'mode':'production'}},
+                {'kind':'Secret','metadata':{'name':'agent-relay-read-api'},'data':{'k':base64.b64encode(b'v').decode()}}]}))
+            secrets = diag.load_secret_manifests([root])
+            self.assertEqual(secrets['agent-relay-secrets']['database-owner-url'], new)
+            self.assertEqual(secrets['agent-relay-read-api']['k'], 'v')
+            self.assertNotIn('rds-ca', secrets)
+            (root/'b.json').write_text(json.dumps({'kind':'Secret','metadata':{'name':'s'},'data':{'database-url':None}}))
+            report = diag.Report()
+            diag.load_credentials(options(secret_manifests=[root/'b.json']),report)
+            self.assertIn('manifest-invalid-fields', json.dumps(report.result()))
+            (root/'b.json').write_text('[1, 2]')
+            report = diag.Report()
+            diag.load_credentials(options(secret_manifests=[root/'b.json']),report)
+            self.assertIn('manifest-invalid-fields', json.dumps(report.result()))
+
+    def test_missing_files_help(self):
+        examples = Path(__file__).resolve().parents[3]/'examples'/'aws'
+        for with_secrets in (False, True):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                if with_secrets:
+                    shutil.copytree(examples/'secrets', root/'secrets')
+                    (root/'secrets'/'02-agent-relay-read-api.yaml').unlink()
+                cwd = os.getcwd()
+                out = io.StringIO()
+                try:
+                    os.chdir(root)
+                    with mock.patch.object(Path, 'home', return_value=root/'nohome'), \
+                         mock.patch.object(diag, 'database_checks'), contextlib.redirect_stdout(out), \
+                         contextlib.redirect_stderr(io.StringIO()):
+                        diag.main(['--scope', 'database'])
+                finally:
+                    os.chdir(cwd)
+                text = out.getvalue()
+                self.assertIn('Missing files - how to fix:', text)
+                self.assertIn('--values <path>', text)
+                if with_secrets:
+                    self.assertIn('truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem', text)
+                    self.assertIn('not in the YAML files found: agent-relay-read-api', text)
+                else:
+                    self.assertIn('No database credentials found', text)
+                    self.assertIn('/<region>/', text)
+
+    def test_ingest_checks(self):
+        cred = {'host':'h','port':'5432','user':'hoopdb_owner','password':'p','database':'hoopdb','params':{}}
+        def run_with(results, s3=None):
+            report = diag.Report()
+            calls = iter(results)
+            with mock.patch.object(diag, 'psql', side_effect=lambda *a, **k: next(calls)), \
+                 mock.patch.object(diag.subprocess, 'run', side_effect=s3 or (lambda *a, **k: SimpleNamespace(returncode=0, stderr=''))):
+                diag.ingest_checks(options(), cred, report)
+            return {c['check']: c for c in report.checks}
+        none = run_with([{'present': True, 'forced_rls': False}, {'rows': 0, 'pointers': 0, 'latest_age_s': None, 'latest': None}])
+        self.assertEqual(none['ingest.pointers']['status'], 'UNKNOWN')
+        self.assertIn('No sessions ingested yet', none['ingest.pointers']['detail'])
+        latest = {'bucket': 'secret-bucket', 'key': 'org/ws/secret-key.json'}
+        ok = run_with([{'present': True, 'forced_rls': False}, {'rows': 3, 'pointers': 3, 'latest_age_s': 120, 'latest': dict(latest)}])
+        self.assertEqual(ok['ingest.pointers']['status'], 'PASS'); self.assertIn('2 min', ok['ingest.pointers']['detail'])
+        self.assertEqual(ok['ingest.s3-object']['status'], 'PASS')
+        self.assertNotIn('secret', json.dumps(ok))
+        for err, status in (('An error occurred (404) when calling the HeadObject operation: Not Found', 'FAIL'),
+                            ('An error occurred (403) when calling the HeadObject operation: Forbidden', 'UNKNOWN'),
+                            ('Unable to locate credentials. You can configure credentials', 'UNKNOWN')):
+            r = run_with([{'present': True, 'forced_rls': False}, {'rows': 1, 'pointers': 1, 'latest_age_s': 5, 'latest': dict(latest)}],
+                         s3=lambda *a, err=err, **k: SimpleNamespace(returncode=255, stderr=err))
+            self.assertEqual(r['ingest.s3-object']['status'], status, err)
+        missing = run_with([{'present': False, 'forced_rls': False}])
+        self.assertEqual(missing['ingest.pointers']['status'], 'UNKNOWN')
+        forced = run_with([{'present': True, 'forced_rls': True}])
+        self.assertIn('row-level', forced['ingest.pointers']['detail'])
+
+    def test_secret_manifest_args(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            diag.parse_args(['--scope','database','--secret-dir','a','--secret-manifests','b'])
+        o = diag.parse_args(['--scope','database','--secret-manifests','b'])
+        self.assertEqual(o.secret_manifests, [Path('b')])
+
+    def test_values_lint_finds_call_mistakes(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ca = root/'rds-ca.pem'
+            ca.write_text('-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n')
+            good = hashlib.sha256(ca.read_bytes()).hexdigest()
+            values = root/'values-poc.yaml'
+            values.write_text('# ar.example.com in a comment is fine\n'
+                              'host: https://ar.example.com\n'
+                              '      url: vpc-x.us-west-2.es.amazonaws.com\n'
+                              '      caSha256: "'+diag.EXAMPLE_CA_SHA+'"\n'
+                              '      sha256: "'+'0'*64+'"\n'
+                              '      caSha256: "'+good+'"\n'
+                              '  digest: sha256:'+'1'*64+'\n')
+            report = diag.Report()
+            diag.values_checks(SimpleNamespace(values=[values], ca_file=ca), report)
+            by = {c['check'].rsplit('.',1)[1]: c for c in report.checks}
+            self.assertEqual(by['placeholders']['status'], 'FAIL')
+            self.assertIn('line(s) 2.', by['placeholders']['detail'])
+            self.assertIn('line(s) 3.', by['opensearch-scheme']['detail'])
+            self.assertIn('Example CA hash on line(s) 4.', by['ca-sha256']['detail'])
+            self.assertIn('local CA file on line(s) 5.', by['ca-sha256']['detail'])
+            values.write_text('url: https://vpc-x.us-west-2.es.amazonaws.com\ncaSha256: "'+good+'"\n')
+            report = diag.Report()
+            diag.values_checks(SimpleNamespace(values=[values], ca_file=ca), report)
+            self.assertTrue(all(c['status']=='PASS' for c in report.checks))
+
+    def test_discover_uses_local_files_without_cluster(self):
+        examples = Path(__file__).resolve().parents[3]/'examples'/'aws'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(examples/'secrets', root/'secrets')
+            shutil.copy(examples/'values.yaml', root/'values.yaml')
+            (root/'rds-ca.pem').write_text('-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n')
+            o = diag.parse_args(['--scope','database'])
+            cwd = os.getcwd()
+            try:
+                os.chdir(root)
+                with mock.patch.object(Path, 'home', return_value=root/'nohome'):
+                    notes = []
+                    diag.discover(o, notes)
+            finally:
+                os.chdir(cwd)
+            self.assertEqual(o.ca_file.name, 'rds-ca.pem')
+            self.assertEqual(len(o.secret_manifests), 5)
+            self.assertEqual([v.name for v in o.values], ['values.yaml'])
+            self.assertTrue(o.output.name.startswith('install-diagnostic-'))
 
     def test_local_files_private_and_wrong_expected_database(self):
         with tempfile.TemporaryDirectory() as directory:

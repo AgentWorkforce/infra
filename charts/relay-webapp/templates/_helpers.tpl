@@ -115,3 +115,23 @@ different backends, which controllers reject or resolve unpredictably. */ -}}
 {{- if and .Values.networkPolicy.enabled (empty .Values.networkPolicy.ingressFrom) }}{{ fail "ingress with networkPolicy requires networkPolicy.ingressFrom" }}{{ end -}}
 {{- end -}}
 {{- end -}}
+
+{{- /* Dashboard-origin paths served by Control. Reused by the umbrella GKE
+Ingress; keep the EKS and Azure definitions in step (test_ingress_routes.py).
+The app base is the parent of runtime.apiBasePath (normally /cloud/api).
+Never claim all of /.well-known: ACME uses /.well-known/acme-challenge. */ -}}
+{{- define "relay-webapp.controlPaths" -}}
+{{- $api := trimSuffix "/" .Values.runtime.apiBasePath -}}
+{{- $base := trimSuffix "/api" $api -}}
+{{- $paths := list $api .Values.runtime.loginPath "/relay-node"
+  "/mcp" (printf "%s/mcp" $base)
+  "/.well-known/oauth-protected-resource"
+  "/.well-known/oauth-authorization-server"
+  "/.well-known/openid-configuration" -}}
+{{- /* An API mounted at /api has no app base: claim only named root
+discovery paths, leaving ACME and unrelated /.well-known routes alone. */ -}}
+{{- if $base }}{{ $paths = append $paths (printf "%s/.well-known" $base) }}{{ end -}}
+{{- $paths = append $paths (printf "%s/oauth" $base) -}}
+{{- if include "relay-webapp.singleHost" . }}{{ $paths = append $paths "/api" }}{{ end -}}
+{{- $paths | uniq | toJson -}}
+{{- end -}}

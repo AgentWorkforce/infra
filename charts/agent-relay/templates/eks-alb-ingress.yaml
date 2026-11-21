@@ -1,0 +1,260 @@
+{{- /* Checked before the gate: a string "false" is truthy in a template and
+would otherwise render the edge. */ -}}
+{{- $eksEnabled := dig "enabled" false (.Values.eksIngress | default dict) -}}
+{{- if not (kindIs "bool" $eksEnabled) }}{{ fail "eksIngress.enabled must be true or false" }}{{ end -}}
+{{- if $eksEnabled }}
+{{- /* The EKS ALB edge as a release object: the same Ingress that
+scripts/selfhost/eks-alb-ingress.sh prints, option for option (README: EKS ALB
+Ingress). The script stays the documented way; ci/agent-relay/test_eks_alb_ingress.py
+holds the two to deep equality. Every backend is named, never looked up:
+Flows and Chief are separate releases, and a read-only history host may name
+a read API Service this release does not install, so nothing here requires a
+component of this release to be enabled. */ -}}
+{{- $e := .Values.eksIngress -}}
+{{- include "agent-relay.validate" . -}}
+{{- $label := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" -}}
+{{- $port := "^[1-9][0-9]{0,4}$" -}}
+{{- $bool := dict -}}
+{{- range $key := list "history.enabled" "history.readOnly" "flows.enabled" }}
+{{- $v := dig (index (splitList "." $key) 0) (index (splitList "." $key) 1) false $e -}}
+{{- if not (kindIs "bool" $v) }}{{ fail (printf "eksIngress.%s must be true or false" $key) }}{{ end -}}
+{{- $_ := set $bool $key $v -}}
+{{- end -}}
+{{- $name := dig "name" "agent-relay" $e | toString -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $name "max" 253)) }}{{ fail "eksIngress.name must be a DNS subdomain name" }}{{ end -}}
+{{- $class := dig "className" "alb" $e | toString -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $class "max" 253)) }}{{ fail "eksIngress.className must be an IngressClass name" }}{{ end -}}
+{{- $domain := dig "domain" "" $e | toString -}}
+{{- if not $domain }}{{ fail "eksIngress.domain (the base domain) is required" }}{{ end -}}
+{{- /* history.<domain> must stay within 253 characters. */ -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $domain "max" 245)) }}{{ fail "eksIngress.domain must be a lowercase DNS name (the base domain, no scheme or path): dot-separated labels of 1-63 letters, digits and inner hyphens, at most 245 characters" }}{{ end -}}
+{{- $cert := dig "certificateArn" "" $e | toString -}}
+{{- if not $cert }}{{ fail "eksIngress.certificateArn (the ACM certificate ARN) is required" }}{{ end -}}
+{{- if not (regexMatch "^arn:[^\\s'\"]+$" $cert) }}{{ fail "eksIngress.certificateArn must be an ACM certificate ARN (arn:...)" }}{{ end -}}
+{{- $history := index $bool "history.enabled" -}}
+{{- $readOnly := index $bool "history.readOnly" -}}
+{{- $flows := index $bool "flows.enabled" -}}
+{{- /* Unset (null) ingest follows the script: on whenever the history host is
+published and not read-only. */ -}}
+{{- $ingest := index (dig "ingest" dict $e) "enabled" -}}
+{{- if kindIs "invalid" $ingest }}{{ $ingest = and $history (not $readOnly) }}{{ end -}}
+{{- if not (kindIs "bool" $ingest) }}{{ fail "eksIngress.ingest.enabled must be true, false or null" }}{{ end -}}
+{{- $ingestSvc := dig "ingest" "serviceName" "agent-relay-ingest-edge" $e | toString -}}
+{{- $ingestPort := dig "ingest" "servicePort" 80 $e | toString -}}
+{{- $readSvc := dig "readApi" "serviceName" "agent-relay-read-api" $e | toString -}}
+{{- $readPort := dig "readApi" "servicePort" 80 $e | toString -}}
+{{- $flowsSvc := dig "flows" "serviceName" "relayfile-control" $e | toString -}}
+{{- $flowsPort := dig "flows" "servicePort" 3100 $e | toString -}}
+{{- $chiefSvc := dig "chief" "serviceName" "" $e | toString -}}
+{{- $chiefPort := dig "chief" "servicePort" 3200 $e | toString -}}
+{{- $controlSvc := dig "control" "serviceName" "relay-control" $e | toString -}}
+{{- $webappSvc := dig "webapp" "serviceName" "relay-webapp" $e | toString -}}
+{{- $validPort := dict -}}
+{{- range $p := list $ingestPort $readPort $flowsPort $chiefPort }}
+{{- $_ := set $validPort $p (and (regexMatch $port $p) (le (atoi $p) 65535)) -}}
+{{- end -}}
+{{- if $chiefSvc }}
+{{- if not (and (le (len $chiefSvc) 63) (regexMatch $label $chiefSvc)) }}{{ fail "eksIngress.chief.serviceName must be a DNS label" }}{{ end -}}
+{{- if not (index $validPort $chiefPort) }}{{ fail "eksIngress.chief.servicePort must be 1-65535" }}{{ end -}}
+{{- end -}}
+{{- range $svc := list $controlSvc $webappSvc }}
+{{- if not (and (le (len $svc) 63) (regexMatch $label $svc)) }}{{ fail "eksIngress.control.serviceName and eksIngress.webapp.serviceName must be DNS labels" }}{{ end -}}
+{{- end -}}
+{{- if and $history (not $readOnly) (not $ingest) }}{{ fail "eksIngress.ingest.enabled=false needs eksIngress.history.readOnly=true: the history host has no standalone RelayHistory backend" }}{{ end -}}
+{{- if $flows }}
+{{- if not (and (le (len $flowsSvc) 63) (regexMatch $label $flowsSvc)) }}{{ fail "eksIngress.flows.serviceName must be a DNS label" }}{{ end -}}
+{{- if not (index $validPort $flowsPort) }}{{ fail "eksIngress.flows.servicePort must be 1-65535" }}{{ end -}}
+{{- end -}}
+{{- if $readOnly }}
+{{- if not (and $history (not $ingest)) }}{{ fail "eksIngress.history.readOnly=true needs eksIngress.history.enabled=true and eksIngress.ingest.enabled=false" }}{{ end -}}
+{{- if not (and (le (len $readSvc) 63) (regexMatch $label $readSvc)) }}{{ fail "eksIngress.readApi.serviceName must be a DNS label" }}{{ end -}}
+{{- if not (index $validPort $readPort) }}{{ fail "eksIngress.readApi.servicePort must be 1-65535" }}{{ end -}}
+{{- end -}}
+{{- if $ingest }}
+{{- if not $history }}{{ fail "eksIngress.ingest.enabled=true needs the history host (eksIngress.history.enabled=true)" }}{{ end -}}
+{{- range $svc := list $ingestSvc $readSvc }}
+{{- if not (and (le (len $svc) 63) (regexMatch $label $svc)) }}{{ fail "eksIngress.ingest.serviceName and eksIngress.readApi.serviceName must be DNS labels" }}{{ end -}}
+{{- end -}}
+{{- range $p := list $ingestPort $readPort }}
+{{- if not (index $validPort $p) }}{{ fail "eksIngress.ingest.servicePort and eksIngress.readApi.servicePort must be 1-65535" }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- /* Dashboard-host paths sent to the control API. The default is the list
+the script emits; a path here is a Prefix route (Exact plus "<path>/*" with
+Chief on), so it may not be "/", end in "/", or hold "*" or "//". */ -}}
+{{- /* Old saved values may lack this key. Use the compatibility helper for
+an absent or null key, but preserve an explicitly empty list. */ -}}
+{{- $defaultControlPaths := include "agent-relay.eksDefaultControlPaths" . | fromJsonArray -}}
+{{- $controlPaths := dig "controlPaths" $defaultControlPaths $e -}}
+{{- if kindIs "invalid" $controlPaths }}{{ $controlPaths = $defaultControlPaths }}{{ end -}}
+{{- if not (kindIs "slice" $controlPaths) }}{{ fail "eksIngress.controlPaths must be a list of paths" }}{{ end -}}
+{{- range $p := $controlPaths }}
+{{- if not (and (kindIs "string" $p) (regexMatch "^(/[-A-Za-z0-9._~%!$&'()+,;=:@]+)+$" $p)) }}{{ fail (printf "eksIngress.controlPaths entry %v must be an absolute path such as /cloud/api: not \"/\", no trailing \"/\", \"//\", \"*\" or spaces" $p) }}{{ end -}}
+{{- end -}}
+{{- if ne (len $controlPaths) (len (uniq $controlPaths)) }}{{ fail "eksIngress.controlPaths must not repeat a path" }}{{ end -}}
+{{- $flowsRoutes := list -}}
+{{- if $flows }}{{ range $r := list "flows" "workers" "workflows" }}{{ $flowsRoutes = append $flowsRoutes $r }}{{ end }}{{ end -}}
+{{- $deny := "backend: { service: { name: edge-deny, port: { name: use-annotation } } }" -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    {{- if or $readOnly $ingest }}
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    {{- end }}
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: {{ $cert | quote }}
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
+    alb.ingress.kubernetes.io/actions.edge-deny: >-
+      {"type":"fixed-response","fixedResponseConfig":{"contentType":"text/plain","statusCode":"404","messageBody":"not found"}}
+spec:
+  ingressClassName: {{ $class }}
+  tls:
+    - hosts:
+        - {{ $domain }}
+        - api.{{ $domain }}
+        - cast.{{ $domain }}
+        {{- if $history }}
+        - history.{{ $domain }}
+        {{- end }}
+  rules:
+    - host: {{ $domain }}
+      http:
+        paths:
+          {{- range $r := $flowsRoutes }}
+          - path: /cloud/api/v1/{{ $r }}
+            pathType: Prefix
+            backend: { service: { name: {{ $flowsSvc }}, port: { number: {{ $flowsPort }} } } }
+          {{- end }}
+          {{- if $chiefSvc }}
+          {{- /* Chief routes need a wildcard for the workspace id; wildcards are
+          ImplementationSpecific and the controller orders Exact, Prefix, then
+          ImplementationSpecific, so this host's Prefix paths become Exact plus
+          ordered wildcards. */}}
+          {{- range $p := $controlPaths }}
+          - path: {{ $p | quote }}
+            pathType: Exact
+            backend: { service: { name: {{ $controlSvc }}, port: { number: 80 } } }
+          {{- end }}
+          {{- range $prefix := list "/cloud/api/v1" "/api/v1" }}
+          {{- range $suffix := list "chiefs" "chiefs/*" }}
+          - path: "{{ $prefix }}/workspaces/*/{{ $suffix }}"
+            pathType: ImplementationSpecific
+            backend: { service: { name: {{ $chiefSvc }}, port: { number: {{ $chiefPort }} } } }
+          {{- end }}
+          {{- end }}
+          {{- range $p := $controlPaths }}
+          - path: "{{ $p }}/*"
+            pathType: ImplementationSpecific
+            backend: { service: { name: {{ $controlSvc }}, port: { number: 80 } } }
+          {{- end }}
+          - path: "/*"
+            pathType: ImplementationSpecific
+            backend: { service: { name: {{ $webappSvc }}, port: { number: 8080 } } }
+          {{- else }}
+          {{- range $p := $controlPaths }}
+          - path: {{ $p | quote }}
+            pathType: Prefix
+            backend: { service: { name: {{ $controlSvc }}, port: { number: 80 } } }
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: {{ $webappSvc }}, port: { number: 8080 } } }
+          {{- end }}
+    - host: api.{{ $domain }}
+      http:
+        paths:
+          - path: /internal
+            pathType: Prefix
+            {{ $deny }}
+          - path: "//internal*"
+            pathType: ImplementationSpecific
+            {{ $deny }}
+          {{- range $base := list "/cloud/api/v1" "/api/v1" }}
+          {{- range $r := $flowsRoutes }}
+          - path: {{ $base }}/{{ $r }}
+            pathType: Prefix
+            backend: { service: { name: {{ $flowsSvc }}, port: { number: {{ $flowsPort }} } } }
+          {{- end }}
+          {{- end }}
+          {{- if $chiefSvc }}
+          {{- range $prefix := list "/cloud/api/v1" "/api/v1" }}
+          {{- range $suffix := list "chiefs" "chiefs/*" }}
+          - path: "{{ $prefix }}/workspaces/*/{{ $suffix }}"
+            pathType: ImplementationSpecific
+            backend: { service: { name: {{ $chiefSvc }}, port: { number: {{ $chiefPort }} } } }
+          {{- end }}
+          {{- end }}
+          {{- end }}
+          - path: "/*"
+            pathType: ImplementationSpecific
+            backend: { service: { name: {{ $controlSvc }}, port: { number: 80 } } }
+    - host: cast.{{ $domain }}
+      http:
+        paths:
+          - path: /internal
+            pathType: Prefix
+            {{ $deny }}
+          - path: "//internal*"
+            pathType: ImplementationSpecific
+            {{ $deny }}
+          - path: /v1/workspaces
+            pathType: Exact
+            {{ $deny }}
+          - path: /v1/workspaces/
+            pathType: Exact
+            {{ $deny }}
+          - path: "/*"
+            pathType: ImplementationSpecific
+            backend: { service: { name: relaycast, port: { number: 8787 } } }
+    {{- if $history }}
+    - host: history.{{ $domain }}
+      http:
+        paths:
+          {{- if not $readOnly }}
+          {{- range $p := list "/v1/delivery/batches" "/v1/turns/batches" "/v1/delivery/limits" "/v1/auth/token/refresh" }}
+          - path: {{ $p }}
+            pathType: Exact
+            backend: { service: { name: {{ $ingestSvc }}, port: { number: {{ $ingestPort }} } } }
+          {{- end }}
+          {{- end }}
+          {{- range $p := list "/v1/delivery/records" "/v1/cli/login" "/v1/events" "/v1/auth/token/revoke" }}
+          - path: {{ $p }}
+            pathType: Exact
+            backend: { service: { name: {{ $readSvc }}, port: { number: {{ $readPort }} } } }
+          {{- end }}
+          {{- range $p := list "/v1/sessions" "/v1/digest" }}
+          - path: {{ $p }}
+            pathType: Prefix
+            backend: { service: { name: {{ $readSvc }}, port: { number: {{ $readPort }} } } }
+          {{- end }}
+          {{- if not $readOnly }}
+          {{- /* The ingest edge owns /v1/delivery/*, /v1/turns/* and
+          /v1/onboarding/*, except delivery records (Exact, above). */}}
+          {{- range $p := list "/v1/delivery" "/v1/turns" "/v1/onboarding" }}
+          - path: {{ $p }}
+            pathType: Prefix
+            backend: { service: { name: {{ $ingestSvc }}, port: { number: {{ $ingestPort }} } } }
+          {{- end }}
+          {{- end }}
+          - path: /internal
+            pathType: Prefix
+            {{ $deny }}
+          - path: "//internal*"
+            pathType: ImplementationSpecific
+            {{ $deny }}
+          {{- /* Everything not named above is a fixed 404 at the edge. */}}
+          - path: "/*"
+            pathType: ImplementationSpecific
+            {{ $deny }}
+    {{- end }}
+{{- end -}}

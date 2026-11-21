@@ -78,9 +78,13 @@ when you run them.
    edge_security_policy = { create = true }
    ```
 
-   Run `terraform apply`. `terraform output edge` prints its name
-   (`<name>-edge`). This policy has the OWASP rules in **preview** (they log
-   and do not block) and a limit of 60 sign-in requests a minute per client.
+   Run `terraform plan` first and read `rule_counts` in the `edge` output:
+   one policy holds at most 20 rules with an expression, and the plan tells
+   you what this policy needs (the defaults need 3). Then `terraform apply`,
+   and continue only if it finishes without an error. `terraform output edge`
+   prints the policy's name (`<name>-edge`). This policy has the OWASP rules
+   in **preview** (they log and do not block) and a limit of 60 sign-in
+   requests a minute per client.
 
 2. Name it in `values.yaml`, and bind the dashboard Service to its
    BackendConfig (`<gkeIngress.name>-dashboard`):
@@ -107,6 +111,27 @@ gcloud compute backend-services list --format='table(name,securityPolicy.basenam
 
 Every BackendConfig shows the policy, and the count equals the number of
 backend services of the Ingress (6 for the default install).
+
+That list can be complete several minutes before every backend enforces the
+policy (4 minutes when measured). If your policy refuses some requests (an
+allowlist, Cloudflare, client rules), confirm with a request that it must
+refuse, **on each backend**, before you rely on it. Each line below reaches a
+different backend service:
+
+```sh
+IP=$(gcloud compute addresses describe $STATIC_IP_NAME --global --format='value(address)')
+for url in "$DOMAIN/" "api.$DOMAIN/readyz" "cast.$DOMAIN/health" \
+           "history.$DOMAIN/healthz" "history.$DOMAIN/v1/delivery/limits" "history.$DOMAIN/"; do
+  h=${url%%/*}
+  curl -sk -o /dev/null -w "$url %{http_code}\n" --resolve "$h:443:$IP" "https://$url"
+done
+```
+
+The six are the dashboard, the API, Relaycast, the history reader, the
+history upload service and the deny service. From an address the policy does
+not admit, every line must end in `403`. Repeat until they all do. Warnings
+that mention `Translate` in `kubectl describe ingress` while the policy
+attaches are transient.
 
 **Turn the OWASP rules on.** Session transcripts and messages contain code,
 SQL and shell text, which is what those rules look for. Use the install
@@ -183,8 +208,8 @@ Cloudflare can reach it.
    the address it received the request from, and its own. Measured on a live
    GKE install, the header is `<client>, <load balancer>` and the right value
    is 2. Cloudflare adds one more, so behind Cloudflare the header is
-   `<client>, <Cloudflare>, <load balancer>` and the value is 3. The
-   Cloudflare case is expected, not yet measured; check it as below.
+   `<client>, <Cloudflare>, <load balancer>` and the value is 3 (also
+   measured). Check yours as below.
 
    ```yaml
    relay-control:
@@ -218,9 +243,10 @@ Cloudflare can reach it.
 
    ```hcl
    edge_security_policy = {
-     create      = true
-     cloudflare  = { enabled = true }
-     rate_limits = []
+     create          = true
+     cloudflare      = { enabled = true }
+     connecting_asns = [13335]   # Cloudflare's network; see below
+     rate_limits     = []
      client_ip_rules = [
        { name = "vendors", hosts = ["history.<domain>"], path_prefixes = ["/v1/delivery", "/v1/turns", "/v1/auth/token/refresh"], cidrs = ["<vendor range>", "<your range>"], rate_limit = { count = 600, interval_sec = 60 } },
        { name = "sign-in", path_prefixes = ["/login", "/api/v1/auth", "/cloud/api/v1/auth"], cidrs = ["<your range>"], rate_limit = { count = 60, interval_sec = 60 } },
@@ -229,14 +255,78 @@ Cloudflare can reach it.
    }
    ```
 
+   `connecting_asns` matters here. A request that one of these rules admits
+   is not checked against Cloudflare's address ranges afterwards, so without
+   it anyone who learned the secret header could connect straight to the
+   load balancer and claim to be any client. With it, a connection that does
+   not come from Cloudflare's network is refused before any of these rules.
+   Terraform refuses `client_ip_rules` without it.
+
+   After applying it, wait until it is enforced before you rely on it: a new
+   rule took almost 4 minutes to reach every backend when measured, and until
+   then a direct request with the header was still admitted. Repeat the loop
+   from section 2 from a machine that is not behind Cloudflare, adding the
+   secret header **and** a client address your staff rule admits:
+
+   ```sh
+   -H "x-origin-auth: <value>" -H "CF-Connecting-IP: <an address in your range>"
+   ```
+
+   until all six lines end in `403`. Both headers matter: without the
+   claimed address the client rules themselves answer 403, which would look
+   like success while the bypass is still open.
+
+   One gap this cannot close: another Cloudflare customer who learned your
+   secret header could send requests through their own Cloudflare zone, which
+   arrive from the same network. Keep the header value secret, rotate it if
+   it may have leaked (item 3), and treat it like a password.
+
    The first rule that matches a request's path decides it: its listed
    clients are admitted, everyone else gets 403. The last rule closes every
    other path. A request that a rule admits is not checked by any later
    rule, so each rule carries its own `rate_limit` (per client), and the
    sign-in limit is a rule of its own ahead of the closing one. The module's
-   README (`terraform/modules/gcp/edge-security`) explains the limits. A
-   vendor that publishes hundreds of ranges needs a higher Cloud Armor quota,
-   or that list enforced as a Cloudflare WAF custom rule instead.
+   README (`terraform/modules/gcp/edge-security`) explains the limits.
+
+   **A long vendor list does not fit.** One Cloud Armor policy holds at most
+   20 rules with an expression, and Google does not raise that limit. After
+   the secret header, the two WAF rules and the sign-in and staff rules,
+   about 13 are left: roughly 100 vendor ranges. Terraform refuses a plan
+   that needs more and says how many it counted (`rule_counts` in the `edge`
+   output shows the same). For a vendor that publishes more, there are two
+   ways:
+
+   - **An address group** (needs Cloud Armor Enterprise, which is billed and
+     takes up to an hour to activate). The whole list then counts as one
+     entry in one rule:
+
+     ```sh
+     gcloud compute project-info update --cloud-armor-tier CA_ENTERPRISE_PAYGO
+     gcloud network-security address-groups create agent-relay-vendor-a --location global \
+       --type IPv4 --capacity 600 --purpose CLOUD_ARMOR
+     gcloud network-security address-groups add-items agent-relay-vendor-a --location global \
+       --items <range>,<range>,...
+     ```
+
+     and in the rule, add `address_groups = ["agent-relay-vendor-a"]` and
+     remove only that vendor's ranges from `cidrs`. Keep your own ranges
+     there (`cidrs = ["<your range>"]`): the rule denies everyone it does not
+     list, so without them your users' uploads would get 403. When the vendor changes its list, update the
+     group with `add-items` and `remove-items`; Terraform is not involved.
+   - **A Cloudflare WAF custom rule** for that vendor's list, keeping only
+     your own ranges here. No extra Google cost.
+
+   The project also has a limit of 20 such rules across all its policies
+   (`SECURITY_POLICY_CEVAL_RULES`). That one can be raised, and a request was
+   granted in seconds when measured. If another policy in the project already
+   uses some, the apply fails part-way with
+   `Quota 'SECURITY_POLICY_CEVAL_RULES' exceeded. Limit: 20.0 globally`.
+
+   **If an apply fails, do not use the policy yet.** It then holds an
+   arbitrary part of its rules, for example the rule that denies the sign-in
+   paths without the rule that admits you. Fix the cause and run
+   `terraform apply` again until it exits without an error. Only then set
+   `gkeIngress.securityPolicy`.
 
 **Done when:**
 

@@ -128,6 +128,9 @@ case "$*" in
   *"get jobs"*)
     n=$(cat "$FAKE/jobs-calls" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE/jobs-calls"
     f="$FAKE/jobs-$n.json"; [ -f "$f" ] || f="$FAKE/jobs.json"; [ -f "$f" ] && cat "$f" || echo '{"items": []}' ;;
+  *"logs job/"*) [ -f "$FAKE/logs-fail" ] && { echo "error: logs unavailable" >&2; exit 1; }
+    printf 'applied 0049_x\n{"applied":["0074_exchange_tokens.sql"]}\nconnecting postgresql://u:JOBSECRET@h/db\nDB_PASSWORD=JOBPW2\nDB_PASSWORD = JOBPW3\ntoken : JOBPW4\n"secret": "JOBPW5"\nmigrations done, exit 0\n' ;;
+  *"get pods"*) echo '{"items": [{"metadata": {"name": "web-1"}, "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}], "containerStatuses": [{"restartCount": 2, "imageID": "img@sha256:abc"}]}}]}' ;;
   *"get deploy,statefulset"*) echo '{"items": [{"kind": "Deployment", "metadata": {"name": "web"}, "spec": {"template": {"spec": {"containers": [{"image": "img:1"}]}}}}]}' ;;
   *"apply --server-side --field-manager=ci-deploy-secret-"*)
     echo "$*" | grep -o 'field-manager=[^ ]*' >> "$FAKE/managers"; cat >> "$FAKE/applied-secrets" ;;
@@ -366,6 +369,44 @@ class ScriptTest(unittest.TestCase):
         p, _ = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7", JOB_TIMEOUT_SECONDS="60")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertGreaterEqual(int((self.fake / "jobs-calls").read_text()), 2)
+
+    def test_apply_records_job_logs_and_pods_without_credentials(self):
+        self.render({"a": 2}, DEPLOY)
+        (self.fake / "jobs.json").write_text(json.dumps({"items": [self.job("done")]}))
+        p, report = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7", JOB_TIMEOUT_SECONDS="60")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("job migrate-done: complete", p.stderr)
+        jobs = (report / "jobs.txt").read_text()
+        self.assertIn("### job migrate-done Complete", jobs)
+        self.assertIn("applied 0049_x", jobs)
+        self.assertIn("migrations done, exit 0", jobs)
+        self.assertIn('{"applied":["0074_exchange_tokens.sql"]}', jobs)
+        self.assertEqual(jobs.count("[line withheld: may contain a credential]"), 5)
+        self.assertEqual(jobs.count("### job migrate-done"), 1)
+        for f in report.rglob("*"):
+            if f.is_file():
+                for secret in ("JOBSECRET", "JOBPW2", "JOBPW3", "JOBPW4", "JOBPW5"):
+                    self.assertNotIn(secret, f.read_text(errors="ignore"))
+        lines = [json.loads(l) for l in (report / "state.jsonl").read_text().splitlines()]
+        self.assertIn({"pod": "web-1", "ready": True, "restarts": 2, "imageIDs": ["img@sha256:abc"]}, lines)
+        self.assertIn("Complete", [l.get("state") for l in lines if l.get("job") == "migrate-done"])
+
+    def test_apply_without_new_jobs_says_so_and_still_records_old_ones(self):
+        self.render({"a": 2}, DEPLOY)
+        (self.fake / "jobs.json").write_text(json.dumps({"items": [self.job("done", created="2000-01-01T00:00:00Z")]}))
+        p, report = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7", JOB_TIMEOUT_SECONDS="60")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("no Jobs created by this upgrade", p.stderr)
+        self.assertIn("### job migrate-done Complete", (report / "jobs.txt").read_text())
+
+    def test_apply_survives_unavailable_job_logs(self):
+        self.render({"a": 2}, DEPLOY)
+        (self.fake / "jobs.json").write_text(json.dumps({"items": [self.job("done")]}))
+        (self.fake / "logs-fail").write_text("")
+        p, report = self.run_script("apply", EXPECT_REVISIONS="agent-relay=7", JOB_TIMEOUT_SECONDS="60")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("logs of job migrate-done unavailable", p.stderr)
+        self.assertIn("[log unavailable: kubectl logs failed]", (report / "jobs.txt").read_text())
 
     def test_apply_fails_on_failed_release_job(self):
         self.render({"a": 2}, DEPLOY)

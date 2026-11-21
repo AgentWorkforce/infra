@@ -10,12 +10,15 @@
 # backend, the Sessions read API and the ingest edge on one history origin; no
 # RelayAuth. Enable sessions-pipeline.sessionReadApi and .ingestEdge in the
 # site values (docs/self-hosted-native-ingest.md), and publish the ALB with
-# scripts/selfhost/eks-alb-ingress.sh and EKS_ALB_INGEST=true.
+# scripts/selfhost/eks-alb-ingress.sh and EKS_ALB_INGEST=true (the documented
+# way), or render the same Ingress from this release with eksIngress below
+# (README: EKS ALB Ingress; adopting a script-applied Ingress is described there).
 # values-eks-native.yaml is now an empty compatibility overlay.
 #
 # AWS mapping of the GCP profile:
 #   GKE Ingress + ManagedCertificate  -> one ALB Ingress with host rules and an
-#                                        ACM certificate (scripts/selfhost/eks-alb-ingress.sh);
+#                                        ACM certificate (scripts/selfhost/eks-alb-ingress.sh,
+#                                        or eksIngress.enabled=true);
 #                                        EKS Auto Mode's built-in ALB controller
 #                                        or the AWS Load Balancer Controller
 #   GKE Workload Identity             -> EKS Pod Identity associations
@@ -48,6 +51,29 @@ global:
     orgId: example-org
 
 gkeIngress:
+  enabled: false
+
+# Off: the edge is applied with scripts/selfhost/eks-alb-ingress.sh. To render
+# it from the release instead, set in the site values (options and defaults in
+# values.yaml mirror the script's variables):
+#   eksIngress:
+#     enabled: true
+#     domain: relay.example.com                 # REQUIRED OVERRIDE
+#     certificateArn: arn:aws:acm:...           # REQUIRED OVERRIDE (covers all four names)
+#     # Pin the live ALB's list; the current default is:
+#     controlPaths:
+#       - /cloud/api
+#       - /login
+#       - /relay-node
+#       - /mcp
+#       - /cloud/mcp
+#       - /.well-known/oauth-protected-resource
+#       - /.well-known/oauth-authorization-server
+#       - /.well-known/openid-configuration
+#       - /cloud/.well-known
+#       - /cloud/oauth
+#     # An explicit earlier three-path list keeps its existing listener rules.
+eksIngress:
   enabled: false
 
 relaycast:
@@ -117,15 +143,20 @@ relayauth:
 sessions-pipeline:
   worker:
     image:
-      # Preferred customer services image from relayhistory-pipeline main 7e9b2f0f
-      # (#509 alpha.5 on top of #505), signed publish run 42964243811.
+      # Customer services image from relayhistory-pipeline main efdd4bb2 (issue
+      # 610 Phase 3: staged reconcile on by default), signed publish run
+      # 44489159041. Vendors relayscrubber 0.5.0-alpha.9 under Khaliq's
+      # recorded override of the relayscrubber-lead security block (see
+      # self-hosted/customer-images.yaml); alpha.10 replaces it when it passes.
       # Before its first migrate, run the privileged HoopDb role bootstraps
-      # the chart does not (session_token_verifier,
-      # session ingest roles) as the Postgres superuser, from the image's own
-      # /app/supabase/bootstrap/*.sql. Mirror it by
-      # digest to your ECR to pull with the node role instead.
+      # the chart does not (session_token_verifier, session ingest roles and,
+      # new for efdd4bb2, legacy_export_privacy_roles.sql) as the Postgres
+      # superuser, from the image's own /app/supabase/bootstrap/*.sql. On a
+      # populated database, prebuild the migration 058000 indexes
+      # (CONCURRENTLY) or set worker.migrations.allowBlockingIndexBuild once.
+      # Mirror it by digest to your ECR to pull with the node role instead.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
     # REQUIRED OVERRIDE: existing Secret name; see the chart README for keys.
     existingSecret: example-agent-relay-secrets
     summaryEncryption:
@@ -162,7 +193,7 @@ sessions-pipeline:
     image:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
     # REQUIRED OVERRIDE: existing Secret name; see the chart README for keys.
     existingSecret: example-agent-relay-secrets
     locker:
@@ -201,7 +232,7 @@ sessions-pipeline:
     sqlImage:
       # Same services image repository and digest as worker.
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:77022c5b6a1d30f96f921d703eb27a1acada8ec273ad84aebdde24f8eddce305
+      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
   session-object-storage:
     enabled: false
 

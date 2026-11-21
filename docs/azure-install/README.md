@@ -311,6 +311,65 @@ kubectl -n agent-relay rollout status deploy/agent-relay-worker-session-brief de
 summary in the dashboard. The GKE step lists the log lines that show model
 versus extractive summaries, the daily limits, and how to turn it off.
 
+### 12. Large sessions: search index limits (optional)
+
+By default the search indexer indexes a session whole only up to 64 MiB and
+100,000 events. A larger session is recorded as partial. A workspace search that
+would include it then answers 501 `session_partial`, unless the read API is set
+to skip partial sessions. These settings need **agent-relay-2026.11.11 or
+later** (chart 0.7.25+). This guide installs 2026.11.16, which supports them.
+If you run an older release, upgrade first.
+
+All are unset by default. When it renders, the chart checks only the format of
+`maxScopeBytes` (bytes, or a MiB/GiB size), not its numeric range, so keep it
+within 64MiB..256MiB yourself. It does refuse out-of-range `maxScopeEvents` and
+`maxRows`. Merge into `values.yaml`:
+
+```yaml
+sessions-pipeline:
+  searchIndexer:
+    limits:
+      maxScopeBytes: 256MiB    # SEARCH_INDEX_MAX_SCOPE_BYTES: 64MiB..256MiB
+      maxScopeEvents: 1000000  # SEARCH_INDEX_MAX_SCOPE_EVENTS: 100000..1000000
+      maxRows: 1000000         # SEARCH_INDEX_MAX_ROWS: 500000..1000000
+    resources:
+      limits:
+        memory: 3Gi            # raise with the limits; the indexer holds a scope in memory several times over
+  sessionReadApi:
+    search:
+      partialSessions: skip    # READ_API_SEARCH_PARTIAL_SESSIONS: refuse (image default) or skip
+```
+
+- **The limits** apply to the search indexer only (Deployment
+  `agent-relay-search-indexer`, service `session-pipeline-consumer`). It
+  re-sends partial sessions on every reconcile tick, so sessions that were
+  partial are indexed whole after the upgrade without a manual re-index.
+- **`partialSessions: skip`** makes a search that would include a still-partial
+  session answer 200, marked incomplete with the `X-Sessions-Read-Incomplete`
+  header, and leaves that session's rows out.
+- Set only what you need: raise `maxScopeBytes` for sessions with large tool
+  outputs, `maxScopeEvents` for very long sessions.
+- **Changing `searchIndexer.resources` renames the `search-indexer-bootstrap`
+  Job**, so Helm runs it once more. The limits and `partialSessions` alone do
+  not. On an install whose `~/.agent-relay-install/hoopdb-layout` is
+  `legacy-admin`, that Job reads the temporary `hoopdb-admin-jobs` Secret,
+  which no longer exists: do not run the command below. Keep `$CHART` and
+  `release-images.values.yaml` as they are, set `NEW_DIR=release`, and run the
+  script in [Upgrades](#upgrades-dedicated-owner-and-legacy-temporary-credentials)
+  from `release_jobs()` on. It creates the Secret, upgrades with the new
+  values, waits for the Job and deletes the Secret.
+
+```sh
+helm upgrade agent-relay "$CHART" --namespace agent-relay \
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
+kubectl -n agent-relay wait --for=condition=complete "$(kubectl -n agent-relay get jobs -o name | grep search-indexer-bootstrap)" --timeout=10m
+kubectl -n agent-relay rollout status deploy/agent-relay-search-indexer deploy/agent-relay-read-api --timeout=10m
+```
+
+**Done when:** the bootstrap Job is complete, both rollouts finish, and a
+workspace search that answered 501 `session_partial` answers 200.
+
 ## Upgrades: dedicated owner and legacy temporary credentials
 
 Fresh installs use `hoopdb_owner`, which has neither `SUPERUSER` nor
