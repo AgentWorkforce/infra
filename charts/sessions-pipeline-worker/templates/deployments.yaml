@@ -19,6 +19,10 @@ spec:
   # Never overlap native model workers during an upgrade.
   strategy:
     type: Recreate
+  {{- else if eq $component "coordination-advisor" }}
+  # Never two advisors at once: cooldown and hourly cap are per process.
+  strategy:
+    type: Recreate
   {{- end }}
   selector:
     matchLabels:
@@ -98,8 +102,10 @@ spec:
             {{- with $c.env }}
             {{- include "sessions-pipeline-worker.renderEnv" . | nindent 12 }}
             {{- end }}
+          {{- /* A dormant coordination-advisor (run=false) idles without serving the health port, so it gets no port or probes. */}}
+          {{- $probed := not (and (eq $component "coordination-advisor") (not $.Values.coordinationAdvisor.run)) }}
           {{- with $.Values.workerHealth }}
-          {{- if .enabled }}
+          {{- if and .enabled $probed }}
           ports:
             - name: health
               containerPort: {{ .port }}

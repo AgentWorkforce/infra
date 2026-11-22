@@ -61,6 +61,13 @@ class AdvisorAnalysis(unittest.TestCase):
         self.assertEqual(e["COORDINATION_ADVISOR_ENABLED"], "false")
         self.assertEqual(e["READ_API_DIRECTORY_WORKSPACES"], "")
         self.assertNotIn("COORDINATION_ADVISOR_RELAY_URL", e)
+        self.assertEqual(e["COORDINATION_ADVISOR_RELAY_DM_ENABLED"], "false")
+        docs = self.render({"components": {"coordination-advisor": {"enabled": True}}})
+        dep = next(d for d in docs if d["kind"] == "Deployment" and d["spec"]["template"]["spec"]["containers"][0]["name"] == "coordination-advisor")
+        c = dep["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(dep["spec"]["strategy"]["type"], "Recreate")
+        for k in ("startupProbe", "readinessProbe", "livenessProbe", "ports"):
+            self.assertNotIn(k, c)
         on = {"components": {"coordination-advisor": {"enabled": True}}, "coordinationAdvisor": {
             "run": True, "workspaces": ["ws_a", "ws_b"], "factsBackend": "postgres", "intervalSeconds": 300,
             "relayDm": {"enabled": True, "url": "https://relay.example.com/v1/dm", "tokenSecret": {"name": "advisor-relay"}}}}
@@ -73,6 +80,9 @@ class AdvisorAnalysis(unittest.TestCase):
         self.assertEqual(e["COORDINATION_ADVISOR_RELAY_TOKEN"]["secretKeyRef"]["name"], "advisor-relay")
         self.assertNotIn("SESSION_PIPELINE_SECRET_JSON", e)
         self.assertNotIn("COORDINATION_ADVISOR_INCARNATION_ENABLED", e)
+        docs = self.render(on)
+        c = next(d for d in docs if d["kind"] == "Deployment" and d["spec"]["template"]["spec"]["containers"][0]["name"] == "coordination-advisor")["spec"]["template"]["spec"]["containers"][0]
+        self.assertIn("readinessProbe", c)
 
     def test_advisor_refusals(self):
         on = {"components": {"coordination-advisor": {"enabled": True}}}
@@ -86,6 +96,9 @@ class AdvisorAnalysis(unittest.TestCase):
             ({"coordinationAdvisor": {"intervalSeconds": 0}}, "intervalSeconds must be a positive integer"),
             ({"coordinationAdvisor": {"egress": {"enabled": True}}}, "egress.to must list destinations"),
             ({"components": {"coordination-advisor": {"enabled": True, "env": [{"name": "COORDINATION_ADVISOR_ENABLED", "value": "true"}]}}}, "must not set COORDINATION_ADVISOR_ENABLED"),
+            ({"components": {"coordination-advisor": {"enabled": True, "env": [{"name": "COORDINATION_ADVISOR_INCARNATION_ENABLED", "value": "true"}]}}}, "must not set COORDINATION_ADVISOR_INCARNATION_ENABLED"),
+            ({"components": {"coordination-advisor": {"enabled": True, "env": [{"name": "COORDINATION_ADVISOR_SESSION_HOURLY_CAP", "value": "99"}]}}}, "must not set COORDINATION_ADVISOR_SESSION_HOURLY_CAP"),
+            ({"extraEnv": [{"name": "COORDINATION_ADVISOR_RELAY_DM_ENABLED", "value": "true"}]}, "extraEnv must not set COORDINATION_ADVISOR_RELAY_DM_ENABLED"),
             ({"coordinationAdvisor": {"egress": {"enabled": True, "to": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}}}, "egress requires networkPolicy.enabled"),
             ({"networkPolicy": {"enabled": True, "dns": {"to": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}, "database": {"to": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}, "objectStorage": {"to": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}}, "coordinationAdvisor": {"run": True, "clickhouseSecret": {"name": "ch"}}}, "needs coordinationAdvisor.egress"),
         ]:
