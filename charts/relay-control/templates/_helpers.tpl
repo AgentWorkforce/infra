@@ -63,8 +63,21 @@ check what is rendered, including the gate-only SESSION_READ_API_URL. */ -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) -}}
 {{- if not (kindIs "slice" .Values.selectedFeatures) }}{{ fail "selectedFeatures must be a list or null" }}{{ end -}}
 {{- if ne (len .Values.selectedFeatures) (len (uniq .Values.selectedFeatures)) }}{{ fail "selectedFeatures must not contain duplicates" }}{{ end -}}
-{{- range .Values.selectedFeatures }}{{ if not (has . (list "flows" "relayfile" "chief" "usage" "launch" "usage_people")) }}{{ fail "selectedFeatures contains an unknown optional component" }}{{ end }}{{ end -}}
+{{- range .Values.selectedFeatures }}{{ if not (has . (list "flows" "relayfile" "chief" "usage" "launch" "usage_people" "events_shim")) }}{{ fail "selectedFeatures contains an unknown optional component" }}{{ end }}{{ end -}}
 {{- end -}}
+{{- $sharing := .Values.sharing -}}
+{{- if kindIs "invalid" $sharing }}{{ $sharing = dict }}{{ end -}}
+{{- if not (kindIs "map" $sharing) }}{{ fail "sharing must be a map" }}{{ end -}}
+{{- /* Type checks come before any default: Sprig's default treats false, 0 and empty values as absent. */ -}}
+{{- $mode := $sharing.defaultMode -}}
+{{- if kindIs "invalid" $mode }}{{ $mode = "" }}{{ end -}}
+{{- if not (kindIs "string" $mode) }}{{ fail "sharing.defaultMode must be a string: all, new or selected" }}{{ end -}}
+{{- if and $mode (not (has $mode (list "all" "new" "selected"))) }}{{ fail (printf "sharing.defaultMode must be all, new or selected, not %q" $mode) }}{{ end -}}
+{{- $roles := $sharing.overrideRoles -}}
+{{- if kindIs "invalid" $roles }}{{ $roles = list }}{{ end -}}
+{{- if not (kindIs "slice" $roles) }}{{ fail "sharing.overrideRoles must be a list of roles: owner, admin" }}{{ end -}}
+{{- if ne (len $roles) (len (uniq $roles)) }}{{ fail "sharing.overrideRoles must not contain duplicates" }}{{ end -}}
+{{- range $roles }}{{ if not (has . (list "owner" "admin")) }}{{ fail (printf "sharing.overrideRoles: %v is not owner or admin" .) }}{{ end }}{{ end -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
 {{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
@@ -130,6 +143,8 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "RELAYHISTORY_BACKEND" "SESSION_ERASE_API_URL" "SESSION_ERASE_API_SECRET" -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) }}{{ $managed = append $managed "SELFHOST_FEATURES" }}{{ end -}}
 {{- if .Values.services.relayhistoryReadApiUrl }}{{ $managed = concat $managed (list "RELAYHISTORY_READ_API_URL" "RELAYHISTORY_READ_API_EVENTS") }}{{ end -}}
+{{- /* The sharing.* values own these names whether or not they are set, so extraEnv cannot shadow or duplicate them. */ -}}
+{{- $managed = concat $managed (list "SELFHOST_DEFAULT_SHARING_MODE" "SELFHOST_SHARING_MODE_OVERRIDE_ROLES") -}}
 {{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
 {{- if .Values.desktopFeed.signingKeys.existingSecret }}{{ $managed = concat $managed (list "SELFHOST_DESKTOP_FEED_SIGNER" "SELFHOST_DESKTOP_FEED_KEY_FILES") }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}

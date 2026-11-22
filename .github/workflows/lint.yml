@@ -171,6 +171,8 @@ jobs:
           python3 ci/sessions-pipeline-scrub-engine/test_scrub_engine.py -v
           python3 ci/pipeline-analytics/test_chart.py -v
           python3 ci/control-analytics/test_chart.py -v
+          python3 ci/control-sharing/test_chart.py -v
+          python3 ci/control-features/test_chart.py -v
           python3 ci/operator-session-erase/test_chart.py -v
           python3 ci/sessions-pipeline-s3-ledger/test_chart.py -v
           python3 ci/history-upload/test_chart.py -v
