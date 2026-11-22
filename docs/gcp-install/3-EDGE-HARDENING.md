@@ -10,12 +10,29 @@ after step 14 of [0-START-HERE.md](0-START-HERE.md), in any order.
 | [A proxy in front (Cloudflare)](#3-cloudflare-in-front) | Only the proxy may reach the load balancer | Off |
 | [Internal only (VPN)](#4-internal-only-behind-your-vpn) | No public address at all | Off |
 
-**Which release.** These controls need the `agent-relay` chart 0.7.59 or
-later and the Terraform from the same release. The release that
-0-START-HERE.md currently pins (chart 0.7.54) has neither: its chart ignores
-`gkeIngress.sslPolicy`, `securityPolicy` and `tlsSecretName` without an
-error, and its Terraform has no `edge_*` inputs. Check with
-`helm show chart "$CHART" | grep '^version'` before you start.
+**Which release.** Check before you start; the answer differs by control.
+
+| Release | TLS policy, TLS Secret (sections 1, 3 item 1) | Internal mode (section 4) | Cloud Armor (sections 2, 3) |
+| --- | --- | --- | --- |
+| agent-relay-2026.11.16 and earlier (chart 0.7.54, the one 0-START-HERE.md pins) | No: the chart ignores the keys without an error, and the Terraform has no `edge_*` inputs | No | No |
+| agent-relay-2026.11.18 (chart 0.7.63) | Yes | Yes | **No. Do not create the policy with this release's Terraform** |
+| Later than agent-relay-2026.11.18 | Yes | Yes | Yes |
+
+The Cloud Armor module in agent-relay-2026.11.18 writes regular expressions
+that Google refuses (`Capture Groups are not allowed`), so
+`terraform apply` fails on the sign-in rate limit and on every client rule,
+and leaves a partial policy. It also lacks the check that keeps a caller who
+holds the secret header from skipping the proxy. Both were fixed afterwards.
+To tell which you have:
+
+```sh
+helm show chart "$CHART" | grep '^version'
+grep -c max_advanced_rules infra/terraform/modules/gcp/edge-security/variables.tf   # 0: do not use it for Cloud Armor
+```
+
+If the second command prints 0 or the file is missing, set no
+`edge_security_policy` and leave `gkeIngress.securityPolicy` empty until you
+are on a later release. The TLS policy from that release is fine.
 
 The chart and Terraform sides are covered by render and plan tests in this
 repository. They have not yet been proven on a live GKE install; follow the
