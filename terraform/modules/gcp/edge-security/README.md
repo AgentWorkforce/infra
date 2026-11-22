@@ -13,6 +13,8 @@ Without an SSL policy a Google load balancer uses its default policy, which stil
 
 ## Cloud Armor policy
 
+**Use the module from a release later than agent-relay-2026.11.18 for this.** The copy in that release writes regular expressions with capture groups, which Google refuses at apply, and has no `connecting_asns` check. If this directory's `variables.tf` has no `max_advanced_rules`, it is that copy: create only the SSL policy with it.
+
 Rules are evaluated in priority order and the first match decides. A rule that admits a request ends evaluation, so the order below matters: the secret header and the WAF rules can only deny, and come first.
 
 | Priority | Rule | Action |
