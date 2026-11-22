@@ -215,7 +215,7 @@ chaos() { # action out
     kill-actor)
       # One busy actor host (sandbox namespace <NS>-agent-relay).
       local an="${ACTOR_NS:-${NS}-agent-relay}" p
-      p="$(kubectl -n "$an" get pods -l "${ACTOR_SELECTOR:-terse.ai/purpose=actor}" --field-selector=status.phase=Running -o name | head -1)"
+      p="$(kubectl -n "$an" get pods -l "${ACTOR_SELECTOR:-terse.ai/purpose=actor}" --field-selector=status.phase=Running -o name | { grep -v -- '-spare-' || true; } | head -1)"
       if [[ -n "$p" ]]; then echo "$p" >>"$out.pods"; kubectl -n "$an" delete "$p" --wait=false >/dev/null; else log "no actor host to kill"; fi ;;
     node-drain)
       # Drain the app node hosting relaycast (PG) or the gateway (actors),
@@ -224,6 +224,26 @@ chaos() { # action out
       echo "node/$node" >>"$out.pods"
       kubectl drain "$node" --ignore-daemonsets --delete-emptydir-data --force --timeout=120s >/dev/null 2>&1 || true
       ( sleep 300; kubectl uncordon "$node" >/dev/null 2>&1 ) & ;;
+    node-drain-actor)
+      # Drain the actor node running the most actor hosts (sandbox namespace), so busy hosts
+      # shut down cleanly and are re-placed on the other actor node; uncordon after 5 min.
+      local an="${ACTOR_NS:-${NS}-agent-relay}" node
+      node="$(kubectl -n "$an" get pods --field-selector=status.phase=Running -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' \
+        | sort | uniq -c | sort -rn | awk 'NR==1{print $2}')"
+      if [[ -n "$node" ]]; then
+        echo "node/$node" >>"$out.pods"
+        kubectl -n "$an" get pods --field-selector="spec.nodeName=$node" -o name >>"$out.pods" 2>/dev/null || true
+        kubectl drain "$node" --ignore-daemonsets --delete-emptydir-data --force --timeout=180s >/dev/null 2>&1 || true
+        ( sleep 300; kubectl uncordon "$node" >/dev/null 2>&1 ) &
+      else log "no actor node to drain"; fi ;;
+    standard-outage)
+      # Regional checkpoint bucket unavailable for writes for OUTAGE_S (default 180 s): an IAM deny
+      # on the control-plane and actor roles; Express keeps serving.
+      local deny roles=(relaycast-actors-bench-cp relaycast-actors-bench-actor-storage) r
+      deny='{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:PutObject","Resource":"arn:aws:s3:::relaycast-actors-bench-805532413586-regional/*"}]}'
+      for r in "${roles[@]}"; do aws iam put-role-policy --role-name "$r" --policy-name soak-standard-outage --policy-document "$deny"; done
+      echo "standard-outage ${roles[*]}" >>"$out.pods"
+      ( sleep "${OUTAGE_S:-180}"; for r in "${roles[@]}"; do aws iam delete-role-policy --role-name "$r" --policy-name soak-standard-outage; done ) & ;;
     rds-failover)
       aws --region "$REGION" rds reboot-db-instance --db-instance-identifier "$DB_ID" --force-failover >/dev/null ;;
     profile:*)

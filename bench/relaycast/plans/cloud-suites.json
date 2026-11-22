@@ -880,6 +880,99 @@
      "action": "rds-failover"
     }
    ]
+  },
+  {
+   "name": "soak-60-express",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "soak-60 load on S3 Express + async regional checkpoint (durable-actors#4): gateway kill +20 min, busy actor host kill +25, actor node drain +30, RDS forced failover +40.",
+   "fixture": {
+    "RCB_WORKSPACES": 3,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 12,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "soak60",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 3,
+     "durationS": 3600,
+     "sizeBytes": 1024,
+     "drainS": 300
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "soak60",
+     "atS": 1200,
+     "action": "kill-relaycast"
+    },
+    {
+     "phase": "soak60",
+     "atS": 1500,
+     "action": "kill-actor"
+    },
+    {
+     "phase": "soak60",
+     "atS": 1800,
+     "action": "node-drain-actor"
+    },
+    {
+     "phase": "soak60",
+     "atS": 2400,
+     "action": "rds-failover"
+    }
+   ]
+  },
+  {
+   "name": "soak-30-express",
+   "sinks": 2,
+   "producers": 2,
+   "notes": "30 min soak-60 load on S3 Express + per-actor ordered checkpoint (durable-actors#4 3f61bf03): busy actor-host kill +10 min, actor node drain +15, regional bucket write outage 3 min at +20.",
+   "fixture": {
+    "RCB_WORKSPACES": 3,
+    "RCB_PRODUCERS": 10,
+    "RCB_RECEIVERS": 20,
+    "RCB_CHANNELS": 4,
+    "RCB_CHANNEL_MEMBERS": 12,
+    "RCB_AGENTS_PER_NODE": 1,
+    "RCB_PRODUCERS_ON_NODES": 1
+   },
+   "phases": [
+    {
+     "label": "soak60",
+     "kind": "mixed",
+     "dmShare": 0.6,
+     "uploadShare": 0.05,
+     "rate": 3,
+     "durationS": 1800,
+     "sizeBytes": 1024,
+     "drainS": 300
+    }
+   ],
+   "chaos": [
+    {
+     "phase": "soak60",
+     "atS": 600,
+     "action": "kill-actor"
+    },
+    {
+     "phase": "soak60",
+     "atS": 900,
+     "action": "node-drain-actor"
+    },
+    {
+     "phase": "soak60",
+     "atS": 1200,
+     "action": "standard-outage"
+    }
+   ]
   }
  ],
  "loadgenCheck": {

@@ -1,0 +1,17 @@
+# 10k-actor churn soak: many small, short-lived Workspace actors. Hosts retire after 30 s idle so
+# live actors stay near the churn slot count; more spares and parallel starts absorb ~4
+# activations/s; the control plane gets room for 10k actors' placements.
+durable-actors:
+  actors:
+    warm: 20
+    maxStarting: 32
+    hostIdleTimeoutMs: 30000
+    memoryMiB: 512
+    cpuMillis: 125
+  resources:
+    requests: {cpu: "2", memory: 2Gi}
+    limits: {memory: 4Gi}
+  # The default organization cap (500 starting or running actors) rejected churn traffic with
+  # actor_quota_exceeded; this run deliberately keeps several hundred hosts live.
+  organizationLimits:
+    maxActiveActors: 3000

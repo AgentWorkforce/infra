@@ -1,0 +1,7 @@
+# Recovery drill: run durable-actors directly from the regional checkpoint (S3 Standard) bucket,
+# as after losing the Express zone. Checkpoint off; artifacts already live there.
+durable-actors:
+  storage:
+    bucket: relaycast-actors-bench-805532413586-regional
+    s3:
+      checkpoint: {bucket: "", maxLagMs: null}
