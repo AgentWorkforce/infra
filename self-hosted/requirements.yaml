@@ -409,9 +409,37 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.52
+    - id: sessions-pipeline-0.8.53
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.53, sessions-pipeline-worker: 0.7.13, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
+      depends:
+        sessions-pipeline: { worker: 0.7.13, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: fresh PG16+ installs use the membership-free separate-database owner graph; legacy and PG15 installs remain master-owner }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: the administrator runs the one-time bootstrap and the migration Job uses hoopdb_owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.52 and sessions-pipeline-worker 0.7.13: default-off workers for SERVICE=coordination-advisor (worker.components.coordination-advisor plus worker.coordinationAdvisor) and SERVICE=session-analysis (worker.sessionAnalysis, S3 only, its own ServiceAccount and file-mounted secrets). Each can render dormant first (run=false). Default renders are unchanged apart from chart versions.'
+    - id: sessions-pipeline-0.8.52
+      status: planned
       charts: { sessions-pipeline: 0.8.52, sessions-pipeline-worker: 0.7.12, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
       depends:
         sessions-pipeline: { worker: 0.7.12, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -2042,9 +2070,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.67
+    - id: agent-relay-0.7.68
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.68, relay-control: 0.4.22, relay-webapp: 0.2.8 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.53, relay-control: 0.4.22, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.67 and sessions-pipeline 0.8.53 (default-off coordination-advisor and session-analysis workers).'
+    - id: agent-relay-0.7.67
+      status: planned
       charts: { agent-relay: 0.7.67, relay-control: 0.4.22, relay-webapp: 0.2.8 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -5335,6 +5376,79 @@ entries:
     sources:
       - charts/sessions-pipeline-worker/templates/_brief-analytics.tpl
       - charts/sessions-pipeline-worker/templates/brief-analytics-networkpolicy.yaml
+
+  - id: opt.sessions-pipeline.coordination-advisor
+    kind: option
+    status: shipped
+    title: Coordination advisor worker (SERVICE=coordination-advisor)
+    chart: sessions-pipeline
+    description: |
+      Off by default. worker.components.coordination-advisor.enabled renders the
+      Deployment (one replica; its cooldown and hourly cap are not shared across
+      replicas); worker.coordinationAdvisor.run sets COORDINATION_ADVISOR_ENABLED,
+      so the pod can ship dormant first. It scans the workspaces in
+      worker.coordinationAdvisor.workspaces (READ_API_DIRECTORY_WORKSPACES; empty
+      scans none) and writes coordination advisories. factsBackend clickhouse
+      (the image default) needs the ClickHouse secret; postgres needs migration
+      20261105062070. Relay DMs for HIGH advisories are a separate opt-in with an
+      https URL and a token Secret. COORDINATION_ADVISOR_INCARNATION_ENABLED is
+      never rendered. Enabling it on a real install is Khaliq's call.
+    values: [worker.components.coordination-advisor.*, worker.coordinationAdvisor.*]
+    env: [COORDINATION_ADVISOR_ENABLED, READ_API_DIRECTORY_WORKSPACES, COORDINATION_ADVISOR_FACTS_BACKEND, COORDINATION_ADVISOR_INTERVAL_SECONDS, COORDINATION_ADVISOR_PAIR_COOLDOWN_SECONDS, COORDINATION_ADVISOR_SESSION_HOURLY_CAP, SESSION_PIPELINE_SECRET_JSON, COORDINATION_ADVISOR_RELAY_DM_ENABLED, COORDINATION_ADVISOR_RELAY_URL, COORDINATION_ADVISOR_RELAY_TOKEN]
+    profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native]
+    provided_by: operator
+    default: false
+    choices:
+      - { value: false }
+      - { value: true, note: "Needs a services image with SERVICE=coordination-advisor (relayhistory-pipeline efdd4bb2 or later) and the advisory migrations (062000; 062070 for the postgres backend)." }
+    secrets:
+      - name: "<ClickHouse pipeline secret>"
+        name_paths: [worker.coordinationAdvisor.clickhouseSecret.name]
+        keys:
+          - { key: SESSION_PIPELINE_SECRET_JSON, key_path: worker.coordinationAdvisor.clickhouseSecret.key }
+      - name: "<Relay DM token Secret>"
+        name_paths: [worker.coordinationAdvisor.relayDm.tokenSecret.name]
+        keys:
+          - { key: COORDINATION_ADVISOR_RELAY_TOKEN, key_path: worker.coordinationAdvisor.relayDm.tokenSecret.key }
+    verify: Render nothing by default; render the dormant Deployment with COORDINATION_ADVISOR_ENABLED=false; render run=true with the workspace list, backend and DM settings; refuse replicas above 1, an unknown backend, clickhouse without its Secret, a non-https or query-bearing relay URL, DM without a token Secret, non-positive intervals, an empty egress list and reserved names in components env.
+    sources: ["charts/sessions-pipeline-worker/templates/_advisor-analysis.tpl:1", "ci/sessions-pipeline-worker-advisor-analysis/test_chart.py:1"]
+
+  - id: opt.sessions-pipeline.session-analysis
+    kind: option
+    status: shipped
+    title: Session-analysis worker (SERVICE=session-analysis)
+    chart: sessions-pipeline
+    description: |
+      Off by default. worker.sessionAnalysis.enabled renders a Deployment (one
+      replica, Recreate, 660 s grace), its own ServiceAccount for an EKS Pod
+      Identity association and an optional model-API egress policy;
+      worker.sessionAnalysis.run sets SESSION_ANALYSIS_ENABLED, so the pod can
+      ship dormant first. It reads canonical evidence from S3 only (no GCS or
+      Azure Blob yet) and writes analysis results, so it needs the bucket and
+      region, the key root, a model key Secret and the HoopDb runtime role's own
+      database login Secret, mounted as files. The S3/KMS grants (cross-account,
+      cross-region) are per relayhistory-pipeline docs/session-analysis-runner.md
+      and need Khaliq's OK. SESSION_ANALYSIS_ASSUME_NO_LEGACY_TURNS is never
+      rendered.
+    values: [worker.sessionAnalysis.*]
+    env: [SESSION_ANALYSIS_ENABLED, SESSION_ANALYSIS_OPENAI_API_KEY_FILE, SESSION_ANALYSIS_DATABASE_URL_FILE, SESSION_ANALYSIS_S3_BUCKET, SESSION_ANALYSIS_S3_REGION, SESSION_ANALYSIS_S3_CREDENTIALS, PIPELINE_KEY_PREFIX, PIPELINE_ORG_FROM_PREFIX, SESSION_ANALYSIS_TICK_MS, SESSION_ANALYSIS_BATCH, SESSION_ANALYSIS_PG_POOL_MAX, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, SUMMARY_DECISION_RECORDS_ENABLED, SESSION_ANALYSIS_CUTOVER_PROOF]
+    profiles: [aws-cnpg, aws-rds-native, external-rds]
+    provided_by: operator
+    default: false
+    choices:
+      - { value: false }
+      - { value: true, note: "S3 only. Needs a services image with SERVICE=session-analysis, the analysis migrations (046000) and the Pod Identity role with the documented S3/KMS grants." }
+    secrets:
+      - name: "<session-analysis model key Secret>"
+        name_paths: [worker.sessionAnalysis.modelKeySecret.name]
+        keys:
+          - { key: OPENAI_API_KEY, key_path: worker.sessionAnalysis.modelKeySecret.key }
+      - name: "<session-analysis database login Secret>"
+        name_paths: [worker.sessionAnalysis.databaseSecret.name]
+        keys:
+          - { key: SESSION_ANALYSIS_DATABASE_URL, key_path: worker.sessionAnalysis.databaseSecret.key }
+    verify: Render nothing by default; render the dormant Deployment with its own ServiceAccount, file-mounted secrets, 660 s grace and the documented probes; render run=true with tick, batch and custom-ca; refuse a missing bucket, region, key root or Secret, non-podIdentity credentials, replicas above 1, out-of-range tick or batch, custom-ca without its CA and an empty egress list.
+    sources: ["charts/sessions-pipeline-worker/templates/session-analysis.yaml:1", "ci/sessions-pipeline-worker-advisor-analysis/test_chart.py:1"]
 
   - id: opt.relay-control.collector-analytics
     kind: option

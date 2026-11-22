@@ -92,6 +92,9 @@ spec:
             {{- if and (eq $component "session-brief") $.Values.nativeBrief.enabled }}
             {{- include "sessions-pipeline-worker.nativeBriefEnv" $ | nindent 12 }}
             {{- end }}
+            {{- if eq $component "coordination-advisor" }}
+            {{- include "sessions-pipeline-worker.advisorEnv" $ | nindent 12 }}
+            {{- end }}
             {{- with $c.env }}
             {{- include "sessions-pipeline-worker.renderEnv" . | nindent 12 }}
             {{- end }}

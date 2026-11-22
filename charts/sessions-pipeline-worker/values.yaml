@@ -367,6 +367,18 @@ components:
     resources:
       requests: { cpu: 25m, memory: 96Mi }
       limits: { memory: 384Mi }
+  # SERVICE=coordination-advisor (relayhistory-pipeline src/coordination-advisor,
+  # docs/coordination-live-advisories.md). Off by default; see
+  # coordinationAdvisor below for its settings. Keep at 1: its cooldown and
+  # hourly cap are not shared across replicas.
+  coordination-advisor:
+    fullnameOverride: ""
+    enabled: false
+    replicas: 1
+    env: []
+    resources:
+      requests: { cpu: 25m, memory: 128Mi }
+      limits: { memory: 512Mi }
   bob-costas:
     # Optional explicit Deployment identity; otherwise fullname-scoped.
     fullnameOverride: ""
@@ -378,6 +390,109 @@ components:
     resources:
       requests: { cpu: 25m, memory: 96Mi }
       limits: { memory: 384Mi }
+
+# Settings for components.coordination-advisor (rendered only when that
+# component is enabled). Mirrors relayhistory-pipeline docs/selfhost-composition.md
+# (coordination-advisor row) and docs/coordination-live-advisories.md.
+coordinationAdvisor:
+  # COORDINATION_ADVISOR_ENABLED. The Deployment renders with the component;
+  # run=false keeps it dormant (green probes, scans nothing) so it can ship
+  # first and be switched on separately.
+  run: false
+  # READ_API_DIRECTORY_WORKSPACES: workspace ids to scan, or ["*"] for all.
+  # Empty scans no workspace. Use the same allowlist as the read API.
+  workspaces: []
+  # COORDINATION_ADVISOR_FACTS_BACKEND: clickhouse (the image default) or
+  # postgres (needs migration 20261105062070; with it the cooldown and cap
+  # also survive a restart).
+  factsBackend: clickhouse
+  # Optional; empty keeps the image defaults (120 s, 21600 s, 3).
+  intervalSeconds: null
+  pairCooldownSeconds: null
+  sessionHourlyCap: null
+  # SESSION_PIPELINE_SECRET_JSON, read only with factsBackend=clickhouse.
+  clickhouseSecret:
+    name: ""
+    key: SESSION_PIPELINE_SECRET_JSON
+  # HIGH advisories as Relay DMs. Off by default.
+  relayDm:
+    enabled: false
+    # COORDINATION_ADVISOR_RELAY_URL: https (http only on loopback), no
+    # credentials, query or fragment.
+    url: ""
+    # COORDINATION_ADVISOR_RELAY_TOKEN.
+    tokenSecret:
+      name: ""
+      key: COORDINATION_ADVISOR_RELAY_TOKEN
+  # Adds ONLY an egress policy for this pod (ClickHouse and/or the relay URL).
+  # NetworkPolicy has no FQDN matcher: list CIDRs or an approved gateway.
+  egress:
+    enabled: false
+    to: []
+    ports:
+      - { protocol: TCP, port: 443 }
+
+# SERVICE=session-analysis: the session-analysis job processor as a pod
+# (relayhistory-pipeline docs/session-analysis-runner.md, "Chart values to
+# request from infra"). Off by default. It reads canonical evidence from S3
+# only today (no GCS or Azure Blob), so it fits the S3 / EKS path.
+sessionAnalysis:
+  # Whether the Deployment, ServiceAccount and policy render at all.
+  enabled: false
+  # SESSION_ANALYSIS_ENABLED. run=false ships the pod dormant first.
+  run: false
+  replicas: 1
+  # SESSION_ANALYSIS_TICK_MS (1000..600000) and SESSION_ANALYSIS_BATCH (1..20);
+  # null keeps the image defaults (30000, 2).
+  tickMs: null
+  batch: null
+  # SESSION_ANALYSIS_PG_POOL_MAX (1..16); null keeps 4.
+  pgPoolMax: null
+  # SESSION_ANALYSIS_S3_BUCKET / _REGION: the canonical pipeline bucket and its
+  # own region (no AWS_REGION default). Set from private values.
+  bucket: ""
+  bucketRegion: ""
+  # PIPELINE_KEY_PREFIX (bare key root); PIPELINE_ORG_FROM_PREFIX=true is fixed.
+  keyPrefix: ""
+  # SESSION_ANALYSIS_S3_CREDENTIALS: podIdentity (EKS Pod Identity) only here;
+  # IRSA is not supported by the runner.
+  s3Credentials: podIdentity
+  # Mounted read-only; SESSION_ANALYSIS_OPENAI_API_KEY_FILE points at it.
+  modelKeySecret:
+    name: ""
+    key: OPENAI_API_KEY
+  # Mounted read-only; SESSION_ANALYSIS_DATABASE_URL_FILE points at it. The
+  # HoopDb runtime role with its OWN login: not the migration owner,
+  # bulls96_analysis_admit or bulls96_read_api.
+  databaseSecret:
+    name: ""
+    key: SESSION_ANALYSIS_DATABASE_URL
+  # SESSION_POSTGRES_TLS_PROFILE: supabase (image default) or custom-ca with a
+  # CA ConfigMap and its SHA-256.
+  postgresTls:
+    profile: ""
+    caConfigMap: ""
+    caKey: ca.crt
+    sha256: ""
+  # SUMMARY_DECISION_RECORDS_ENABLED and SESSION_ANALYSIS_CUTOVER_PROOF, passed
+  # through when set. SESSION_ANALYSIS_ASSUME_NO_LEGACY_TURNS is never rendered.
+  decisionRecords: ""
+  cutoverProof: ""
+  # Dedicated ServiceAccount for the EKS Pod Identity association that holds the
+  # S3/KMS grants; never shared with ingest-edge or the other workers.
+  serviceAccount:
+    name: ""
+    annotations: {}
+  # One 600 s lease plus margin.
+  terminationGracePeriodSeconds: 660
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1Gi }
+  # Adds ONLY a model-API egress policy for this pod (the shared worker policy
+  # covers DNS, the database, object storage and workload identity).
+  modelEgress:
+    enabled: false
+    to: []
 
 podAnnotations: {}
 podLabels: {}

@@ -1,0 +1,165 @@
+{{- include "sessions-pipeline-worker.validate" . -}}
+{{- $s := .Values.sessionAnalysis -}}
+{{- if $s.enabled }}
+{{- $component := "session-analysis" -}}
+{{- $t := $s.postgresTls | default dict }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "sessions-pipeline-worker.analysisServiceAccountName" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "sessions-pipeline-worker.componentLabels" (dict "context" . "component" $component) | nindent 4 }}
+  {{- with $s.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sessions-pipeline-worker.componentName" (dict "context" . "component" $component) }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "sessions-pipeline-worker.componentLabels" (dict "context" . "component" $component) | nindent 4 }}
+spec:
+  replicas: {{ $s.replicas }}
+  # One job at a time per pod; never overlap two runners during an upgrade.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sessions-pipeline-worker.componentSelectorLabels" (dict "context" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sessions-pipeline-worker.componentSelectorLabels" (dict "context" . "component" $component) | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      terminationGracePeriodSeconds: {{ $s.terminationGracePeriodSeconds }}
+      {{- include "sessions-pipeline-worker.pullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "sessions-pipeline-worker.analysisServiceAccountName" . }}
+      # EKS Pod Identity injects its token through the pod spec, not the SA token mount.
+      automountServiceAccountToken: false
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: session-analysis
+          image: {{ include "sessions-pipeline-worker.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - { name: SERVICE, value: "session-analysis" }
+            - { name: OTEL_SERVICE_NAME, value: "session-analysis" }
+            - { name: SESSION_ANALYSIS_ENABLED, value: {{ ternary "true" "false" $s.run | quote }} }
+            {{- include "sessions-pipeline-worker.scrubEngine" (dict "root" . "localName" "readerMaxRuleset") | nindent 12 }}
+            - { name: SESSION_ANALYSIS_OPENAI_API_KEY_FILE, value: /var/run/session-analysis/model/key }
+            - { name: SESSION_ANALYSIS_DATABASE_URL_FILE, value: /var/run/session-analysis/database/url }
+            - { name: SESSION_ANALYSIS_S3_BUCKET, value: {{ $s.bucket | quote }} }
+            - { name: SESSION_ANALYSIS_S3_REGION, value: {{ $s.bucketRegion | quote }} }
+            - { name: SESSION_ANALYSIS_S3_CREDENTIALS, value: "podIdentity" }
+            - { name: PIPELINE_KEY_PREFIX, value: {{ $s.keyPrefix | quote }} }
+            - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+            {{- with $s.tickMs }}
+            - { name: SESSION_ANALYSIS_TICK_MS, value: {{ int64 . | toString | quote }} }
+            {{- end }}
+            {{- with $s.batch }}
+            - { name: SESSION_ANALYSIS_BATCH, value: {{ int64 . | toString | quote }} }
+            {{- end }}
+            {{- with $s.pgPoolMax }}
+            - { name: SESSION_ANALYSIS_PG_POOL_MAX, value: {{ int64 . | toString | quote }} }
+            {{- end }}
+            {{- with $t.profile }}
+            - { name: SESSION_POSTGRES_TLS_PROFILE, value: {{ . | quote }} }
+            {{- end }}
+            {{- if eq $t.profile "custom-ca" }}
+            - { name: SESSION_POSTGRES_CA_FILE, value: /etc/session-analysis-ca/{{ $t.caKey }} }
+            - { name: SESSION_POSTGRES_CA_SHA256, value: {{ $t.sha256 | quote }} }
+            {{- end }}
+            {{- with $s.decisionRecords }}
+            - { name: SUMMARY_DECISION_RECORDS_ENABLED, value: {{ . | quote }} }
+            {{- end }}
+            {{- with $s.cutoverProof }}
+            - { name: SESSION_ANALYSIS_CUTOVER_PROOF, value: {{ . | quote }} }
+            {{- end }}
+            - { name: WORKER_HEALTH_PORT, value: "8081" }
+          ports:
+            - { name: health, containerPort: 8081, protocol: TCP }
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $s.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: model-key, mountPath: /var/run/session-analysis/model, readOnly: true }
+            - { name: database-url, mountPath: /var/run/session-analysis/database, readOnly: true }
+            {{- if eq $t.profile "custom-ca" }}
+            - { name: postgres-ca, mountPath: /etc/session-analysis-ca, readOnly: true }
+            {{- end }}
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - name: model-key
+          secret:
+            secretName: {{ $s.modelKeySecret.name | quote }}
+            items: [{ key: {{ $s.modelKeySecret.key | quote }}, path: key }]
+        - name: database-url
+          secret:
+            secretName: {{ $s.databaseSecret.name | quote }}
+            items: [{ key: {{ $s.databaseSecret.key | quote }}, path: url }]
+        {{- if eq $t.profile "custom-ca" }}
+        - name: postgres-ca
+          configMap:
+            name: {{ $t.caConfigMap | quote }}
+            items: [{ key: {{ $t.caKey | quote }}, path: {{ $t.caKey | quote }} }]
+        {{- end }}
+{{- if $s.modelEgress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sessions-pipeline-worker.componentName" (dict "context" . "component" $component) }}-model
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{ include "sessions-pipeline-worker.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{ include "sessions-pipeline-worker.componentSelectorLabels" (dict "context" . "component" $component) | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    - to: {{ toYaml $s.modelEgress.to | nindent 8 }}
+      ports: [{ protocol: TCP, port: 443 }]
+{{- end }}
+{{- end }}
