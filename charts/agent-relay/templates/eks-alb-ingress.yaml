@@ -232,7 +232,7 @@ spec:
             pathType: Exact
             backend: { service: { name: {{ $readSvc }}, port: { number: {{ $readPort }} } } }
           {{- end }}
-          {{- range $p := list "/v1/sessions" "/v1/digest" }}
+          {{- range $p := list "/v1/sessions" "/v1/digest" "/v1/relayfacts" "/v1/coordination" }}
           - path: {{ $p }}
             pathType: Prefix
             backend: { service: { name: {{ $readSvc }}, port: { number: {{ $readPort }} } } }
