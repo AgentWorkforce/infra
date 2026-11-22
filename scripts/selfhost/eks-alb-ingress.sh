@@ -245,6 +245,8 @@ if [[ "$HISTORY" == true ]]; then
     done
     route /v1/sessions "$READ_API_SVC" "$READ_API_PORT" Prefix
     route /v1/digest "$READ_API_SVC" "$READ_API_PORT" Prefix
+    route /v1/relayfacts "$READ_API_SVC" "$READ_API_PORT" Prefix
+    route /v1/coordination "$READ_API_SVC" "$READ_API_PORT" Prefix
     deny /internal Prefix
     deny '"//internal*"' ImplementationSpecific
     deny '"/*"' ImplementationSpecific
@@ -261,6 +263,8 @@ if [[ "$HISTORY" == true ]]; then
     done
     route /v1/sessions "$READ_API_SVC" "$READ_API_PORT" Prefix
     route /v1/digest "$READ_API_SVC" "$READ_API_PORT" Prefix
+    route /v1/relayfacts "$READ_API_SVC" "$READ_API_PORT" Prefix
+    route /v1/coordination "$READ_API_SVC" "$READ_API_PORT" Prefix
     for path in /v1/delivery /v1/turns /v1/onboarding; do
       route "$path" "$INGEST_SVC" "$INGEST_PORT" Prefix
     done

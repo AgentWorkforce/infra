@@ -702,7 +702,7 @@ spec:
             backend:
               service: { name: {{ $nativeReadEdge }}, port: { number: 80 } }
           {{- end }}
-          {{- range $path := list "/v1/sessions" "/v1/digest" }}
+          {{- range $path := list "/v1/sessions" "/v1/digest" "/v1/relayfacts" "/v1/coordination" }}
           - path: {{ $path }}
             pathType: Prefix
             backend:

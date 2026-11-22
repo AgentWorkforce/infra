@@ -162,6 +162,8 @@ class Names(unittest.TestCase):
             ('/v1/auth/token/revoke', 'Exact', 'agent-relay-read-api', {'number': 80}),
             ('/v1/sessions', 'Prefix', 'agent-relay-read-api', {'number': 80}),
             ('/v1/digest', 'Prefix', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/relayfacts', 'Prefix', 'agent-relay-read-api', {'number': 80}),
+            ('/v1/coordination', 'Prefix', 'agent-relay-read-api', {'number': 80}),
             ('/v1/delivery', 'Prefix', 'agent-relay-ingest-edge', ingest),
             ('/v1/turns', 'Prefix', 'agent-relay-ingest-edge', ingest),
             ('/v1/onboarding', 'Prefix', 'agent-relay-ingest-edge', ingest),
