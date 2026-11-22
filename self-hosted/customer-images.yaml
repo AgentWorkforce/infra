@@ -446,45 +446,42 @@ images:
       - Deployment/relay-control:relay-control
     current:
       repository: ghcr.io/agentworkforce/relay-control
-      digest: sha256:d1b6ca95fab240a9d41208d83de3b1f4245408b0765038762f1c419ee60f43bc
+      digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relay-control
-      revision: edad6432b07ac9997fb7af9c29999b52c81e0c5a
+      revision: b985c6f678ff37718a851d5f53c33a05e6a4c0a6
       path: Dockerfile
       reproducibleReference: true
       note: >-
-        Relay Control 0.5.24: sender receipts and grant-bound OAuth launches
-        (#137), the optional Ed25519 file feed signer (#138, new optional
-        SELFHOST_DESKTOP_FEED_SIGNER/_KEY_FILES/_KEY_LABEL env, unused by the
-        charts), Grok Bot webhook wake-ups (#136, migration 0051) and desktop
-        enrollment keys (#134, migration 0050). Carries migrations 0043
-        through 0049 from 0.5.17-0.5.23 and everything in 0.5.16: shared-session
-        read auditing with an owner/admin export (#100, migration 0042), the
-        bounded native provider transport (#101), the one-time first-admin
-        setup key and admin-set temporary passwords with password sign-in
-        that works without SMTP (#96, migration 0041), MCP agent launch behind
-        SELFHOST_FEATURES=launch (#95), Desktop dashboard links redirected to
-        the dashboard host (#97), Claude Code chat attestation (#98), the
-        owner-only usage API (#92), EKS Pod Identity / IRSA credentials (#91)
-        and direct-to-S3 History upload credentials (#90). The image Cmd is
-        unchanged (node node_modules/relay-control/dist/server.js), so the
-        chart's server.js and migrate-cli.js args still apply.
+        Relay Control 0.5.35: the deployment default session-sharing mode with
+        an owner override (#232; optional SELFHOST_DEFAULT_SHARING_MODE and
+        SELFHOST_SHARING_MODE_OVERRIDE_ROLES, rendered by sharing.*). Adds
+        migrations 0052-0065 and 0067-0077 over 0.5.24 with no operator step:
+        0057 rewrites two small Desktop identity tables, 0074 backfills
+        use_count on exchanged enrollment tokens, 0073 validates a constraint
+        on admin_audit_events under a short lock, and the 0062 preflight cannot
+        fire on a 0.5.24 database. No new required env or Secrets (20 new
+        optional names; an invalid value refuses startup). History origins now
+        live in SELFHOST_RELAYHISTORY_AUDIENCES; a History origin left in
+        SELFHOST_INTROSPECT_AUDIENCES is ignored with a startup warning. The
+        image Cmd is unchanged (node node_modules/relay-control/dist/server.js),
+        so the chart's server.js and migrate-cli.js args still apply.
     license:
       status: approved
-      spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relay-control/blob/edad6432b07ac9997fb7af9c29999b52c81e0c5a/LICENSE
+      spdx: FSL-1.1-ALv2
+      evidence: https://github.com/AgentWorkforce/relay-control/blob/b985c6f678ff37718a851d5f53c33a05e6a4c0a6/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relay-control/blob/edad6432b07ac9997fb7af9c29999b52c81e0c5a/.github/workflows/release-relay-control-image.yml
-      run: https://github.com/AgentWorkforce/relay-control/actions/runs/43673082170
+      workflow: https://github.com/AgentWorkforce/relay-control/blob/b985c6f678ff37718a851d5f53c33a05e6a4c0a6/.github/workflows/release-relay-control-image.yml
+      run: https://github.com/AgentWorkforce/relay-control/actions/runs/44492248387
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["0.5.24", sha-edad6432b07ac9997fb7af9c29999b52c81e0c5a]
+      publishedTags: ["0.5.35", sha-b985c6f678ff37718a851d5f53c33a05e6a4c0a6]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation
@@ -494,11 +491,12 @@ images:
     approval:
       status: approved
       basis: >-
-        Public digest from the successful reviewed 0.5.24 release workflow at
+        Public digest from the successful reviewed 0.5.35 release workflow at
         the recorded revision (validate and build/publish jobs green), with
         SBOM, max-mode provenance, a GitHub build-provenance attestation
         verified with gh attestation verify, and amd64+arm64 verified
-        anonymously.
+        anonymously. License FSL-1.1-ALv2 (from 0.5.28) approved by Khaliq on
+        2026-11-19 for self-hosted distribution.
       blockingReasons: []
 
   - id: relay-webapp
