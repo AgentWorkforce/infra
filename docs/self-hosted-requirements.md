@@ -3141,7 +3141,8 @@ region, the key root, a model key Secret and the HoopDb runtime role's own
 database login Secret, mounted as files. The S3/KMS grants (cross-account,
 cross-region) are per relayhistory-pipeline docs/session-analysis-runner.md
 and need Khaliq's OK. SESSION_ANALYSIS_ASSUME_NO_LEGACY_TURNS is never
-rendered.
+rendered. Operator session erase refuses to render while it is enabled
+(it writes create-only results with no erase obligation yet).
 
 - Default: `false`
 - Choices: `false`; `true`: S3 only. Needs a services image with SERVICE=session-analysis, the analysis migrations (046000) and the Pod Identity role with the documented S3/KMS grants.

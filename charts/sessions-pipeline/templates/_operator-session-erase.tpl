@@ -35,6 +35,7 @@
 {{- range $component, $entry := .Values.worker.components -}}
 {{- if and $entry.enabled (gt (int $entry.replicas) 0) }}{{ fail (printf "operator session erase requires every legacy worker Deployment scaled to zero; worker.components.%s is active" $component) }}{{ end -}}
 {{- end -}}
+{{- if dig "sessionAnalysis" "enabled" false .Values.worker }}{{ fail "operator session erase requires worker.sessionAnalysis.enabled=false; session-analysis writes create-only results to canonical storage and has no writer-drain or erase obligation yet" }}{{ end -}}
 {{- $native := .Values.nativeConsumer.enabled -}}
 {{- $indexer := .Values.searchIndexer.enabled -}}
 {{- if eq $native $indexer }}{{ fail "operator session erase requires exactly one enabled consumer: nativeConsumer or searchIndexer" }}{{ end -}}
