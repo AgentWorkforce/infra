@@ -25,7 +25,7 @@ The image must contain the compiled `relay-control` package. The server runs
 built before the rename, set `server.args` and `migrations.args` to its
 `node_modules/@cloud/selfhost-api/dist/` paths.
 
-The default image is `ghcr.io/agentworkforce/relay-control` 0.5.24. The session
+The default image is `ghcr.io/agentworkforce/relay-control` 0.5.35. The session
 read handoff and MCP reads (`services.sessionReadApi*`,
 `secretKeys.sessionReadApiSecret`) need 0.5.1 or later, which this pin
 satisfies; they still stay off by default. `secretKeys.introspectSecret` and
