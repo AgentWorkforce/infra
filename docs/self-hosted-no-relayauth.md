@@ -53,7 +53,8 @@ pipeline migration 043910 must be applied for `sessionSelection`.
 Run `scripts/selfhost/eks-alb-ingress.sh` (ingest routes are on by default). The ingest edge then receives `/v1/delivery/*`
 (except `GET /v1/delivery/records`), `/v1/turns/*`, `/v1/onboarding/*` and
 `POST /v1/auth/token/refresh`. The read API receives `POST /v1/cli/login`,
-`GET /v1/delivery/records`, `/v1/sessions*`, `/v1/events`, `/v1/digest/*` and
+`GET /v1/delivery/records`, `/v1/sessions*`, `/v1/events`, `/v1/digest/*`,
+`/v1/relayfacts*`, `/v1/coordination/*` and
 `/v1/auth/token/revoke`. `/internal` and every other path on the history host,
 including `/healthz`, are a fixed 404 at the edge.
 

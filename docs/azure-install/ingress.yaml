@@ -83,6 +83,8 @@ spec:
           - { path: /v1/auth/token/revoke, pathType: Exact, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
           - { path: /v1/sessions, pathType: Prefix, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
           - { path: /v1/digest, pathType: Prefix, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
+          - { path: /v1/relayfacts, pathType: Prefix, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
+          - { path: /v1/coordination, pathType: Prefix, backend: { service: { name: agent-relay-read-api, port: { number: 80 } } } }
           - { path: /v1/delivery, pathType: Prefix, backend: { service: { name: agent-relay-ingest-edge, port: { number: 80 } } } }
           - { path: /v1/turns, pathType: Prefix, backend: { service: { name: agent-relay-ingest-edge, port: { number: 80 } } } }
           - { path: /v1/onboarding, pathType: Prefix, backend: { service: { name: agent-relay-ingest-edge, port: { number: 80 } } } }
