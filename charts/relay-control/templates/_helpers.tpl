@@ -63,7 +63,7 @@ check what is rendered, including the gate-only SESSION_READ_API_URL. */ -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) -}}
 {{- if not (kindIs "slice" .Values.selectedFeatures) }}{{ fail "selectedFeatures must be a list or null" }}{{ end -}}
 {{- if ne (len .Values.selectedFeatures) (len (uniq .Values.selectedFeatures)) }}{{ fail "selectedFeatures must not contain duplicates" }}{{ end -}}
-{{- range .Values.selectedFeatures }}{{ if not (has . (list "flows" "relayfile" "chief" "usage" "launch" "usage_people")) }}{{ fail "selectedFeatures contains an unknown optional component" }}{{ end }}{{ end -}}
+{{- range .Values.selectedFeatures }}{{ if not (has . (list "flows" "relayfile" "chief" "usage" "launch" "usage_people" "events_shim")) }}{{ fail "selectedFeatures contains an unknown optional component" }}{{ end }}{{ end -}}
 {{- end -}}
 {{- $sharing := .Values.sharing -}}
 {{- if kindIs "invalid" $sharing }}{{ $sharing = dict }}{{ end -}}

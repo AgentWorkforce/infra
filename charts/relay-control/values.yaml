@@ -43,7 +43,8 @@ global:
       policySecret: { key: secret }
 existingSecret: ""
 # null preserves existing extraEnv selection; [] explicitly selects core only.
-# Managed names: flows, relayfile, chief, usage, launch, usage_people. No
+# Managed names: flows, relayfile, chief, usage, launch, usage_people,
+# events_shim. No
 # license is used. With selectedFeatures null and no SELFHOST_FEATURES in
 # extraEnv, relay-control 0.5.17 and later select usage and usage_people by
 # default; a managed list (including []) is exact.
@@ -57,6 +58,11 @@ existingSecret: ""
 # Needs a relay-control image with the usage API (relay-control
 # docs/usage.md) and a relay-webapp image with the Usage page; an older
 # Control image refuses the name at startup.
+# events_shim: webhook inboxes that wake an idle agent, served under
+# /api/v1/events-shim (relay-control docs/events-shim.md). While it is off every
+# such path answers 404 before authentication. Needs relay-control 0.5.24 or
+# later (the chart default); an older Control image refuses the name at
+# startup.
 # launch: agent launch tools on the shared-sessions MCP endpoint (workspace
 # owners/admins on a person connection; never OAuth) onto this workspace's own
 # claimed Agent Relay Desktop nodes. Needs relay-control 0.5.14 or later
