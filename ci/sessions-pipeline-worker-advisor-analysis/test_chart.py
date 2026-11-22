@@ -86,6 +86,8 @@ class AdvisorAnalysis(unittest.TestCase):
             ({"coordinationAdvisor": {"intervalSeconds": 0}}, "intervalSeconds must be a positive integer"),
             ({"coordinationAdvisor": {"egress": {"enabled": True}}}, "egress.to must list destinations"),
             ({"components": {"coordination-advisor": {"enabled": True, "env": [{"name": "COORDINATION_ADVISOR_ENABLED", "value": "true"}]}}}, "must not set COORDINATION_ADVISOR_ENABLED"),
+            ({"coordinationAdvisor": {"egress": {"enabled": True, "to": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}}}, "egress requires networkPolicy.enabled"),
+            ({"networkPolicy": {"enabled": True, "dns": {"to": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}, "database": {"to": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}, "objectStorage": {"to": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}}, "coordinationAdvisor": {"run": True, "clickhouseSecret": {"name": "ch"}}}, "needs coordinationAdvisor.egress"),
         ]:
             with self.subTest(msg=msg):
                 self.render(merge(yaml.safe_load(yaml.safe_dump(on)), extra), fail=msg)
@@ -131,6 +133,19 @@ class AdvisorAnalysis(unittest.TestCase):
         ]:
             with self.subTest(msg=msg):
                 self.render({"sessionAnalysis": merge(yaml.safe_load(yaml.safe_dump(ANALYSIS)), extra)}, fail=msg)
+        peer = [{"ipBlock": {"cidr": "10.0.0.0/8"}}]
+        netpol = {"enabled": True, "dns": {"to": peer}, "database": {"to": peer}, "objectStorage": {"to": peer}}
+        for top, extra, msg in [
+            ({"locker": {"provider": "gcs"}}, {}, "requires locker.provider=s3"),
+            ({}, {"modelEgress": {"enabled": True, "to": peer}}, "modelEgress requires networkPolicy.enabled"),
+            ({"networkPolicy": netpol}, {"run": True}, "needs sessionAnalysis.modelEgress"),
+            ({"networkPolicy": netpol}, {"modelEgress": {"enabled": True, "to": peer}}, "workloadIdentity.to must list the Pod Identity agent"),
+        ]:
+            with self.subTest(msg=msg):
+                self.render(merge(yaml.safe_load(yaml.safe_dump(top)), {"sessionAnalysis": merge(yaml.safe_load(yaml.safe_dump(ANALYSIS)), extra)}), fail=msg)
+        ok = merge(yaml.safe_load(yaml.safe_dump(netpol)), {"workloadIdentity": {"to": [{"ipBlock": {"cidr": "169.254.170.23/32"}}], "ports": [{"protocol": "TCP", "port": 80}]}})
+        docs = self.render({"networkPolicy": ok, "sessionAnalysis": dict(ANALYSIS, run=True, modelEgress={"enabled": True, "to": peer})})
+        self.assertTrue(any(d["kind"] == "NetworkPolicy" and d["metadata"]["name"].endswith("-model") for d in docs))
 
 
 if __name__ == "__main__":

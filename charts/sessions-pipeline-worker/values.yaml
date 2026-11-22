@@ -425,7 +425,9 @@ coordinationAdvisor:
       name: ""
       key: COORDINATION_ADVISOR_RELAY_TOKEN
   # Adds ONLY an egress policy for this pod (ClickHouse and/or the relay URL).
-  # NetworkPolicy has no FQDN matcher: list CIDRs or an approved gateway.
+  # NetworkPolicy has no FQDN matcher: list CIDRs or an approved gateway. It
+  # needs networkPolicy.enabled; with networkPolicy on, run=true with the
+  # clickhouse backend or relayDm needs it.
   egress:
     enabled: false
     to: []
@@ -489,7 +491,12 @@ sessionAnalysis:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { memory: 1Gi }
   # Adds ONLY a model-API egress policy for this pod (the shared worker policy
-  # covers DNS, the database, object storage and workload identity).
+  # covers DNS, the database, object storage and workload identity). It needs
+  # networkPolicy.enabled, and networkPolicy.enabled with run=true needs it.
+  # With networkPolicy on, workloadIdentity.to must list the Pod Identity agent
+  # (169.254.170.23/32 on EKS) even when locker.credentials.mode=secret, and
+  # networkPolicy.objectStorage.to must also cover S3 in bucketRegion, which
+  # can differ from the Locker bucket's region.
   modelEgress:
     enabled: false
     to: []

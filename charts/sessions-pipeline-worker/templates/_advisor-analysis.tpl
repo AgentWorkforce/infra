@@ -21,6 +21,8 @@
 {{- if not $dm.tokenSecret.name }}{{ fail "sessions-pipeline-worker: coordinationAdvisor.relayDm.tokenSecret.name is required with relayDm.enabled=true" }}{{ end -}}
 {{- end -}}
 {{- if and $a.egress.enabled (empty $a.egress.to) }}{{ fail "sessions-pipeline-worker: coordinationAdvisor.egress.to must list destinations when egress.enabled=true (an empty to would allow every destination)" }}{{ end -}}
+{{- if and $a.egress.enabled (not .Values.networkPolicy.enabled) }}{{ fail "sessions-pipeline-worker: coordinationAdvisor.egress requires networkPolicy.enabled (alone it would isolate the pod from DNS and the database)" }}{{ end -}}
+{{- if and .Values.networkPolicy.enabled $a.run (or (eq $a.factsBackend "clickhouse") $dm.enabled) (not $a.egress.enabled) }}{{ fail "sessions-pipeline-worker: with networkPolicy.enabled, coordinationAdvisor.run=true needs coordinationAdvisor.egress for ClickHouse or the Relay URL" }}{{ end -}}
 {{- $reserved := list "COORDINATION_ADVISOR_ENABLED" "READ_API_DIRECTORY_WORKSPACES" "COORDINATION_ADVISOR_FACTS_BACKEND" "COORDINATION_ADVISOR_RELAY_DM_ENABLED" "COORDINATION_ADVISOR_RELAY_URL" "COORDINATION_ADVISOR_RELAY_TOKEN" "SESSION_PIPELINE_SECRET_JSON" -}}
 {{- range ($comp.env | default list) }}{{ if has (.name | default "") $reserved }}{{ fail (printf "sessions-pipeline-worker: components.coordination-advisor.env must not set %s: use coordinationAdvisor.*" .name) }}{{ end }}{{ end -}}
 {{- end -}}
@@ -61,7 +63,7 @@
 {{- if not $s.modelKeySecret.name }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelKeySecret.name is required when sessionAnalysis.enabled=true" }}{{ end -}}
 {{- if not $s.databaseSecret.name }}{{ fail "sessions-pipeline-worker: sessionAnalysis.databaseSecret.name is required when sessionAnalysis.enabled=true (the runtime role's own login)" }}{{ end -}}
 {{- if ne ($s.s3Credentials | default "podIdentity") "podIdentity" }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Credentials must be podIdentity (IRSA and static keys are not supported in a pod)" }}{{ end -}}
-{{- if eq (.Values.locker.provider | default "s3") "gcs" }}{{ fail "sessions-pipeline-worker: sessionAnalysis reads canonical evidence from S3 only; it is not supported with locker.provider=gcs" }}{{ end -}}
+{{- if ne (.Values.locker.provider | default "s3") "s3" }}{{ fail "sessions-pipeline-worker: sessionAnalysis reads canonical evidence from S3 only; it requires locker.provider=s3" }}{{ end -}}
 {{- $t := $s.postgresTls | default dict -}}
 {{- if not (has ($t.profile | default "") (list "" "supabase" "custom-ca")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.postgresTls.profile must be empty, supabase or custom-ca" }}{{ end -}}
 {{- if and (eq $t.profile "custom-ca") (or (not $t.caConfigMap) (not (regexMatch "^[a-f0-9]{64}$" ($t.sha256 | default "")))) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.postgresTls.profile=custom-ca needs caConfigMap and a 64-hex sha256" }}{{ end -}}
@@ -72,6 +74,9 @@
 {{- end }}
 {{- if not (has ($s.decisionRecords | default "") (list "" "true" "false")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.decisionRecords must be empty, \"true\" or \"false\"" }}{{ end -}}
 {{- if and $s.modelEgress.enabled (empty $s.modelEgress.to) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelEgress.to must list destinations when modelEgress.enabled=true (an empty to would allow every destination)" }}{{ end -}}
+{{- if and $s.modelEgress.enabled (not .Values.networkPolicy.enabled) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelEgress requires networkPolicy.enabled (alone it would isolate the pod from DNS, the database, S3 and the Pod Identity agent)" }}{{ end -}}
+{{- if and .Values.networkPolicy.enabled $s.run (not $s.modelEgress.enabled) }}{{ fail "sessions-pipeline-worker: with networkPolicy.enabled, sessionAnalysis.run=true needs sessionAnalysis.modelEgress for the model API" }}{{ end -}}
+{{- if and .Values.networkPolicy.enabled (empty (dig "workloadIdentity" "to" (list) .Values.networkPolicy)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis always uses EKS Pod Identity; with networkPolicy.enabled, networkPolicy.workloadIdentity.to must list the Pod Identity agent" }}{{ end -}}
 {{- end -}}
 {{- end }}
 
