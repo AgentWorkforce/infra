@@ -381,8 +381,11 @@ bundled MinIO with static keys. It is off by default. Before you start:
   the pod exits 2 at startup with `credentials_mode_invalid`, so pin a newer
   image in `release-images.values.yaml` first.
 - **Versioning.** The runner checks at startup that the bucket is versioned
-  and refuses to start otherwise (`bucket_not_versioned`). The chart's
-  `locker-init` Job enables versioning on the bucket it creates.
+  and refuses to start otherwise (`bucket_not_versioned`). The worker's
+  `locker-init` Job (`lockerInit.enabled: true` in `values.yaml`) runs the
+  services' `SERVICE=locker-init`. It creates the Locker bucket if needed and
+  enables versioning on it, also on an existing unversioned bucket. So
+  `sessionAnalysis.bucket` must be that same bucket (`__SESSIONS_BUCKET__`).
 - **Model key.** It needs the `agent-relay-llm` Secret from step 11.
 - **Database login.** It uses the HoopDb runtime role, from a Secret of its
   own. The runner refuses `ssl*` query parameters in the URL (TLS comes from
