@@ -436,7 +436,8 @@ eksIngress:
 | --- | --- | --- |
 | `eksIngress.name` | `EKS_ALB_INGRESS_NAME` | `agent-relay` |
 | `eksIngress.className` | `EKS_INGRESS_CLASS` | `alb` |
-| `eksIngress.domain` | `EKS_ALB_DOMAIN` | required |
+| `eksIngress.domain` | `EKS_ALB_DOMAIN` | required, unless `hosts` is set |
+| `eksIngress.hosts` | none (chart only) | `{}` |
 | `eksIngress.certificateArn` | `EKS_ALB_CERT_ARN` | required |
 | `eksIngress.extraEdges` | none (chart only) | `[]` |
 | `eksIngress.history.enabled` | `EKS_ALB_HISTORY` | `true` |
@@ -457,6 +458,13 @@ DNS labels and ports outside 1-65535 (each checked only when its route is
 rendered). It also refuses non-boolean switches, a domain that is not a DNS
 name, a certificate that is not an ARN, and malformed `controlPaths`.
 
+`hosts` gives the primary edge explicit hostnames per role instead of
+`domain`: `hosts.dashboard`, `hosts.api`, `hosts.cast`, and `hosts.history`
+(required when `history.enabled`, refused otherwise). Set exactly one of
+`domain` and `hosts`. Hosts that follow the `<domain>` pattern render exactly
+what the script prints for that domain (tested), so moving an install from
+`domain` to the equivalent `hosts` changes nothing.
+
 `extraEdges` renders more Ingresses next to the primary one. Each has its own
 load balancer (no `group.name`), so the ALB listener-rule quota (100 by
 default) applies per edge. Each has the same routes as the primary, with
@@ -466,10 +474,10 @@ own `name` and `certificateArn`. Use it to bring up a new public name set next
 to the old one during a cutover. Edge names and hostnames must be unique across
 all edges. The primary edge always uses `<domain>` for the dashboard and
 `api.`, `cast.` and `history.` in front of it, so only a host set that follows
-that pattern can later become the primary. Any other set (for example
-`app.example.com` for the dashboard beside `api.example.com`) stays in
-`extraEdges`, and the primary edge stays in place until the chart lets the
-primary take explicit hosts as well.
+that pattern can become the primary through `domain`; any other set (for
+example `app.example.com` for the dashboard beside `api.example.com`) becomes
+the primary through `hosts`, after which the old names can move to
+`extraEdges` or be dropped.
 `ci/agent-relay/test_eks_alb_ingress.py` proves that an extra edge whose hosts
 follow the `<domain>` pattern is exactly the script's output for that domain.
 
