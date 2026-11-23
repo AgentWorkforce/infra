@@ -141,14 +141,17 @@ class AdvisorAnalysis(unittest.TestCase):
         dedicated = "registry.example.com/analysis/runner@sha256:" + "2" * 64
         values = {
             "image": {"repository": "ghcr.io/agentworkforce/96bulls-services", "digest": "sha256:" + "1" * 64},
-            "components": {"session-status-worker": {"enabled": True}},
+            "components": {"referee": {"enabled": True}},
             "sessionAnalysis": dict(ANALYSIS, image={
                 "repository": "registry.example.com/analysis/runner", "digest": "sha256:" + "2" * 64,
                 "pullPolicy": "Always",
             }),
         }
         docs = self.render(values)
-        deployments = {d["spec"]["template"]["spec"]["containers"][0]["name"]: d for d in docs if d["kind"] == "Deployment"}
+        deployment_docs = [d for d in docs if d["kind"] == "Deployment"]
+        deployment_names = [d["spec"]["template"]["spec"]["containers"][0]["name"] for d in deployment_docs]
+        self.assertEqual(len(deployment_names), len(set(deployment_names)))
+        deployments = dict(zip(deployment_names, deployment_docs))
         analysis = deployments["session-analysis"]["spec"]["template"]["spec"]["containers"][0]
         status = deployments["session-status-worker"]["spec"]["template"]["spec"]["containers"][0]
         self.assertEqual(analysis["image"], dedicated)
