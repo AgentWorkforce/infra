@@ -250,7 +250,9 @@ shred -u priv.der private-key-2 patch.json   # macOS: rm -P (or rm)
 
 `verify.mode: off` (the default; quote it, a bare `off` is a YAML boolean,
 which the chart reads as off) renders nothing on the verifiers. `log` accepts
-and logs what `enforce` would refuse: run `log` first. Both `log` and `enforce`
+and logs what `enforce` would refuse: run a period on `log` with relaygate in
+front first, count the refusal reasons by route, and switch to `enforce` only
+when they are explained. Both `log` and `enforce`
 need `global.relaygate.gateOnly.enabled` (either scope): without it the history
 host routes straight to the reader and ingest edge, so every public History
 request would arrive unsigned, flooding the log (`log`) or being refused
@@ -270,7 +272,8 @@ startup.
 
 The verifiers let health endpoints and CORS preflight through; exempt the
 ingest edge's `POST /v1/auth/token/refresh` stub and the reader's exact
-`POST /v1/auth/token/revoke` (a presented assertion is still validated there);
+`POST /v1/auth/token/revoke` (a presented assertion is still validated there;
+relaygate proxies revoke without an assertion);
 and skip the assertion on `/internal/v1/session-read/*` (the reader's mints)
 and `/internal/v1/session-erase/*` (relay-control's per-session erase, sent
 directly, not through relaygate) only after their own internal authentication
@@ -634,6 +637,12 @@ Not proxied, so gate-only breaks them for public clients:
   Chief, relayflows workers, the desktop app's Relaycast connection) stop
   working until they register through relaygate.
 - Sessions: `/v1/turns/batches`, `/v1/cli/login` and the public `/healthz`.
+  relaygate also answers `404 relaygate_route_not_proxied` to two read routes
+  under the `/v1/sessions` prefix the history host sends it:
+  `GET /v1/sessions/summaries/search` and `GET /v1/sessions/:id/sources`. Their
+  read-API flags (`READ_API_SUMMARY_SEARCH_ENABLED`,
+  `READ_API_SESSION_SOURCES_ENABLED`) therefore have no effect for public
+  clients behind gate-only.
   Aggregate reads (`/v1/delivery/records`, `/v1/digest/*`, `/v1/sessions/users`,
   `/activity`) work only for `policy.sessionAggregates` groups.
 - relaycast `runtime.backend: durable-actors`: actors fetch Relaycast's public
