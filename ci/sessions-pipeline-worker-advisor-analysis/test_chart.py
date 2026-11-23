@@ -205,7 +205,7 @@ class AdvisorAnalysis(unittest.TestCase):
         self.assertEqual(mount, {"name": "s3-keys", "mountPath": "/var/run/session-analysis/s3", "readOnly": True})
         sa = next(d for d in docs if d["kind"] == "ServiceAccount" and d["metadata"]["name"] == spec["serviceAccountName"])
         self.assertNotIn("annotations", sa["metadata"])
-        for endpoint in ("http://minio.ns.svc:9000", "http://minio.ns.svc", "https://minio.example.com", "https://minio.example.com:9000/", "https://minio.example.com:65535", "http://localhost:9000", "http://[::1]:9000", "http://127.0.0.1:9000"):
+        for endpoint in ("http://minio.ns.svc:9000", "http://minio.ns.svc", "https://minio.example.com", "https://minio.example.com:9000/", "https://minio.example.com:65535", "https://10.0.0.5:9000", "https://minio:9000", "http://localhost:9000", "http://[::1]:9000", "http://127.0.0.1:9000"):
             with self.subTest(endpoint=endpoint):
                 e = self.env(self.render({"sessionAnalysis": dict(ANALYSIS, **dict(self.STATIC, s3Endpoint=endpoint))}), "session-analysis")
                 self.assertEqual(e["SESSION_ANALYSIS_S3_ENDPOINT"], endpoint)
@@ -238,6 +238,9 @@ class AdvisorAnalysis(unittest.TestCase):
             ({"s3Endpoint": "https://user:pw@minio.example.com"}, "s3Endpoint must be a bare lowercase origin"),
             ({"s3Endpoint": "https://minio.example.com?x=1"}, "s3Endpoint must be a bare lowercase origin"),
             ({"s3Endpoint": "minio.example.com"}, "s3Endpoint must be a bare lowercase origin"),
+            ({"s3Endpoint": "https://minio..example.com"}, "s3Endpoint must be a bare lowercase origin"),
+            ({"s3Endpoint": "https://-minio.example.com"}, "s3Endpoint must be a bare lowercase origin"),
+            ({"s3Endpoint": "https://MinIO.example.com"}, "s3Endpoint must be a bare lowercase origin"),
             ({"s3Endpoint": "https://minio.example.com:99999"}, "s3Endpoint port must be from 1 to 65535"),
             ({"s3Endpoint": "https://minio.example.com:0"}, "s3Endpoint port must be from 1 to 65535"),
             ({"s3Endpoint": "http://minio.ns.svc:65536", "allowInClusterHttp": True}, "s3Endpoint port must be from 1 to 65535"),

@@ -81,7 +81,8 @@
 {{- if $endpoint -}}
 {{- $label := "[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?" -}}
 {{- $port := "(:[0-9]{1,5})?/?" -}}
-{{- $https := regexMatch (printf "^https://[a-z0-9]([-a-z0-9.]*[a-z0-9])?%s$" $port) $endpoint -}}
+{{- /* https: any well-formed lowercase host, as the runner allows (TLS is the boundary; IP literals and single labels included). */ -}}
+{{- $https := regexMatch (printf "^https://%s(\\.%s)*%s$" $label $label $port) $endpoint -}}
 {{- $loopback := regexMatch (printf "^http://(localhost|127\\.0\\.0\\.1|\\[::1\\])%s$" $port) $endpoint -}}
 {{- $service := regexMatch (printf "^http://%s\\.%s\\.svc(\\.cluster\\.local)?%s$" $label $label $port) $endpoint -}}
 {{- if not (or $https $loopback $service) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Endpoint must be a bare lowercase origin: https://<host>[:port], or plain http only to loopback or a Kubernetes Service name <svc>.<ns>.svc[.cluster.local] (no credentials, path, query or fragment)" }}{{ end -}}
