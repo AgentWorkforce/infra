@@ -184,6 +184,84 @@ values and [adopt the existing sessions](#existing-sessions-adopt-them-once)
 (dry run first). Sessions uploaded before the switch are invisible through the
 gate until they are adopted.
 
+## Upstream verification (off by default)
+
+NetworkPolicy keeps other pods away from the Sessions reader and ingest edge
+only on a cluster that enforces it. Upstream verification makes the services
+themselves accept only requests relaygate signed: relaygate adds a short-lived
+Ed25519 assertion (header `X-Relaygate-Assertion`, token
+`v1.<base64url-json>.<base64url-signature>`) to every request it proxies, and
+the reader and ingest edge verify it. relaygate alone holds the private key;
+the verifiers get only public keys.
+
+```yaml
+global:
+  relaygate:
+    upstreamAuth:
+      enabled: true                                       # relaygate signs
+      privateKey: { name: relaygate-upstream, key: private-key }   # base64 PKCS#8 DER
+      kid: k1
+      ttlSeconds: 30                                      # 5 to 60
+      verify:
+        mode: "log"                                       # off | log | enforce
+        publicKeys:                                       # base64 SPKI DER, one Secret or ConfigMap
+          configMapName: relaygate-upstream-public
+          currentKey: public-key-1
+          currentKid: k1
+          # previousKey: public-key-0                     # during a rotation only
+          # previousKid: k0
+```
+
+| Workload | Env | Gets |
+| --- | --- | --- |
+| relaygate | `RELAYGATE_UPSTREAM_ASSERTION_KEY`, `_KID`, `_TTL_SECONDS` | the private key only |
+| read API | `READ_API_UPSTREAM_ASSERTION_MODE`, `_PUBLIC_KEY`, `_KID`, `_PUBLIC_KEY_PREVIOUS`, `_KID_PREVIOUS` | public keys only |
+| ingest edge | the same under `INGEST_UPSTREAM_ASSERTION_` | public keys only |
+
+`verify.mode: off` (the default; quote it, a bare `off` is a YAML boolean,
+which the chart reads as off) renders nothing on the verifiers. `log` accepts
+and logs what `enforce` would refuse: run `log` first. Each verifier carries a
+`checksum/upstream-assertion` annotation over `verify`, so a change there (a
+new kid, key or source) rolls its pods.
+
+helm refuses to render when: `enabled` has no private key or kid, the kid or
+TTL is invalid, or relaygate has no Sessions proxy; `verify.mode` is not off,
+log or enforce; verification is on without `enabled`; relaygate's `kid` is
+neither `currentKid` nor `previousKid`; there is not exactly one public-key
+source; the public keys are in the private key's Secret; or `previousKey` and
+`previousKid` are not set together or repeat the current kid. The chart does
+not check key length or format; relaygate and the services parse them at
+startup.
+
+The verifiers let health endpoints and CORS preflight through; exempt the
+ingest edge's `POST /v1/auth/token/refresh` stub and the reader's exact
+`POST /v1/auth/token/revoke` (a presented assertion is still validated there);
+and skip the assertion on `/internal/v1/session-read/*` (the reader's mints)
+and `/internal/v1/session-erase/*` (relay-control's per-session erase, sent
+directly, not through relaygate) only after their own internal authentication
+succeeds. In log or enforce a service refuses to start on a non-canonical or
+non-Ed25519 key, an empty kid, a half-set previous pair or equal kids. `/internal` stays denied at every edge. No path rewrite
+may sit between relaygate and the services (relaygate's upstreams are their
+Services, directly).
+
+**Rotation.** relaygate and the verifiers read their keys at startup, and
+changing a Secret's or ConfigMap's contents under the same name and key rolls
+nothing (the chart cannot see values). Rotate by key name and kid, which
+changes the pod templates, one upgrade per step. If you must replace a value in
+place, follow it with `kubectl rollout restart` of relaygate, the read API and
+the ingest edge (or a reloader), and keep the same step order:
+
+1. Add the new public key to the public-key object under a new key. Make it
+   `currentKey`/`currentKid` and the old one `previousKey`/`previousKid`.
+   Upgrade: every verifier replica rolls and accepts both keys, and relaygate
+   still signs with the old kid (now the previous one).
+2. Add the new private key to its Secret under a new key, and point
+   `privateKey.key` and `kid` at it. Upgrade: relaygate rolls and signs with
+   the new kid.
+3. Once every relaygate pod signs with the new kid, wait at least `ttlSeconds`
+   plus 5 s (65 s at TTL 60). Then clear `previous*` and upgrade. Remove the
+   old keys.
+
 ## Proxying Relaycast and Sessions (build 2)
 
 ```yaml

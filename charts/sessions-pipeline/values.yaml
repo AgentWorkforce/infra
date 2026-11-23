@@ -11,6 +11,14 @@
 ## session-object-storage, otel-collector) so the app charts can address them.
 
 global:
+  # Upstream verification (set in the agent-relay umbrella,
+  # global.relaygate.upstreamAuth.verify; these are only the key defaults):
+  # log or enforce makes this service verify relaygate's Ed25519 assertions.
+  relaygate:
+    upstreamAuth:
+      verify:
+        mode: "off"
+        publicKeys: { secretName: "", configMapName: "", currentKey: public-key, currentKid: "", previousKey: "", previousKid: "" }
   imageRegistry: ghcr.io
   # One compatibility contract for every self-host workload that runs the
   # services image. Existing installs first set only readerMaxRuleset: "10",

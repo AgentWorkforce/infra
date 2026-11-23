@@ -228,6 +228,14 @@ affinity: {}
 # (global.relaygate.controlPolicy; see docs/self-hosted-relaygate.md).
 global:
   relaygate:
+    # Upstream verification signer (set in the agent-relay umbrella; see its
+    # values.yaml): RELAYGATE_UPSTREAM_ASSERTION_KEY (Ed25519 private key), _KID
+    # and _TTL_SECONDS.
+    upstreamAuth:
+      enabled: false
+      privateKey: { name: "", key: private-key }
+      kid: ""
+      ttlSeconds: 30
     controlPolicy:
       adminToken: { key: token }
       policySecret: { key: secret }

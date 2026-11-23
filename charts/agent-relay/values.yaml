@@ -102,6 +102,44 @@ global:
     #   2. pull: relaygate pulls the signed policy from relay-control
     #      (RELAYCONTROL_POLICY_URL, _SECRET); its file and ConfigMap are dropped.
     # See docs/self-hosted-relaygate.md, "Control-owned policy".
+    # Upstream verification (off by default): relaygate signs every request it
+    # proxies to the Sessions reader and ingest edge with a short-lived Ed25519
+    # assertion (header X-Relaygate-Assertion), and those services can accept
+    # only signed requests, even where NetworkPolicy is not enforced. Needs a
+    # relaygate image and Sessions images with upstream assertions.
+    # docs/self-hosted-relaygate.md, "Upstream verification".
+    upstreamAuth:
+      # relaygate signs (RELAYGATE_UPSTREAM_ASSERTION_KEY, _KID, _TTL_SECONDS).
+      enabled: false
+      # The Ed25519 private key, canonical base64 PKCS#8 DER, in a Secret.
+      # relaygate alone holds it.
+      privateKey: { name: "", key: private-key }
+      # The signing key's id (1-64 of A-Z a-z 0-9 . _ -); must be one of the
+      # kids the verifiers accept (verify.publicKeys.currentKid or previousKid).
+      kid: ""
+      # Assertion lifetime, 5 to 60 seconds.
+      ttlSeconds: 30
+      verify:
+        # The reader and ingest edge (READ_API_UPSTREAM_ASSERTION_* and
+        # INGEST_UPSTREAM_ASSERTION_*): off (default, nothing rendered), log
+        # (accept, log what would be refused) or enforce. Quote it: a bare off
+        # is a YAML boolean (the chart reads false as off).
+        mode: "off"
+        # The public keys (canonical base64 SPKI DER), from ONE Secret or
+        # ConfigMap so a rotation is one object; not secret material.
+        publicKeys:
+          secretName: ""
+          configMapName: ""
+          currentKey: public-key
+          currentKid: ""
+          # During a rotation only: the other key the verifiers accept.
+          previousKey: ""
+          previousKid: ""
+      # Rotation, one upgrade per step: 1) the new public key becomes current
+      # and the old one previous (verifiers roll and accept both); 2) switch
+      # relaygate to the new private key and kid; 3) once every relaygate pod
+      # signs with it, wait ttlSeconds + 5 s and clear previous. The verifier
+      # pods roll whenever verify changes.
     controlPolicy:
       enabled: false
       pull: false
