@@ -37,6 +37,9 @@ locals {
   agent_hosts_elevated_role_arn = "arn:aws:iam::${var.broker_account_id}:role/agent-broker-elevated"
   scoped_role_name              = "agent-broker-sandbox-scoped"
   scoped_role_arn               = "arn:aws:iam::${var.sandbox_account_id}:role/${local.scoped_role_name}"
+  # The read-only prod-cluster role (created by ../prod). Read from the
+  # allowlist by label, so the broker's target and the allowlist cannot differ.
+  prod_read_role_arn = one([for a in values(jsondecode(file("${path.module}/../../allowlist.json")).accounts) : a.roles.elevated if a.label == "agentrelay-prod"])
 }
 
 # The dev account's read-only role is created by that account's owner, by hand
@@ -48,7 +51,7 @@ module "broker_role" {
 
   account_id             = var.broker_account_id
   trusted_principal_arns = [var.broker_host_role_arn]
-  target_role_arns       = [local.scoped_role_arn, local.agent_hosts_elevated_role_arn, var.dev_read_role_arn]
+  target_role_arns       = [local.scoped_role_arn, local.agent_hosts_elevated_role_arn, var.dev_read_role_arn, local.prod_read_role_arn]
   audit_log_group_arn    = module.audit_log.arn
 }
 

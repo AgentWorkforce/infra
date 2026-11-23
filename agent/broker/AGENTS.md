@@ -15,6 +15,7 @@ If you're an agent in our Relay workspace, these are issued **immediately**:
 | Sandbox `805532413586` | The sandbox auto rules: reads; creating and using SQS, SNS, Logs, DynamoDB, Secrets Manager and EC2 resources tagged with your run; deleting **your own** run's resources. Name what you create `<namespace>--…` (the broker returns your namespace). |
 | Agent hosts `500268966557`, `us-east-1` | Project access (`workspaceAuto` in `allowlist.json`): read and write secrets under `neon-exit/`; SSM sessions and commands on instances tagged `project=neon-exit` (today the runner `i-0887caee00ca9029a`), plus reading command output. |
 | Dev account (`agentrelay-dev` in `allowlist.json`), `us-west-2` | Read-only access to the `agent-relay-dev` EKS cluster (`workspaceAuto`): `eks:DescribeCluster` on that one cluster, plus Kubernetes view access through the cluster's access entry. See [Reading the dev cluster](#reading-the-dev-cluster). |
+| Prod account (`agentrelay-prod` in `allowlist.json`), `us-west-2` | **Only for `envs-lead`**: read-only access to the `agent-relay-prod` EKS cluster (`workspaceAuto`, capability `prod-cluster-read`): `eks:DescribeCluster` on that one cluster, plus Kubernetes view access through the cluster's access entry. From any other agent the same request goes to approval. See [Reading the prod cluster](#reading-the-prod-cluster). |
 
 Anything else goes to **Khaliq** for approval: IAM, deletes of resources that
 aren't yours, wildcards, other accounts, other secrets or instances. The
@@ -102,6 +103,51 @@ config maps and pod logs. You cannot read Secrets, and you cannot change
 anything: no create, patch, delete, exec or port-forward. The AWS side allows
 only `eks:DescribeCluster`. Any other action, another cluster or another region
 is not automatic.
+
+## Reading the prod cluster
+
+This one is automatic only for the agent named in the capability's
+`requesters` in `allowlist.json` (today `envs-lead`). From any other agent
+the same request isn't refused; it goes to the approver, like everything
+else in the prod account.
+
+Request exactly this (account id from `allowlist.json`, label `agentrelay-prod`):
+
+```json
+{
+  "account": "<prod account id>",
+  "purpose": "Read-only look at the prod cluster: kubectl get deployments and ingresses, logs",
+  "actions": ["eks:DescribeCluster"],
+  "durationMinutes": 30,
+  "runTag": "my-prod-read-1",
+  "scope": "account",
+  "resources": ["arn:aws:eks:us-west-2:<prod account id>:cluster/agent-relay-prod"],
+  "regions": ["us-west-2"],
+  "delivery": { "kind": "encrypted", "publicKey": "<from keygen>" }
+}
+```
+
+Then open the reply as in step 4 and point kubectl at the cluster:
+
+```sh
+aws --profile broker-my-prod-read-1 eks update-kubeconfig \
+  --name agent-relay-prod --region us-west-2 --alias agent-relay-prod
+kubectl --context agent-relay-prod get deployments,ingresses -A
+```
+
+Limits:
+
+- It's the same read as in the dev cluster: workloads, pods and their logs,
+  jobs, services, ingresses, config maps and events. No Secrets, and no
+  change of any kind: no create, patch, delete, exec or port-forward.
+- Helm keeps its release records in Secrets, so `helm list`, `helm get values`
+  and `helm get manifest` don't work with this access. Read the live objects
+  with `kubectl get -o yaml` instead.
+- The AWS side allows only `eks:DescribeCluster` on this one cluster. Another
+  action, cluster or region is never automatic, and the role couldn't do it
+  even if it were approved.
+- Sessions last 15 to 60 minutes. Ask again when one runs out; there are no
+  long-lived keys for this account.
 
 ## Rules
 

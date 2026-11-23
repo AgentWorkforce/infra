@@ -36,7 +36,9 @@ const req = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
 });
 
 test("the shipped allowlist: auto only in the sandbox, the agent-hosts account approval-only, Khaliq the only approver, 15 to 60 minutes", () => {
-  assert.deepEqual(Object.keys(allowlist.accounts), [SANDBOX, "500268966557", "154551280135"]);
+  const PROD = Object.keys(allowlist.accounts).find((k) => allowlist.accounts[k]!.label === "agentrelay-prod")!;
+  assert.deepEqual(Object.keys(allowlist.accounts), [SANDBOX, "500268966557", "154551280135", PROD]);
+  assert.deepEqual(Object.values(allowlist.accounts).map((a) => a.label), ["sandbox", "agent-hosts", "agentrelay-dev", "agentrelay-prod"]);
   assert.equal(allowlist.accounts[SANDBOX]!.tier, "sandbox");
   assert.equal(allowlist.accounts[SANDBOX]!.roles.scoped, `arn:aws:iam::${SANDBOX}:role/agent-broker-sandbox-scoped`);
   assert.equal(allowlist.accounts[SANDBOX]!.roles.elevated, undefined, "no approval-tier role in the sandbox");
@@ -49,6 +51,11 @@ test("the shipped allowlist: auto only in the sandbox, the agent-hosts account a
   assert.equal(dev.tier, "prod");
   assert.deepEqual(dev.regions, ["us-west-2"]);
   assert.deepEqual(dev.roles, { elevated: "arn:aws:iam::154551280135:role/agent-broker-dev-read" });
+  // The prod account: approval-tier role only, us-west-2 only; the role itself can describe one cluster and nothing else (terraform/prod).
+  const prod = allowlist.accounts[PROD]!;
+  assert.equal(prod.tier, "prod");
+  assert.deepEqual(prod.regions, ["us-west-2"]);
+  assert.deepEqual(prod.roles, { elevated: `arn:aws:iam::${PROD}:role/agent-broker-prod-read` });
   assert.deepEqual(allowlist.humanApprovers, ["khaliq-gant"]);
   assert.deepEqual(allowlist.duration, { minMinutes: 15, maxMinutes: 60, autoMaxMinutes: 60 });
   for (const r of allowlist.autoRules) for (const a of r.actions) {

@@ -56,7 +56,8 @@ run "wires_broker_to_its_roles_and_matches_the_allowlist" {
       jsondecode(file("${path.module}/../../allowlist.json")).accounts["805532413586"].roles.scoped,
       jsondecode(file("${path.module}/../../allowlist.json")).accounts["500268966557"].roles.elevated,
       jsondecode(file("${path.module}/../../allowlist.json")).accounts["154551280135"].roles.elevated,
-    ])
+      one([for a in values(jsondecode(file("${path.module}/../../allowlist.json")).accounts) : a.roles.elevated if a.label == "agentrelay-prod"]),
+    ]) && length(module.broker_role.permissions_policy.Statement[0].Resource) == 4 && length(jsondecode(file("${path.module}/../../allowlist.json")).accounts) == 4
     error_message = "the broker may vend into exactly the allowlist's roles"
   }
   assert {

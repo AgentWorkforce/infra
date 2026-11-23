@@ -1,0 +1,8 @@
+# Copy to backend.hcl (gitignored) and run: terraform init -backend-config=backend.hcl
+# Use a versioned, private S3 bucket in the prod account that you already own.
+# State holds no secrets (a role, its policies and an EKS access entry).
+bucket       = "<state bucket in the prod account>"
+key          = "aws-cred-broker/prod.tfstate"
+region       = "us-west-2"
+encrypt      = true
+use_lockfile = true

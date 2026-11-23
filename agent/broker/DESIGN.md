@@ -64,7 +64,7 @@ agent ◀──Relay reply: request id, pointer, expiry, access key id (no secre
 | --- | --- | --- |
 | Never | `sts:*`, `organizations:*`, `account:*`, billing, `iam:CreateAccessKey` / login profiles, `*`, or any wildcard that overlaps them; an account not on the allowlist; a bad shape (duration outside 15 to 60 min, run tag, region) | Refused, audited, STS never called |
 | Auto | Sandbox account `805532413586`, every action literal and on an `autoRules` entry, scope `run-tag`, the run tag unclaimed or claimed by this agent | Issued on `agent-broker-sandbox-scoped` |
-| Workspace auto | A requester the Relay server verifies as an agent of our workspace (`workspaceAuto.workspaceId`), with a request wholly inside a `workspaceAuto` capability. The same rules and checks as a delegation (never IAM, identity or audit controls, deletes or wildcards), with the capability's IAM tag guards added to the policy. Khaliq's rule, 2026-11-16 | Issued with no approval, audited as `approver: workspace-auto` |
+| Workspace auto | A requester the Relay server verifies as an agent of our workspace (`workspaceAuto.workspaceId`), with a request wholly inside a `workspaceAuto` capability. A capability that lists `requesters` counts only for the agents it names. The same rules and checks as a delegation (never IAM, identity or audit controls, deletes or wildcards), with the capability's IAM tag guards added to the policy. Khaliq's rule, 2026-11-16 | Issued with no approval, audited as `approver: workspace-auto` |
 | Approval | A prod account, `iam:*` / identity / audit actions, wildcards, `scope: account` with any non-read action (changes outside the run's tag), off-list actions, another agent's run tag | Parked. Khaliq is DMed the full request and a digest |
 
 Auto rules (allowlist `autoRules`) have three scopes:
@@ -202,6 +202,35 @@ A run tag is claimed by the first agent that receives credentials for it
   makes `kubectl` read-only access automatic for workspace agents; the cost
   is that an approved request for anything else in this account is issued
   and then denied by IAM, since the role has no more than that.
+- The prod account (`agentrelay-prod`, tier `prod`) follows the same
+  pattern: `agent-broker-prod-read` allows only `eks:DescribeCluster` on
+  `agent-relay-prod` and is an EKS access entry with `AmazonEKSViewPolicy`
+  at cluster scope (`terraform/prod`, applied by layered-infra-ops with its
+  role in that account, on the owner's approval). The view policy reads no
+  Secrets, so Helm's release records (`helm get values`) are out of reach
+  too. Its `workspaceAuto` capability `prod-cluster-read` carries
+  `requesters`, a list of Relay agent names:
+  - a capability with `requesters` is matched only for a verified workspace
+    agent whose name is on the list. For anyone else it is left out of the
+    match, so their request goes on to approval, and never to a wider grant;
+  - the list never widens anything. The requester must still be a verified
+    agent of the workspace, and the request must still fit the capability
+    under the same checks as every other workspace capability;
+  - a capability without the field is for every verified workspace agent,
+    as before;
+  - `requesters` that is empty, isn't a list, or holds anything but agent
+    names (a human approver's name included) makes the `workspaceAuto`
+    config unsound. That turns all workspace auto-issue off until it's
+    fixed; it is never read as "everyone";
+  - on a delegation's capability the field is a config error: a
+    delegation's `requesters` belongs on the delegation itself;
+  - the match is by name, as for a delegation's `requesters`, and isn't
+    pinned to a Relay agent id. An agent that registered under a listed
+    name in the workspace would get the read. That's accepted for a role
+    that can read no Secrets and write nothing; pin ids before using
+    `requesters` for anything that writes;
+  - the approver can still approve another agent's request for this role.
+    It gets the same read and no more, since the role has no more.
 
 ## Delivery: never in plaintext over Relay
 
@@ -324,9 +353,12 @@ broker's account (stream: the broker's Relay name), as the broker role.
   ceiling's tag lists and names to `policy.ts`.
 - `sandbox/`: the root that wires the two together across both accounts, on
   an S3 backend configured at init.
+- `prod/`: the read-only role and the EKS access entry in the prod account.
+  It's a root of its own, with its own state in that account
+  (`terraform/prod/README.md`).
 
 Agent CI runs `terraform fmt`, `validate` and `test` (mocked providers, plan
-only) on all three.
+only) on every module and root.
 
 Credential chain: host instance role → `agent-cred-broker` → scoped role. Role
 chaining caps each hop at 1 h, which matches the 60-minute maximum.
@@ -356,6 +388,12 @@ layered-infra-ops applies `sandbox/` once this is merged to main (Khaliq,
    at the wrong account.
 3. Check that `sandbox_scoped_role_arn` equals the allowlist's `roles.scoped`
    (a test already pins this).
+
+`prod/` is applied separately, by layered-infra-ops with its role in the
+prod account: plan first (4 resources to add, nothing changed or destroyed),
+then apply only on the owner's own OK. The broker role can assume the new
+role only once `sandbox/` lists it in the broker role's `target_role_arns`
+and is applied again (1 inline policy changed in place, the same gate).
 
 The broker can't use the role until the infra-ops host can assume it. That
 needs `credentialBroker: true` (set here, live after a full Agent Deploy) and
