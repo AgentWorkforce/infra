@@ -1,0 +1,11 @@
+{
+  "adminEmail": "you@your-company.com",
+  "googleClientId": "",
+  "googleClientSecret": "",
+  "googleEnvFile": "",
+  "autoJoinDomains": [],
+  "port": 3100,
+  "nextPort": 3102,
+  "dashboardPort": 3103,
+  "controlPort": 33100
+}
