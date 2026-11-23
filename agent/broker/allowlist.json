@@ -110,6 +110,16 @@
       "roles": {
         "elevated": "arn:aws:iam::154551280135:role/agent-broker-dev-read"
       }
+    },
+    "786098391924": {
+      "label": "agentrelay-prod",
+      "tier": "prod",
+      "regions": [
+        "us-west-2"
+      ],
+      "roles": {
+        "elevated": "arn:aws:iam::786098391924:role/agent-broker-prod-read"
+      }
     }
   },
   "neverIssue": [
@@ -376,7 +386,7 @@
     }
   ],
   "workspaceAuto": {
-    "$comment": "Issued with NO approval to any agent the Relay server verifies as a member of this workspace, when the request falls wholly inside one capability (same checks as a delegation: never IAM, identity or audit controls, deletes, wildcards). Khaliq chose this scope (2026-11-16, option A). Widening it is an allowlist PR. See broker/AGENTS.md.",
+    "$comment": "Issued with NO approval to any agent the Relay server verifies as a member of this workspace, when the request falls wholly inside one capability (same checks as a delegation: never IAM, identity or audit controls, deletes, wildcards). Khaliq chose this scope (2026-11-16, option A). Widening it is an allowlist PR. A capability with requesters is issued this way only to the agents it names; anyone else's request for it goes to approval. See broker/AGENTS.md.",
     "workspaceId": "rw_7ccfea89",
     "grantedBy": "khaliq-gant",
     "reason": "Khaliq (2026-11-16): workspace agents shouldn't need his approval for routine project access.",
@@ -440,6 +450,29 @@
             ],
             "eksClusters": [
               "agent-relay-dev"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "prod-cluster-read",
+        "requesters": [
+          "envs-lead"
+        ],
+        "accounts": [
+          "786098391924"
+        ],
+        "regions": [
+          "us-west-2"
+        ],
+        "grants": [
+          {
+            "id": "prod-cluster-describe",
+            "actions": [
+              "eks:DescribeCluster"
+            ],
+            "eksClusters": [
+              "agent-relay-prod"
             ]
           }
         ]

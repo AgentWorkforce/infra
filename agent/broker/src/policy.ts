@@ -62,7 +62,21 @@ export interface WorkspaceAuto {
   workspaceId: string;
   grantedBy: string;
   reason: string;
-  capabilities: DelegatedCapability[];
+  capabilities: WorkspaceCapability[];
+}
+
+/** A workspaceAuto capability: a delegation-shaped capability, optionally limited to named agents. */
+export interface WorkspaceCapability extends DelegatedCapability {
+  /**
+   * Optional: only these agents (Relay names, matched like a delegation's
+   * requesters) are issued this capability without approval. Any other
+   * workspace agent's request is not matched against it and goes on to the
+   * normal path (approval). Absent: every verified workspace agent. Present
+   * but empty or malformed: a config error, which turns workspace auto-issue
+   * off. It never widens anything: a capability is the same grants with or
+   * without it.
+   */
+  requesters?: string[];
 }
 
 /**
@@ -608,6 +622,8 @@ export function delegationConfigProblems(list: Allowlist): string[] {
     if (!Array.isArray(d.requesters) || d.requesters.length === 0) problems.push(`${who}: requesters must list the agents whose requests it may approve`);
     else for (const r of d.requesters) if (typeof r !== "string" || !NAME_RE.test(r) || r === d.agent || list.humanApprovers.includes(r)) problems.push(`${who}: requester ${JSON.stringify(r)} must be another agent's Relay name`);
     if (!Array.isArray(d.capabilities) || d.capabilities.length === 0) problems.push(`${who}: no capabilities`);
+    // A per-capability requesters list is workspaceAuto's. Here it would be ignored, and read as a limit that isn't one.
+    for (const c of Array.isArray(d.capabilities) ? d.capabilities : []) if (c && typeof c === "object" && "requesters" in c) problems.push(`${who} capability ${(c as DelegatedCapability).id}: requesters belongs on the delegation, not on its capability`);
     problems.push(...capabilityProblems(d.capabilities ?? [], list, who));
   }
   return problems;
@@ -827,8 +843,13 @@ export function checkWorkspaceAuto(p: { request: CredentialRequest; requester: P
   }
   for (const r of req.resources ?? []) if (/[*?]/.test(r)) return no(`resource ${r} is a wildcard`);
   if (!list.accounts[String(req.account)]) return no(`account ${req.account} is not on the allowlist`);
-  const fit = fitsCapabilities(p, w.capabilities, list, capabilityGuards(req, w.capabilities, WORKSPACE_GUARD_PREFIX), sid(WORKSPACE_GUARD_PREFIX));
-  return fit.ok ? fit : no(fit.reason);
+  // A capability limited to named requesters is matched only for them. For anyone else it is as if it
+  // weren't there, so the request can only fit another capability or go to approval: never a wider grant.
+  // The tag guards still come from every capability, exactly as the broker built them into the policy.
+  const open = w.capabilities.filter((c) => c.requesters === undefined || c.requesters.includes(p.requester.name));
+  const limited = w.capabilities.filter((c) => !open.includes(c)).map((c) => `${c.id}: only issued without approval to ${c.requesters!.join(", ")}`);
+  const fit = fitsCapabilities(p, open, list, capabilityGuards(req, w.capabilities, WORKSPACE_GUARD_PREFIX), sid(WORKSPACE_GUARD_PREFIX));
+  return fit.ok ? fit : no([...(open.length ? [fit.reason] : []), ...limited].join("; "));
 }
 
 /** Problems with workspaceAuto itself. Any problem turns workspace auto-issue off (requests go to approval). */
@@ -839,6 +860,15 @@ export function workspaceAutoProblems(list: Allowlist): string[] {
   if (typeof w.workspaceId !== "string" || !/^rw_[0-9a-z]{4,32}$/.test(w.workspaceId)) problems.push("workspaceAuto: workspaceId must be a Relaycast workspace id (rw_…)");
   if (!list.humanApprovers.includes(w.grantedBy)) problems.push("workspaceAuto: grantedBy must be a human approver");
   if (!Array.isArray(w.capabilities) || w.capabilities.length === 0) problems.push("workspaceAuto: no capabilities");
+  // requesters, when the key is there at all (null counts), must be a non-empty list of agent names: an
+  // empty or malformed list is never read as "everyone" or as "no one", it turns auto-issue off.
+  for (const c of Array.isArray(w.capabilities) ? w.capabilities : []) {
+    if (!c || typeof c !== "object" || !("requesters" in c)) continue;
+    const where = `workspaceAuto capability ${c.id}`;
+    const r: unknown = c.requesters;
+    if (!Array.isArray(r) || r.length === 0) problems.push(`${where}: requesters, when given, must list at least one agent`);
+    else for (const n of r) if (typeof n !== "string" || !NAME_RE.test(n) || list.humanApprovers.includes(n)) problems.push(`${where}: requester ${JSON.stringify(n)} must be an agent's Relay name`);
+  }
   problems.push(...capabilityProblems(w.capabilities ?? [], list, "workspaceAuto"));
   return problems;
 }

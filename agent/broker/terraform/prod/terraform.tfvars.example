@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars (gitignored). No secrets here.
+# The prod account: allowed_account_ids stops a run with the wrong profile before it changes anything.
+prod_account_id = "<the prod account id, from broker/allowlist.json>"
+# From ../sandbox (output broker_role_arn): the broker role, the only principal the new role trusts.
+broker_role_arn = "arn:aws:iam::<broker account id>:role/agent-cred-broker"
+# cluster_name = "agent-relay-prod"
+# profile      = "<AWS CLI profile with IAM and EKS rights in the prod account>"
