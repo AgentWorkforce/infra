@@ -328,7 +328,7 @@ compatibility:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Adds two default-off values: summaries.searchBackend ("" or "postgres") renders READ_API_SUMMARY_SEARCH_BACKEND, and search.sessionPartialRetryable (boolean) renders READ_API_SESSION_PARTIAL_RETRYABLE=true. Both are reserved from extraEnv and refuse any other value at render time. They need a services image whose read API accepts the variables. Default renders are unchanged apart from the chart version.'
     - id: session-read-api-0.2.15
-      status: planned
+      status: shipped
       charts: { session-read-api: 0.2.15 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
@@ -445,7 +445,7 @@ compatibility:
         - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
       notes: 'Carries 0.8.53 and session-read-api 0.2.16: default-off sessionReadApi.summaries.searchBackend (postgres) and sessionReadApi.search.sessionPartialRetryable. Default renders are unchanged apart from chart versions.'
     - id: sessions-pipeline-0.8.53
-      status: planned
+      status: shipped
       charts: { sessions-pipeline: 0.8.53, sessions-pipeline-worker: 0.7.13, session-ingest-api: 0.4.5, session-read-api: 0.2.15 }
       depends:
         sessions-pipeline: { worker: 0.7.13, alleyoop: 0.4.5, sessionReadApi: 0.2.15, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
