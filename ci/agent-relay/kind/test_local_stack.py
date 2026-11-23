@@ -336,6 +336,27 @@ class LocalTests(unittest.TestCase):
             stack.ensure_credential_probe("official installer")
             self.assertEqual(sql.call_args.args, ("hoopdb", "official installer"))
 
+    def test_privileged_bootstraps_include_legacy_export_privacy_role_before_migrations(self):
+        # Migration 062030 refuses (42704) unless bulls96_legacy_export_privacy exists; the
+        # unprivileged migrator never creates roles, so both paths run the image's bootstrap as postgres.
+        privileged = ["session_directory_search_worker", "session_token_verifier", "session_ingest_roles",
+                      "session_read_api_roles", "legacy_export_privacy_roles"]
+        stack = LocalStack.__new__(LocalStack)
+        stack.ca_sha = "0" * 64
+        calls = []
+        stack.source_files = lambda paths: {path: "-- " + path for path in paths}
+        stack.sql = lambda database, text, variables=(): calls.append(("sql", database, text, tuple(variables)))
+        stack.secret = lambda *args, **kwargs: calls.append(("secret",))
+        stack.job = lambda name, *args, **kwargs: calls.append(("job", name))
+        stack.pipeline_schema({"hoop": "fixture"})
+        plain = [text[len("-- supabase/bootstrap/"):-len(".sql")] for kind, *rest in calls if kind == "sql"
+                 for _, text, variables in [rest] if text.startswith("-- supabase/bootstrap/") and not variables]
+        self.assertEqual(plain[:5], privileged)
+        calls.clear()
+        stack.migrate_pipeline()
+        self.assertEqual([c[2] for c in calls if c[0] == "sql"], ["-- supabase/bootstrap/" + n + ".sql" for n in privileged])
+        self.assertEqual([c[0] for c in calls][-2:], ["job", "job"])
+
     def test_pipeline_only_pin_change_runs_migrations_without_adopting_another_generation(self):
         previous = {**selected_images(), "pipeline": "old"}
         self.assertFalse(check_selection(None, previous))

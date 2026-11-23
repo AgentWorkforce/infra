@@ -295,11 +295,11 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
         self.job("local-locker-init", PIPELINE, ["bun", "src/locker/init.ts"], locker_env())
 
     def pipeline_schema(self, c):
-        names = ["session_directory_search_worker", "session_token_verifier", "session_ingest_roles", "session_read_api_roles", "session_consumer_roles", "hoopdb_runtime_role", "hoopdb_function_default_revoke", "session_consumer_credential_probe"]
+        names = ["session_directory_search_worker", "session_token_verifier", "session_ingest_roles", "session_read_api_roles", "legacy_export_privacy_roles", "session_consumer_roles", "hoopdb_runtime_role", "hoopdb_function_default_revoke", "session_consumer_credential_probe"]
         paths = ["supabase/tests/supabase_shim.sql"] + ["supabase/bootstrap/" + n + ".sql" for n in names]
         files = self.source_files(paths)
         self.sql("hoopdb", files[paths[0]])
-        for name in names[:4]:
+        for name in names[:5]:
             self.sql("hoopdb", files["supabase/bootstrap/" + name + ".sql"])
         self.sql("hoopdb", "ALTER ROLE hoop CREATEROLE; SET ROLE hoop; SET createrole_self_grant=''; CREATE SCHEMA sessions; CREATE SCHEMA search_index;\n" + files["supabase/bootstrap/session_consumer_roles.sql"])
         self.sql("hoopdb", files["supabase/bootstrap/hoopdb_runtime_role.sql"], ["runtime_role=sessions_pipeline_runtime", "runtime_login=true"])
@@ -310,7 +310,8 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
         # New migrations may name new principals; repeat the image's idempotent
         # privileged pre-migrate bootstraps before the unprivileged migrator.
         paths = ["supabase/bootstrap/" + n + ".sql" for n in (
-            "session_directory_search_worker", "session_token_verifier", "session_ingest_roles", "session_read_api_roles")]
+            "session_directory_search_worker", "session_token_verifier", "session_ingest_roles", "session_read_api_roles",
+            "legacy_export_privacy_roles")]
         for sql in self.source_files(paths).values():
             self.sql("hoopdb", sql)
         migrate_env = [env("SERVICE", "hoopdb-migrate"), secret_env("HOOPDB_URL", "local-pipeline-owner", "url"),
