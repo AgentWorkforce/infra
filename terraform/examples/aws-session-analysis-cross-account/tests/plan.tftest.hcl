@@ -38,11 +38,6 @@ run "least_privilege" {
     error_message = "Version listing must be conditioned to result objects."
   }
   assert {
-    condition = anytrue([for s in jsondecode(aws_iam_role_policy.runner.policy).Statement :
-    s.Sid == "NoUploadInbox" && s.Effect == "Deny" && s.Resource == "arn:aws:s3:::sessions-bucket/96bulls/.upload-inbox/*"])
-    error_message = "The runner must never touch the upload inbox."
-  }
-  assert {
     condition = (anytrue([for s in jsondecode(aws_iam_role_policy.runner.policy).Statement :
       s.Sid == "InspectCanonicalBucket" && contains(flatten([s.Action]), "s3:GetBucketVersioning")]) &&
       anytrue([for s in output.resource_policy_statements.bucket_policy :
@@ -51,10 +46,10 @@ run "least_privilege" {
   }
   assert {
     condition = (anytrue([for s in jsondecode(aws_iam_role_policy.runner.policy).Statement :
-      s.Sid == "NoAdmissionInbox" && s.Effect == "Deny" && s.Resource == "arn:aws:s3:::sessions-bucket/96bulls/.admission-inbox/*"]) &&
+      s.Sid == "NoReservedNamespaces" && s.Effect == "Deny" && s.Resource == "arn:aws:s3:::sessions-bucket/96bulls/.*"]) &&
       anytrue([for s in jsondecode(aws_iam_role_policy.runner.policy).Statement :
-    s.Sid == "NoAdmissionJournalDecrypt" && s.Effect == "Deny" && s.Condition.StringLike["kms:EncryptionContext:aws:s3:arn"] == "arn:aws:s3:::sessions-bucket/96bulls/.admission-inbox/*"]))
-    error_message = "The runner must neither read nor decrypt native-ingest privacy journals."
+    s.Sid == "NoReservedNamespaceDecrypt" && s.Effect == "Deny" && s.Condition.StringLike["kms:EncryptionContext:aws:s3:arn"] == "arn:aws:s3:::sessions-bucket/96bulls/.*"]))
+    error_message = "The runner must neither read nor decrypt any reserved dot-prefix namespace."
   }
   assert {
     condition = (anytrue([for s in output.resource_policy_statements.key_policy :

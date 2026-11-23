@@ -5,14 +5,13 @@
 # explicit Deny, so that stack must also carve out this exact role for the
 # result prefix.
 locals {
-  bucket_name       = trimprefix(var.sessions_bucket_arn, "arn:aws:s3:::")
-  kms_region        = split(":", var.sessions_kms_key_arn)[3]
-  session_objects   = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*"
-  analysis_results  = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*/normalized/session-analysis-v2/*"
-  result_prefix     = "${var.key_base}/*/v1/*/normalized/session-analysis-v2/*"
-  upload_inbox      = "${var.sessions_bucket_arn}/${var.key_base}/.upload-inbox/*"
-  admission_inbox   = "${var.sessions_bucket_arn}/${var.key_base}/.admission-inbox/*"
-  admission_context = "arn:aws:s3:::${local.bucket_name}/${var.key_base}/.admission-inbox/*"
+  bucket_name         = trimprefix(var.sessions_bucket_arn, "arn:aws:s3:::")
+  kms_region          = split(":", var.sessions_kms_key_arn)[3]
+  session_objects     = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*"
+  analysis_results    = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*/normalized/session-analysis-v2/*"
+  result_prefix       = "${var.key_base}/*/v1/*/normalized/session-analysis-v2/*"
+  reserved_namespaces = "${var.sessions_bucket_arn}/${var.key_base}/.*"
+  reserved_context    = "arn:aws:s3:::${local.bucket_name}/${var.key_base}/.*"
 }
 
 resource "aws_iam_role" "runner" {
@@ -56,15 +55,14 @@ resource "aws_iam_role_policy" "runner" {
           "s3:prefix" = local.result_prefix
         } }
       },
-      { Sid = "NoUploadInbox", Effect = "Deny", Action = ["s3:*"], Resource = local.upload_inbox },
-      { Sid = "NoAdmissionInbox", Effect = "Deny", Action = ["s3:*"], Resource = local.admission_inbox },
+      { Sid = "NoReservedNamespaces", Effect = "Deny", Action = ["s3:*"], Resource = local.reserved_namespaces },
       {
-        Sid      = "NoAdmissionJournalDecrypt"
+        Sid      = "NoReservedNamespaceDecrypt"
         Effect   = "Deny"
         Action   = ["kms:Decrypt"]
         Resource = var.sessions_kms_key_arn
         Condition = {
-          StringLike = { "kms:EncryptionContext:aws:s3:arn" = local.admission_context }
+          StringLike = { "kms:EncryptionContext:aws:s3:arn" = local.reserved_context }
         }
       },
       {
