@@ -221,15 +221,16 @@ key in a ConfigMap (or a separate Secret, never the private key's):
 umask 077; mkdir -p keys && cd keys
 openssl genpkey -algorithm ed25519 -outform DER -out priv.der
 openssl pkey -in priv.der -inform DER -pubout -outform DER -out pub.der
-base64 -w0 priv.der > private-key-1 && base64 -w0 pub.der > public-key-1
+base64 < priv.der | tr -d '\n' > private-key-1   # one line, no trailing newline
+base64 < pub.der | tr -d '\n' > public-key-1
 kubectl -n agent-relay create secret generic relaygate-upstream --from-file=private-key-1
 kubectl -n agent-relay create configmap relaygate-upstream-public --from-file=public-key-1
-shred -u priv.der private-key-1   # the private key now lives only in the Secret
+shred -u priv.der private-key-1   # macOS: rm -P (or rm); the private key now lives only in the Secret
 ```
 
 Use `privateKey.key: private-key-1`, `currentKey: public-key-1` and a kid such
-as `k1`. (On macOS use `base64 -i priv.der` without `-w0`.) The key never goes
-on a command line. For a rotation, make a new pair the same way as
+as `k1`. The key never goes on a command line, and the commands work the same
+with GNU and BSD (macOS) `base64`. For a rotation, make a new pair the same way as
 `private-key-2`/`public-key-2` and add it next to the old one, leaving the
 existing keys in place:
 
@@ -238,7 +239,7 @@ printf '{"stringData":{"private-key-2":"%s"}}' "$(cat private-key-2)" > patch.js
 kubectl -n agent-relay patch secret relaygate-upstream --type merge --patch-file patch.json
 kubectl -n agent-relay patch configmap relaygate-upstream-public --type merge \
   -p "{\"data\":{\"public-key-2\":\"$(cat public-key-2)\"}}"
-shred -u priv.der private-key-2 patch.json
+shred -u priv.der private-key-2 patch.json   # macOS: rm -P (or rm)
 ```
 
 | Workload | Env | Gets |
@@ -253,8 +254,8 @@ and logs what `enforce` would refuse: run `log` first. Both `log` and `enforce`
 need `global.relaygate.gateOnly.enabled` (either scope): without it the history
 host routes straight to the reader and ingest edge, so every public History
 request would arrive unsigned, flooding the log (`log`) or being refused
-(`enforce`). The chart refuses that combination. Kids may be unquoted numbers;
-the chart renders them as integers. Each verifier carries a
+(`enforce`). The chart refuses that combination. Quote kids; an unquoted
+whole number also works (the chart renders it as an integer, exact up to 2^53). Each verifier carries a
 `checksum/upstream-assertion` annotation over `verify`, so a change there (a
 new kid, key or source) rolls its pods.
 
