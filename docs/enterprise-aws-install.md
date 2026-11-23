@@ -340,7 +340,25 @@ Use the release packet's complete RDS values overlay. The historical
    credential-helper/import procedure. Verify destination digests and use those
    references in the overlay. Include migration and supporting images. See the
    [image supply-chain guide](self-hosted-image-supply-chain.md).
-6. Render and lint the selected chart with that overlay. Check every namespace,
+6. Built-in relaygate, sessions-only (recommended once available): the
+   history host goes through relaygate, the cast host stays on Relaycast
+   ([relaygate](self-hosted-relaygate.md#built-in-sessions-only)). It needs
+   agent-relay chart 0.7.77 or later **and a release whose signed image
+   inventory pins relaygate**: the pull-based upgrader refuses a render with an
+   image the release did not mirror, and no release pins relaygate yet. Until
+   one does, install without it. When it is available, pass the chart's
+   `values-eks-relaygate.yaml` before the customer values on every install and
+   upgrade (`tar -xOzf "$CHART_PACKAGE" agent-relay/values-eks-relaygate.yaml`),
+   set its REQUIRED values in the customer values (relaygate digest, the history
+   and dashboard hosts, `policy.controlPrincipals` without `readerKinds`,
+   `eksIngress.domain` or `hosts` and `certificateArn`), and render the ALB from
+   the release (`eksIngress.enabled`, which the profile sets):
+   `scripts/selfhost/eks-alb-ingress.sh` has no gate mode. Hand a
+   script-applied Ingress of the same name to the release first (label
+   `app.kubernetes.io/managed-by=Helm`, annotations `meta.helm.sh/release-name`
+   and `meta.helm.sh/release-namespace`). The NetworkPolicy isolation needs the
+   VPC CNI with network policy enforcement on.
+7. Render and lint the selected chart with that overlay. Check every namespace,
    origin, Secret reference, image and network setting before installation.
 
 Set `RELEASE`, `CHART_PACKAGE`, `KUBE_CONTEXT` and `INSTALL_PACK_DIR` from the

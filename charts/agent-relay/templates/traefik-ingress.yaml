@@ -1,0 +1,150 @@
+{{- /* traefikIngress: the public edge for AKS (or any cluster with Traefik
+and cert-manager) as a release object: one edge-deny Service and one Ingress
+with host rules, the same routes as eksIngress and gkeIngress. It replaces the
+hand-edited docs/azure-install/ingress.yaml; with the gate off it renders that
+file's objects (ci/agent-relay/test_traefik_ingress.py holds the two equal).
+Edge denials (/internal on api, cast and history, Relaycast workspace create,
+and everything unlisted on the history host) go to the deny Service, which has
+no endpoints, so Traefik answers 503 without reaching a backend. Traefik
+collapses a leading "//", so "//internal" matches "/internal".
+Gate-only (global.relaygate.gateOnly): the history host (both scopes) and, with
+scope all, the cast host send only relaygate's routes to the relaygate Service;
+everything else there is denied, /internal and /admin explicitly. */ -}}
+{{- $t := .Values.traefikIngress | default dict -}}
+{{- $enabled := dig "enabled" false $t -}}
+{{- if not (kindIs "bool" $enabled) }}{{ fail "traefikIngress.enabled must be true or false" }}{{ end -}}
+{{- if $enabled }}
+{{- include "agent-relay.validate" . -}}
+{{- if or (eq (dig "enabled" false (.Values.eksIngress | default dict) | toString) "true") (dig "enabled" false (.Values.gkeIngress | default dict)) }}{{ fail "traefikIngress.enabled is exclusive with eksIngress.enabled and gkeIngress.enabled: an install has one edge" }}{{ end -}}
+{{- $label := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" -}}
+{{- $name := dig "name" "agent-relay" $t | toString -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $name "max" 253)) }}{{ fail "traefikIngress.name must be a DNS subdomain name" }}{{ end -}}
+{{- $class := dig "className" "traefik" $t | toString -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $class "max" 253)) }}{{ fail "traefikIngress.className must be an IngressClass name" }}{{ end -}}
+{{- $entrypoint := dig "entrypoint" "websecure" $t | toString -}}
+{{- if not (regexMatch "^[A-Za-z0-9_-]+$" $entrypoint) }}{{ fail "traefikIngress.entrypoint must be a Traefik entrypoint name" }}{{ end -}}
+{{- $issuer := dig "clusterIssuer" "letsencrypt" $t | toString -}}
+{{- if and $issuer (not (include "agent-relay.isDnsName" (dict "name" $issuer "max" 253))) }}{{ fail "traefikIngress.clusterIssuer must be a cert-manager ClusterIssuer name, or empty when the TLS Secret is managed elsewhere" }}{{ end -}}
+{{- $tls := dig "tlsSecretName" "agent-relay-tls" $t | toString -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $tls "max" 253)) }}{{ fail "traefikIngress.tlsSecretName must be the name of a kubernetes.io/tls Secret in the release namespace" }}{{ end -}}
+{{- $hosts := dig "hosts" dict $t | default dict -}}
+{{- range $r := list "root" "api" "cast" "history" }}
+{{- if not (include "agent-relay.isDnsName" (dict "name" (dig $r "" $hosts | toString) "max" 253)) }}{{ fail (printf "traefikIngress.hosts.%s is required: a lowercase DNS name (no scheme or path)" $r) }}{{ end -}}
+{{- end }}
+{{- $all := list $hosts.root $hosts.api $hosts.cast $hosts.history -}}
+{{- if ne (len $all) (len (uniq $all)) }}{{ fail "traefikIngress.hosts must be four different hostnames" }}{{ end -}}
+{{- $b := dig "backends" dict $t | default dict -}}
+{{- $svc := dict -}}
+{{- range $role, $d := dict "control" (list "relay-control" 80) "webapp" (list "relay-webapp" 8080) "relaycast" (list "relaycast" 8787) "readApi" (list "agent-relay-read-api" 80) "ingest" (list "agent-relay-ingest-edge" 80) }}
+{{- $n := dig $role "serviceName" (index $d 0) $b | toString -}}
+{{- $p := dig $role "servicePort" (index $d 1) $b | toString -}}
+{{- if not (and (le (len $n) 63) (regexMatch $label $n)) }}{{ fail (printf "traefikIngress.backends.%s.serviceName must be a DNS label" $role) }}{{ end -}}
+{{- if not (and (regexMatch "^[1-9][0-9]{0,4}$" $p) (le (atoi $p) 65535)) }}{{ fail (printf "traefikIngress.backends.%s.servicePort must be 1-65535" $role) }}{{ end -}}
+{{- $_ := set $svc $role (printf "backend: { service: { name: %s, port: { number: %s } } }" $n $p) -}}
+{{- end }}
+{{- $denyName := dig "denyServiceName" "edge-deny" $t | toString -}}
+{{- if not (and (le (len $denyName) 63) (regexMatch $label $denyName)) }}{{ fail "traefikIngress.denyServiceName must be a DNS label" }}{{ end -}}
+{{- $deny := printf "backend: { service: { name: %s, port: { number: 80 } } }" $denyName -}}
+{{- $defaultControlPaths := include "agent-relay.eksDefaultControlPaths" . | fromJsonArray -}}
+{{- $controlPaths := dig "controlPaths" $defaultControlPaths $t -}}
+{{- if kindIs "invalid" $controlPaths }}{{ $controlPaths = $defaultControlPaths }}{{ end -}}
+{{- if not (kindIs "slice" $controlPaths) }}{{ fail "traefikIngress.controlPaths must be a list of paths" }}{{ end -}}
+{{- range $p := $controlPaths }}
+{{- if not (and (kindIs "string" $p) (regexMatch "^(/[-A-Za-z0-9._~%!$&'()+,;=:@]+)+$" $p)) }}{{ fail (printf "traefikIngress.controlPaths entry %v must be an absolute path such as /cloud/api: not \"/\", no trailing \"/\", \"//\", \"*\" or spaces" $p) }}{{ end -}}
+{{- end }}
+{{- $gateOnly := include "agent-relay.gateOnly" . -}}
+{{- $gateCast := include "agent-relay.gateCast" . -}}
+{{- $gate := printf "backend: { service: { name: %s, port: { number: %s } } }" (include "agent-relay.gate.serviceName" .) (include "agent-relay.gate.servicePort" .) -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $denyName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: edge-deny
+spec:
+  type: ClusterIP
+  ports:
+    - { name: http, port: 80, targetPort: 65535 }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    {{- with $issuer }}
+    cert-manager.io/cluster-issuer: {{ . }}
+    {{- end }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ $entrypoint }}
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: {{ $class }}
+  tls:
+    - secretName: {{ $tls }}
+      hosts: [{{ $hosts.root }}, {{ $hosts.api }}, {{ $hosts.cast }}, {{ $hosts.history }}]
+  rules:
+    - host: {{ $hosts.root }}
+      http:
+        paths:
+          {{- range $p := $controlPaths }}
+          - { path: {{ $p | quote }}, pathType: Prefix, {{ $svc.control }} }
+          {{- end }}
+          - { path: /, pathType: Prefix, {{ $svc.webapp }} }
+    - host: {{ $hosts.api }}
+      http:
+        paths:
+          - { path: /internal, pathType: Prefix, {{ $deny }} }
+          - { path: /, pathType: Prefix, {{ $svc.control }} }
+    - host: {{ $hosts.cast }}
+      http:
+        paths:
+          {{- if $gateCast }}
+          {{- range $p := include "agent-relay.gate.castExact" . | fromJsonArray }}
+          - { path: {{ $p }}, pathType: Exact, {{ $gate }} }
+          {{- end }}
+          {{- range $p := include "agent-relay.gate.castPrefix" . | fromJsonArray }}
+          - { path: {{ $p }}, pathType: Prefix, {{ $gate }} }
+          {{- end }}
+          - { path: /internal, pathType: Prefix, {{ $deny }} }
+          - { path: /admin, pathType: Prefix, {{ $deny }} }
+          - { path: /, pathType: Prefix, {{ $deny }} }
+          {{- else }}
+          - { path: /internal, pathType: Prefix, {{ $deny }} }
+          - { path: /v1/workspaces, pathType: Exact, {{ $deny }} }
+          - { path: /v1/workspaces/, pathType: Exact, {{ $deny }} }
+          - { path: /, pathType: Prefix, {{ $svc.relaycast }} }
+          {{- end }}
+    - host: {{ $hosts.history }}
+      http:
+        paths:
+          {{- if $gateOnly }}
+          {{- range $p := include "agent-relay.gate.historyExact" . | fromJsonArray }}
+          - { path: {{ $p }}, pathType: Exact, {{ $gate }} }
+          {{- end }}
+          {{- range $p := include "agent-relay.gate.historyPrefix" . | fromJsonArray }}
+          - { path: {{ $p }}, pathType: Prefix, {{ $gate }} }
+          {{- end }}
+          - { path: /internal, pathType: Prefix, {{ $deny }} }
+          - { path: /admin, pathType: Prefix, {{ $deny }} }
+          {{- else }}
+          {{- range $p := list "/v1/delivery/batches" "/v1/turns/batches" "/v1/delivery/limits" "/v1/auth/token/refresh" }}
+          - { path: {{ $p }}, pathType: Exact, {{ $svc.ingest }} }
+          {{- end }}
+          {{- range $p := list "/v1/delivery/records" "/v1/cli/login" "/v1/events" "/v1/auth/token/revoke" }}
+          - { path: {{ $p }}, pathType: Exact, {{ $svc.readApi }} }
+          {{- end }}
+          {{- range $p := list "/v1/sessions" "/v1/digest" "/v1/relayfacts" "/v1/coordination" }}
+          - { path: {{ $p }}, pathType: Prefix, {{ $svc.readApi }} }
+          {{- end }}
+          {{- range $p := list "/v1/delivery" "/v1/turns" "/v1/onboarding" }}
+          - { path: {{ $p }}, pathType: Prefix, {{ $svc.ingest }} }
+          {{- end }}
+          {{- end }}
+          - { path: /, pathType: Prefix, {{ $deny }} }
+{{- end }}

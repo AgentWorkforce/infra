@@ -560,6 +560,45 @@ be Ready, then apply `values-scrub-wasm-bindgen.yaml` in a second Helm revision.
 A fresh install with an empty Sessions database may include that strict overlay
 in its first revision.
 
+### Built-in relaygate on every edge
+
+`global.relaygate.gateOnly` with `components.relaygate` puts relaygate in
+front of History on all three edges this chart renders, with one model:
+`scope: sessions` (sessions-only) routes the history host to relaygate and
+leaves the cast host on Relaycast; `scope: all` (the default when the gate is
+on, today's gate-only) routes the cast host through relaygate as well. Off by
+default: with `gateOnly.enabled=false` every render is unchanged.
+`gateOnly.relayfactsRoutes` (off by default) also routes `/v1/relayfacts` and
+`/v1/coordination` to relaygate; it needs a relaygate image that proxies them.
+
+| Edge | History host with the gate on | Cast host with `scope: all` |
+| --- | --- | --- |
+| `gkeIngress` | `<gkeIngress.name>-gate` NEG Service (relaygate pods, `/healthz`) | the same edge Service |
+| `eksIngress` | the relaygate Service; `/internal`, `/admin` and everything unlisted are fixed 404s | the relaygate Service, same denials |
+| `traefikIngress` | the relaygate Service; `/internal`, `/admin` and everything unlisted go to `edge-deny` (503) | the relaygate Service, same denials |
+
+`eksIngress.history.readOnly` cannot be combined with the gate (relaygate
+fronts this release's reader). The routes are listed in
+`docs/self-hosted-relaygate.md` ("Built in: sessions-only"); the example
+profiles are `values-gcp-relaygate.yaml`, `values-eks-relaygate.yaml` and the
+AKS guide's `relaygate-values.yaml`.
+
+### Traefik Ingress (AKS)
+
+`traefikIngress.enabled=true` renders the AKS edge from the release: an
+`edge-deny` Service with no endpoints and one Traefik Ingress (cert-manager
+annotation, `websecure` entrypoint) with the host rules of `eksIngress`:
+`hosts.root` (the dashboard, with `traefikIngress.controlPaths` to
+relay-control, default the `eksIngress` list), `hosts.api`, `hosts.cast` and
+`hosts.history`. `docs/azure-install/ingress.yaml` is now generated from this
+template (`scripts/selfhost/aks-traefik-ingress.sh`) for releases whose chart
+predates it; with the gate off the release renders the same objects as the old
+hand-edited file (`ci/agent-relay/test_traefik_ingress.py` checks both). Backend Service names are values
+(`traefikIngress.backends.*`, defaults as in the AKS guide). Exclusive with
+`eksIngress` and `gkeIngress`. An install that applied the old file must hand
+the Ingress and Service to the release first (docs/azure-install/README.md,
+"Upgrading from the hand-applied ingress.yaml").
+
 ### Secrets from AWS SSM Parameter Store (or another external store)
 
 By default the chart renders no Secret and you create the named Secrets

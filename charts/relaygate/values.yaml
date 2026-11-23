@@ -145,7 +145,9 @@ proxy:
 #
 # Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay
 # umbrella) makes relaygate the only way into Relaycast and Sessions and needs
-# both proxies, proxy.sessionsHosts and this block. The chart then also
+# both proxies, proxy.sessionsHosts and this block. With
+# global.relaygate.gateOnly.scope=sessions (sessions-only) only Sessions is
+# gated and proxy.relaycastUrl is optional. The chart then also
 # renders the internal Sessions listener (SESSIONS_PORT =
 # global.relaygate.gateOnly.sessionsPort, default 8081; relaygate #28 or
 # later), a ClusterIP Service <fullname>-sessions on it (never on an Ingress

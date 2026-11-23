@@ -26,6 +26,51 @@
 {{- if dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict) }}true{{ end -}}
 {{- end }}
 
+{{- /* global.relaygate.gateOnly.scope: "all" (default) gates Relaycast and
+Sessions; "sessions" (sessions-only) gates History and leaves Relaycast direct.
+agent-relay.gateOnly is "true" for either scope (History is gated);
+agent-relay.gateCast only when Relaycast is gated too. */ -}}
+{{- define "agent-relay.gateScope" -}}
+{{- dig "relaygate" "gateOnly" "scope" "all" (.Values.global | default dict) | default "all" | toString -}}
+{{- end }}
+
+{{- define "agent-relay.gateCast" -}}
+{{- if and (include "agent-relay.gateOnly" .) (eq (include "agent-relay.gateScope" .) "all") }}true{{ end -}}
+{{- end }}
+
+{{- /* The public routes relaygate serves, shared by every edge this chart
+renders (gkeIngress, eksIngress, traefikIngress). History: exact and prefix
+paths on the history host. Cast (scope all only): the Relaycast allowlist.
+Everything else on a gated host is denied at the edge, /internal and /admin
+explicitly. Keep in step with sessions-pipeline nativeRouting and the relaycast
+chart's gate-only ingress (docs/self-hosted-relaygate.md lists them). */ -}}
+{{- define "agent-relay.gate.historyExact" -}}
+{{- list "/v1/events" "/v1/ingest" "/v1/auth/token/refresh" "/v1/auth/token/revoke" "/v1/onboarding/heartbeat" "/v1/upload-consent" | toJson -}}
+{{- end }}
+{{- /* /v1/relayfacts and /v1/coordination only with
+global.relaygate.gateOnly.relayfactsRoutes (off by default): they need a
+relaygate image that proxies them; older images answer 404
+relaygate_route_not_proxied after authentication. */ -}}
+{{- define "agent-relay.gate.historyPrefix" -}}
+{{- /* /v1/delivery covers batches, limits, admission, sessions/selection and
+records; relaygate answers relaygate_route_not_proxied for any other child. */ -}}
+{{- $p := list "/v1/sessions" "/v1/delivery" "/v1/digest" -}}
+{{- if eq (dig "relaygate" "gateOnly" "relayfactsRoutes" false (.Values.global | default dict) | toString) "true" }}{{ $p = concat $p (list "/v1/relayfacts" "/v1/coordination") }}{{ end -}}
+{{- $p | toJson -}}
+{{- end }}
+{{- define "agent-relay.gate.castExact" -}}
+{{- list "/v1/register" "/v1/check" "/v1/whoami" "/v1/agent" "/v1/agent/node-token" "/v1/node/ws" "/v1/search" "/v1/inbox" | toJson -}}
+{{- end }}
+{{- define "agent-relay.gate.castPrefix" -}}
+{{- list "/v1/agents" "/v1/channels" "/v1/messages" "/v1/dm" "/v1/streams" "/v1/deliveries" | toJson -}}
+{{- end }}
+{{- define "agent-relay.gate.serviceName" -}}
+{{- dig "relaygate" "gateOnly" "serviceName" "" (.Values.global | default dict) | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+{{- define "agent-relay.gate.servicePort" -}}
+{{- dig "relaygate" "gateOnly" "servicePort" 8080 (.Values.global | default dict) | int -}}
+{{- end }}
+
 {{- /* "true" when url is http(s) to the in-cluster Service svc in this
 release's namespace (svc, svc.<ns>, svc.<ns>.svc or svc.<ns>.svc.cluster.local). */ -}}
 {{- define "agent-relay.isService" -}}
@@ -47,7 +92,11 @@ than leaving a direct path open or a client cut off silently. */ -}}
 {{- $control := index .Values "relay-control" | default dict -}}
 {{- $relaycast := .Values.relaycast | default dict -}}
 {{- $g := .Values.global.relaygate.gateOnly -}}
-{{- if not (and (dig "relaygate" false $components) (dig "relaycast" true $components) (dig "sessionsPipeline" true $components)) }}{{ fail "global.relaygate.gateOnly.enabled requires components.relaygate, components.relaycast and components.sessionsPipeline" }}{{ end -}}
+{{- $scope := include "agent-relay.gateScope" . -}}
+{{- if not (has $scope (list "all" "sessions")) }}{{ fail (printf "global.relaygate.gateOnly.scope must be all (Relaycast and Sessions through relaygate) or sessions (History only; Relaycast stays direct), got %q" $scope) }}{{ end -}}
+{{- $gateCast := eq $scope "all" -}}
+{{- if not (and (dig "relaygate" false $components) (dig "sessionsPipeline" true $components)) }}{{ fail "global.relaygate.gateOnly.enabled requires components.relaygate and components.sessionsPipeline (relaygate is built in: turn components.relaygate on and set relaygate.image.digest)" }}{{ end -}}
+{{- if and $gateCast (not (dig "relaycast" true $components)) }}{{ fail "global.relaygate.gateOnly.scope=all requires components.relaycast (relaygate fronts Relaycast); use scope sessions to gate History only" }}{{ end -}}
 {{- if not (and (dig "sessionReadApi" "enabled" false $pipeline) (dig "ingestEdge" "enabled" false $pipeline)) }}{{ fail "global.relaygate.gateOnly.enabled requires sessions-pipeline.sessionReadApi.enabled and ingestEdge.enabled (the native reader and ingest edge relaygate fronts)" }}{{ end -}}
 {{- $gateName := dig "fullnameOverride" "" $gate | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-" -}}
 {{- if ne (dig "serviceName" "" $g | default (ternary .Release.Name (printf "%s-relaygate" .Release.Name) (contains "relaygate" .Release.Name)) | trunc 63 | trimSuffix "-") $gateName }}{{ fail (printf "global.relaygate.gateOnly.serviceName must be the relaygate Service %s" $gateName) }}{{ end -}}
@@ -57,13 +106,18 @@ than leaving a direct path open or a client cut off silently. */ -}}
 {{- $ingestService := dig "ingestEdge" "fullnameOverride" "" $pipeline | default (printf "%s-ingest-edge" .Release.Name) -}}
 {{- $controlService := dig "fullnameOverride" "" $control | default (printf "%s-%s" .Release.Name (dig "nameOverride" "" $control | default "relay-control")) | trunc 63 | trimSuffix "-" -}}
 {{- $proxy := dig "proxy" dict $gate -}}
-{{- range $want := list (list "relaycastUrl" $castService "the relaycast Service") (list "sessionsUploadUrl" $ingestService "the ingest edge Service") (list "sessionsReadUrl" $readService "the Sessions reader Service") }}
+{{- $upstreams := list (list "sessionsUploadUrl" $ingestService "the ingest edge Service") (list "sessionsReadUrl" $readService "the Sessions reader Service") -}}
+{{- /* Sessions-only leaves relaycastUrl optional; when set it must still be the in-cluster Service. */ -}}
+{{- if or $gateCast (dig "relaycastUrl" "" $proxy) }}{{ $upstreams = prepend $upstreams (list "relaycastUrl" $castService "the relaycast Service") }}{{ end -}}
+{{- range $want := $upstreams }}
 {{- $url := dig (index $want 0) "" $proxy -}}
 {{- if not (include "agent-relay.isService" (dict "root" $ "url" $url "svc" (index $want 1))) }}{{ fail (printf "global.relaygate.gateOnly.enabled requires relaygate.proxy.%s to be %s (http://%s...), never a public host" (index $want 0) (index $want 2) (index $want 1)) }}{{ end -}}
 {{- end }}
 {{- $origin := dig "ingestEdge" "origin" "" $pipeline -}}
 {{- $historyHosts := list (urlParse $origin).hostname -}}
 {{- if dig "enabled" false (.Values.gkeIngress | default dict) }}{{ $historyHosts = append $historyHosts (dig "hosts" "history" "" .Values.gkeIngress) }}{{ end -}}
+{{- $historyHosts = concat $historyHosts (include "agent-relay.eksHistoryHosts" . | fromJsonArray) -}}
+{{- if dig "enabled" false (.Values.traefikIngress | default dict) }}{{ $historyHosts = append $historyHosts (dig "hosts" "history" "" .Values.traefikIngress) }}{{ end -}}
 {{- $listed := dig "sessionsHosts" (list) $proxy -}}
 {{- range $h := $historyHosts | uniq }}
 {{- if and $h (not (has $h $listed)) }}{{ fail (printf "global.relaygate.gateOnly.enabled routes the history host to relaygate: relaygate.proxy.sessionsHosts must include %s" $h) }}{{ end -}}
@@ -72,7 +126,9 @@ than leaving a direct path open or a client cut off silently. */ -}}
 Control must select it, or Control loses Sessions (relaygate's internal
 listener) and Relaycast under gate-only. */ -}}
 {{- $controlName := dig "nameOverride" "" $control | default "relay-control" -}}
-{{- range $want := list (list "relaygate.sessionsListener.controlFrom" (dig "sessionsListener" "controlFrom" (list (dict "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "relay-control")))) $gate)) (list "relaycast.networkPolicy.gateOnlyFrom" (dig "networkPolicy" "gateOnlyFrom" (list (dict "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "relay-control")))) $relaycast)) }}
+{{- $controlPeers := list (list "relaygate.sessionsListener.controlFrom" (dig "sessionsListener" "controlFrom" (list (dict "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "relay-control")))) $gate)) -}}
+{{- if $gateCast }}{{ $controlPeers = append $controlPeers (list "relaycast.networkPolicy.gateOnlyFrom" (dig "networkPolicy" "gateOnlyFrom" (list (dict "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "relay-control")))) $relaycast)) }}{{ end -}}
+{{- range $want := $controlPeers }}
 {{- $found := false -}}
 {{- range $peer := index $want 1 }}
 {{- if eq (dig "podSelector" "matchLabels" "app.kubernetes.io/name" "" $peer) $controlName }}{{ $found = true }}{{ end -}}
@@ -99,9 +155,14 @@ not with existingConfigMap, and not when it pulls its policy from relay-control.
 {{- end }}
 {{- with dig "introspection" "audiences" (list) $control }}{{ if not (has $origin .) }}{{ fail (printf "relay-control.introspection.audiences must include %s: relaygate introspects upload tokens for that audience" $origin) }}{{ end }}{{ end -}}
 {{- $castPublic := dig "services" "relaycastPublicUrl" "" $control -}}
-{{- if and (dig "enabled" false (.Values.gkeIngress | default dict)) (ne $castPublic (printf "https://%s" (dig "hosts" "cast" "" .Values.gkeIngress))) }}{{ fail (printf "global.relaygate.gateOnly.enabled requires relay-control.services.relaycastPublicUrl=https://%s: the cast host is relaygate's public origin, and Control also sends it as SELFHOST_RELAYGATE_PUBLIC_URL" (dig "hosts" "cast" "" .Values.gkeIngress)) }}{{ end -}}
+{{- if and $gateCast (dig "enabled" false (.Values.gkeIngress | default dict)) (ne $castPublic (printf "https://%s" (dig "hosts" "cast" "" .Values.gkeIngress))) }}{{ fail (printf "global.relaygate.gateOnly.enabled requires relay-control.services.relaycastPublicUrl=https://%s: the cast host is relaygate's public origin, and Control also sends it as SELFHOST_RELAYGATE_PUBLIC_URL" (dig "hosts" "cast" "" .Values.gkeIngress)) }}{{ end -}}
+{{- if $gateCast }}
+{{- range $edge := list (list "eksIngress" (and (eq (dig "enabled" false (.Values.eksIngress | default dict) | toString) "true") (include "agent-relay.eksPrimaryHost" (dict "root" $ "role" "cast")))) (list "traefikIngress" (and (dig "enabled" false (.Values.traefikIngress | default dict)) (dig "hosts" "cast" "" .Values.traefikIngress))) }}
+{{- with index $edge 1 }}{{ if ne $castPublic (printf "https://%s" .) }}{{ fail (printf "global.relaygate.gateOnly.scope=all requires relay-control.services.relaycastPublicUrl=https://%s: the %s cast host is relaygate's public origin, and Control also sends it as SELFHOST_RELAYGATE_PUBLIC_URL" . (index $edge 0)) }}{{ end }}{{ end -}}
+{{- end }}
+{{- end }}
 {{- if not (dig "services" "sessionReadApiUrl" "" $control) }}{{ fail "global.relaygate.gateOnly.enabled requires relay-control.services.sessionReadApiUrl (Control's read handoff, then sent through relaygate)" }}{{ end -}}
-{{- if and (dig "slackRelay" false $components) (not (dig "relaygate" "url" "" (index .Values "slack-relay" | default dict))) }}{{ fail "global.relaygate.gateOnly.enabled requires slack-relay.relaygate.url: Relaycast admits only relaygate, so the Slack app must register through it" }}{{ end -}}
+{{- if and $gateCast (dig "slackRelay" false $components) (not (dig "relaygate" "url" "" (index .Values "slack-relay" | default dict))) }}{{ fail "global.relaygate.gateOnly.enabled requires slack-relay.relaygate.url: Relaycast admits only relaygate, so the Slack app must register through it" }}{{ end -}}
 {{- end -}}
 {{- end }}
 
@@ -298,3 +359,20 @@ normal defaults and the missing/null-key fallback, with Chief off and on. */ -}}
   "/.well-known/openid-configuration"
   "/cloud/.well-known" "/cloud/oauth" | toJson -}}
 {{- end -}}
+
+{{- /* eksIngress: the primary edge's cast host and every edge's history host
+(primary and extraEdges), for the gate checks. */ -}}
+{{- define "agent-relay.eksPrimaryHost" -}}
+{{- $e := .root.Values.eksIngress | default dict -}}
+{{- with dig "domain" "" $e }}{{ ternary . (printf "%s.%s" $.role .) (eq $.role "dashboard") }}{{ else }}{{ dig "hosts" $.role "" $e }}{{ end -}}
+{{- end }}
+
+{{- define "agent-relay.eksHistoryHosts" -}}
+{{- $e := .Values.eksIngress | default dict -}}
+{{- $hosts := list -}}
+{{- if and (eq (dig "enabled" false $e | toString) "true") (eq (dig "history" "enabled" false $e | toString) "true") }}
+{{- $hosts = append $hosts (include "agent-relay.eksPrimaryHost" (dict "root" . "role" "history")) -}}
+{{- range $x := dig "extraEdges" list $e | default list }}{{ if kindIs "map" $x }}{{ $hosts = append $hosts (dig "hosts" "history" "" $x) }}{{ end }}{{ end -}}
+{{- end }}
+{{- $hosts | toJson -}}
+{{- end }}
