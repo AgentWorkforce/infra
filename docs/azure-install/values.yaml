@@ -95,8 +95,18 @@ sessions-pipeline:
     completeSince: epoch
     directoryWorkspaces: "*"
     events: { messageIds: true }
+    # Self-host defaults set by this profile (the subchart defaults stay off):
+    # summaries.searchBackend postgres serves GET /v1/sessions/summaries/search
+    # from the Postgres session directory, but only once
+    # READ_API_SUMMARY_SEARCH_ENABLED=true is set in extraEnv; this profile does
+    # not set it, so summary search stays off and the backend has no effect.
+    # search.sessionPartialRetryable true answers the first page of a
+    # session-scoped read of a partially indexed session with 503
+    # backend_unavailable (reason session_partial, Retry-After 60) instead of
+    # 501; clients must cap retries. Both need a services image that accepts
+    # them (abd4e8a8 or later); an older image ignores them.
     # MCP list_session_summaries reads the recorded short summaries.
-    summaries: { listShortSummary: true }
+    summaries: { listShortSummary: true, searchBackend: postgres }
     turns: { assumeNoLegacy: true }
     login: { advertisesSync: false }
     config:
@@ -111,6 +121,7 @@ sessions-pipeline:
     search:
       backend: postgres
       backendId: postgres-main
+      sessionPartialRetryable: true
     auth:
       mode: self_issued
       relaycontrol: { enabled: false, url: "", existingSecret: "" }

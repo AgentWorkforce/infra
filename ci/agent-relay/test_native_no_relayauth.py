@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Render checks for the install without RelayAuth or standalone RelayHistory."""
+import importlib.util
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,6 +15,49 @@ NATIVE = {'services': {
     'relayhistoryBackend': 'native', 'sessionReadApiUrl': 'http://agent-relay-read-api',
     'sessionReadApiPublicUrl': 'https://history.placeholder.company',
 }, 'secretKeys': {'relayauthApiKey': '', 'introspectSecret': 'introspect', 'sessionReadApiSecret': 'read'}}
+
+
+SERVICES_IMAGE = ('ghcr.io/agentworkforce/sessions-pipeline@sha256:'
+                  '459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f')
+AKS_FIXTURE = 'charts/agent-relay/ci/aks-native-values.yaml'
+# The HoopDb layout postgres-setup.sh writes for a fresh install.
+AKS_LAYOUT = {'sessions-pipeline': {
+    'worker': {'migrations': {'roleBootstrap': False, 'hoopdb': {
+        'existingSecret': 'agent-relay-secrets', 'key': 'HOOPDB_MIGRATION_URL'}}},
+    'searchIndexer': {'bootstrap': {
+        'existingSecret': 'search-indexer-owner', 'key': 'RELAYHISTORY_PIPELINE_CONSUMER_SECRET'}},
+}}
+
+
+def render_aks(*extra):
+    """The Azure guide's layering, with the guide's file placeholders filled."""
+    with tempfile.TemporaryDirectory() as tmp:
+        site = str(Path(tmp) / 'site.yaml')
+        subprocess.run(['ci/agent-relay/aks-native-site-values.sh', site], cwd=ROOT, check=True)
+        return subprocess.run([
+            'helm', 'template', 'agent-relay', 'charts/agent-relay', '-n', 'agent-relay', '--no-hooks',
+            '-f', 'charts/agent-relay/values-eks.yaml', '-f', site, '-f', AKS_FIXTURE, *extra,
+        ], cwd=ROOT, capture_output=True, text=True)
+
+
+def release_overlay():
+    """release-images.values.yaml as the release builds it from customer-images.yaml (eks)."""
+    spec = importlib.util.spec_from_file_location(
+        'release_manifest', ROOT / 'scripts/release/build-agent-relay-release-manifest.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    inventory = yaml.safe_load((ROOT / 'self-hosted/customer-images.yaml').read_text())
+    images = [{'name': image['id'], 'ref': f"{image['current']['repository']}@{image['current']['digest']}"}
+              for image in inventory['images']
+              if image['approval']['status'] in module.APPROVED_IMAGE_STATUSES]
+    text = module.build_values_overlay({'valuesOverlayProfile': 'eks', 'images': images})
+    return yaml.safe_load(text.replace('__IMAGE_MIRROR_ROOT__/', ''))
+
+
+def read_api_env(docs):
+    read_api = [doc for doc in docs if doc.get('kind') == 'Deployment' and doc['metadata']['name'].endswith('read-api')]
+    assert len(read_api) == 1, [doc['metadata']['name'] for doc in read_api]
+    return {item['name']: item.get('value') for item in read_api[0]['spec']['template']['spec']['containers'][0]['env']}
 
 
 def merge(base, overlay):
@@ -355,6 +400,66 @@ class NativeNoRelayauth(unittest.TestCase):
             self.assertIn(('Service', name), kinds)
             self.assertIn(('BackendConfig', name), kinds)
         self.assertFalse(any(doc.get('kind') == 'Secret' for doc in docs))
+
+    def test_aks_native_profile_renders_the_azure_guide_with_the_pinned_services_image(self):
+        first, second = render_aks(), render_aks()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(first.stdout, second.stdout)
+        docs = [doc for doc in yaml.safe_load_all(first.stdout) if doc]
+        workloads = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') in ('Deployment', 'Job')}
+        self.assertFalse(any('relayauth' in name or 'relayhistory' in name for name in workloads))
+        self.assertFalse(any(doc.get('kind') == 'Secret' for doc in docs))
+        services = [name for name in workloads if name.startswith('agent-relay-')]
+        for name in ('agent-relay-read-api', 'agent-relay-ingest-edge', 'agent-relay-search-indexer'):
+            self.assertIn(name, services)
+        for name in services:
+            pod = workloads[name]['spec']['template']['spec']
+            for container in pod['containers']:
+                self.assertEqual(container['image'], SERVICES_IMAGE, name)
+        env = read_api_env(docs)
+        self.assertEqual(env['READ_API_SUMMARY_SEARCH_BACKEND'], 'postgres')
+        self.assertEqual(env['READ_API_SESSION_PARTIAL_RETRYABLE'], 'true')
+        self.assertNotIn('READ_API_SUMMARY_SEARCH_ENABLED', env)
+
+    def test_aks_native_fixture_is_only_the_release_overlay_and_hoopdb_layout(self):
+        fixture = yaml.safe_load((ROOT / AKS_FIXTURE).read_text())
+        self.assertEqual(fixture, merge(release_overlay(), json.loads(json.dumps(AKS_LAYOUT))))
+        setup = (ROOT / 'docs/azure-install/postgres-setup.sh').read_text()
+        for line in ("'      roleBootstrap: false'", "'        key: HOOPDB_MIGRATION_URL'",
+                     "'      key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET'",
+                     'migration_secret=agent-relay-secrets search_secret=search-indexer-owner'):
+            self.assertIn(line, setup)
+        eks = yaml.safe_load((ROOT / 'charts/agent-relay/values-eks.yaml').read_text())['sessions-pipeline']
+        pins = fixture['sessions-pipeline']
+        for key in ('worker', 'alleyoop'):
+            self.assertEqual(pins[key]['image'], eks[key]['image'], key)
+            self.assertEqual(f"{pins[key]['image']['repository']}@{pins[key]['image']['digest']}", SERVICES_IMAGE)
+        self.assertEqual(pins['privilegedSql']['sqlImage'], eks['privilegedSql']['sqlImage'])
+
+    def test_every_native_profile_defaults_the_read_api_summary_backend_and_retryable_partial(self):
+        p = 'charts/agent-relay'
+        profiles = {
+            'eks-rds-native': ['-f', f'{p}/values-eks.yaml', '-f', f'{p}/values-eks-rds-native.yaml'],
+            'gcp-native': ['-f', f'{p}/values-gcp.yaml', '-f', f'{p}/values-gcp-native.yaml',
+                           '-f', f'{p}/ci/gcp-native-values.yaml'],
+            'gcp': ['-f', f'{p}/values-gcp.yaml'],
+            'gcp-proof': ['-f', f'{p}/values-gcp-proof.yaml', '-f', f'{p}/ci/gcp-proof-values.yaml'],
+        }
+        results = {name: subprocess.run(['helm', 'template', 'proof', p, '-n', 'agent-relay', '--no-hooks', *args],
+                                        cwd=ROOT, capture_output=True, text=True)
+                   for name, args in profiles.items()}
+        results['aks-native'] = render_aks()
+        for name, result in results.items():
+            with self.subTest(profile=name):
+                self.assertEqual(result.returncode, 0, result.stderr)
+                env = read_api_env([doc for doc in yaml.safe_load_all(result.stdout) if doc])
+                self.assertEqual(env.get('READ_API_SUMMARY_SEARCH_BACKEND'), 'postgres')
+                self.assertEqual(env.get('READ_API_SESSION_PARTIAL_RETRYABLE'), 'true')
+                self.assertNotIn('READ_API_SUMMARY_SEARCH_ENABLED', env)
+        for doc in ('docs/gcp-install/values.yaml', 'docs/azure-install/values.yaml'):
+            read_api = yaml.safe_load((ROOT / doc).read_text())['sessions-pipeline']['sessionReadApi']
+            self.assertEqual(read_api['summaries']['searchBackend'], 'postgres', doc)
+            self.assertIs(read_api['search']['sessionPartialRetryable'], True, doc)
 
     def test_umbrella_overlay_renders_without_relayauth_or_history(self):
         result = subprocess.run(['helm', 'template', 'proof', 'charts/agent-relay', '-n', 'agent-relay', '--no-hooks',

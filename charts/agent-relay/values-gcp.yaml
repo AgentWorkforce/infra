@@ -145,9 +145,10 @@ sessions-pipeline:
       # publish run 45199432277. Over efdd4bb2 (issue 610 Phase 3) it carries
       # the session-analysis runner on any S3-compatible store (9b29a3dd,
       # 745cc671) and the read API's opt-in summary search backend and
-      # retryable session_partial answer (549e6d38; this profile leaves
-      # session-read-api summaries.searchBackend and
-      # search.sessionPartialRetryable off). Vendors relayscrubber
+      # retryable session_partial answer (549e6d38; this profile sets
+      # session-read-api summaries.searchBackend postgres and
+      # search.sessionPartialRetryable true under sessionReadApi below, and
+      # leaves summary search itself off). Vendors relayscrubber
       # 0.5.0-alpha.10, the replacement the alpha.9 override named (see
       # self-hosted/customer-images.yaml), and adds eight migrations
       # (062150-062220) that the migrate Job applies.
@@ -266,8 +267,18 @@ sessions-pipeline:
     completeSince: epoch
     directoryWorkspaces: "*"
     events: { messageIds: true }
+    # Self-host defaults set by this profile (the subchart defaults stay off):
+    # summaries.searchBackend postgres serves GET /v1/sessions/summaries/search
+    # from the Postgres session directory, but only once
+    # READ_API_SUMMARY_SEARCH_ENABLED=true is set in extraEnv; this profile does
+    # not set it, so summary search stays off and the backend has no effect.
+    # search.sessionPartialRetryable true answers the first page of a
+    # session-scoped read of a partially indexed session with 503
+    # backend_unavailable (reason session_partial, Retry-After 60) instead of
+    # 501; clients must cap retries. Both need a services image that accepts
+    # them (abd4e8a8 or later); an older image ignores them.
     # MCP list_session_summaries reads the recorded short summaries.
-    summaries: { listShortSummary: true }
+    summaries: { listShortSummary: true, searchBackend: postgres }
     turns: { assumeNoLegacy: true }
     login: { advertisesSync: false }
     config:
@@ -283,6 +294,7 @@ sessions-pipeline:
     search:
       backend: postgres
       backendId: gcp-native
+      sessionPartialRetryable: true
     auth:
       mode: self_issued
       relaycontrol: { enabled: false, url: "", existingSecret: "" }

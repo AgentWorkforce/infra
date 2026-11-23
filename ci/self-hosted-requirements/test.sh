@@ -15,6 +15,8 @@ fresh() { # a clean copy of what the shipped/planned/coverage checks read
   rm -rf "$WORK/r" && mkdir -p "$WORK/r/ci"
   cp -r "$ROOT/charts" "$ROOT/self-hosted" "$WORK/r/"
   cp -r "$ROOT/ci/self-hosted-requirements" "$WORK/r/ci/"
+  # The agent-relay-aks-native profile layers the Azure guide's site values.
+  mkdir -p "$WORK/r/docs" && cp -r "$ROOT/docs/azure-install" "$WORK/r/docs/"
   rm -rf "$WORK"/r/charts/*/charts
 }
 check() { node "$WORK/r/ci/self-hosted-requirements/registry.mjs" check "$@" 2>&1; }

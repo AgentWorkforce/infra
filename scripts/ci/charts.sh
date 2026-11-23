@@ -16,6 +16,8 @@ charts=("$@")
 [ ${#charts[@]} -gt 0 ] || charts=($(ls -d charts/*/ | xargs -n1 basename))
 fail=0
 err() { echo "::error::$*"; fail=1; }
+aks_site=$(mktemp); trap 'rm -f "$aks_site"' EXIT
+ci/agent-relay/aks-native-site-values.sh "$aks_site"
 
 render() { # chart valuesfile [extra helm args]
   local chart=$1 v=$2 args=(); shift 2
@@ -26,6 +28,10 @@ render() { # chart valuesfile [extra helm args]
     if [ "$chart" = agent-relay ]; then
       if [ "$(basename "$v")" = gcp-native-values.yaml ]; then
         args=(-f "charts/agent-relay/values-gcp.yaml" -f "charts/agent-relay/values-gcp-native.yaml" -f "$v")
+      elif [ "$(basename "$v")" = aks-native-values.yaml ]; then
+        # The AKS guide's layering: the EKS base, the filled Azure site values, then
+        # this stand-in for the release image overlay and HoopDb layout.
+        args=(-f "charts/agent-relay/values-eks.yaml" -f "$aks_site" -f "$v")
       else
         args=(-f "charts/agent-relay/values-gcp-proof.yaml" -f "$v")
       fi
@@ -125,6 +131,10 @@ for chart in "${charts[@]}"; do
           if [ "$chart" = agent-relay ]; then
             if [ "$(basename "$v")" = gcp-native-values.yaml ]; then
               args=(-f "charts/agent-relay/values-gcp.yaml" -f "charts/agent-relay/values-gcp-native.yaml" -f "$v")
+            elif [ "$(basename "$v")" = aks-native-values.yaml ]; then
+              # The AKS guide's layering: the EKS base, the filled Azure site values, then
+              # this stand-in for the release image overlay and HoopDb layout.
+              args=(-f "charts/agent-relay/values-eks.yaml" -f "$aks_site" -f "$v")
             else
               args=(-f "charts/agent-relay/values-gcp-proof.yaml" -f "$v")
             fi

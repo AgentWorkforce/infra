@@ -47,6 +47,7 @@ Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.y
   - [relayfile-durable-actors](#profile-relayfile-durable-actors)
   - [agent-relay-durable-actors](#profile-agent-relay-durable-actors)
   - [agent-relay-eks-durable-actors](#profile-agent-relay-eks-durable-actors)
+  - [agent-relay-aks-native](#profile-agent-relay-aks-native)
   - [telemetry-collector](#profile-telemetry-collector)
 - [All entries](#all-entries)
 
@@ -175,7 +176,7 @@ Services image (sessions-pipeline-worker, alleyoop and the privileged SQL Jobs):
 | relayauth-0.1.2 | shipped | relayauth 0.1.2 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | License-annotation patch bump of 0.1.1. Superseded by 0.1.3. |
 | relayauth-0.1.1 | shipped | relayauth 0.1.1 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdf…` |  |  | relayauth 784582ef (machine-bound History assertion contract, relayauth #113). Superseded by 0.1.2. |
 | relayauth-0.1.0 | shipped | relayauth 0.1.0 | relayauth: `ghcr.io/agentworkforce/relayauth@sha256:eb71daa28e30…` |  |  | superseded by 0.1.1. |
-| agent-relay-0.7.77 | unreleased | agent-relay 0.7.77<br>relay-control 0.4.24<br>relay-webapp 0.2.8<br>(deps: relaycast 0.3.16, relayauth 0.1.5, sessions-pipeline 0.8.56, relay-control 0.4.24, relay-webapp 0.2.8, relayflows 0.2.5, durable-actors 0.14.6-awf.4, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.11, relaygate 0.1.10) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:459104bc432c…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:1cb5bd714e7c…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.76. The GCP, EKS and EKS RDS-native profiles move the services image from relayhistory-pipeline efdd4bb2 to abd4e8a8 (ghcr.io/agentworkforce/sessions-pipeline@sha256:459104bc, publish run 45199432277). The image carries the session-analysis runner on any S3-compatible store and the read API summary search backend and retryable session_partial answer; no value is turned on (session-read-api summaries.searchBackend and search.sessionPartialRetryable stay off). It vendors relayscrubber 0.5.0-alpha.10, the replacement the alpha.9 override named (customer-images.yaml), and adds eight migrations (20261105062150-062220) that the migrate Job applies. A database that last ran an image older than efdd4bb2 keeps the pre-steps of 0.7.63 (the bulls96_legacy_export_privacy role and the 058000 index prebuild or one allowBlockingIndexBuild). No upgrade rehearsal from an efdd4bb2 database exists yet. Chart templates, subchart versions and base default images are unchanged. |
+| agent-relay-0.7.77 | unreleased | agent-relay 0.7.77<br>relay-control 0.4.24<br>relay-webapp 0.2.8<br>(deps: relaycast 0.3.16, relayauth 0.1.5, sessions-pipeline 0.8.56, relay-control 0.4.24, relay-webapp 0.2.8, relayflows 0.2.5, durable-actors 0.14.6-awf.4, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.11, relaygate 0.1.10) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:459104bc432c…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:1cb5bd714e7c…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.76. The GCP, EKS and EKS RDS-native profiles move the services image from relayhistory-pipeline efdd4bb2 to abd4e8a8 (ghcr.io/agentworkforce/sessions-pipeline@sha256:459104bc, publish run 45199432277). The image carries the session-analysis runner on any S3-compatible store and the read API summary search backend and retryable session_partial answer. Every native self-host profile (values-eks.yaml and so EKS, EKS RDS native and AKS; values-gcp.yaml and so GCP native and GCP supported-100; values-gcp-proof.yaml; docs/gcp-install/values.yaml; docs/azure-install/values.yaml) now sets session-read-api summaries.searchBackend postgres and search.sessionPartialRetryable true, rendering READ_API_SUMMARY_SEARCH_BACKEND=postgres and READ_API_SESSION_PARTIAL_RETRYABLE=true on the read API: the first page of a session-scoped read of a partially indexed session answers a retryable 503 session_partial (Retry-After 60) instead of 501, and clients must cap retries. The backend takes effect only once summary search is enabled (READ_API_SUMMARY_SEARCH_ENABLED=true in extraEnv), which no profile sets, so summary search stays off. The session-read-api and sessions-pipeline chart defaults are unchanged, so the sessions-pipeline profiles (external Supabase and the rest) render as before; the GCP proof overlays still pin an older services image that ignores both variables. Adds the agent-relay-aks-native registry profile: values-eks.yaml, docs/azure-install/values.yaml and the CI stand-in ci/aks-native-values.yaml for the release image overlay and HoopDb layout, rendered as the aks-native golden profile and in scripts/ci/charts.sh. It vendors relayscrubber 0.5.0-alpha.10, the replacement the alpha.9 override named (customer-images.yaml), and adds eight migrations (20261105062150-062220) that the migrate Job applies. A database that last ran an image older than efdd4bb2 keeps the pre-steps of 0.7.63 (the bulls96_legacy_export_privacy role and the 058000 index prebuild or one allowBlockingIndexBuild). No upgrade rehearsal from an efdd4bb2 database exists yet. Chart templates, subchart versions and base default images are unchanged. |
 | agent-relay-0.7.76 | **planned** | agent-relay 0.7.76<br>relay-control 0.4.24<br>relay-webapp 0.2.8<br>(deps: relaycast 0.3.16, relayauth 0.1.5, sessions-pipeline 0.8.56, relay-control 0.4.24, relay-webapp 0.2.8, relayflows 0.2.5, durable-actors 0.14.6-awf.4, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.11, relaygate 0.1.10) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:e51749eb2b7c…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:1cb5bd714e7c…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.75 and sessions-pipeline 0.8.56 (default-off dedicated image pin for the session-analysis worker). |
 | agent-relay-0.7.75 | **planned** | agent-relay 0.7.75<br>relay-control 0.4.24<br>relay-webapp 0.2.8<br>(deps: relaycast 0.3.16, relayauth 0.1.5, sessions-pipeline 0.8.55, relay-control 0.4.24, relay-webapp 0.2.8, relayflows 0.2.5, durable-actors 0.14.6-awf.4, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.11, relaygate 0.1.10) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:e51749eb2b7c…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:1cb5bd714e7c…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.74 and sessions-pipeline 0.8.55 (session-analysis static keys and S3-compatible endpoint for the bundled MinIO; default off). |
 | agent-relay-0.7.74 | **planned** | agent-relay 0.7.74<br>relay-control 0.4.24<br>relay-webapp 0.2.8<br>(deps: relaycast 0.3.16, relayauth 0.1.5, sessions-pipeline 0.8.54, relay-control 0.4.24, relay-webapp 0.2.8, relayflows 0.2.5, durable-actors 0.14.6-awf.4, relayfile 0.2.2, telemetry-collector 0.1.7, relay-chief 0.1.0, slack-relay 0.3.11, relaygate 0.1.10) | relaycast: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>relaycast-postgres: `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af…`<br>sessions-pipeline-worker: `ghcr.io/agentworkforce/sessions-pipeline@sha256:e51749eb2b7c…`<br>relay-control: `ghcr.io/agentworkforce/relay-control@sha256:1cb5bd714e7c…`<br>relay-webapp: `ghcr.io/agentworkforce/relay-webapp@sha256:bd295ccb7d13…` |  |  | Carries 0.7.73 and sessions-pipeline 0.8.54 (default-off read API summary search backend and retryable session_partial values). |
@@ -1276,6 +1277,8 @@ chart `agent-relay` · values [`values-gcp-proof.yaml`](../charts/agent-relay/va
 | shipped | [Native pipeline collector adapters](#opt-native-pipeline-analytics) | `false`, `true` | `false` | values `ingestEdge.analytics.*`, `nativeConsumer.analytics.*`, `session-read-api:analytics.*`; env `ANALYTICS_SINK`, `ANALYTICS_DEPLOYMENT_ID`, `ANALYTICS_COLLECTOR_URL`, `ANALYTICS_COLLECTOR_TOKEN`, `NODE_EXTRA_CA_CERTS`; Secret `<ingest component-bound analytics producer Secret>` keys `token`; Secret `<consumer component-bound analytics producer Secret>` keys `token`; Secret `<reader component-bound analytics producer Secret>` keys `token` |
 | shipped | [Operator session erase fences, API, and byte deletion](#opt-operator-session-erase) | `false`, `true` | `false` | values `global.operatorSessionErase.*`, `operatorSessionErase.*`, `session-read-api:global.operatorSessionErase.*`, `relay-control:sessionErasureApi.*`; env `SESSION_ERASE_FENCE_ENFORCED`, `SESSION_ERASE_API_ENABLED`, `SESSION_ERASE_API_URL`, `SESSION_ERASE_API_SECRET`, `SESSION_ERASE_API_SECRET_PREVIOUS`, `SESSION_ERASE_BYTES_ENABLED`, `SESSION_ERASE_S3_BUCKET`, `SESSION_ERASE_S3_REGION`, `SESSION_ERASE_S3_ENDPOINT`, `SESSION_ERASE_KEY_ROOT`, `SESSION_ERASE_S3_ACCESS_KEY_ID`, `SESSION_ERASE_S3_SECRET_ACCESS_KEY`, `SESSION_ERASE_SEARCH_POSTGRES_URL`, `SESSION_ERASE_OPENSEARCH_USERNAME`, `SESSION_ERASE_OPENSEARCH_PASSWORD`; Secret `<dedicated operator session erase API Secret>` keys `SESSION_ERASE_API_SECRET`, `<operator-chosen previous API key>`; Secret `<dedicated session eraser S3 Secret>` keys `SESSION_ERASE_S3_ACCESS_KEY_ID`, `SESSION_ERASE_S3_SECRET_ACCESS_KEY`; Secret `<dedicated session erase Postgres search Secret>` keys `SESSION_ERASE_SEARCH_POSTGRES_URL`; Secret `<dedicated session erase OpenSearch Secret>` keys `SESSION_ERASE_OPENSEARCH_USERNAME`, `SESSION_ERASE_OPENSEARCH_PASSWORD` |
 | shipped | [relay-control manages relaygate's policy](#opt-relay-control-relaygate-control-policy) | `off`, `on` | `off` | values `global.relaygate.controlPolicy.adminToken.name`, `global.relaygate.controlPolicy.policySecret.name`; env `SELFHOST_RELAYGATE_ADMIN_URL`, `SELFHOST_RELAYGATE_ADMIN_TOKEN`, `SELFHOST_RELAYGATE_POLICY_SECRET`; Secret `<relaygate admin token Secret>` keys `token`; Secret `<relaygate policy Secret>` keys `secret` |
+| shipped | [Summary search backend](#opt-session-read-api-summary-search-backend) | (no default), `postgres` | `postgres` | values `summaries.searchBackend`; env `READ_API_SUMMARY_SEARCH_BACKEND` |
+| shipped | [Retryable 503 for a partially indexed session's first page](#opt-session-read-api-session-partial-retryable) | `false`, `true` | `true` | values `search.sessionPartialRetryable`; env `READ_API_SESSION_PARTIAL_RETRYABLE` |
 | shipped | [Retire a legacy Deployment while retaining resources](#opt-legacy-deployment-retirement) | `true`, `false` | `true` | values `deployment.enabled` |
 
 ### Profile: relayfile
@@ -1565,6 +1568,31 @@ chart `agent-relay` · values [`values-eks-actors.yaml`](../charts/agent-relay/v
 | shipped | [Run the durable-actors control plane and Relayfile in the suite](#opt-agent-relay-durable-actors) | `false`, `true` | `false` | values `components.durableActors`, `components.relayfile`, `durableActorsNetworkPolicy.*`, `gkeIngress.hosts.files`, `gkeIngress.backends.files.*` |
 | shipped | [Relaycast runtime backend (sqlite, durable-actors or postgres)](#opt-relaycast-durable-actors) | `sqlite`, `durable-actors`, `postgres` | `sqlite` | values `runtime.backend`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.homeRegion`, `runtime.durableActors.socketOrigin`, `runtime.durableActors.gateway.*`, `runtime.durableActors.maxUploadBytes`, `runtime.durableActors.shutdownGraceMs`, `runtime.durableActors.logFormat`, `runtime.durableActors.fileStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_HOME_REGION`, `DURABLE_ACTORS_SOCKET_ORIGIN`, `RELAYCAST_FILE_STORE`, `RELAYCAST_FILE_DIR`, `RELAYCAST_GCS_BUCKET`, `RELAYCAST_GCS_PREFIX`, `RELAYCAST_S3_BUCKET`, `RELAYCAST_S3_REGION`, `RELAYCAST_S3_ENDPOINT`, `RELAYCAST_S3_PREFIX`, `RELAYCAST_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `RELAYCAST_MAX_UPLOAD_BYTES`, `RELAYCAST_SHUTDOWN_GRACE_MS`, `RELAYCAST_LOG_FORMAT`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `RELAYCAST_PUBLIC_URL`, `RELAYCAST_INTERNAL_SECRET`; Secret `<runtime.durableActors.fileStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 file store only; empty uses the pod's ambient identity) |
 | shipped | [Relayfile runtime backend (go or durable-actors)](#opt-relayfile-durable-actors) | `go`, `durable-actors` | `go` | values `runtime.backend`, `runtime.durableActors.image.*`, `runtime.durableActors.projectId`, `runtime.durableActors.organizationId`, `runtime.durableActors.controlPlaneUrl`, `runtime.durableActors.gateway.*`, `runtime.durableActors.broker.*`, `runtime.durableActors.deployer.*`, `runtime.durableActors.blobStore.*`, `runtime.durableActors.devRuntime.*`; env `DURABLE_ACTORS_CONTROL_PLANE_URL`, `DURABLE_ACTORS_PROJECT_ID`, `DURABLE_ACTORS_ORGANIZATION_ID`, `DURABLE_ACTORS_ARTIFACT_BUCKET`, `RELAYFILE_ACTORS_BROKER_URL`, `RELAYFILE_ACTORS_ALLOW_ADMIN_KEY`, `RELAYFILE_BLOB_STORE`, `RELAYFILE_BLOB_BUCKET`, `RELAYFILE_BLOB_PREFIX`, `RELAYFILE_BLOB_INLINE_MAX_BYTES`, `RELAYFILE_S3_ENDPOINT`, `RELAYFILE_S3_REGION`, `RELAYFILE_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `DURABLE_ACTORS_PORT`, `DURABLE_ACTORS_DATA_DIR`, `DURABLE_ACTORS_ARTIFACT_STORE`, `DURABLE_ACTORS_S3_REGION`, `DURABLE_ACTORS_S3_ENDPOINT`, `DURABLE_ACTORS_S3_FORCE_PATH_STYLE`; Secret `<runtime.durableActors.blobStore.s3.existingSecret>` keys `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (s3 blob store only; empty uses the pod's ambient identity) |
+
+### Profile: agent-relay-aks-native
+
+**Azure AKS native History, in-cluster CloudNativePG HoopDb and bundled S3-compatible store.** The Azure install guide's layering. The EKS profile is the portable base; docs/azure-install/values.yaml swaps RDS for the standalone CloudNativePG hoopdb release (databaseMode selfhosted, postgres-setup.sh), S3 for the chart's bundled MinIO with static keys, OpenSearch for PostgreSQL search and the ALB for Traefik with cert-manager. Images come from the release's release-images.values.yaml; ci/aks-native-values.yaml stands in for it and for the HoopDb layout file in CI (ci/agent-relay/subdomain-golden.sh renders the guide's file with its placeholders filled by ci/agent-relay/aks-native-site-values.sh). No RelayAuth, no Relaycast PostgreSQL, no actors.
+
+chart `agent-relay` · values [`values-eks.yaml`](../charts/agent-relay/values-eks.yaml), [`../../docs/azure-install/values.yaml`](../charts/agent-relay/../../docs/azure-install/values.yaml), [`ci/aks-native-values.yaml`](../charts/agent-relay/ci/aks-native-values.yaml) · install: `helm upgrade --install agent-relay <release chart .tgz> -n agent-relay -f release/agent-relay/values-eks.yaml -f values.yaml -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml (docs/azure-install/README.md, run from docs/azure-install)`
+
+**Options (choose)**
+
+| | option | choices | default here | maps to |
+| --- | --- | --- | --- | --- |
+| shipped | [CA bundle for verifying the Postgres server certificate (postgresCa)](#opt-postgres-ca-bundle) | `false`, `true` | `true` | values `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relaychief-control:postgresCa.*`, `relayfile-control:postgresCa.*`; env `NODE_EXTRA_CA_CERTS`, `PGSSLROOTCERT` |
+| shipped | [Control deployment default session-sharing mode](#opt-relay-control-sharing-mode) | (no default), `all`, `new`, `selected` | (no default) | values `sharing.defaultMode`, `sharing.overrideRoles`; env `SELFHOST_DEFAULT_SHARING_MODE`, `SELFHOST_SHARING_MODE_OVERRIDE_ROLES` |
+| shipped | [Control collector analytics adapter](#opt-relay-control-collector-analytics) | `false`, `true` | `false` | values `analytics.*`; env `SELFHOST_ANALYTICS_DESTINATION`, `SELFHOST_ANALYTICS_PROFILE`, `SELFHOST_ANALYTICS_DEPLOYMENT_ID`, `SELFHOST_ANALYTICS_COLLECTOR_URL`, `SELFHOST_ANALYTICS_COLLECTOR_TOKEN_FILE`, `SELFHOST_ANALYTICS_COLLECTOR_CA_FILE`; Secret `<Control component-bound analytics producer Secret>` keys `token` |
+| shipped | [Control advertises relaygate under gate-only](#opt-relay-control-relaygate-public-url) | `off`, `on` | `off` | values `services.relaycastPublicUrl`; env `SELFHOST_RELAYGATE_PUBLIC_URL` |
+| shipped | [Separate Control introspection credential Secret](#opt-relay-control-external-introspection-secret) | `disabled`, `enabled` | `disabled` | values `introspection.existingSecret`, `introspection.key`; env `RELAYCONTROL_INTROSPECT_SECRET_FILE`; Secret `<Control introspection Secret>` keys `introspect-secret` |
+| shipped | [Single-host mode for the dashboard and the control API](#opt-agent-relay-single-host) | `disabled`, `enabled` | `disabled` | values `global.singleHost.host`, `relay-control:global.singleHost.host`, `relay-control:publicUrl`, `relay-webapp:global.singleHost.host`, `relay-webapp:runtime.publicUrl`, `relay-webapp:ingress.host`; env `SELFHOST_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL` |
+| shipped | [Optional Relayflows component in the suite](#opt-agent-relay-relayflows) | `enabled`, `disabled` | `disabled` | values `components.relayflows`, `relayflows.*` |
+| shipped | [Control legacy RelayAuth client environment](#opt-control-legacy-relayauth) | `true`, `false` | `true` | values `services.relayauthEnabled`; env `RELAYAUTH_URL`, `RELAYAUTH_API_KEY_FILE` |
+| shipped | [Native pipeline collector adapters](#opt-native-pipeline-analytics) | `false`, `true` | `false` | values `ingestEdge.analytics.*`, `nativeConsumer.analytics.*`, `session-read-api:analytics.*`; env `ANALYTICS_SINK`, `ANALYTICS_DEPLOYMENT_ID`, `ANALYTICS_COLLECTOR_URL`, `ANALYTICS_COLLECTOR_TOKEN`, `NODE_EXTRA_CA_CERTS`; Secret `<ingest component-bound analytics producer Secret>` keys `token`; Secret `<consumer component-bound analytics producer Secret>` keys `token`; Secret `<reader component-bound analytics producer Secret>` keys `token` |
+| shipped | [Operator session erase fences, API, and byte deletion](#opt-operator-session-erase) | `false`, `true` | `false` | values `global.operatorSessionErase.*`, `operatorSessionErase.*`, `session-read-api:global.operatorSessionErase.*`, `relay-control:sessionErasureApi.*`; env `SESSION_ERASE_FENCE_ENFORCED`, `SESSION_ERASE_API_ENABLED`, `SESSION_ERASE_API_URL`, `SESSION_ERASE_API_SECRET`, `SESSION_ERASE_API_SECRET_PREVIOUS`, `SESSION_ERASE_BYTES_ENABLED`, `SESSION_ERASE_S3_BUCKET`, `SESSION_ERASE_S3_REGION`, `SESSION_ERASE_S3_ENDPOINT`, `SESSION_ERASE_KEY_ROOT`, `SESSION_ERASE_S3_ACCESS_KEY_ID`, `SESSION_ERASE_S3_SECRET_ACCESS_KEY`, `SESSION_ERASE_SEARCH_POSTGRES_URL`, `SESSION_ERASE_OPENSEARCH_USERNAME`, `SESSION_ERASE_OPENSEARCH_PASSWORD`; Secret `<dedicated operator session erase API Secret>` keys `SESSION_ERASE_API_SECRET`, `<operator-chosen previous API key>`; Secret `<dedicated session eraser S3 Secret>` keys `SESSION_ERASE_S3_ACCESS_KEY_ID`, `SESSION_ERASE_S3_SECRET_ACCESS_KEY`; Secret `<dedicated session erase Postgres search Secret>` keys `SESSION_ERASE_SEARCH_POSTGRES_URL`; Secret `<dedicated session erase OpenSearch Secret>` keys `SESSION_ERASE_OPENSEARCH_USERNAME`, `SESSION_ERASE_OPENSEARCH_PASSWORD` |
+| shipped | [relay-control manages relaygate's policy](#opt-relay-control-relaygate-control-policy) | `off`, `on` | `off` | values `global.relaygate.controlPolicy.adminToken.name`, `global.relaygate.controlPolicy.policySecret.name`; env `SELFHOST_RELAYGATE_ADMIN_URL`, `SELFHOST_RELAYGATE_ADMIN_TOKEN`, `SELFHOST_RELAYGATE_POLICY_SECRET`; Secret `<relaygate admin token Secret>` keys `token`; Secret `<relaygate policy Secret>` keys `secret` |
+| shipped | [Summary search backend](#opt-session-read-api-summary-search-backend) | (no default), `postgres` | `postgres` | values `summaries.searchBackend`; env `READ_API_SUMMARY_SEARCH_BACKEND` |
+| shipped | [Retryable 503 for a partially indexed session's first page](#opt-session-read-api-session-partial-retryable) | `false`, `true` | `true` | values `search.sessionPartialRetryable`; env `READ_API_SESSION_PARTIAL_RETRYABLE` |
+| shipped | [Retire a legacy Deployment while retaining resources](#opt-legacy-deployment-retirement) | `true`, `false` | `false` | values `deployment.enabled` |
 
 ### Profile: telemetry-collector
 
@@ -2580,7 +2608,7 @@ bundled MinIO at http://session-object-storage:9000 works with the default false
 
 <a id="opt-postgres-ca-bundle"></a>
 
-**CA bundle for verifying the Postgres server certificate (postgresCa)** · shipped · chart `sessions-pipeline`, `relay-control`, `relaychief-control`, `relayfile-control` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relay-control, agent-relay, relaychief-control, relayfile-control
+**CA bundle for verifying the Postgres server certificate (postgresCa)** · shipped · chart `sessions-pipeline`, `relay-control`, `relaychief-control`, `relayfile-control` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, relay-control, agent-relay, agent-relay-aks-native, relaychief-control, relayfile-control
 
 node-pg verifies the server certificate for sslmode=require or verify-full, and the
 service images do not carry private CAs such as Amazon RDS's. postgresCa mounts a PEM
@@ -2600,7 +2628,7 @@ ingestEdge.postgres.caConfigMap, caKey and caSha256.
 When postgresCa is on, wait-for-role (psql) gets PGSSLROOTCERT. psql run by an operator
 needs sslrootcert=<bundle> with verify-full.
 
-- Default: `false` (by profile: default `false`, aws-rds-native `true`)
+- Default: `false` (by profile: default `false`, aws-rds-native `true`, agent-relay-aks-native `true`)
 - Choices: `false`; `true`
 - Provided by: operator
 - Values: `worker.postgresCa.*`, `alleyoop.postgresCa.*`, `relay-control:postgresCa.*`, `relaychief-control:postgresCa.*`, `relayfile-control:postgresCa.*`
@@ -3135,7 +3163,7 @@ admit the labeled brief pod at the collector.
 
 <a id="opt-relay-control-sharing-mode"></a>
 
-**Control deployment default session-sharing mode** · shipped · chart `relay-control` · profiles relay-control, agent-relay
+**Control deployment default session-sharing mode** · shipped · chart `relay-control` · profiles relay-control, agent-relay, agent-relay-aks-native
 
 Optional deployment default for session sharing, with the workspace roles
 allowed to change it. Both unset by default, which keeps Control's
@@ -3219,7 +3247,7 @@ rendered. Operator session erase refuses to render while it is enabled
 
 <a id="opt-relay-control-collector-analytics"></a>
 
-**Control collector analytics adapter** · shipped · chart `relay-control` · profiles relay-control, agent-relay
+**Control collector analytics adapter** · shipped · chart `relay-control` · profiles relay-control, agent-relay, agent-relay-aks-native
 
 Default-off Control business analytics to a private collector. Requires
 a compatible qualified application image, existing component-bound
@@ -3241,7 +3269,7 @@ No hosted PostHog configuration is accepted through this adapter.
 
 <a id="opt-relay-control-relaygate-public-url"></a>
 
-**Control advertises relaygate under gate-only** · shipped · chart `relay-control` · profiles relay-control, agent-relay
+**Control advertises relaygate under gate-only** · shipped · chart `relay-control` · profiles relay-control, agent-relay, agent-relay-aks-native
 
 With global.relaygate.gateOnly.enabled (agent-relay umbrella) the chart renders SELFHOST_RELAYGATE_PUBLIC_URL from services.relaycastPublicUrl, the cast host, which gate-only routes to relaygate; the same value as RELAYCAST_PUBLIC_URL, so the two cannot drift. relay-control (cc361ed or later) then returns urls.relaygateUrl from /resolve, withholds the shared Relaycast key, and refuses events-shim temp workspaces. Unset when gate-only is off. The umbrella refuses gate-only unless relaycastPublicUrl is https://<gkeIngress.hosts.cast>.
 
@@ -3257,7 +3285,7 @@ With global.relaygate.gateOnly.enabled (agent-relay umbrella) the chart renders 
 
 <a id="opt-relay-control-external-introspection-secret"></a>
 
-**Separate Control introspection credential Secret** · shipped · chart `relay-control` · profiles relay-control, agent-relay
+**Separate Control introspection credential Secret** · shipped · chart `relay-control` · profiles relay-control, agent-relay, agent-relay-aks-native
 
 Mount an existing introspection credential into the API without copying
 it into the main application Secret. Mutually exclusive with
@@ -3551,7 +3579,7 @@ allowAllEgress=false, the level is not off and the transport is https.
 
 <a id="opt-agent-relay-single-host"></a>
 
-**Single-host mode for the dashboard and the control API** · shipped · chart `agent-relay`, `relay-control`, `relay-webapp` · profiles agent-relay
+**Single-host mode for the dashboard and the control API** · shipped · chart `agent-relay`, `relay-control`, `relay-webapp` · profiles agent-relay, agent-relay-aks-native
 
 global.singleHost.host (off when empty) puts the dashboard and the
 self-host control API on one host: / to the dashboard and /cloud/api,
@@ -3779,7 +3807,7 @@ address and the firewall rule from the subnet to the nodes.
 
 <a id="opt-agent-relay-relayflows"></a>
 
-**Optional Relayflows component in the suite** · shipped · chart `agent-relay` · profiles agent-relay
+**Optional Relayflows component in the suite** · shipped · chart `agent-relay` · profiles agent-relay, agent-relay-aks-native
 
 components.relayflows adds the relayflows subchart to the agent-relay
 suite; relayflows.* values pass through to it unchanged. Off by default.
@@ -4472,7 +4500,7 @@ aws-rds-native profile enables both routes with no model.
 
 <a id="opt-control-legacy-relayauth"></a>
 
-**Control legacy RelayAuth client environment** · shipped · chart `relay-control` · profiles relay-control, agent-relay
+**Control legacy RelayAuth client environment** · shipped · chart `relay-control` · profiles relay-control, agent-relay, agent-relay-aks-native
 
 Keep services.relayauthEnabled true for the published legacy control
 images. False omits RELAYAUTH_URL and RELAYAUTH_API_KEY_FILE and removes
@@ -4493,7 +4521,7 @@ in the kind profiles. Introspection config uses existing extraEnv refs.
 
 <a id="opt-native-pipeline-analytics"></a>
 
-**Native pipeline collector adapters** · shipped · chart `sessions-pipeline`, `session-read-api` · profiles agent-relay
+**Native pipeline collector adapters** · shipped · chart `sessions-pipeline`, `session-read-api` · profiles agent-relay, agent-relay-aks-native
 
 Managed default-off analytics for native ingest, reader and consumer.
 A qualified pipeline source71801741-or-later image sends closed business
@@ -4518,7 +4546,7 @@ Collector registrations and network admission remain operator-controlled.
 
 <a id="opt-operator-session-erase"></a>
 
-**Operator session erase fences, API, and byte deletion** · shipped · chart `sessions-pipeline`, `session-read-api`, `relay-control` · profiles agent-relay
+**Operator session erase fences, API, and byte deletion** · shipped · chart `sessions-pipeline`, `session-read-api`, `relay-control` · profiles agent-relay, agent-relay-aks-native
 
 Default-off hard-delete composition for an approved 2026.11.2 Sessions
 image. A shared permanent fence reaches every ingest, active consumer and
@@ -4932,7 +4960,7 @@ Off by default; needs gate-only, relaygate main at R1/R2 or later and a relay-co
 
 <a id="opt-relay-control-relaygate-control-policy"></a>
 
-**relay-control manages relaygate's policy** · shipped · chart `relay-control` · profiles relay-control, agent-relay
+**relay-control manages relaygate's policy** · shipped · chart `relay-control` · profiles relay-control, agent-relay, agent-relay-aks-native
 
 With global.relaygate.controlPolicy.enabled (agent-relay umbrella, gate-only) relay-control calls relaygate's admin API at SELFHOST_RELAYGATE_ADMIN_URL (http://<relaygate>.<ns>.svc.cluster.local:8080, a bare origin) with SELFHOST_RELAYGATE_ADMIN_TOKEN and signs the policy it serves relaygate with SELFHOST_RELAYGATE_POLICY_SECRET; both Secrets are the ones relaygate uses. Needs a relay-control image with C1.
 
@@ -5435,43 +5463,53 @@ X-Sessions-Read-Incomplete header, leaving those sessions' rows out.
 
 <a id="opt-session-read-api-summary-search-backend"></a>
 
-**Summary search backend** · shipped · chart `session-read-api` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native
+**Summary search backend** · shipped · chart `session-read-api` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native, agent-relay, agent-relay-aks-native
 
-Empty by default (renders nothing; the image default is ClickHouse, which
-the self-host read API does not have, so GET /v1/sessions/summaries/search
-stays 501). postgres serves summary search from the Postgres session
-directory (migration 046010) with no ClickHouse. The route also needs
-READ_API_SUMMARY_SEARCH_ENABLED=true. Needs a services image whose read API
-accepts READ_API_SUMMARY_SEARCH_BACKEND.
+Empty by default in the subchart (renders nothing; the image default is
+ClickHouse, which the self-host read API does not have, so GET
+/v1/sessions/summaries/search stays 501). postgres serves summary search
+from the Postgres session directory (migration 046010) with no ClickHouse.
+The native agent-relay profiles (values-eks.yaml, so EKS and its RDS native
+overlay, values-gcp.yaml, values-gcp-proof.yaml, docs/gcp-install and
+docs/azure-install) set postgres; the sessions-pipeline profiles keep the
+empty default. The backend takes effect only once summary search is
+enabled: the route needs READ_API_SUMMARY_SEARCH_ENABLED=true (extraEnv),
+which no profile sets, so until then the postgres default changes no
+answer. Needs a services image whose read API accepts
+READ_API_SUMMARY_SEARCH_BACKEND (abd4e8a8 or later).
 
-- Default: (no default)
+- Default: (no default) (by profile: default (no default), agent-relay `postgres`, agent-relay-aks-native `postgres`)
 - Choices: (no default); `postgres`
 - Provided by: operator
 - Values: `summaries.searchBackend`
 - Env: `READ_API_SUMMARY_SEARCH_BACKEND`
-- Verify: Render nothing by default or with ""; render READ_API_SUMMARY_SEARCH_BACKEND=postgres for postgres; refuse any other value and the variable in extraEnv.
+- Verify: Render nothing by default or with ""; render READ_API_SUMMARY_SEARCH_BACKEND=postgres for postgres (every native agent-relay profile); refuse any other value and the variable in extraEnv.
 - Sources: [`charts/session-read-api/templates/deployment.yaml`](../charts/session-read-api/templates/deployment.yaml), [`charts/session-read-api/values.yaml`](../charts/session-read-api/values.yaml), [`ci/sessions-pipeline-read-api/test_read_api.py`](../ci/sessions-pipeline-read-api/test_read_api.py)
 
 #### opt.session-read-api.session-partial-retryable
 
 <a id="opt-session-read-api-session-partial-retryable"></a>
 
-**Retryable 503 for a partially indexed session's first page** · shipped · chart `session-read-api` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native
+**Retryable 503 for a partially indexed session's first page** · shipped · chart `session-read-api` · profiles selfhost-postgres, migration, external-selfhosted, external-rds, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql, aws-rds-native, agent-relay, agent-relay-aks-native
 
-Off by default (a session-scoped read of a partially indexed session
-answers 501 session_partial). true renders
+Off by default in the subchart (a session-scoped read of a partially
+indexed session answers 501 session_partial). true renders
 READ_API_SESSION_PARTIAL_RETRYABLE=true: the first page answers 503
 backend_unavailable, reason session_partial, Retry-After 60. Workspace
 search and cursor pages keep the 501. A session can stay partial
 indefinitely, so clients must cap retries; these answers count as 5xx.
-Needs a services image whose read API accepts the variable.
+The native agent-relay profiles (values-eks.yaml, so EKS and its RDS native
+overlay, values-gcp.yaml, values-gcp-proof.yaml, docs/gcp-install and
+docs/azure-install) set true; the sessions-pipeline profiles keep false.
+Needs a services image whose read API accepts the variable (abd4e8a8 or
+later); an older image ignores it.
 
-- Default: `false`
+- Default: `false` (by profile: default `false`, agent-relay `true`, agent-relay-aks-native `true`)
 - Choices: `false`; `true`
 - Provided by: operator
 - Values: `search.sessionPartialRetryable`
 - Env: `READ_API_SESSION_PARTIAL_RETRYABLE`
-- Verify: Render nothing by default or with false; render READ_API_SESSION_PARTIAL_RETRYABLE=true for true; refuse a non-boolean and the variable in extraEnv.
+- Verify: Render nothing by default or with false; render READ_API_SESSION_PARTIAL_RETRYABLE=true for true (every native agent-relay profile); refuse a non-boolean and the variable in extraEnv.
 - Sources: [`charts/session-read-api/templates/deployment.yaml`](../charts/session-read-api/templates/deployment.yaml), [`charts/session-read-api/values.yaml`](../charts/session-read-api/values.yaml), [`ci/sessions-pipeline-read-api/test_read_api.py`](../ci/sessions-pipeline-read-api/test_read_api.py)
 
 #### opt.sessions-pipeline.native-routing
@@ -5499,11 +5537,11 @@ before local fixture preparation; no manual resource is auto-adopted.
 
 <a id="opt-legacy-deployment-retirement"></a>
 
-**Retire a legacy Deployment while retaining resources** · shipped · chart `relayauth`, `session-ingest-api` · profiles relayauth, agent-relay, selfhost-postgres, external-selfhosted, external-rds, aws-rds-native
+**Retire a legacy Deployment while retaining resources** · shipped · chart `relayauth`, `session-ingest-api` · profiles relayauth, agent-relay, agent-relay-aks-native, selfhost-postgres, external-selfhosted, external-rds, aws-rds-native
 
 Omit only the legacy auth or ingest Deployment after a verified replacement and drain. Services, PVCs and all other resources remain managed. This does not switch routing, migrate data or qualify a replacement.
 
-- Default: `true` (by profile: default `true`, aws-rds-native `false`)
+- Default: `true` (by profile: default `true`, aws-rds-native `false`, agent-relay-aks-native `false`)
 - Choices: `true`; `false`: Requires a verified replacement
 - Provided by: operator
 - Values: `deployment.enabled`
