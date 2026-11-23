@@ -136,6 +136,41 @@ class AdvisorAnalysis(unittest.TestCase):
         self.assertEqual(e["SESSION_POSTGRES_TLS_PROFILE"], "custom-ca")
         self.assertEqual(e["SESSION_POSTGRES_CA_SHA256"], "a" * 64)
 
+    def test_analysis_dedicated_image_does_not_change_sibling_workers(self):
+        shared = "ghcr.io/agentworkforce/96bulls-services@sha256:" + "1" * 64
+        dedicated = "registry.example.com/analysis/runner@sha256:" + "2" * 64
+        values = {
+            "image": {"repository": "ghcr.io/agentworkforce/96bulls-services", "digest": "sha256:" + "1" * 64},
+            "components": {"session-status-worker": {"enabled": True}},
+            "sessionAnalysis": dict(ANALYSIS, image={
+                "repository": "registry.example.com/analysis/runner", "digest": "sha256:" + "2" * 64,
+                "pullPolicy": "Always",
+            }),
+        }
+        docs = self.render(values)
+        deployments = {d["spec"]["template"]["spec"]["containers"][0]["name"]: d for d in docs if d["kind"] == "Deployment"}
+        analysis = deployments["session-analysis"]["spec"]["template"]["spec"]["containers"][0]
+        status = deployments["session-status-worker"]["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(analysis["image"], dedicated)
+        self.assertEqual(analysis["imagePullPolicy"], "Always")
+        self.assertEqual(status["image"], shared)
+        self.assertEqual(status["imagePullPolicy"], "IfNotPresent")
+        inherited = self.analysis(self.render({
+            "image": {"repository": "ghcr.io/agentworkforce/96bulls-services", "digest": "sha256:" + "1" * 64},
+            "sessionAnalysis": dict(ANALYSIS, image=None),
+        }))["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(inherited["image"], shared)
+        self.assertEqual(inherited["imagePullPolicy"], "IfNotPresent")
+
+    def test_analysis_image_refusals(self):
+        for image, msg in [
+            ({"repository": "runner"}, "needs image.tag or image.digest"),
+            ({"digest": "sha256:" + "2" * 64}, "needs image.repository"),
+            ({"repository": "runner", "tag": "v1", "pullPolicy": "Sometimes"}, "pullPolicy must be"),
+        ]:
+            with self.subTest(msg=msg):
+                self.render({"sessionAnalysis": dict(ANALYSIS, image=image)}, fail=msg)
+
     def test_analysis_refusals(self):
         for extra, msg in [
             ({"bucket": ""}, "sessionAnalysis.bucket is required"),

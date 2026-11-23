@@ -61,6 +61,10 @@
 {{- if $s.enabled -}}
 {{- if not (kindIs "bool" $s.run) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.run must be true or false" }}{{ end -}}
 {{- if ne (int $s.replicas) 1 }}{{ fail "sessions-pipeline-worker: sessionAnalysis.replicas must be 1" }}{{ end -}}
+{{- $image := $s.image | default dict -}}
+{{- if and $image.repository (not (or $image.tag $image.digest)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.image.repository needs image.tag or image.digest (pin the dedicated runner image)" }}{{ end -}}
+{{- if and (not $image.repository) (or $image.tag $image.digest) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.image.tag or image.digest needs image.repository" }}{{ end -}}
+{{- if and $image.pullPolicy (not (has $image.pullPolicy (list "Always" "IfNotPresent" "Never"))) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.image.pullPolicy must be Always, IfNotPresent, Never or empty" }}{{ end -}}
 {{- range $k := list "bucket" "bucketRegion" "keyPrefix" }}{{ if not (get $s $k) }}{{ fail (printf "sessions-pipeline-worker: sessionAnalysis.%s is required when sessionAnalysis.enabled=true" $k) }}{{ end }}{{ end -}}
 {{- if not $s.modelKeySecret.name }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelKeySecret.name is required when sessionAnalysis.enabled=true" }}{{ end -}}
 {{- if not $s.databaseSecret.name }}{{ fail "sessions-pipeline-worker: sessionAnalysis.databaseSecret.name is required when sessionAnalysis.enabled=true (the runtime role's own login)" }}{{ end -}}

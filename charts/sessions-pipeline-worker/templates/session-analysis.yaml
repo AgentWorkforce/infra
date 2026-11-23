@@ -2,6 +2,7 @@
 {{- $s := .Values.sessionAnalysis -}}
 {{- if $s.enabled }}
 {{- $component := "session-analysis" -}}
+{{- $analysisImage := $s.image | default dict -}}
 {{- $t := $s.postgresTls | default dict }}
 {{- $static := eq ($s.s3Credentials | default "podIdentity") "static" }}
 apiVersion: v1
@@ -68,8 +69,8 @@ spec:
       {{- end }}
       containers:
         - name: session-analysis
-          image: {{ include "sessions-pipeline-worker.image" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ include "sessions-pipeline-worker.analysisImage" . | quote }}
+          imagePullPolicy: {{ $analysisImage.pullPolicy | default .Values.image.pullPolicy }}
           env:
             - { name: SERVICE, value: "session-analysis" }
             - { name: OTEL_SERVICE_NAME, value: "session-analysis" }
