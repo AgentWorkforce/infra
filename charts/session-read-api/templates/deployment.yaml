@@ -92,6 +92,9 @@ spec:
             {{- if not (has . (list "refuse" "skip")) }}{{ fail "search.partialSessions must be refuse or skip" }}{{ end }}
             - { name: READ_API_SEARCH_PARTIAL_SESSIONS, value: {{ . | quote }} }
             {{- end }}
+            {{- if eq (dig "sessionPartialRetryable" false $c.search) true }}
+            - { name: READ_API_SESSION_PARTIAL_RETRYABLE, value: "true" }
+            {{- end }}
             {{- if eq $backend "opensearch" }}
             - { name: SEARCH_INDEX_OPENSEARCH_URL, value: {{ $c.search.opensearch.url | quote }} }
             - { name: SEARCH_INDEX_OPENSEARCH_AUTH, value: sigv4 }
@@ -114,6 +117,9 @@ spec:
             {{- end }}
             {{- if and $c.summaries (eq $c.summaries.listShortSummary true) }}
             - { name: READ_API_LIST_SHORT_SUMMARY_ENABLED, value: "true" }
+            {{- end }}
+            {{- with (dig "searchBackend" "" ($c.summaries | default dict)) }}
+            - { name: READ_API_SUMMARY_SEARCH_BACKEND, value: {{ . | quote }} }
             {{- end }}
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
             - { name: SESSION_POSTGRES_TLS_PROFILE, value: {{ $c.postgres.tlsProfile | quote }} }

@@ -93,6 +93,15 @@ summaries:
   # it; off, that tool gets 501 param_includeShortSummary. No SQL or
   # credential change. The per-session brief summary is always served.
   listShortSummary: false
+  # READ_API_SUMMARY_SEARCH_BACKEND: the store GET /v1/sessions/summaries/search
+  # reads. "" (the default) renders nothing: the image default is ClickHouse,
+  # which this service does not have, so the route stays 501
+  # summary_search_not_configured. "postgres" reads the Postgres session
+  # directory (needs migration 046010; before it, 501 directory_not_migrated)
+  # with no ClickHouse and no migration of its own. The route itself still
+  # needs READ_API_SUMMARY_SEARCH_ENABLED=true (extraEnv). Needs a services
+  # image whose read API accepts the variable; an older image ignores it.
+  searchBackend: ""
 turns:
   # True only where no Neon source exists, so no legacy coverage marker is expected.
   assumeNoLegacy: false
@@ -150,6 +159,15 @@ search:
   # answers a workspace search 200 with `incomplete` and leaves out sessions the
   # index lists as partial. Empty renders nothing.
   partialSessions: ""
+  # READ_API_SESSION_PARTIAL_RETRYABLE. false (the default) renders nothing. true
+  # renders "true": the FIRST page of a session-scoped read of a partially
+  # indexed session (GET /v1/sessions/:id/events, GET /v1/events?session=)
+  # answers 503 backend_unavailable, reason session_partial, Retry-After: 60,
+  # instead of 501 session_partial. Workspace search and cursor pages keep the
+  # 501. A session can stay partial indefinitely, so clients must cap retries,
+  # and these answers count as 5xx. Needs a services image whose read API
+  # accepts the variable; an older image ignores it.
+  sessionPartialRetryable: false
   # Used only when backend=opensearch. Auth is sigv4, so serviceAccountName needs
   # an AWS identity (agent-relay-session-read in the agent-relay composition).
   opensearch:

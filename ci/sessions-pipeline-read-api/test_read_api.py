@@ -338,6 +338,26 @@ class ReadApi(unittest.TestCase):
         for bad in ("false", "true"):
             self.assertIn("summaries.listShortSummary must be a boolean", self.render(overlay={"summaries": {"listShortSummary": bad}}, fail=True))
 
+    def test_summary_search_backend_is_a_default_off_postgres_only_value(self):
+        self.assertNotIn("READ_API_SUMMARY_SEARCH_BACKEND", self.env_of(self.render()))
+        self.assertNotIn("READ_API_SUMMARY_SEARCH_BACKEND", self.env_of(self.render(overlay={"summaries": {"searchBackend": ""}})))
+        env = self.env_of(self.render(overlay={"summaries": {"searchBackend": "postgres"}}))
+        self.assertEqual(env["READ_API_SUMMARY_SEARCH_BACKEND"]["value"], "postgres")
+        for bad in ("clickhouse", "Postgres", "postgres ", True):
+            self.assertIn("summaries.searchBackend must be", self.render(overlay={"summaries": {"searchBackend": bad}}, fail=True))
+        self.assertIn("duplicates a managed or repeated variable: READ_API_SUMMARY_SEARCH_BACKEND",
+                      self.render(overlay={"extraEnv": [{"name": "READ_API_SUMMARY_SEARCH_BACKEND", "value": "postgres"}]}, fail=True))
+
+    def test_session_partial_retryable_is_a_dedicated_default_off_boolean(self):
+        self.assertNotIn("READ_API_SESSION_PARTIAL_RETRYABLE", self.env_of(self.render()))
+        self.assertNotIn("READ_API_SESSION_PARTIAL_RETRYABLE", self.env_of(self.render(overlay={"search": {"sessionPartialRetryable": False}})))
+        env = self.env_of(self.render(overlay={"search": {"sessionPartialRetryable": True}}))
+        self.assertEqual(env["READ_API_SESSION_PARTIAL_RETRYABLE"]["value"], "true")
+        for bad in ("true", "false", 1):
+            self.assertIn("search.sessionPartialRetryable must be a boolean", self.render(overlay={"search": {"sessionPartialRetryable": bad}}, fail=True))
+        self.assertIn("duplicates a managed or repeated variable: READ_API_SESSION_PARTIAL_RETRYABLE",
+                      self.render(overlay={"extraEnv": [{"name": "READ_API_SESSION_PARTIAL_RETRYABLE", "value": "true"}]}, fail=True))
+
     def test_coordination_overlaps_defaults_on_in_pipeline_with_postgres_backend(self):
         env = self.env_of(self.render())
         self.assertEqual(env["READ_API_COORDINATION_OVERLAPS_ENABLED"]["value"], "true")
