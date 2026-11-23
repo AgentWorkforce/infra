@@ -1,0 +1,7 @@
+account_id           = "000000000000" # the EKS cluster account
+region               = "us-west-2"
+eks_cluster_name     = "example-cluster"
+namespace            = "example-namespace"
+role_name            = "example-session-analysis"
+sessions_bucket_arn  = "arn:aws:s3:::example-canonical-sessions"
+sessions_kms_key_arn = "arn:aws:kms:us-east-1:111111111111:key/00000000-0000-4000-8000-000000000000"
