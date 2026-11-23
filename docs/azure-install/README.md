@@ -378,8 +378,10 @@ bundled MinIO with static keys. It is off by default. Before you start:
 - **Image.** Static keys and the MinIO endpoint need a services image with the
   runner's S3-compatible store support (relayhistory-pipeline 9b29a3dd or
   later). The services image this release pins predates it. On that image
-  the pod exits 2 at startup with `credentials_mode_invalid`, so pin a newer
-  image in `release-images.values.yaml` first.
+  the pod exits 2 at startup with `credentials_mode_invalid`, so pin a newer,
+  reviewed repository plus digest under `sessionAnalysis.image`. This changes
+  only the session-analysis Deployment; do not replace the shared worker image
+  merely to start this optional worker.
 - **Versioning.** The runner checks at startup that the bucket is versioned
   and refuses to start otherwise (`bucket_not_versioned`). The worker's
   `locker-init` Job (`lockerInit.enabled: true` in `values.yaml`) runs the
@@ -404,14 +406,9 @@ Uncomment the `sessionAnalysis` block under `sessions-pipeline.worker` in
 `sessions-pipeline-locker` Secret by name, and the chart never takes key
 values. Keep `run: false` for the first upgrade.
 
-The newer services image renames the worker `migrate` and `locker-init` Jobs,
-so Helm runs them again. On an install whose `~/.agent-relay-install/hoopdb-layout` is
-`legacy-admin`, the migration Job reads the temporary `hoopdb-admin-jobs` Secret,
-which no longer exists: do not run the command below. Keep `$CHART` and the
-updated `release-images.values.yaml`, set `NEW_DIR=release`, and run the
-script in [Upgrades](#upgrades-dedicated-owner-and-legacy-temporary-credentials)
-from `release_jobs()` on. It creates the Secret, upgrades with the new
-values, waits for the Jobs and deletes the Secret. Every other install:
+Because the dedicated image is scoped to this Deployment, it does not rename
+or rerun the worker `migrate` and `locker-init` Jobs and does not roll the
+summary, status or index workers. Upgrade dormant and wait for the new pod:
 
 ```sh
 helm upgrade agent-relay "$CHART" --namespace agent-relay \

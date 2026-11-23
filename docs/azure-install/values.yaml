@@ -245,6 +245,9 @@ sessions-pipeline:
     # S3-compatible store support (the release's pinned image predates it).
     # sessionAnalysis:
     #   enabled: true
+    #   image:                         # this Deployment only; siblings keep worker.image
+    #     repository: ghcr.io/agentworkforce/96bulls-services
+    #     digest: sha256:__REVIEWED_SESSION_ANALYSIS_IMAGE_DIGEST__
     #   run: false                     # ship dormant first; true starts claiming jobs
     #   bucket: __SESSIONS_BUCKET__
     #   bucketRegion: us-east-1        # MinIO's default region

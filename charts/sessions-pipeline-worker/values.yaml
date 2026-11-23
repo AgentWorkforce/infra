@@ -442,6 +442,15 @@ coordinationAdvisor:
 sessionAnalysis:
   # Whether the Deployment, ServiceAccount and policy render at all.
   enabled: false
+  # Optional image for this Deployment only. Leave repository empty to use
+  # the shared worker image byte-for-byte. When repository is set, pin either
+  # tag or digest (digest wins) so enabling the runner never rolls the existing
+  # summary, status or index workers onto an unreviewed services build.
+  image:
+    repository: ""
+    tag: ""
+    digest: ""
+    pullPolicy: ""
   # SESSION_ANALYSIS_ENABLED. run=false ships the pod dormant first.
   run: false
   replicas: 1
