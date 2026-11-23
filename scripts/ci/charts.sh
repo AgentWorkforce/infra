@@ -1403,6 +1403,16 @@ for chart in "${charts[@]}"; do
         ! grep -Eq '(READ_API|INGEST)_UPSTREAM_ASSERTION' <<<"$(render "$chart" "$uav" --set global.relaygate.upstreamAuth.verify.mode=false)" || err "$chart: verify mode false (a bare YAML off) must render no verifier env"
         expect_render_failure "$chart" "$uav" "extraEnv overriding the reader's verify mode" "extraEnv must not set READ_API_UPSTREAM_ASSERTION_MODE" --set-json 'sessions-pipeline.sessionReadApi.extraEnv=[{"name":"READ_API_UPSTREAM_ASSERTION_MODE","value":"off"}]'
         expect_render_failure "$chart" charts/agent-relay/ci/gate-sessions-gke-values.yaml "extraEnv setting a reader verify variable with verification off" "extraEnv must not set READ_API_UPSTREAM_ASSERTION_PUBLIC_KEY" --set-json 'sessions-pipeline.sessionReadApi.extraEnv=[{"name":"READ_API_UPSTREAM_ASSERTION_PUBLIC_KEY","value":"x"}]'
+        # The verifier charts installed on their own check the previous pair too
+        # (the service refuses a half-set pair or equal kids at startup).
+        vp=global.relaygate.upstreamAuth.verify.publicKeys
+        vstd=(--set global.relaygate.upstreamAuth.verify.mode=enforce --set $vp.configMapName=pk --set $vp.currentKid=k2)
+        for vc in "session-read-api charts/session-read-api/ci/default-values.yaml" "sessions-pipeline charts/sessions-pipeline/ci/ingest-edge-values.yaml"; do
+          read -r vchart vfile <<<"$vc"
+          expect_render_failure "$vchart" "$vfile" "standalone verifier with previousKey but no previousKid" "previousKey and previousKid go together" "${vstd[@]}" --set $vp.previousKey=public-key-1
+          expect_render_failure "$vchart" "$vfile" "standalone verifier with previousKid equal to currentKid" "previousKid must differ from currentKid" "${vstd[@]}" --set $vp.previousKey=public-key-1 --set $vp.previousKid=k2
+          render "$vchart" "$vfile" "${vstd[@]}" --set $vp.previousKey=public-key-1 --set $vp.previousKid=k1 >/dev/null || err "$vchart: a complete previous pair must render standalone"
+        done
         expect_render_failure "$chart" "$uav" "verify enforce without gate-only" "verify.mode=enforce requires global.relaygate.gateOnly.enabled" --set global.relaygate.gateOnly.enabled=false
         expect_render_failure "$chart" "$uav" "verify log without gate-only" "verify.mode=log requires global.relaygate.gateOnly.enabled" --set global.relaygate.gateOnly.enabled=false --set global.relaygate.upstreamAuth.verify.mode=log
         expect_render_failure "$chart" "$v" "verify mode invalid with no verifier rendered" "verify.mode must be off, log or enforce" --set global.relaygate.upstreamAuth.verify.mode=required

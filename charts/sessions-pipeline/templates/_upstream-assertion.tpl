@@ -25,6 +25,11 @@ DER, from one Secret or ConfigMap, with their kids. */ -}}
 {{- $pk := dig "relaygate" "upstreamAuth" "verify" "publicKeys" dict .Values.global -}}
 {{- if eq (empty (dig "secretName" "" $pk)) (empty (dig "configMapName" "" $pk)) }}{{ fail "sessions-pipeline: global.relaygate.upstreamAuth.verify.mode log or enforce needs exactly one of verify.publicKeys.secretName or configMapName (the public keys)" }}{{ end -}}
 {{- if or (not (dig "currentKey" "" $pk)) (not (regexMatch "^[A-Za-z0-9._-]{1,64}$" (include "sessions-pipeline.upstreamAssertion.kid" (dig "currentKid" "" $pk)))) }}{{ fail "sessions-pipeline: global.relaygate.upstreamAuth.verify needs publicKeys.currentKey and currentKid (1-64 of A-Z a-z 0-9 . _ -)" }}{{ end -}}
+{{- $cur := include "sessions-pipeline.upstreamAssertion.kid" (dig "currentKid" "" $pk) -}}
+{{- $prev := include "sessions-pipeline.upstreamAssertion.kid" (dig "previousKid" "" $pk) -}}
+{{- if ne (empty (dig "previousKey" "" $pk)) (empty $prev) }}{{ fail "sessions-pipeline: global.relaygate.upstreamAuth.verify.publicKeys.previousKey and previousKid go together (the service refuses a half-set previous pair)" }}{{ end -}}
+{{- if and $prev (not (regexMatch "^[A-Za-z0-9._-]{1,64}$" $prev)) }}{{ fail "sessions-pipeline: global.relaygate.upstreamAuth.verify.publicKeys.previousKid must be 1-64 of A-Z a-z 0-9 . _ -" }}{{ end -}}
+{{- if and $prev (eq $prev $cur) }}{{ fail "sessions-pipeline: global.relaygate.upstreamAuth.verify.publicKeys.previousKid must differ from currentKid" }}{{ end -}}
 {{- end }}
 {{- end }}
 
