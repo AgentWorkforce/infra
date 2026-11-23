@@ -463,8 +463,13 @@ default) applies per edge. Each has the same routes as the primary, with
 explicit hostnames per role: `hosts.dashboard`, `hosts.api`, `hosts.cast`, and
 `hosts.history` (required when `history.enabled`, refused otherwise), plus its
 own `name` and `certificateArn`. Use it to bring up a new public name set next
-to the old one during a cutover, then make the new names the primary and drop
-the old edge. Edge names and hostnames must be unique across all edges.
+to the old one during a cutover. Edge names and hostnames must be unique across
+all edges. The primary edge always uses `<domain>` for the dashboard and
+`api.`, `cast.` and `history.` in front of it, so only a host set that follows
+that pattern can later become the primary. Any other set (for example
+`app.example.com` for the dashboard beside `api.example.com`) stays in
+`extraEdges`, and the primary edge stays in place until the chart lets the
+primary take explicit hosts as well.
 `ci/agent-relay/test_eks_alb_ingress.py` proves that an extra edge whose hosts
 follow the `<domain>` pattern is exactly the script's output for that domain.
 
