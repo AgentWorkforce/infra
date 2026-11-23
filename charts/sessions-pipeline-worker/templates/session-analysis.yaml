@@ -71,6 +71,8 @@ spec:
           env:
             - { name: SERVICE, value: "session-analysis" }
             - { name: OTEL_SERVICE_NAME, value: "session-analysis" }
+            {{- /* Same configured-or-blank rule as the other workers: the image bakes a local-stack collector address. */}}
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ (dig "otel" "endpoint" "" (.Values.global | default dict)) | quote }} }
             - { name: SESSION_ANALYSIS_ENABLED, value: {{ ternary "true" "false" $s.run | quote }} }
             {{- include "sessions-pipeline-worker.scrubEngine" (dict "root" . "localName" "readerMaxRuleset") | nindent 12 }}
             - { name: SESSION_ANALYSIS_OPENAI_API_KEY_FILE, value: /var/run/session-analysis/model/key }

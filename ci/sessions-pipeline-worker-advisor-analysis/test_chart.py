@@ -66,6 +66,8 @@ class AdvisorAnalysis(unittest.TestCase):
         dep = next(d for d in docs if d["kind"] == "Deployment" and d["spec"]["template"]["spec"]["containers"][0]["name"] == "coordination-advisor")
         c = dep["spec"]["template"]["spec"]["containers"][0]
         self.assertEqual(dep["spec"]["strategy"]["type"], "Recreate")
+        named = self.render({"components": {"coordination-advisor": {"enabled": True, "fullnameOverride": "advisor-custom"}}})
+        self.assertIn("advisor-custom", [d["metadata"]["name"] for d in named if d["kind"] == "Deployment"])
         for k in ("startupProbe", "readinessProbe", "livenessProbe", "ports"):
             self.assertNotIn(k, c)
         on = {"components": {"coordination-advisor": {"enabled": True}}, "coordinationAdvisor": {
@@ -109,6 +111,9 @@ class AdvisorAnalysis(unittest.TestCase):
         docs = self.render({"sessionAnalysis": ANALYSIS})
         e = self.env(docs, "session-analysis")
         self.assertEqual(e["SESSION_ANALYSIS_ENABLED"], "false")
+        self.assertEqual(e["OTEL_EXPORTER_OTLP_ENDPOINT"], "")
+        e2 = self.env(self.render({"global": {"otel": {"endpoint": "http://otel.observability.svc:4318"}}, "sessionAnalysis": ANALYSIS}), "session-analysis")
+        self.assertEqual(e2["OTEL_EXPORTER_OTLP_ENDPOINT"], "http://otel.observability.svc:4318")
         self.assertEqual(e["SESSION_ANALYSIS_S3_BUCKET"], "canonical-bucket")
         self.assertEqual(e["SESSION_ANALYSIS_S3_REGION"], "us-east-1")
         self.assertEqual(e["PIPELINE_ORG_FROM_PREFIX"], "true")
