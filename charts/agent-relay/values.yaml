@@ -212,6 +212,11 @@ eksIngress:
   # and the ACM certificate that covers all four names.
   domain: ""                  # EKS_ALB_DOMAIN
   certificateArn: ""          # EKS_ALB_CERT_ARN
+  # More base domains served with the same hosts and routes, after domain
+  # (for example a new public name during a cutover), and more certificates
+  # for the listener. Together the certificates must cover every name.
+  aliasDomains: []            # EKS_ALB_ALIAS_DOMAINS (comma-separated)
+  additionalCertificateArns: []  # EKS_ALB_EXTRA_CERT_ARNS (comma-separated)
   history:
     enabled: true             # EKS_ALB_HISTORY
     # Read API only on history.<domain> (needs ingest.enabled=false).

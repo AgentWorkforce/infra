@@ -31,6 +31,25 @@ component of this release to be enabled. */ -}}
 {{- $cert := dig "certificateArn" "" $e | toString -}}
 {{- if not $cert }}{{ fail "eksIngress.certificateArn (the ACM certificate ARN) is required" }}{{ end -}}
 {{- if not (regexMatch "^arn:[^\\s'\"]+$" $cert) }}{{ fail "eksIngress.certificateArn must be an ACM certificate ARN (arn:...)" }}{{ end -}}
+{{- /* Extra base domains served with the same hosts and routes as domain
+(for example a new public name next to the old one during a cutover). Each
+needs its names on one of the certificates. */ -}}
+{{- $aliases := dig "aliasDomains" list $e -}}
+{{- if kindIs "invalid" $aliases }}{{ $aliases = list }}{{ end -}}
+{{- if not (kindIs "slice" $aliases) }}{{ fail "eksIngress.aliasDomains must be a list of base domains" }}{{ end -}}
+{{- range $a := $aliases }}
+{{- if not (and (kindIs "string" $a) (include "agent-relay.isDnsName" (dict "name" $a "max" 245))) }}{{ fail (printf "eksIngress.aliasDomains entry %v must be a lowercase DNS name (a base domain, no scheme or path)" $a) }}{{ end -}}
+{{- end -}}
+{{- $domains := prepend $aliases $domain -}}
+{{- if ne (len $domains) (len (uniq $domains)) }}{{ fail "eksIngress.aliasDomains must not repeat a domain or the base domain" }}{{ end -}}
+{{- $extraCerts := dig "additionalCertificateArns" list $e -}}
+{{- if kindIs "invalid" $extraCerts }}{{ $extraCerts = list }}{{ end -}}
+{{- if not (kindIs "slice" $extraCerts) }}{{ fail "eksIngress.additionalCertificateArns must be a list of ACM certificate ARNs" }}{{ end -}}
+{{- range $c := $extraCerts }}
+{{- if not (and (kindIs "string" $c) (regexMatch "^arn:[^\\s'\",]+$" $c)) }}{{ fail (printf "eksIngress.additionalCertificateArns entry %v must be an ACM certificate ARN (arn:...)" $c) }}{{ end -}}
+{{- end -}}
+{{- $certs := prepend $extraCerts $cert -}}
+{{- if ne (len $certs) (len (uniq $certs)) }}{{ fail "eksIngress.additionalCertificateArns must not repeat a certificate or certificateArn" }}{{ end -}}
 {{- $history := index $bool "history.enabled" -}}
 {{- $readOnly := index $bool "history.readOnly" -}}
 {{- $flows := index $bool "flows.enabled" -}}
@@ -111,7 +130,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
-    alb.ingress.kubernetes.io/certificate-arn: {{ $cert | quote }}
+    alb.ingress.kubernetes.io/certificate-arn: {{ join "," $certs | quote }}
     alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
     alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
     alb.ingress.kubernetes.io/actions.edge-deny: >-
@@ -120,13 +139,16 @@ spec:
   ingressClassName: {{ $class }}
   tls:
     - hosts:
+        {{- range $domain := $domains }}
         - {{ $domain }}
         - api.{{ $domain }}
         - cast.{{ $domain }}
         {{- if $history }}
         - history.{{ $domain }}
         {{- end }}
+        {{- end }}
   rules:
+    {{- range $domain := $domains }}
     - host: {{ $domain }}
       http:
         paths:
@@ -256,5 +278,6 @@ spec:
           - path: "/*"
             pathType: ImplementationSpecific
             {{ $deny }}
+    {{- end }}
     {{- end }}
 {{- end -}}

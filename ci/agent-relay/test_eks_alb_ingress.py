@@ -54,7 +54,12 @@ OPTIONS = {
     'EKS_ALB_CHIEF_PORT': 'chief.servicePort',
     'EKS_ALB_CONTROL_SERVICE': 'control.serviceName',
     'EKS_ALB_WEBAPP_SERVICE': 'webapp.serviceName',
+    'EKS_ALB_ALIAS_DOMAINS': 'aliasDomains',
+    'EKS_ALB_EXTRA_CERT_ARNS': 'additionalCertificateArns',
 }
+# Comma-separated in the script, a list in the chart.
+LIST_OPTIONS = {'aliasDomains', 'additionalCertificateArns'}
+EXTRA_CERT = 'arn:aws:acm:us-east-1:111111111111:certificate/11111111-1111-1111-1111-111111111111'
 
 CASES = {
     'defaults': {},
@@ -70,6 +75,13 @@ CASES = {
     'flows + chief + read-only': {'EKS_ALB_RELAYFILE_CONTROL': 'true',
                                   'EKS_ALB_CHIEF_SERVICE': 'relaychief-control',
                                   'EKS_ALB_HISTORY_READ_ONLY': 'true'},
+    'alias domain, one certificate': {'EKS_ALB_ALIAS_DOMAINS': 'public.example.com'},
+    'two alias domains, extra certificate, chief + flows + read-only': {
+        'EKS_ALB_ALIAS_DOMAINS': 'public.example.com,public-staging.example.com',
+        'EKS_ALB_EXTRA_CERT_ARNS': EXTRA_CERT,
+        'EKS_ALB_RELAYFILE_CONTROL': 'true', 'EKS_ALB_CHIEF_SERVICE': 'relaychief-control',
+        'EKS_ALB_HISTORY_READ_ONLY': 'true'},
+    'alias domain with history off': {'EKS_ALB_ALIAS_DOMAINS': 'public.example.com', 'EKS_ALB_HISTORY': 'false'},
     'overridden names, ports, ingress name and class': {
         'EKS_ALB_INGRESS_NAME': 'relay-edge', 'EKS_INGRESS_CLASS': 'alb-internal',
         'EKS_ALB_DOMAIN': 'edge.example.com',
@@ -98,6 +110,11 @@ REFUSALS = {
     'flows Service not a label': ({'EKS_ALB_RELAYFILE_CONTROL': 'true', 'EKS_ALB_RELAYFILE_CONTROL_SERVICE': 'Flows'}, {}, 'flows.serviceName must be a DNS label'),
     'flows port 70000': ({'EKS_ALB_RELAYFILE_CONTROL': 'true', 'EKS_ALB_RELAYFILE_CONTROL_PORT': '70000'}, {}, 'flows.servicePort must be 1-65535'),
     'chief Service not a label': ({'EKS_ALB_CHIEF_SERVICE': 'chief_control'}, {}, 'chief.serviceName must be a DNS label'),
+    'alias repeats the domain': ({'EKS_ALB_ALIAS_DOMAINS': 'relay.example.com'}, {}, 'must not repeat a domain'),
+    'alias repeated': ({'EKS_ALB_ALIAS_DOMAINS': 'a.example.com,a.example.com'}, {}, 'must not repeat a domain'),
+    'alias not a DNS name': ({'EKS_ALB_ALIAS_DOMAINS': 'https://a.example.com'}, {}, 'aliasDomains entry'),
+    'extra certificate not an ARN': ({'EKS_ALB_EXTRA_CERT_ARNS': 'cert-1'}, {}, 'additionalCertificateArns entry'),
+    'extra certificate repeats the certificate': ({'EKS_ALB_EXTRA_CERT_ARNS': BASE_ENV['EKS_ALB_CERT_ARN']}, {}, 'must not repeat a certificate'),
     'chief port 0': ({'EKS_ALB_CHIEF_SERVICE': 'relaychief-control', 'EKS_ALB_CHIEF_PORT': '0'}, {}, 'chief.servicePort must be 1-65535'),
 }
 
@@ -117,7 +134,9 @@ def chart_values(env):
         *parents, leaf = OPTIONS[key].split('.')
         for part in parents:
             node = node.setdefault(part, {})
-        if value in ('true', 'false'):
+        if leaf in LIST_OPTIONS:
+            value = [v for v in value.split(',') if v]
+        elif value in ('true', 'false'):
             value = value == 'true'
         elif leaf == 'servicePort' and value.isdigit():
             value = int(value)

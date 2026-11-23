@@ -438,6 +438,8 @@ eksIngress:
 | `eksIngress.className` | `EKS_INGRESS_CLASS` | `alb` |
 | `eksIngress.domain` | `EKS_ALB_DOMAIN` | required |
 | `eksIngress.certificateArn` | `EKS_ALB_CERT_ARN` | required |
+| `eksIngress.aliasDomains` | `EKS_ALB_ALIAS_DOMAINS` (comma-separated) | `[]` |
+| `eksIngress.additionalCertificateArns` | `EKS_ALB_EXTRA_CERT_ARNS` (comma-separated) | `[]` |
 | `eksIngress.history.enabled` | `EKS_ALB_HISTORY` | `true` |
 | `eksIngress.history.readOnly` | `EKS_ALB_HISTORY_READ_ONLY` | `false` |
 | `eksIngress.ingest.enabled` | `EKS_ALB_INGEST` | `null`: on when the history host is on and not read-only |
@@ -455,6 +457,15 @@ not read-only; ingest on without the history host; Service names that are not
 DNS labels and ports outside 1-65535 (each checked only when its route is
 rendered). It also refuses non-boolean switches, a domain that is not a DNS
 name, a certificate that is not an ARN, and malformed `controlPaths`.
+
+`aliasDomains` serves more base domains on the same load balancer, after
+`domain`, each with the same hosts and routes (`<alias>`, `api.`, `cast.` and,
+with history on, `history.`). Use it to bring up a new public name next to the
+old one during a cutover, then make it `domain` and drop the old one.
+`additionalCertificateArns` adds ACM certificates to the HTTPS listener
+(`certificateArn` stays the default certificate); together they must cover
+every name. Both default to empty, which renders exactly what earlier versions
+did. A repeated domain or certificate is refused.
 
 `controlPaths` is the list of dashboard-host (`<domain>`) paths sent to the
 control API ahead of the dashboard catch-all, in order (Prefix paths; with Chief

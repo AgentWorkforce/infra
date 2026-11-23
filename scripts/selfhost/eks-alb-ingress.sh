@@ -61,6 +61,12 @@
 # EKS_ALB_CHIEF_PORT (default 3200), ahead of the control API. Those routes need
 # a wildcard for the workspace id, and wildcards are ImplementationSpecific, so
 # with Chief on, this host's Prefix paths become Exact plus ordered wildcards.
+#
+# EKS_ALB_ALIAS_DOMAINS (comma-separated, default empty) serves more base
+# domains with the same hosts and routes, after EKS_ALB_DOMAIN: for example a
+# new public name next to the old one during a cutover. EKS_ALB_EXTRA_CERT_ARNS
+# (comma-separated) adds ACM certificates to the listener; together the
+# certificates must cover every name of every domain.
 
 set -euo pipefail
 NS="${1:-agent-relay}"
@@ -68,6 +74,30 @@ CLASS="${EKS_INGRESS_CLASS:-alb}"
 DOMAIN="${EKS_ALB_DOMAIN:?EKS_ALB_DOMAIN=<base domain> is required}"
 CERT="${EKS_ALB_CERT_ARN:?EKS_ALB_CERT_ARN=<ACM certificate ARN> is required}"
 HISTORY="${EKS_ALB_HISTORY:-true}"
+DOMAINS=("$DOMAIN")
+if [[ -n "${EKS_ALB_ALIAS_DOMAINS:-}" ]]; then
+  IFS=, read -r -a aliases <<<"$EKS_ALB_ALIAS_DOMAINS"
+  for alias in "${aliases[@]}"; do
+    [[ ${#alias} -le 245 && "$alias" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$ ]] ||
+      { printf '%s\n' "EKS_ALB_ALIAS_DOMAINS entry '$alias' must be a lowercase DNS name" >&2; exit 2; }
+    for seen in "${DOMAINS[@]}"; do
+      [[ "$seen" != "$alias" ]] ||
+        { printf '%s\n' 'EKS_ALB_ALIAS_DOMAINS must not repeat a domain or EKS_ALB_DOMAIN' >&2; exit 2; }
+    done
+    DOMAINS+=("$alias")
+  done
+fi
+CERTS="$CERT"
+if [[ -n "${EKS_ALB_EXTRA_CERT_ARNS:-}" ]]; then
+  IFS=, read -r -a extra_certs <<<"$EKS_ALB_EXTRA_CERT_ARNS"
+  for extra in "${extra_certs[@]}"; do
+    [[ "$extra" =~ ^arn:[^[:space:]\'\",]+$ ]] ||
+      { printf '%s\n' "EKS_ALB_EXTRA_CERT_ARNS entry '$extra' must be an ACM certificate ARN" >&2; exit 2; }
+    [[ ",$CERTS," != *",$extra,"* ]] ||
+      { printf '%s\n' 'EKS_ALB_EXTRA_CERT_ARNS must not repeat a certificate or EKS_ALB_CERT_ARN' >&2; exit 2; }
+    CERTS="$CERTS,$extra"
+  done
+fi
 # Read API only on history.<domain>, for installs with no ingest edge yet. Upload
 # paths then answer the fixed 404 rather than a missing backend.
 HISTORY_READ_ONLY="${EKS_ALB_HISTORY_READ_ONLY:-false}"
@@ -166,6 +196,15 @@ host() {
   printf '%s\n' "    - host: $1" "      http:" "        paths:"
 }
 
+tls_hosts() {
+  local d sep=""
+  for d in "${DOMAINS[@]}"; do
+    printf '%s%s, api.%s, cast.%s' "$sep" "$d" "$d" "$d"
+    [[ "$HISTORY" == true ]] && printf ', history.%s' "$d"
+    sep=", "
+  done
+}
+
 cat <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -177,7 +216,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
-    alb.ingress.kubernetes.io/certificate-arn: ${CERT}
+    alb.ingress.kubernetes.io/certificate-arn: "${CERTS}"
     alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
     alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
     alb.ingress.kubernetes.io/actions.edge-deny: >-
@@ -185,10 +224,11 @@ metadata:
 spec:
   ingressClassName: ${CLASS}
   tls:
-    - hosts: [${DOMAIN}, api.${DOMAIN}, cast.${DOMAIN}$([[ "$HISTORY" == true ]] && printf ', history.%s' "$DOMAIN")]
+    - hosts: [$(tls_hosts)]
   rules:
 EOF
 
+for DOMAIN in "${DOMAINS[@]}"; do
 host "$DOMAIN"
 flows_routes /cloud/api/v1
 # Keep in step with relay-webapp.controlPaths and the Azure dashboard rule.
@@ -274,3 +314,4 @@ if [[ "$HISTORY" == true ]]; then
     deny '"/*"' ImplementationSpecific
   fi
 fi
+done
