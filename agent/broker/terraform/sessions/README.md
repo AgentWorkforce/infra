@@ -115,7 +115,11 @@ terraform init -backend=false -input=false && terraform validate && terraform te
 - The role's identity policy only allows the six actions above. A request in
   this account for anything else can still be approved, but it is issued and
   then gets AccessDenied. Widen this root first.
-- A request must name its resources (`scope: "account"` with `resources`),
-  or the broker asks for the function and log group ARNs to be listed. The
-  two ARNs are this root's `function_arn` and `log_group_arn` outputs; log
-  reads also need the log group ARN followed by `:*` (its streams).
+- Name the resources in every request (`scope: "account"` with `resources`,
+  as in `../../AGENTS.md`). The broker does not require them: a request
+  without `resources` goes to approval with `Resource: "*"` in its session
+  policy. This role's own policy still holds such a session to the function
+  and the log group, but the approval prompt then shows `*`, so the approver
+  should refuse it and ask for the ARNs. The two ARNs are this root's
+  `function_arn` and `log_group_arn` outputs; log reads also need the log
+  group ARN followed by `:*` (its streams).
