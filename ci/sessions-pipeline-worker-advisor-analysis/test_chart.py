@@ -169,6 +169,7 @@ class AdvisorAnalysis(unittest.TestCase):
         for image, msg in [
             ({"repository": "runner"}, "needs image.tag or image.digest"),
             ({"digest": "sha256:" + "2" * 64}, "needs image.repository"),
+            ({"repository": "runner", "tag": 20261123}, "image.tag must be a string"),
             ({"repository": "runner", "tag": "v1", "pullPolicy": "Sometimes"}, "pullPolicy must be"),
         ]:
             with self.subTest(msg=msg):

@@ -62,6 +62,7 @@
 {{- if not (kindIs "bool" $s.run) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.run must be true or false" }}{{ end -}}
 {{- if ne (int $s.replicas) 1 }}{{ fail "sessions-pipeline-worker: sessionAnalysis.replicas must be 1" }}{{ end -}}
 {{- $image := $s.image | default dict -}}
+{{- if and (hasKey $image "tag") (not (kindIs "string" $image.tag)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.image.tag must be a string (quote numeric tags or use --set-string)" }}{{ end -}}
 {{- if and $image.repository (not (or $image.tag $image.digest)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.image.repository needs image.tag or image.digest (pin the dedicated runner image)" }}{{ end -}}
 {{- if and (not $image.repository) (or $image.tag $image.digest) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.image.tag or image.digest needs image.repository" }}{{ end -}}
 {{- if and $image.pullPolicy (not (has $image.pullPolicy (list "Always" "IfNotPresent" "Never"))) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.image.pullPolicy must be Always, IfNotPresent, Never or empty" }}{{ end -}}
