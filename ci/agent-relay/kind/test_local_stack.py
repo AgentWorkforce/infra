@@ -339,23 +339,48 @@ class LocalTests(unittest.TestCase):
     def test_privileged_bootstraps_include_legacy_export_privacy_role_before_migrations(self):
         # Migration 062030 refuses (42704) unless bulls96_legacy_export_privacy exists; the
         # unprivileged migrator never creates roles, so both paths run the image's bootstrap as postgres.
+        # Images before that bootstrap existed (candidates up to 2026.11.15) lack the file and the
+        # migration, so it is the one optional file: skipped when absent, every other file stays required.
         privileged = ["session_directory_search_worker", "session_token_verifier", "session_ingest_roles",
                       "session_read_api_roles", "legacy_export_privacy_roles"]
+        legacy = "supabase/bootstrap/legacy_export_privacy_roles.sql"
+        self.assertEqual(local_stack.LEGACY_EXPORT_BOOTSTRAP, legacy)
+        for image_has_legacy in (True, False):
+            with self.subTest(image_has_legacy=image_has_legacy):
+                expected = privileged if image_has_legacy else privileged[:4]
+                stack = LocalStack.__new__(LocalStack)
+                stack.ca_sha = "0" * 64
+                calls, requests = [], []
+
+                def source_files(paths, optional=()):
+                    requests.append(set(optional))
+                    return {p: "-- " + p for p in paths if image_has_legacy or p != legacy or p not in optional}
+                stack.source_files = source_files
+                stack.sql = lambda database, text, variables=(): calls.append(("sql", database, text, tuple(variables)))
+                stack.secret = lambda *args, **kwargs: calls.append(("secret",))
+                stack.job = lambda name, *args, **kwargs: calls.append(("job", name))
+                stack.pipeline_schema({"hoop": "fixture"})
+                plain = [text[len("-- supabase/bootstrap/"):-len(".sql")] for kind, *rest in calls if kind == "sql"
+                         for _, text, variables in [rest] if text.startswith("-- supabase/bootstrap/") and not variables]
+                # Only the privileged bootstraps run as plain postgres SQL without variables, in this order.
+                self.assertEqual(plain, expected)
+                calls.clear()
+                stack.migrate_pipeline()
+                self.assertEqual([c[2] for c in calls if c[0] == "sql"], ["-- supabase/bootstrap/" + n + ".sql" for n in expected])
+                self.assertEqual([c[0] for c in calls][-2:], ["job", "job"])
+                self.assertEqual(requests, [{legacy}, {legacy}])
+
+    def test_source_files_omits_only_absent_optional_paths(self):
         stack = LocalStack.__new__(LocalStack)
-        stack.ca_sha = "0" * 64
-        calls = []
-        stack.source_files = lambda paths: {path: "-- " + path for path in paths}
-        stack.sql = lambda database, text, variables=(): calls.append(("sql", database, text, tuple(variables)))
-        stack.secret = lambda *args, **kwargs: calls.append(("secret",))
-        stack.job = lambda name, *args, **kwargs: calls.append(("job", name))
-        stack.pipeline_schema({"hoop": "fixture"})
-        plain = [text[len("-- supabase/bootstrap/"):-len(".sql")] for kind, *rest in calls if kind == "sql"
-                 for _, text, variables in [rest] if text.startswith("-- supabase/bootstrap/") and not variables]
-        self.assertEqual(plain[:5], privileged)
-        calls.clear()
-        stack.migrate_pipeline()
-        self.assertEqual([c[2] for c in calls if c[0] == "sql"], ["-- supabase/bootstrap/" + n + ".sql" for n in privileged])
-        self.assertEqual([c[0] for c in calls][-2:], ["job", "job"])
+        stack.docker_args = ["docker"]
+        seen = []
+        stack.cmd = lambda argv, **kw: seen.append(argv) or SimpleNamespace(stdout="{}")
+        stack.source_files(["a.sql", "b.sql"], optional=["b.sql"])
+        code = seen[0][-1]
+        self.assertIn('new Set(["b.sql"])', code)
+        self.assertIn("!optional.has(p)||fs.existsSync('/app/'+p)", code)
+        stack.source_files(["a.sql"])
+        self.assertIn("new Set([])", seen[1][-1])
 
     def test_pipeline_only_pin_change_runs_migrations_without_adopting_another_generation(self):
         previous = {**selected_images(), "pipeline": "old"}
