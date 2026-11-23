@@ -438,6 +438,7 @@ eksIngress:
 | `eksIngress.className` | `EKS_INGRESS_CLASS` | `alb` |
 | `eksIngress.domain` | `EKS_ALB_DOMAIN` | required |
 | `eksIngress.certificateArn` | `EKS_ALB_CERT_ARN` | required |
+| `eksIngress.extraEdges` | none (chart only) | `[]` |
 | `eksIngress.history.enabled` | `EKS_ALB_HISTORY` | `true` |
 | `eksIngress.history.readOnly` | `EKS_ALB_HISTORY_READ_ONLY` | `false` |
 | `eksIngress.ingest.enabled` | `EKS_ALB_INGEST` | `null`: on when the history host is on and not read-only |
@@ -455,6 +456,22 @@ not read-only; ingest on without the history host; Service names that are not
 DNS labels and ports outside 1-65535 (each checked only when its route is
 rendered). It also refuses non-boolean switches, a domain that is not a DNS
 name, a certificate that is not an ARN, and malformed `controlPaths`.
+
+`extraEdges` renders more Ingresses next to the primary one. Each has its own
+load balancer (no `group.name`), so the ALB listener-rule quota (100 by
+default) applies per edge. Each has the same routes as the primary, with
+explicit hostnames per role: `hosts.dashboard`, `hosts.api`, `hosts.cast`, and
+`hosts.history` (required when `history.enabled`, refused otherwise), plus its
+own `name` and `certificateArn`. Use it to bring up a new public name set next
+to the old one during a cutover. Edge names and hostnames must be unique across
+all edges. The primary edge always uses `<domain>` for the dashboard and
+`api.`, `cast.` and `history.` in front of it, so only a host set that follows
+that pattern can later become the primary. Any other set (for example
+`app.example.com` for the dashboard beside `api.example.com`) stays in
+`extraEdges`, and the primary edge stays in place until the chart lets the
+primary take explicit hosts as well.
+`ci/agent-relay/test_eks_alb_ingress.py` proves that an extra edge whose hosts
+follow the `<domain>` pattern is exactly the script's output for that domain.
 
 `controlPaths` is the list of dashboard-host (`<domain>`) paths sent to the
 control API ahead of the dashboard catch-all, in order (Prefix paths; with Chief

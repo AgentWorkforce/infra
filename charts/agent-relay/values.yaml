@@ -212,6 +212,16 @@ eksIngress:
   # and the ACM certificate that covers all four names.
   domain: ""                  # EKS_ALB_DOMAIN
   certificateArn: ""          # EKS_ALB_CERT_ARN
+  # More edges: each is another Ingress (its own ALB, so the listener-rule
+  # quota is per edge) with the same routes as the primary and explicit
+  # hostnames, e.g. a new public name set next to the old one during a cutover.
+  # Chart only (the script prints the primary edge). Example:
+  #   - name: agent-relay-public
+  #     certificateArn: arn:aws:acm:...
+  #     hosts: { dashboard: app.example.com, api: api.example.com,
+  #              cast: cast.example.com, history: history.example.com }
+  # hosts.history is required when history.enabled and refused otherwise.
+  extraEdges: []
   history:
     enabled: true             # EKS_ALB_HISTORY
     # Read API only on history.<domain> (needs ingest.enabled=false).

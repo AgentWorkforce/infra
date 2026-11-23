@@ -95,14 +95,53 @@ an absent or null key, but preserve an explicitly empty list. */ -}}
 {{- $flowsRoutes := list -}}
 {{- if $flows }}{{ range $r := list "flows" "workers" "workflows" }}{{ $flowsRoutes = append $flowsRoutes $r }}{{ end }}{{ end -}}
 {{- $deny := "backend: { service: { name: edge-deny, port: { name: use-annotation } } }" -}}
+{{- /* The primary edge is <domain>, api., cast. and history. on one ALB.
+Each eksIngress.extraEdges entry is another Ingress with the same routes on its
+own ALB (so the listener-rule quota is per edge), with explicit hostnames: for
+example a new public name set next to the old one during a cutover. No two
+edges may share a hostname or an Ingress name. */ -}}
+{{- $edges := list (dict "name" $name "cert" $cert "dashboard" $domain "api" (printf "api.%s" $domain) "cast" (printf "cast.%s" $domain) "history" (printf "history.%s" $domain)) -}}
+{{- $extra := dig "extraEdges" list $e -}}
+{{- if kindIs "invalid" $extra }}{{ $extra = list }}{{ end -}}
+{{- if not (kindIs "slice" $extra) }}{{ fail "eksIngress.extraEdges must be a list" }}{{ end -}}
+{{- range $i, $x := $extra }}
+{{- if not (kindIs "map" $x) }}{{ fail (printf "eksIngress.extraEdges[%d] must be a map with name, certificateArn and hosts" $i) }}{{ end -}}
+{{- $xn := dig "name" "" $x | toString -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $xn "max" 253)) }}{{ fail (printf "eksIngress.extraEdges[%d].name must be a DNS subdomain name" $i) }}{{ end -}}
+{{- $xc := dig "certificateArn" "" $x | toString -}}
+{{- if not (regexMatch "^arn:[^\\s'\"]+$" $xc) }}{{ fail (printf "eksIngress.extraEdges[%d].certificateArn must be an ACM certificate ARN (arn:...)" $i) }}{{ end -}}
+{{- $xh := dig "hosts" dict $x -}}
+{{- if not (kindIs "map" $xh) }}{{ fail (printf "eksIngress.extraEdges[%d].hosts must be a map" $i) }}{{ end -}}
+{{- $edge := dict "name" $xn "cert" $xc -}}
+{{- $roles := list "dashboard" "api" "cast" -}}
+{{- if $history }}{{ $roles = append $roles "history" }}{{ end -}}
+{{- range $r := $roles }}
+{{- $h := dig $r "" $xh | toString -}}
+{{- if not (include "agent-relay.isDnsName" (dict "name" $h "max" 253)) }}{{ fail (printf "eksIngress.extraEdges[%d].hosts.%s must be a lowercase DNS name (no scheme or path)" $i $r) }}{{ end -}}
+{{- $_ := set $edge $r $h -}}
+{{- end -}}
+{{- if and (not $history) (dig "history" "" $xh) }}{{ fail (printf "eksIngress.extraEdges[%d].hosts.history is set but eksIngress.history.enabled is false" $i) }}{{ end -}}
+{{- $edges = append $edges $edge -}}
+{{- end -}}
+{{- $allNames := list -}}
+{{- $allHosts := list -}}
+{{- range $edge := $edges }}
+{{- $allNames = append $allNames $edge.name -}}
+{{- $allHosts = concat $allHosts (list $edge.dashboard $edge.api $edge.cast) -}}
+{{- if $history }}{{ $allHosts = append $allHosts $edge.history }}{{ end -}}
+{{- end -}}
+{{- if ne (len $allNames) (len (uniq $allNames)) }}{{ fail "eksIngress.extraEdges names must differ from eksIngress.name and from each other" }}{{ end -}}
+{{- if ne (len $allHosts) (len (uniq $allHosts)) }}{{ fail "eksIngress.extraEdges must not repeat a hostname of another edge or of its own" }}{{ end -}}
+{{- range $edge := $edges }}
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ $name }}
-  namespace: {{ .Release.Namespace | quote }}
+  name: {{ $edge.name }}
+  namespace: {{ $.Release.Namespace | quote }}
   labels:
     app.kubernetes.io/name: agent-relay
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
   annotations:
     {{- if or $readOnly $ingest }}
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
@@ -111,7 +150,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
-    alb.ingress.kubernetes.io/certificate-arn: {{ $cert | quote }}
+    alb.ingress.kubernetes.io/certificate-arn: {{ $edge.cert | quote }}
     alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
     alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
     alb.ingress.kubernetes.io/actions.edge-deny: >-
@@ -120,14 +159,14 @@ spec:
   ingressClassName: {{ $class }}
   tls:
     - hosts:
-        - {{ $domain }}
-        - api.{{ $domain }}
-        - cast.{{ $domain }}
+        - {{ $edge.dashboard }}
+        - {{ $edge.api }}
+        - {{ $edge.cast }}
         {{- if $history }}
-        - history.{{ $domain }}
+        - {{ $edge.history }}
         {{- end }}
   rules:
-    - host: {{ $domain }}
+    - host: {{ $edge.dashboard }}
       http:
         paths:
           {{- range $r := $flowsRoutes }}
@@ -170,7 +209,7 @@ spec:
             pathType: Prefix
             backend: { service: { name: {{ $webappSvc }}, port: { number: 8080 } } }
           {{- end }}
-    - host: api.{{ $domain }}
+    - host: {{ $edge.api }}
       http:
         paths:
           - path: /internal
@@ -198,7 +237,7 @@ spec:
           - path: "/*"
             pathType: ImplementationSpecific
             backend: { service: { name: {{ $controlSvc }}, port: { number: 80 } } }
-    - host: cast.{{ $domain }}
+    - host: {{ $edge.cast }}
       http:
         paths:
           - path: /internal
@@ -217,7 +256,7 @@ spec:
             pathType: ImplementationSpecific
             backend: { service: { name: relaycast, port: { number: 8787 } } }
     {{- if $history }}
-    - host: history.{{ $domain }}
+    - host: {{ $edge.history }}
       http:
         paths:
           {{- if not $readOnly }}
@@ -257,4 +296,5 @@ spec:
             pathType: ImplementationSpecific
             {{ $deny }}
     {{- end }}
+{{- end }}
 {{- end -}}
