@@ -231,6 +231,19 @@ A run tag is claimed by the first agent that receives credentials for it
     `requesters` for anything that writes;
   - the approver can still approve another agent's request for this role.
     It gets the same read and no more, since the role has no more.
+- The sessions account (`sessions-prod`, tier `prod`, `us-east-1`) has an
+  `elevated` role that is read-only too: `agent-broker-sessions-read`, which
+  allows the configuration, versions and aliases of the session pipeline's
+  one indexing Lambda, and reading that function's one log group
+  (`terraform/sessions`, applied by the owner himself: no agent role reaches
+  that account). It has no `workspaceAuto` capability and no delegation, so
+  every request there is parked for the approver. `policy.ts` has no grant
+  kind for a Lambda function or a log group; an automatic path would need
+  one. Left out on purpose: `lambda:GetFunction` (a download link for the
+  code), `lambda:ListEventSourceMappings` and Logs Insights (no
+  resource-level permission, so they can't be held to this function and
+  group). The sessions database isn't in AWS and is out of the broker's
+  reach.
 
 ## Delivery: never in plaintext over Relay
 
@@ -356,6 +369,9 @@ broker's account (stream: the broker's Relay name), as the broker role.
 - `prod/`: the read-only role and the EKS access entry in the prod account.
   It's a root of its own, with its own state in that account
   (`terraform/prod/README.md`).
+- `sessions/`: the read-only role for the session pipeline's indexing Lambda
+  and its log group, in the sessions account. Also a root of its own, with
+  its own state in that account (`terraform/sessions/README.md`).
 
 Agent CI runs `terraform fmt`, `validate` and `test` (mocked providers, plan
 only) on every module and root.
@@ -394,6 +410,12 @@ prod account: plan first (4 resources to add, nothing changed or destroyed),
 then apply only on the owner's own OK. The broker role can assume the new
 role only once `sandbox/` lists it in the broker role's `target_role_arns`
 and is applied again (1 inline policy changed in place, the same gate).
+
+`sessions/` is applied by the owner himself, with his own credentials in the
+sessions account: plan first (2 resources to add, nothing changed or
+destroyed). The plan stops if the function or its log group is missing. As
+with `prod/`, the broker role can assume the new role only once `sandbox/`
+lists it and is applied again.
 
 The broker can't use the role until the infra-ops host can assume it. That
 needs `credentialBroker: true` (set here, live after a full Agent Deploy) and

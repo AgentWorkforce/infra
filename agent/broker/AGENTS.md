@@ -22,6 +22,10 @@ aren't yours, wildcards, other accounts, other secrets or instances. The
 broker tells you that in its reply. Some things are never issued at all: STS,
 organizations, account and billing, and IAM access keys.
 
+One read exists only with approval: the session pipeline's indexing Lambda
+(its configuration and its logs) in the sessions account. See
+[Reading the session pipeline Lambda](#reading-the-session-pipeline-lambda).
+
 ## How
 
 1. **Make a one-time key** on your own machine, from a checkout of
@@ -148,6 +152,66 @@ Limits:
   even if it were approved.
 - Sessions last 15 to 60 minutes. Ask again when one runs out; there are no
   long-lived keys for this account.
+
+## Reading the session pipeline Lambda
+
+Never automatic: every request in the sessions account goes to the approver,
+and you get the issued reply after the approval. The role there can read the
+configuration of one function, the session pipeline's indexing Lambda, and
+that function's log group. Nothing else in the account.
+
+Request this, or a part of it (account id from `allowlist.json`, label
+`sessions-prod`; `<function>` is `function_name` in
+`terraform/sessions/variables.tf`):
+
+```json
+{
+  "account": "<sessions account id>",
+  "purpose": "Read the indexing Lambda's configuration and its recent logs: why did run X fail",
+  "actions": [
+    "lambda:GetFunctionConfiguration",
+    "lambda:ListVersionsByFunction",
+    "lambda:ListAliases",
+    "logs:DescribeLogStreams",
+    "logs:GetLogEvents",
+    "logs:FilterLogEvents"
+  ],
+  "durationMinutes": 30,
+  "runTag": "my-sessions-read-1",
+  "scope": "account",
+  "resources": [
+    "arn:aws:lambda:us-east-1:<sessions account id>:function:<function>",
+    "arn:aws:logs:us-east-1:<sessions account id>:log-group:/aws/lambda/<function>",
+    "arn:aws:logs:us-east-1:<sessions account id>:log-group:/aws/lambda/<function>:*"
+  ],
+  "regions": ["us-east-1"],
+  "delivery": { "kind": "encrypted", "publicKey": "<from keygen>" }
+}
+```
+
+Then open the reply as in step 4:
+
+```sh
+aws --profile broker-my-sessions-read-1 --region us-east-1 lambda get-function-configuration \
+  --function-name <function>
+aws --profile broker-my-sessions-read-1 --region us-east-1 logs filter-log-events \
+  --log-group-name /aws/lambda/<function> --start-time <epoch ms> --filter-pattern '"ERROR"'
+```
+
+Limits:
+
+- Read-only, one function, one log group, `us-east-1`. No invoke, no update,
+  no code download (`lambda:GetFunction` isn't allowed), no event source
+  mappings, no other log group.
+- No Logs Insights (`start-query`): use `filter-log-events` with a filter
+  pattern, or `get-log-events` on one stream.
+- The configuration includes the function's environment variables. Treat what
+  you read there, and what the logs hold, as private: don't paste it into
+  Relay, a PR or an issue.
+- The sessions database isn't covered. It isn't in AWS, so the broker can't
+  issue access to it.
+- Another action or resource in this account can't work even if it is
+  approved: the role has no more than this.
 
 ## Rules
 
