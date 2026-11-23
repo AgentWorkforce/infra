@@ -41,24 +41,20 @@ Keep `sessionAnalysis.run: false` until both accounts' policy plans and the
 dormant pod readback are complete.
 
 <!-- BEGIN_TF_DOCS -->
-## Requirements
+### Requirements
 
 | Name | Version |
 | ---- | ------- |
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0, < 7.0 |
+| terraform | >= 1.11 |
+| aws | >= 6.0, < 7.0 |
 
-## Providers
+### Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.73.0 |
+| aws | >= 6.0, < 7.0 |
 
-## Modules
-
-No modules.
-
-## Resources
+### Resources
 
 | Name | Type |
 | ---- | ---- |
@@ -66,28 +62,28 @@ No modules.
 | [aws_iam_role.runner](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.runner](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 
-## Inputs
+### Inputs
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| <a name="input_account_id"></a> [account\_id](#input\_account\_id) | The EKS cluster account. The provider refuses any other account. | `string` | n/a | yes |
-| <a name="input_eks_cluster_name"></a> [eks\_cluster\_name](#input\_eks\_cluster\_name) | The EKS cluster that runs session-analysis and has the Pod Identity Agent add-on. | `string` | n/a | yes |
-| <a name="input_key_base"></a> [key\_base](#input\_key\_base) | Bare canonical key root; session objects live under <key\_base>/<org>/v1/. | `string` | `"96bulls"` | no |
-| <a name="input_namespace"></a> [namespace](#input\_namespace) | Namespace of the agent-relay release. | `string` | n/a | yes |
-| <a name="input_permissions_boundary_arn"></a> [permissions\_boundary\_arn](#input\_permissions\_boundary\_arn) | Optional permissions boundary for the runner role. | `string` | `null` | no |
-| <a name="input_region"></a> [region](#input\_region) | The EKS cluster region. | `string` | n/a | yes |
-| <a name="input_role_name"></a> [role\_name](#input\_role\_name) | Name of the runner IAM role in the EKS cluster account. | `string` | n/a | yes |
-| <a name="input_role_path"></a> [role\_path](#input\_role\_path) | IAM path for the role. | `string` | `"/"` | no |
-| <a name="input_service_account"></a> [service\_account](#input\_service\_account) | Dedicated session-analysis ServiceAccount; never share the ingest or general worker identity. | `string` | `"agent-relay-worker-session-analysis"` | no |
-| <a name="input_sessions_bucket_arn"></a> [sessions\_bucket\_arn](#input\_sessions\_bucket\_arn) | Canonical sessions bucket ARN in the other account, with no key path. | `string` | n/a | yes |
-| <a name="input_sessions_kms_key_arn"></a> [sessions\_kms\_key\_arn](#input\_sessions\_kms\_key\_arn) | The bucket SSE-KMS key ARN, not an alias. | `string` | n/a | yes |
-| <a name="input_tags"></a> [tags](#input\_tags) | Tags for the role and Pod Identity association. | `map(string)` | `{}` | no |
+| account\_id | The EKS cluster account. The provider refuses any other account. | `string` | n/a | yes |
+| eks\_cluster\_name | The EKS cluster that runs session-analysis and has the Pod Identity Agent add-on. | `string` | n/a | yes |
+| namespace | Namespace of the agent-relay release. | `string` | n/a | yes |
+| region | The EKS cluster region. | `string` | n/a | yes |
+| role\_name | Name of the runner IAM role in the EKS cluster account. | `string` | n/a | yes |
+| sessions\_bucket\_arn | Canonical sessions bucket ARN in the other account, with no key path. | `string` | n/a | yes |
+| sessions\_kms\_key\_arn | The bucket SSE-KMS key ARN, not an alias. | `string` | n/a | yes |
+| key\_base | Bare canonical key root; session objects live under <key\_base>/<org>/v1/. | `string` | `"96bulls"` | no |
+| permissions\_boundary\_arn | Optional permissions boundary for the runner role. | `string` | `null` | no |
+| role\_path | IAM path for the role. | `string` | `"/"` | no |
+| service\_account | Dedicated session-analysis ServiceAccount; never share the ingest or general worker identity. | `string` | `"agent-relay-worker-session-analysis"` | no |
+| tags | Tags for the role and Pod Identity association. | `map(string)` | `{}` | no |
 
-## Outputs
+### Outputs
 
 | Name | Description |
 | ---- | ----------- |
-| <a name="output_resource_policy_statements"></a> [resource\_policy\_statements](#output\_resource\_policy\_statements) | Exact statements for the bucket owner to merge into the bucket and KMS key policies. The bucket stack must separately carve this role out of its result-delete Deny. |
-| <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | Dedicated session-analysis Pod Identity role ARN. |
-| <a name="output_service_account"></a> [service\_account](#output\_service\_account) | ServiceAccount the Pod Identity association binds. |
+| resource\_policy\_statements | Exact statements for the bucket owner to merge into the bucket and KMS key policies. The bucket stack must separately carve this role out of its result-delete Deny. |
+| role\_arn | Dedicated session-analysis Pod Identity role ARN. |
+| service\_account | ServiceAccount the Pod Identity association binds. |
 <!-- END_TF_DOCS -->
