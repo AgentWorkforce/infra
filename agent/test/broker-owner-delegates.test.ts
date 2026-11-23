@@ -583,7 +583,7 @@ test("a named pipe at the grant path grants nothing and never blocks the broker;
 });
 
 /** A command on one named instance in a region no automatic rule covers: it needs an approval. */
-const WEST_INSTANCE =`arn:aws:ec2:us-west-2:${HOSTS}:instance/i-0123456789abcdef0`;
+const WEST_INSTANCE = `arn:aws:ec2:us-west-2:${HOSTS}:instance/i-0123456789abcdef0`;
 const commandReq = (over: Partial<CredentialRequest> = {}): CredentialRequest =>
   secretsReq({ purpose: "run one command on the host", actions: ["ssm:SendCommand"], resources: [WEST_INSTANCE, "arn:aws:ssm:us-west-2::document/AWS-RunShellScript"], regions: ["us-west-2"], runTag: "one-command", ...over });
 
