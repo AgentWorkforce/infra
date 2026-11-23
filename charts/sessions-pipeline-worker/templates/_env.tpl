@@ -42,6 +42,8 @@ unless a separate mark_pass step runs, which this chart does not have. */ -}}
 {{- if or (eq ($entry.name | default "") "SUMMARY_MASTER_KEYS") (eq ($entry.name | default "") "SUMMARY_MASTER_KEYS_FILE") }}{{ fail "sessions-pipeline-worker: configure summaryEncryption instead of components.bob-costas.env SUMMARY_MASTER_KEYS/SUMMARY_MASTER_KEYS_FILE" }}{{ end -}}
 {{- end }}
 {{- include "sessions-pipeline-worker.validateNativeBrief" . }}
+{{- include "sessions-pipeline-worker.validateAdvisor" . }}
+{{- include "sessions-pipeline-worker.validateAnalysis" . }}
 {{- include "sessions-pipeline-worker.validateLocker" . }}
 {{- include "sessions-pipeline-worker.validatePostgresCa" . }}
 {{- end }}

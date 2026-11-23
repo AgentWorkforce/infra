@@ -163,6 +163,7 @@ class OperatorSessionErase(unittest.TestCase):
             (lambda v: v["sessionReadApi"]["search"].setdefault("clickhouse", {}).update(enabled=True, existingSecret="clickhouse-reader", key="RELAYHISTORY_READ_API_SECRET"), "clickhouse.enabled=false"),
             (lambda v: v["alleyoop"]["ingest"].update(replicas=1), "legacy ingest Deployment scaled to zero"),
             (lambda v: v["worker"]["components"]["referee"].update(enabled=True, replicas=1), "legacy worker Deployment scaled to zero"),
+            (lambda v: v["worker"].setdefault("sessionAnalysis", {}).update(enabled=True, bucket="b", bucketRegion="us-east-1", keyPrefix="96bulls", modelKeySecret={"name": "m", "key": "k"}, databaseSecret={"name": "d", "key": "k"}), "worker.sessionAnalysis.enabled=false"),
             (lambda v: v["nativeConsumer"].update(enabled=False), "exactly one enabled consumer"),
             (lambda v: v["nativeConsumer"].setdefault("bootstrap", {}).update(enabled=True, phase="prepare"), "runtime Deployment"),
             (lambda v: v["sessionReadApi"]["search"].update(backendId="different"), "same search backendId"),
