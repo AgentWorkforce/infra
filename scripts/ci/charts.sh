@@ -1334,9 +1334,12 @@ for chart in "${charts[@]}"; do
           check_control_origins "$chart (sessions-only $edge)" "$out"
         done
         # The platform example overlays (values-gcp-relaygate.yaml,
-        # values-eks-relaygate.yaml) render once the relaygate digest is set,
-        # route the history host to relaygate, and refuse without the digest.
+        # values-eks-relaygate.yaml) render, route the history host to
+        # relaygate, and deploy the relaygate chart's pinned digest, which must
+        # match its self-hosted/customer-images.yaml entry.
         rg_digest=sha256:0ca54cddf43b4771fade43d06d280405574ea77280eb0fde392fdb90ee29e248
+        [ "$(yq '.images[] | select(.id == "relaygate") | .current.digest' self-hosted/customer-images.yaml)" = "$(yq '.image.digest' charts/relaygate/values.yaml)" ] \
+          || err "$chart: charts/relaygate image.digest must match its self-hosted/customer-images.yaml entry"
         gcp_stack=(-f charts/agent-relay/values-gcp.yaml -f charts/agent-relay/values-gcp-native.yaml -f charts/agent-relay/ci/gcp-native-values.yaml -f charts/agent-relay/values-gcp-relaygate.yaml)
         eks_stack=(-f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-rds-native.yaml -f charts/agent-relay/values-eks-relaygate.yaml --set eksIngress.domain=placeholder.company --set eksIngress.certificateArn=arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000)
         for stack in gcp eks; do
@@ -1344,7 +1347,9 @@ for chart in "${charts[@]}"; do
           ex=$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${st[@]}" --set relaygate.image.digest=$rg_digest) || { err "$chart: the $stack relaygate example did not render"; unset -n st; continue; }
           [ "$(yq 'select(.kind == "Ingress") | .spec.rules[] | select(.host == "history.placeholder.company") | .http.paths[] | select(.path == "/v1/sessions") | .backend.service.name' <<<"$ex" | sed '/^---$/d;/^$/d')" = "$([ $stack = gcp ] && echo example-agent-relay-gate || echo agent-relay-relaygate)" ] \
             || err "$chart: the $stack relaygate example must route the history host to relaygate"
-          ! helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${st[@]}" >/dev/null 2>&1 || err "$chart: the $stack relaygate example must refuse to render without relaygate.image.digest"
+          # No digest in the example: the relaygate chart's pinned image (self-hosted/customer-images.yaml).
+          [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "agent-relay-relaygate") | .spec.template.spec.containers[0].image' <<<"$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${st[@]}")")" = "ghcr.io/agentworkforce/relaygate@$(yq '.image.digest' charts/relaygate/values.yaml)" ] \
+            || err "$chart: the $stack relaygate example must deploy the relaygate chart's pinned digest"
           unset -n st
         done
         # global.relaygate.gateOnly.relayfactsRoutes (off by default) adds

@@ -264,7 +264,7 @@ agent-relay chart **0.7.77 or later** and the release-rendered edge above
 Cilium dataplane enforces the NetworkPolicy it relies on.
 
 1. In `relaygate-values.yaml`, replace `__HOST_HISTORY__` and `__HOST_ROOT__`,
-   set `relaygate.image.digest` and fill `policy.controlPrincipals` (your org
+   and fill `policy.controlPrincipals` (your org
    id, the admins' emails; no `readerKinds`). helm refuses to render until they
    are set.
 2. Create the admin Secret (used once, for the adopt in 4):

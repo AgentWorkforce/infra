@@ -4007,8 +4007,8 @@ compatibility:
       charts: { relaygate: 0.1.11 }
       app_versions: { relaygate: 0.1.0 }
       images:
-        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
-      notes: 'Carries 0.1.10. global.relaygate.gateOnly.scope sessions (sessions-only) makes proxy.relaycastUrl optional; an unknown scope fails the render. Default renders differ only in the helm.sh/chart label.'
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest: sha256:79d20158e921d8785470af209ebc33c8c117e6a6ca157cc421287949e1a31ef5 }
+      notes: 'Carries 0.1.10. global.relaygate.gateOnly.scope sessions (sessions-only) makes proxy.relaycastUrl optional; an unknown scope fails the render. image.digest now defaults to the published relaygate index sha256:79d20158 (relaygate main 1279d7b4: #48 Ed25519 upstream assertions, #49 relayfacts and coordination, #50), recorded in self-hosted/customer-images.yaml; the chart previously had no default image.'
     - id: relaygate-0.1.10
       status: planned
       charts: { relaygate: 0.1.10 }

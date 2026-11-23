@@ -349,7 +349,8 @@ Use the release packet's complete RDS values overlay. The historical
    one does, install without it. When it is available, pass the chart's
    `values-eks-relaygate.yaml` before the customer values on every install and
    upgrade (`tar -xOzf "$CHART_PACKAGE" agent-relay/values-eks-relaygate.yaml`),
-   set its REQUIRED values in the customer values (relaygate digest, the history
+   set its REQUIRED values in the customer values (the relaygate image mirrored by
+   its pinned digest, the history
    and dashboard hosts, `policy.controlPrincipals` without `readerKinds`,
    `eksIngress.domain` or `hosts` and `certificateArn`), and render the ALB from
    the release (`eksIngress.enabled`, which the profile sets):

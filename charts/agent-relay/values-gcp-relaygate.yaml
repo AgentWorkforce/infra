@@ -21,9 +21,8 @@ global:
       enabled: true
       scope: sessions
 relaygate:
-  image:
-    # REQUIRED: the published relaygate digest (sha256:<64 hex>).
-    digest: ""
+  # image.digest: the chart pins the published relaygate image; set it only
+  # to your mirror of that digest.
   persistence:
     size: 1Gi
   policy:

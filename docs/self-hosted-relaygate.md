@@ -128,9 +128,11 @@ The example values per platform (release name `agent-relay`):
 | EKS | `eksIngress` (render the ALB from the release; `scripts/selfhost/eks-alb-ingress.sh` has no gate mode): the history host goes to the relaygate Service, ALB health check `/healthz` | [`charts/agent-relay/values-eks-relaygate.yaml`](../charts/agent-relay/values-eks-relaygate.yaml) |
 | AKS | `traefikIngress` (the release-rendered form of `docs/azure-install/ingress.yaml`): the history host goes to the relaygate Service; denials go to the endpoint-less `edge-deny` Service (Traefik 503) | [`docs/azure-install/relaygate-values.yaml`](azure-install/relaygate-values.yaml), after the guide's `values.yaml`; AKS guide step 8b |
 
-helm refuses to render until each file's REQUIRED values are set (the relaygate
-image digest, the history host, the dashboard origin and your
-`controlPrincipals`), and names what is missing. `charts/agent-relay/ci/gate-sessions-{gke,eks,aks}-values.yaml`
+helm refuses to render until each file's REQUIRED values are set (the history
+host, the dashboard origin and your `controlPrincipals`), and names what is
+missing. The relaygate chart pins the published relaygate image by digest
+(recorded in `self-hosted/customer-images.yaml`); override `relaygate.image`
+only with your mirror of it. `charts/agent-relay/ci/gate-sessions-{gke,eks,aks}-values.yaml`
 are complete render examples.
 
 History routes relaygate serves on the history host: `/v1/sessions`,
@@ -152,8 +154,10 @@ Limits, until the images named here ship:
   relay-control puts the reader kind on read-token mints only when
   `SELFHOST_RELAYGATE_PUBLIC_URL` is set, which scope sessions leaves unset
   (it belongs to the Relaycast gate). relaygate fails closed, so a rule with
-  `readerKinds` matches no dashboard read. A relay-control change adds a
-  separate switch; the chart gets a key for it once its name is fixed.
+  `readerKinds` matches no dashboard read. relay-control #273 (held, in no
+  image yet) adds `SESSION_READ_MINT_INCLUDE_READER_KIND`; it is safe only where
+  `SESSION_READ_API_URL` is relaygate's 8081 listener, which is what
+  sessions-only renders. The chart gets a key for it once #273 ships in an image.
 - **Rules on `roles` need the role on read tokens:** set
   `relay-control.services.sessionReadMintIncludeRole: true` (renders
   `SESSION_READ_MINT_INCLUDE_ROLE=true`; off by default). Without it, list

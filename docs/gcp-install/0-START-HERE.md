@@ -647,12 +647,10 @@ pins (0.7.54) has no sessions-only mode, so with it skip this subsection.
    ```
 
 2. Add the site values to the end of `values.yaml` (your domain, org and
-   admins; the relaygate digest from the release):
+   admins; the chart pins the relaygate image):
 
    ```yaml
    relaygate:
-     image:
-       digest: sha256:<published relaygate digest>
      policy:
        controlPrincipals:   # no readerKinds (see the relaygate guide)
          - { match: { orgIds: [<org id>], emails: [<admin email>] }, gid: 33 }
