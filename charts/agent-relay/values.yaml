@@ -211,6 +211,12 @@ eksIngress:
   # Required when enabled: the base domain (<domain>, api., cast., history.)
   # and the ACM certificate that covers all four names.
   domain: ""                  # EKS_ALB_DOMAIN
+  # Or, instead of domain, explicit primary-edge hostnames (chart only):
+  #   hosts: { dashboard: app.example.com, api: api.example.com,
+  #            cast: cast.example.com, history: history.example.com }
+  # Exactly one of domain and hosts; hosts.history is required when
+  # history.enabled and refused otherwise.
+  hosts: {}
   certificateArn: ""          # EKS_ALB_CERT_ARN
   # More edges: each is another Ingress (its own ALB, so the listener-rule
   # quota is per edge) with the same routes as the primary and explicit

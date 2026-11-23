@@ -392,5 +392,65 @@ class EksExtraEdges(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, f'chart accepted {name}')
                 self.assertIn(message, result.stderr)
 
+
+class EksPrimaryHosts(unittest.TestCase):
+    """eksIngress.hosts: explicit per-role hostnames for the primary edge, instead of domain."""
+
+    def test_pattern_hosts_equal_the_script(self):
+        # Explicit hosts that follow the <domain> pattern render exactly what the script prints for that domain.
+        for name, env in CASES.items():
+            with self.subTest(case=name):
+                values = chart_values(env)
+                domain = values.pop('domain')
+                history = values.get('history', {}).get('enabled', True)
+                hosts = {'dashboard': domain, 'api': f'api.{domain}', 'cast': f'cast.{domain}'}
+                if history:
+                    hosts['history'] = f'history.{domain}'
+                values['hosts'] = hosts
+                got = helm(values)
+                self.assertEqual(got.returncode, 0, got.stderr)
+                self.assertEqual(comparable(ingress(got.stdout)), comparable(ingress(script(env).stdout)))
+
+    def test_explicit_hosts_with_extra_edge(self):
+        values = chart_values({'EKS_ALB_CHIEF_SERVICE': 'relaychief-control', 'EKS_ALB_HISTORY_READ_ONLY': 'true'})
+        del values['domain']
+        values['hosts'] = {'dashboard': 'app.example.com', 'api': 'api.example.com',
+                           'cast': 'cast.example.com', 'history': 'history.example.com'}
+        values['extraEdges'] = [pattern_edge('old.example.com', name='agent-relay-old')]
+        got = helm(values)
+        self.assertEqual(got.returncode, 0, got.stderr)
+        primary, extra = ingresses(got.stdout)
+        hosts = ['app.example.com', 'api.example.com', 'cast.example.com', 'history.example.com']
+        self.assertEqual([r['host'] for r in primary['spec']['rules']], hosts)
+        self.assertEqual(primary['spec']['tls'], [{'hosts': hosts}])
+        self.assertEqual(primary['metadata']['name'], 'agent-relay')
+        self.assertEqual(extra['metadata']['name'], 'agent-relay-old')
+        for a, b in zip(primary['spec']['rules'], extra['spec']['rules']):
+            self.assertEqual(a['http'], b['http'])
+
+    def test_refusals(self):
+        good = {'dashboard': 'app.example.com', 'api': 'api.example.com', 'cast': 'cast.example.com',
+                'history': 'history.example.com'}
+        bad = {
+            'domain and hosts': ({'hosts': good}, True, 'are exclusive'),
+            'neither': ({}, False, 'eksIngress.domain (the base domain) is required, or eksIngress.hosts'),
+            'not a map': ({'hosts': ['a']}, False, 'eksIngress.hosts must be a map'),
+            'missing history': ({'hosts': {k: v for k, v in good.items() if k != 'history'}}, False, 'hosts.history must be'),
+            'bad host': ({'hosts': {**good, 'api': 'https://api.example.com'}}, False, 'hosts.api must be'),
+            'repeated host': ({'hosts': {**good, 'cast': 'api.example.com'}}, False, 'must not repeat a hostname'),
+            'history with history off': ({'hosts': good, 'history': {'enabled': False}}, False, 'history.enabled is false'),
+            'extra edge reuses a primary host': ({'hosts': good, 'extraEdges': [pattern_edge('x.example.com') | {'hosts': {**pattern_edge('x.example.com')['hosts'], 'api': 'api.example.com'}}]}, False, 'must not repeat a hostname'),
+        }
+        for name, (extra, keep_domain, message) in bad.items():
+            with self.subTest(case=name):
+                values = chart_values({})
+                if not keep_domain:
+                    del values['domain']
+                for k, v in extra.items():
+                    values[k] = {**values.get(k, {}), **v} if k == 'history' else v
+                result = helm(values)
+                self.assertNotEqual(result.returncode, 0, f'chart accepted {name}')
+                self.assertIn(message, result.stderr)
+
 if __name__ == '__main__':
     unittest.main()
