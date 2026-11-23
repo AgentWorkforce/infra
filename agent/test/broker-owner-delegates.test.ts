@@ -512,8 +512,78 @@ test("IAM, identity and audit controls, deletes and wildcards are never an owner
   }
 });
 
+test("letter case never gets a delete past an owner delegate: IAM ignores an action's case, and so does the deletes limit", async () => {
+  // kms:ScheduleKeyDeletion is also on approvalOnly. Without that entry the deletes limit has to hold on its own.
+  const noKmsEntry = allowlist();
+  noKmsEntry.approvalOnly = noKmsEntry.approvalOnly.filter((a) => a !== "kms:ScheduleKeyDeletion");
+  const KEY = `arn:aws:kms:us-east-1:${HOSTS}:key/11111111-2222-3333-4444-555555555555`;
+  const cases: [Partial<CredentialRequest>, string, Allowlist?][] = [
+    [{ actions: ["secretsmanager:deletesecret"] }, "secretsmanager:deletesecret deletes"],
+    [{ actions: ["secretsmanager:GetSecretValue", "secretsmanager:dELETEsECRET"] }, "secretsmanager:dELETEsECRET deletes"],
+    [{ actions: ["ec2:TERMINATEINSTANCES"], resources: [INSTANCE] }, "ec2:TERMINATEINSTANCES deletes"],
+    [{ actions: ["kms:scheduleKeyDELETION"], resources: [KEY] }, "kms:scheduleKeyDELETION deletes", noKmsEntry],
+    [{ actions: ["secretsmanager:untagresource"] }, "secretsmanager:untagresource deletes"],
+  ];
+  for (const [over, why, list] of cases) {
+    const { broker, calls, audit } = setup({ list });
+    const { r, text } = await pend(broker, secretsReq(over));
+    assert.equal(r.ownerDelegable, false, JSON.stringify(over));
+    assert.equal(r.approver, OWNER);
+    const d = await dm(broker, DELEGATE, text);
+    assert.equal(d.outcome, "error", JSON.stringify(over));
+    assert.equal(d.reasons[0], `owner delegates cannot approve this: ${why}; needs ${OWNER}'s own DM`);
+    assert.ok(!("ownerNotice" in d));
+    assert.equal(calls.length, 0);
+    assert.ok(!audit().some((l) => l.kind === "approved"));
+    // Still pending: the owner's own DM approves it.
+    assert.equal((await dm(broker, OWNER, text, "1000003")).outcome, "issued", JSON.stringify(over));
+    assert.equal(calls.length, 1);
+  }
+  // The rule itself, on the request and on the session policy's allowed actions.
+  const policy = (action: string) => ({ Version: "2012-10-17" as const, Statement: [{ Sid: "x", Effect: "Allow" as const, Action: [action], Resource: TOKEN_SECRET }] });
+  for (const a of ["secretsmanager:deletesecret", "ec2:terminateinstances", "s3:REMOVEsomething", "sqs:purgequeue", "x:destroyThing", "kms:SCHEDULEkeyDELETION"]) {
+    assert.match(ownerDelegableProblem({ request: secretsReq({ actions: [a] }), sessionPolicy: policy(a) }, noKmsEntry) ?? "", new RegExp(`: ${a} deletes; `), a);
+    assert.match(ownerDelegableProblem({ request: secretsReq(), sessionPolicy: policy(a) }, noKmsEntry) ?? "", new RegExp(`: ${a} deletes; `), `${a} in the session policy only`);
+  }
+  // A write that is not a delete is still an owner delegate's to approve.
+  assert.equal(ownerDelegableProblem({ request: secretsReq({ actions: ["secretsmanager:putsecretvalue"] }), sessionPolicy: policy("secretsmanager:putsecretvalue") }, noKmsEntry), undefined);
+});
+
+test("a named pipe at the grant path grants nothing and never blocks the broker; a regular file there reads as before", async (t) => {
+  const { broker, calls, source, grantFile, list } = setup({ file: false });
+  try {
+    execFileSync("mkfifo", [grantFile], { stdio: "ignore" });
+  } catch {
+    t.skip("mkfifo is unavailable");
+    return;
+  }
+  const problem = `${grantFile} is not a regular file`;
+  // In its own process first, with a time limit: opening a pipe that has no writer blocks for ever unless the open is non-blocking.
+  const cli = new URL("../broker/src/cli.ts", import.meta.url).pathname;
+  const env: NodeJS.ProcessEnv = { ...process.env, BROKER_STATE_DIR: join(grantFile, "..", "cli-state"), BROKER_DELIVERY_DIR: join(grantFile, "..", "cli-creds"), BROKER_OWNER_DELEGATES_FILE: grantFile };
+  delete env.BROKER_RELAY_TOKEN_FILE;
+  const started = Date.now();
+  const out = JSON.parse(execFileSync(process.execPath, ["--no-warnings", cli, "owner-delegates"], { env, encoding: "utf8", timeout: 15_000 })) as { valid: number; problems: string[] };
+  assert.deepEqual({ valid: out.valid, problems: out.problems }, { valid: 0, problems: [problem] });
+  assert.ok(Date.now() - started < 15_000);
+  // In this process, and through the broker: the request stays the owner's to approve.
+  assert.deepEqual(source.load(NOW), { grants: [], problems: [problem] });
+  const { r, text } = await pend(broker);
+  assert.equal(r.ownerDelegable, false);
+  const d = await dm(broker, DELEGATE, text);
+  assert.equal(d.outcome, "error");
+  assert.equal(d.reasons[0], `${NOT_APPROVER} (owner-delegate grants unavailable: ${problem})`);
+  assert.equal(calls.length, 0);
+  assert.equal((await dm(broker, OWNER, text, "1000003")).outcome, "issued");
+  // A regular file at the same path is read exactly as before.
+  rmSync(grantFile);
+  writeFileSync(grantFile, grantFileBody());
+  chmodSync(grantFile, 0o644);
+  assert.deepEqual(hostFileSource(grantFile, list, asRoot).load(NOW), { grants: [{ agentId: DELEGATE_ID, expiresAt: "2026-12-01T00:00:00Z", grantedBy: OWNER, source: "host-file" }], problems: [] });
+});
+
 /** A command on one named instance in a region no automatic rule covers: it needs an approval. */
-const WEST_INSTANCE = `arn:aws:ec2:us-west-2:${HOSTS}:instance/i-0123456789abcdef0`;
+const WEST_INSTANCE =`arn:aws:ec2:us-west-2:${HOSTS}:instance/i-0123456789abcdef0`;
 const commandReq = (over: Partial<CredentialRequest> = {}): CredentialRequest =>
   secretsReq({ purpose: "run one command on the host", actions: ["ssm:SendCommand"], resources: [WEST_INSTANCE, "arn:aws:ssm:us-west-2::document/AWS-RunShellScript"], regions: ["us-west-2"], runTag: "one-command", ...over });
 

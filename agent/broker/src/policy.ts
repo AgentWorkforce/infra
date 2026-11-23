@@ -626,8 +626,12 @@ export function approverCounts(p: Principal, list: Allowlist): boolean {
 /** The longest a delegation may run from the moment it is used: a longer expiresAt is refused as misconfigured. */
 export const MAX_DELEGATION_DAYS = 30;
 
-/** Never delegable, whatever a capability says: IAM and identity, audit controls, never-issue, deletes, and wildcards. */
-export const DELETE_VERB_RE = /^(Delete|Terminate|Remove|Purge|Destroy|Untag|Schedule\w*Deletion)/;
+/**
+ * Never delegable, whatever a capability says: IAM and identity, audit controls, never-issue, deletes, and wildcards.
+ * In any letter case: IAM ignores the case of an action name and a request may spell one any way
+ * (ACTION_RE), so "secretsmanager:deletesecret" is the delete "secretsmanager:DeleteSecret" is.
+ */
+export const DELETE_VERB_RE = /^(Delete|Terminate|Remove|Purge|Destroy|Untag|Schedule\w*Deletion)/i;
 
 export function neverDelegable(action: string, list: Allowlist): string | undefined {
   if (/[*?]/.test(action)) return `${action} is a wildcard`;

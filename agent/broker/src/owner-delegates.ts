@@ -72,8 +72,10 @@ export function hostFileSource(path: string, list: Allowlist, facts: (fd: number
       let text: string;
       let fd: number;
       try {
-        // O_NOFOLLOW: a symlink is refused, never followed.
-        fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+        // O_NOFOLLOW: a symlink is refused, never followed. O_NONBLOCK: a named pipe with no writer (or a
+        // device) opens at once instead of blocking the broker, and is then refused as not a regular file.
+        // It changes nothing for a regular file.
+        fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       } catch (e) {
         const code = (e as NodeJS.ErrnoException).code;
         return none(code === "ENOENT" ? `${path} is missing` : code === "ELOOP" ? `${path} is a symlink` : `${path} is unreadable (${code ?? "error"})`);
