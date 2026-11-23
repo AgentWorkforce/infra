@@ -166,5 +166,88 @@ class AdvisorAnalysis(unittest.TestCase):
         self.assertTrue(any(d["kind"] == "NetworkPolicy" and d["metadata"]["name"].endswith("-model") for d in docs))
 
 
+    MINIO = "http://session-object-storage.agent-relay.svc.cluster.local:9000"
+    STATIC = {"s3Credentials": "static", "s3KeysSecret": {"name": "sessions-pipeline-locker", "accessKeyIdKey": "rootUser", "secretAccessKeyKey": "rootPassword"},
+              "s3Endpoint": MINIO, "allowInClusterHttp": True}
+
+    def analysis(self, docs):
+        return next(d for d in docs if d["kind"] == "Deployment" and d["spec"]["template"]["spec"]["containers"][0]["name"] == "session-analysis")
+
+    def test_analysis_pod_identity_default_renders_no_new_store_settings(self):
+        e = self.env(self.render({"sessionAnalysis": ANALYSIS}), "session-analysis")
+        self.assertEqual(e["SESSION_ANALYSIS_S3_CREDENTIALS"], "podIdentity")
+        for name in ("SESSION_ANALYSIS_S3_ENDPOINT", "ALLOW_IN_CLUSTER_HTTP", "SESSION_ANALYSIS_S3_VERSIONING_CHECK",
+                     "SESSION_ANALYSIS_S3_ACCESS_KEY_ID_FILE", "SESSION_ANALYSIS_S3_SECRET_ACCESS_KEY_FILE",
+                     "SESSION_ANALYSIS_S3_ACCESS_KEY_ID", "SESSION_ANALYSIS_S3_SECRET_ACCESS_KEY"):
+            self.assertNotIn(name, e)
+        e = self.env(self.render({"sessionAnalysis": dict(ANALYSIS, s3VersioningCheck="true")}), "session-analysis")
+        self.assertEqual(e["SESSION_ANALYSIS_S3_VERSIONING_CHECK"], "true")
+        e = self.env(self.render({"sessionAnalysis": dict(ANALYSIS, s3Endpoint="https://s3.example.com")}), "session-analysis")
+        self.assertEqual(e["SESSION_ANALYSIS_S3_CREDENTIALS"], "podIdentity")
+        self.assertEqual(e["SESSION_ANALYSIS_S3_ENDPOINT"], "https://s3.example.com")
+        self.assertEqual(e["ALLOW_IN_CLUSTER_HTTP"], "false")
+
+    def test_analysis_static_keys_with_in_cluster_minio(self):
+        docs = self.render({"sessionAnalysis": dict(ANALYSIS, **self.STATIC)})
+        e = self.env(docs, "session-analysis")
+        self.assertEqual(e["SESSION_ANALYSIS_S3_CREDENTIALS"], "static")
+        self.assertEqual(e["SESSION_ANALYSIS_S3_ENDPOINT"], self.MINIO)
+        self.assertEqual(e["ALLOW_IN_CLUSTER_HTTP"], "true")
+        self.assertEqual(e["SESSION_ANALYSIS_S3_ACCESS_KEY_ID_FILE"], "/var/run/session-analysis/s3/access-key-id")
+        self.assertEqual(e["SESSION_ANALYSIS_S3_SECRET_ACCESS_KEY_FILE"], "/var/run/session-analysis/s3/secret-access-key")
+        self.assertNotIn("SESSION_ANALYSIS_S3_VERSIONING_CHECK", e)
+        self.assertFalse([k for k in e if k.startswith("AWS_") or k in ("SESSION_ANALYSIS_S3_ACCESS_KEY_ID", "SESSION_ANALYSIS_S3_SECRET_ACCESS_KEY")])
+        spec = self.analysis(docs)["spec"]["template"]["spec"]
+        vol = next(v for v in spec["volumes"] if v["name"] == "s3-keys")
+        self.assertEqual(vol["secret"]["secretName"], "sessions-pipeline-locker")
+        self.assertEqual(vol["secret"]["items"], [{"key": "rootUser", "path": "access-key-id"}, {"key": "rootPassword", "path": "secret-access-key"}])
+        mount = next(m for m in spec["containers"][0]["volumeMounts"] if m["name"] == "s3-keys")
+        self.assertEqual(mount, {"name": "s3-keys", "mountPath": "/var/run/session-analysis/s3", "readOnly": True})
+        sa = next(d for d in docs if d["kind"] == "ServiceAccount" and d["metadata"]["name"] == spec["serviceAccountName"])
+        self.assertNotIn("annotations", sa["metadata"])
+        for endpoint in ("http://minio.ns.svc:9000", "http://minio.ns.svc", "https://minio.example.com", "https://minio.example.com:9000/", "http://localhost:9000", "http://127.0.0.1:9000"):
+            with self.subTest(endpoint=endpoint):
+                e = self.env(self.render({"sessionAnalysis": dict(ANALYSIS, **dict(self.STATIC, s3Endpoint=endpoint))}), "session-analysis")
+                self.assertEqual(e["SESSION_ANALYSIS_S3_ENDPOINT"], endpoint)
+        e = self.env(self.render({"sessionAnalysis": dict(ANALYSIS, **dict(self.STATIC, s3Endpoint="", allowInClusterHttp=False))}), "session-analysis")
+        self.assertEqual(e["SESSION_ANALYSIS_S3_CREDENTIALS"], "static")
+        self.assertNotIn("SESSION_ANALYSIS_S3_ENDPOINT", e)
+        self.assertNotIn("ALLOW_IN_CLUSTER_HTTP", e)
+
+    def test_analysis_static_network_policy_needs_no_workload_identity(self):
+        minio = [{"podSelector": {"matchLabels": {"app": "minio"}}}]
+        peer = [{"ipBlock": {"cidr": "10.0.0.0/8"}}]
+        netpol = {"enabled": True, "dns": {"to": peer}, "database": {"to": peer}, "objectStorage": {"to": minio, "ports": [{"protocol": "TCP", "port": 9000}]}}
+        docs = self.render({"networkPolicy": netpol, "sessionAnalysis": dict(ANALYSIS, run=True, modelEgress={"enabled": True, "to": peer}, **self.STATIC)})
+        shared = next(d for d in docs if d["kind"] == "NetworkPolicy" and not d["metadata"]["name"].endswith("-model") and d["spec"]["policyTypes"] == ["Ingress", "Egress"])
+        self.assertIn({"to": minio, "ports": [{"protocol": "TCP", "port": 9000}]}, shared["spec"]["egress"])
+
+    def test_analysis_store_refusals(self):
+        for extra, msg in [
+            ({"s3Credentials": "role"}, "must be podIdentity or static"),
+            ({"s3Credentials": "static", "s3KeysSecret": {"name": ""}}, "s3Credentials=static needs sessionAnalysis.s3KeysSecret.name"),
+            ({"s3Credentials": "static", "s3KeysSecret": {"name": "keys", "accessKeyIdKey": ""}}, "s3KeysSecret.accessKeyIdKey must be a Secret data key"),
+            ({"s3Credentials": "static", "s3KeysSecret": {"name": "keys", "secretAccessKeyKey": "a/b"}}, "s3KeysSecret.secretAccessKeyKey must be a Secret data key"),
+            ({"s3Credentials": "static", "s3KeysSecret": {"name": "keys", "accessKeyIdKey": "k", "secretAccessKeyKey": "k"}}, "must be different keys"),
+            ({"s3KeysSecret": {"name": "keys"}}, "s3KeysSecret is used only with s3Credentials=static"),
+            ({"s3Endpoint": "http://session-object-storage.agent-relay.svc.cluster.local:9000"}, "needs sessionAnalysis.allowInClusterHttp=true"),
+            ({"s3Endpoint": "http://minio.example.com:9000", "allowInClusterHttp": True}, "s3Endpoint must be a bare lowercase origin"),
+            ({"s3Endpoint": "http://10.0.0.5:9000", "allowInClusterHttp": True}, "s3Endpoint must be a bare lowercase origin"),
+            ({"s3Endpoint": "http://minio:9000", "allowInClusterHttp": True}, "s3Endpoint must be a bare lowercase origin"),
+            ({"s3Endpoint": "https://minio.example.com/bucket"}, "s3Endpoint must be a bare lowercase origin"),
+            ({"s3Endpoint": "https://user:pw@minio.example.com"}, "s3Endpoint must be a bare lowercase origin"),
+            ({"s3Endpoint": "https://minio.example.com?x=1"}, "s3Endpoint must be a bare lowercase origin"),
+            ({"s3Endpoint": "minio.example.com"}, "s3Endpoint must be a bare lowercase origin"),
+            ({"s3Endpoint": "https://storage.googleapis.com"}, "must not be the GCS API host"),
+            ({"s3Endpoint": "https://bucket.storage.googleapis.com"}, "must not be the GCS API host"),
+            ({"allowInClusterHttp": True}, "allowInClusterHttp=true needs sessionAnalysis.s3Endpoint"),
+            ({"allowInClusterHttp": "true", "s3Endpoint": "https://minio.example.com"}, "allowInClusterHttp must be true or false"),
+            ({"s3VersioningCheck": "false"}, "s3VersioningCheck must be"),
+            ({"s3VersioningCheck": False}, "s3VersioningCheck must be"),
+            ({"s3VersioningCheck": "yes"}, "s3VersioningCheck must be"),
+        ]:
+            with self.subTest(msg=msg, extra=extra):
+                self.render({"sessionAnalysis": merge(yaml.safe_load(yaml.safe_dump(ANALYSIS)), extra)}, fail=msg)
+
 if __name__ == "__main__":
     unittest.main()

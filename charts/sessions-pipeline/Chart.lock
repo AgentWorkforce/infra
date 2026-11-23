@@ -1,7 +1,7 @@
 dependencies:
 - name: sessions-pipeline-worker
   repository: file://../sessions-pipeline-worker
-  version: 0.7.13
+  version: 0.7.14
 - name: session-ingest-api
   repository: file://../session-ingest-api
   version: 0.4.5
@@ -17,5 +17,5 @@ dependencies:
 - name: opentelemetry-collector
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.178.0
-digest: sha256:b0f916b673877044437145397a4482fd19b6e2c4dc9dd2de2dbc6b4a11670ac8
-generated: "2026-11-22T22:32:23.172253385-08:00"
+digest: sha256:3f1a97332a861626bdcd25277bfd229addbddf1e5a186aee2aee2fe76b62a1af
+generated: "2026-11-22T22:42:51.508440588-08:00"

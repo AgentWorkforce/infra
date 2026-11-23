@@ -415,9 +415,37 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.54
+    - id: sessions-pipeline-0.8.55
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.55, sessions-pipeline-worker: 0.7.14, session-ingest-api: 0.4.5, session-read-api: 0.2.16 }
+      depends:
+        sessions-pipeline: { worker: 0.7.14, alleyoop: 0.4.5, sessionReadApi: 0.2.16, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: fresh PG16+ installs use the membership-free separate-database owner graph; legacy and PG15 installs remain master-owner }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: the administrator runs the one-time bootstrap and the migration Job uses hoopdb_owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline/templates/_scrub-engine.tpl:1"
+        - "ci/sessions-pipeline-scrub-engine/test_scrub_engine.py:1"
+      notes: 'Carries 0.8.54 and sessions-pipeline-worker 0.7.14: worker.sessionAnalysis gains s3Credentials static (keys mounted as files from an existing Secret named in s3KeysSecret), s3Endpoint (an S3-compatible store such as the bundled MinIO), allowInClusterHttp and s3VersioningCheck, with render-time refusals for the combinations the runner refuses. Static mode and the endpoint need a services image with the runner S3-compatible store support (relayhistory-pipeline 9b29a3dd); the pinned image predates it. The podIdentity default renders exactly as before. Default renders are unchanged apart from chart versions.'
+    - id: sessions-pipeline-0.8.54
+      status: planned
       charts: { sessions-pipeline: 0.8.54, sessions-pipeline-worker: 0.7.13, session-ingest-api: 0.4.5, session-read-api: 0.2.16 }
       depends:
         sessions-pipeline: { worker: 0.7.13, alleyoop: 0.4.5, sessionReadApi: 0.2.16, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -2104,9 +2132,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.74
+    - id: agent-relay-0.7.75
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.75, relay-control: 0.4.24, relay-webapp: 0.2.8 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.55, relay-control: 0.4.24, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.74 and sessions-pipeline 0.8.55 (session-analysis static keys and S3-compatible endpoint for the bundled MinIO; default off).'
+    - id: agent-relay-0.7.74
+      status: planned
       charts: { agent-relay: 0.7.74, relay-control: 0.4.24, relay-webapp: 0.2.8 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -5561,8 +5602,14 @@ entries:
       replica, Recreate, 660 s grace), its own ServiceAccount for an EKS Pod
       Identity association and an optional model-API egress policy;
       worker.sessionAnalysis.run sets SESSION_ANALYSIS_ENABLED, so the pod can
-      ship dormant first. It reads canonical evidence from S3 only (no GCS or
-      Azure Blob yet) and writes analysis results, so it needs the bucket and
+      ship dormant first. It reads canonical evidence from S3 or an
+      S3-compatible store only (no GCS or Azure Blob yet): EKS Pod Identity
+      (s3Credentials podIdentity, the default) or static keys file-mounted from
+      an existing Secret (s3Credentials static, s3KeysSecret), with an optional
+      s3Endpoint (the bundled MinIO over in-cluster http needs
+      allowInClusterHttp) and s3VersioningCheck. Static keys and the endpoint
+      need a services image with relayhistory-pipeline 9b29a3dd or later; the
+      pinned image predates it. It writes analysis results, so it needs the bucket and
       region, the key root, a model key Secret and the HoopDb runtime role's own
       database login Secret, mounted as files. The S3/KMS grants (cross-account,
       cross-region) are per relayhistory-pipeline docs/session-analysis-runner.md
@@ -5570,13 +5617,13 @@ entries:
       rendered. Operator session erase refuses to render while it is enabled
       (it writes create-only results with no erase obligation yet).
     values: [worker.sessionAnalysis.*]
-    env: [SESSION_ANALYSIS_ENABLED, SESSION_ANALYSIS_OPENAI_API_KEY_FILE, SESSION_ANALYSIS_DATABASE_URL_FILE, SESSION_ANALYSIS_S3_BUCKET, SESSION_ANALYSIS_S3_REGION, SESSION_ANALYSIS_S3_CREDENTIALS, PIPELINE_KEY_PREFIX, PIPELINE_ORG_FROM_PREFIX, SESSION_ANALYSIS_TICK_MS, SESSION_ANALYSIS_BATCH, SESSION_ANALYSIS_PG_POOL_MAX, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, SUMMARY_DECISION_RECORDS_ENABLED, SESSION_ANALYSIS_CUTOVER_PROOF]
+    env: [SESSION_ANALYSIS_ENABLED, SESSION_ANALYSIS_OPENAI_API_KEY_FILE, SESSION_ANALYSIS_DATABASE_URL_FILE, SESSION_ANALYSIS_S3_BUCKET, SESSION_ANALYSIS_S3_REGION, SESSION_ANALYSIS_S3_CREDENTIALS, SESSION_ANALYSIS_S3_ACCESS_KEY_ID_FILE, SESSION_ANALYSIS_S3_SECRET_ACCESS_KEY_FILE, SESSION_ANALYSIS_S3_ENDPOINT, ALLOW_IN_CLUSTER_HTTP, SESSION_ANALYSIS_S3_VERSIONING_CHECK, PIPELINE_KEY_PREFIX, PIPELINE_ORG_FROM_PREFIX, SESSION_ANALYSIS_TICK_MS, SESSION_ANALYSIS_BATCH, SESSION_ANALYSIS_PG_POOL_MAX, SESSION_POSTGRES_TLS_PROFILE, SESSION_POSTGRES_CA_FILE, SESSION_POSTGRES_CA_SHA256, SUMMARY_DECISION_RECORDS_ENABLED, SESSION_ANALYSIS_CUTOVER_PROOF]
     profiles: [aws-cnpg, aws-rds-native, external-rds]
     provided_by: operator
     default: false
     choices:
       - { value: false }
-      - { value: true, note: "S3 only. Needs a services image with SERVICE=session-analysis, the analysis migrations (046000) and the Pod Identity role with the documented S3/KMS grants." }
+      - { value: true, note: "S3 or S3-compatible only. Needs a services image with SERVICE=session-analysis, the analysis migrations (046000) and either the Pod Identity role with the documented S3/KMS grants or, with static keys, an image with relayhistory-pipeline 9b29a3dd or later and a versioned bucket." }
     secrets:
       - name: "<session-analysis model key Secret>"
         name_paths: [worker.sessionAnalysis.modelKeySecret.name]
@@ -5586,7 +5633,12 @@ entries:
         name_paths: [worker.sessionAnalysis.databaseSecret.name]
         keys:
           - { key: SESSION_ANALYSIS_DATABASE_URL, key_path: worker.sessionAnalysis.databaseSecret.key }
-    verify: Render nothing by default; render the dormant Deployment with its own ServiceAccount, file-mounted secrets, 660 s grace and the documented probes; render run=true with tick, batch and custom-ca; refuse a missing bucket, region, key root or Secret, non-podIdentity credentials, replicas above 1, out-of-range tick or batch, custom-ca without its CA and an empty egress list.
+      - name: "<session-analysis static S3 keys Secret>"
+        name_paths: [worker.sessionAnalysis.s3KeysSecret.name]
+        keys:
+          - { key: LOCKER_ACCESS_KEY_ID, key_path: worker.sessionAnalysis.s3KeysSecret.accessKeyIdKey }
+          - { key: LOCKER_SECRET_ACCESS_KEY, key_path: worker.sessionAnalysis.s3KeysSecret.secretAccessKeyKey }
+    verify: Render nothing by default; render the dormant Deployment with its own ServiceAccount, file-mounted secrets, 660 s grace and the documented probes; render run=true with tick, batch and custom-ca; podIdentity renders exactly the pre-static env; static renders the key files from s3KeysSecret, an in-cluster http endpoint with allowInClusterHttp and needs no workloadIdentity rule; refuse a missing bucket, region, key root or Secret, credentials other than podIdentity or static, static without s3KeysSecret, s3KeysSecret with podIdentity, an endpoint with a path, query, credentials or plain http outside loopback and in-cluster Service names, in-cluster http without allowInClusterHttp, the GCS API host, allowInClusterHttp without an endpoint, s3VersioningCheck other than empty or true, replicas above 1, out-of-range tick or batch, custom-ca without its CA and an empty egress list.
     sources: ["charts/sessions-pipeline-worker/templates/session-analysis.yaml:1", "ci/sessions-pipeline-worker-advisor-analysis/test_chart.py:1"]
 
   - id: opt.relay-control.collector-analytics
