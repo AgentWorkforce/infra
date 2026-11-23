@@ -64,7 +64,37 @@
 {{- range $k := list "bucket" "bucketRegion" "keyPrefix" }}{{ if not (get $s $k) }}{{ fail (printf "sessions-pipeline-worker: sessionAnalysis.%s is required when sessionAnalysis.enabled=true" $k) }}{{ end }}{{ end -}}
 {{- if not $s.modelKeySecret.name }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelKeySecret.name is required when sessionAnalysis.enabled=true" }}{{ end -}}
 {{- if not $s.databaseSecret.name }}{{ fail "sessions-pipeline-worker: sessionAnalysis.databaseSecret.name is required when sessionAnalysis.enabled=true (the runtime role's own login)" }}{{ end -}}
-{{- if ne ($s.s3Credentials | default "podIdentity") "podIdentity" }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Credentials must be podIdentity (IRSA and static keys are not supported in a pod)" }}{{ end -}}
+{{- $creds := $s.s3Credentials | default "podIdentity" -}}
+{{- if not (has $creds (list "podIdentity" "static")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Credentials must be podIdentity or static (IRSA is not supported; role is for local tests only)" }}{{ end -}}
+{{- $keys := $s.s3KeysSecret | default dict -}}
+{{- if eq $creds "static" -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" ($keys.name | default "")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Credentials=static needs sessionAnalysis.s3KeysSecret.name, the name of an existing Secret holding the access key id and secret key" }}{{ end -}}
+{{- range $k := list "accessKeyIdKey" "secretAccessKeyKey" }}{{ if not (regexMatch "^[-._a-zA-Z0-9]{1,253}$" ((get $keys $k) | default "")) }}{{ fail (printf "sessions-pipeline-worker: sessionAnalysis.s3KeysSecret.%s must be a Secret data key ([-._a-zA-Z0-9]) with s3Credentials=static" $k) }}{{ end }}{{ end -}}
+{{- if eq $keys.accessKeyIdKey $keys.secretAccessKeyKey }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3KeysSecret.accessKeyIdKey and secretAccessKeyKey must be different keys" }}{{ end -}}
+{{- else if $keys.name -}}
+{{- fail "sessions-pipeline-worker: sessionAnalysis.s3KeysSecret is used only with s3Credentials=static (the runner refuses static keys with podIdentity)" -}}
+{{- end -}}
+{{- $endpoint := $s.s3Endpoint | default "" -}}
+{{- if not (kindIs "string" $endpoint) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Endpoint must be a string" }}{{ end -}}
+{{- $allowHttp := $s.allowInClusterHttp | default false -}}
+{{- if not (kindIs "bool" $allowHttp) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.allowInClusterHttp must be true or false" }}{{ end -}}
+{{- if $endpoint -}}
+{{- $label := "[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?" -}}
+{{- $port := "(:[0-9]{1,5})?/?" -}}
+{{- /* https: any well-formed lowercase host, as the runner allows (TLS is the boundary; IP literals and single labels included). */ -}}
+{{- $https := regexMatch (printf "^https://%s(\\.%s)*%s$" $label $label $port) $endpoint -}}
+{{- $loopback := regexMatch (printf "^http://(localhost|127\\.0\\.0\\.1|\\[::1\\])%s$" $port) $endpoint -}}
+{{- $service := regexMatch (printf "^http://%s\\.%s\\.svc(\\.cluster\\.local)?%s$" $label $label $port) $endpoint -}}
+{{- if not (or $https $loopback $service) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Endpoint must be a bare lowercase origin: https://<host>[:port], or plain http only to loopback or a Kubernetes Service name <svc>.<ns>.svc[.cluster.local] (no credentials, path, query or fragment)" }}{{ end -}}
+{{- $explicitPort := regexFind ":[0-9]+/?$" $endpoint | trimPrefix ":" | trimSuffix "/" -}}
+{{- if and $explicitPort (or (lt (atoi $explicitPort) 1) (gt (atoi $explicitPort) 65535)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Endpoint port must be from 1 to 65535" }}{{ end -}}
+{{- if and $service (not $allowHttp) }}{{ fail "sessions-pipeline-worker: a plain-http in-cluster sessionAnalysis.s3Endpoint needs sessionAnalysis.allowInClusterHttp=true (the runner refuses it otherwise)" }}{{ end -}}
+{{- if regexMatch "^https?://(storage\\.googleapis\\.com|.+\\.storage\\.googleapis\\.com|storage\\.google\\.com)\\.?(:[0-9]+)?/?$" $endpoint }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Endpoint must not be the GCS API host (the runner refuses GCS as provider_unsupported)" }}{{ end -}}
+{{- else if $allowHttp -}}
+{{- fail "sessions-pipeline-worker: sessionAnalysis.allowInClusterHttp=true needs sessionAnalysis.s3Endpoint (the runner reads it only with an endpoint)" -}}
+{{- end -}}
+{{- $check := $s.s3VersioningCheck -}}
+{{- if not (or (kindIs "invalid" $check) (eq (toString $check) "") (eq (toString $check) "true")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3VersioningCheck must be \"\" (the runner decides: on with s3Endpoint or static keys) or \"true\"; the check cannot be turned off" }}{{ end -}}
 {{- if ne (.Values.locker.provider | default "s3") "s3" }}{{ fail "sessions-pipeline-worker: sessionAnalysis reads canonical evidence from S3 only; it requires locker.provider=s3" }}{{ end -}}
 {{- $t := $s.postgresTls | default dict -}}
 {{- if not (has ($t.profile | default "") (list "" "supabase" "custom-ca")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.postgresTls.profile must be empty, supabase or custom-ca" }}{{ end -}}
@@ -76,9 +106,9 @@
 {{- end }}
 {{- if not (has ($s.decisionRecords | default "") (list "" "true" "false")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.decisionRecords must be empty, \"true\" or \"false\"" }}{{ end -}}
 {{- if and $s.modelEgress.enabled (empty $s.modelEgress.to) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelEgress.to must list destinations when modelEgress.enabled=true (an empty to would allow every destination)" }}{{ end -}}
-{{- if and $s.modelEgress.enabled (not .Values.networkPolicy.enabled) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelEgress requires networkPolicy.enabled (alone it would isolate the pod from DNS, the database, S3 and the Pod Identity agent)" }}{{ end -}}
+{{- if and $s.modelEgress.enabled (not .Values.networkPolicy.enabled) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelEgress requires networkPolicy.enabled (alone it would isolate the pod from DNS, the database, object storage and, with podIdentity, the Pod Identity agent)" }}{{ end -}}
 {{- if and .Values.networkPolicy.enabled $s.run (not $s.modelEgress.enabled) }}{{ fail "sessions-pipeline-worker: with networkPolicy.enabled, sessionAnalysis.run=true needs sessionAnalysis.modelEgress for the model API" }}{{ end -}}
-{{- if and .Values.networkPolicy.enabled (empty (dig "workloadIdentity" "to" (list) .Values.networkPolicy)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis always uses EKS Pod Identity; with networkPolicy.enabled, networkPolicy.workloadIdentity.to must list the Pod Identity agent" }}{{ end -}}
+{{- if and .Values.networkPolicy.enabled (eq $creds "podIdentity") (empty (dig "workloadIdentity" "to" (list) .Values.networkPolicy)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis with s3Credentials=podIdentity uses EKS Pod Identity; with networkPolicy.enabled, networkPolicy.workloadIdentity.to must list the Pod Identity agent" }}{{ end -}}
 {{- end -}}
 {{- end }}
 

@@ -370,6 +370,69 @@ kubectl -n agent-relay rollout status deploy/agent-relay-search-indexer deploy/a
 **Done when:** the bootstrap Job is complete, both rollouts finish, and a
 workspace search that answered 501 `session_partial` answers 200.
 
+### 13. Session analysis (optional)
+
+The session-analysis worker (`SERVICE=session-analysis`) can run against the
+bundled MinIO with static keys. It is off by default. Before you start:
+
+- **Image.** Static keys and the MinIO endpoint need a services image with the
+  runner's S3-compatible store support (relayhistory-pipeline 9b29a3dd or
+  later). The services image this release pins predates it. On that image
+  the pod exits 2 at startup with `credentials_mode_invalid`, so pin a newer
+  image in `release-images.values.yaml` first.
+- **Versioning.** The runner checks at startup that the bucket is versioned
+  and refuses to start otherwise (`bucket_not_versioned`). The worker's
+  `locker-init` Job (`lockerInit.enabled: true` in `values.yaml`) runs the
+  services' `SERVICE=locker-init`. It creates the Locker bucket if needed and
+  enables versioning on it, also on an existing unversioned bucket. So
+  `sessionAnalysis.bucket` must be that same bucket (`__SESSIONS_BUCKET__`).
+- **Model key.** It needs the `agent-relay-llm` Secret from step 11.
+- **Database login.** It uses the HoopDb runtime role, from a Secret of its
+  own. The runner refuses `ssl*` query parameters in the URL (TLS comes from
+  `postgresTls`), so the URL is the runtime role's `HOOPDB_URL` without
+  `?sslmode=verify-full`:
+
+```sh
+S=~/.agent-relay-install/secret-files
+( umask 077; mkdir -p "$S/session-analysis-db"
+sed 's/?sslmode=verify-full$//' "$S/agent-relay-secrets/HOOPDB_URL" > "$S/session-analysis-db/url" )
+put_secret session-analysis-db --from-file="$S/session-analysis-db"   # put_secret from step 5
+```
+
+Uncomment the `sessionAnalysis` block under `sessions-pipeline.worker` in
+`values.yaml`. It reads the MinIO keys from the existing
+`sessions-pipeline-locker` Secret by name, and the chart never takes key
+values. Keep `run: false` for the first upgrade.
+
+The newer services image renames the worker `migrate` and `locker-init` Jobs,
+so Helm runs them again. On an install whose `~/.agent-relay-install/hoopdb-layout` is
+`legacy-admin`, the migration Job reads the temporary `hoopdb-admin-jobs` Secret,
+which no longer exists: do not run the command below. Keep `$CHART` and the
+updated `release-images.values.yaml`, set `NEW_DIR=release`, and run the
+script in [Upgrades](#upgrades-dedicated-owner-and-legacy-temporary-credentials)
+from `release_jobs()` on. It creates the Secret, upgrades with the new
+values, waits for the Jobs and deletes the Secret. Every other install:
+
+```sh
+helm upgrade agent-relay "$CHART" --namespace agent-relay \
+  -f release/agent-relay/values-eks.yaml -f values.yaml \
+  -f ~/.agent-relay-install/hoopdb-layout-values.yaml -f release-images.values.yaml --timeout 25m
+kubectl -n agent-relay rollout status deploy/agent-relay-worker-session-analysis --timeout=10m
+```
+
+Then set `run: true` and upgrade again. If the pod exits with code 2, its log
+line names the refused setting (for example `endpoint_invalid` or
+`bucket_not_versioned`). Exit code 1 (for example
+`bucket_versioning_unavailable`) means MinIO was not reachable yet, and the
+pod retries.
+
+This guide does not turn on the worker NetworkPolicy. If you turn it on, list
+the MinIO pods in `worker.networkPolicy.objectStorage.to` with port 9000, and
+the model API in `sessionAnalysis.modelEgress`. With static keys no workload
+identity rule is needed.
+
+**Done when:** the rollout finishes with `run: true` and the pod stays Ready.
+
 ## Upgrades: dedicated owner and legacy temporary credentials
 
 Fresh installs use `hoopdb_owner`, which has neither `SUPERUSER` nor

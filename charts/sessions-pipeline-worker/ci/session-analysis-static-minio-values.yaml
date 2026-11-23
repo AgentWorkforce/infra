@@ -1,0 +1,56 @@
+# session-analysis against the bundled in-cluster MinIO with static keys
+# (s3Credentials: static), as on a self-hosted install with no workload
+# identity. The keys come from an existing Secret by name; the chart never
+# takes their values. With networkPolicy on, the shared worker policy
+# reaches MinIO through objectStorage; no workloadIdentity rule is needed.
+existingSecret: sessions-pipeline
+locker:
+  endpoint: http://session-object-storage:9000
+tenant:
+  orgId: org_ci
+migrations:
+  databaseMode: selfhosted
+  supabaseShim: true
+  runtimeRole: sessions_pipeline_runtime
+  runtimeRoleLogin: true
+  functionBoundaryMode: global-default-revoke
+networkPolicy:
+  enabled: true
+  dns:
+    to:
+      - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+        podSelector: { matchLabels: { k8s-app: kube-dns } }
+  database:
+    to:
+      - podSelector: { matchLabels: { cnpg.io/cluster: hoopdb } }
+  # The bundled MinIO's pods, on its S3 API port.
+  objectStorage:
+    to:
+      - podSelector: { matchLabels: { app: minio, release: ci } }
+    ports:
+      - { protocol: TCP, port: 9000 }
+sessionAnalysis:
+  enabled: true
+  run: false
+  bucket: sessions-pipeline-ci
+  # MinIO's default region; the runner signs for it.
+  bucketRegion: us-east-1
+  keyPrefix: 96bulls
+  s3Credentials: static
+  s3KeysSecret:
+    name: sessions-pipeline-locker
+    accessKeyIdKey: rootUser
+    secretAccessKeyKey: rootPassword
+  s3Endpoint: http://session-object-storage.ci.svc.cluster.local:9000
+  allowInClusterHttp: true
+  modelKeySecret:
+    name: agent-relay-llm
+    key: OPENAI_API_KEY
+  databaseSecret:
+    name: session-analysis-db
+    key: url
+  postgresTls:
+    profile: custom-ca
+    caConfigMap: postgres-ca
+    caKey: ca.crt
+    sha256: "0000000000000000000000000000000000000000000000000000000000000000"

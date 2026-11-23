@@ -240,6 +240,33 @@ sessions-pipeline:
       bob-costas:
         env:
           - { name: BOB_COSTAS_MODEL, value: "off" }
+    # Session analysis (optional, off): README step 13. Static keys against the
+    # bundled MinIO; needs a services image that carries the runner's
+    # S3-compatible store support (the release's pinned image predates it).
+    # sessionAnalysis:
+    #   enabled: true
+    #   run: false                     # ship dormant first; true starts claiming jobs
+    #   bucket: __SESSIONS_BUCKET__
+    #   bucketRegion: us-east-1        # MinIO's default region
+    #   keyPrefix: 96bulls
+    #   s3Credentials: static
+    #   s3KeysSecret:                  # an existing Secret; the chart takes names only
+    #     name: sessions-pipeline-locker
+    #     accessKeyIdKey: rootUser
+    #     secretAccessKeyKey: rootPassword
+    #   s3Endpoint: http://session-object-storage.agent-relay.svc.cluster.local:9000
+    #   allowInClusterHttp: true       # plain http to the in-cluster MinIO Service
+    #   modelKeySecret:
+    #     name: agent-relay-llm
+    #     key: OPENAI_API_KEY
+    #   databaseSecret:                # the runtime role's URL without ?sslmode=
+    #     name: session-analysis-db
+    #     key: url
+    #   postgresTls:
+    #     profile: custom-ca
+    #     caConfigMap: postgres-ca
+    #     caKey: ca.crt
+    #     sha256: __POSTGRES_CA_SHA256__
 
   # The legacy RelayAuth ingest path is unused: uploads go to the ingest edge.
   alleyoop:

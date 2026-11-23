@@ -9,6 +9,13 @@ destinations fail closed instead; a rule is rendered only with destinations. */ 
 {{- range $name := $required }}
 {{- if empty (dig "to" (list) (index $.Values.networkPolicy $name | default dict)) }}{{ fail (printf "sessions-pipeline-worker: networkPolicy.%s.to must list destinations when networkPolicy.enabled=true (an empty to would allow every destination)" $name) }}{{ end -}}
 {{- end }}
+{{- /* The session-analysis pod carries the same selector labels, so this policy
+covers it too. With sessionAnalysis.s3Credentials=static and the bundled
+in-cluster MinIO, objectStorage.to selects the MinIO pods (NetworkPolicy
+matches pods, not the Service) with the MinIO API port (9000) in
+objectStorage.ports, and no workloadIdentity rule is needed. With
+podIdentity, workloadIdentity.to must list the Pod Identity agent
+(validateAnalysis refuses otherwise). */}}
 # Worker pods only dial out (database, object storage, workload identity,
 # cluster DNS, optional OTLP): no Service ever selects them, so ingress stays
 # fully denied and each egress destination must be listed explicitly.
