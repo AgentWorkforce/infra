@@ -42,6 +42,8 @@ export interface AuditEvent {
   reasons?: string[];
   /** On an approval by a delegated approver: who, under which capability and grants, until when. */
   delegation?: { delegate: string; capability: string; grants: string[]; expiresAt: string };
+  /** On an approval by an owner delegate (the approver above): the grant it used, by Relay agent id, whose delegate, until when, read from where. */
+  ownerDelegation?: { agentId: string; grantedBy: string; expiresAt: string; source: string };
 }
 
 export interface AuditLine extends AuditEvent {

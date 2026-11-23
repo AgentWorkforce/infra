@@ -12,6 +12,8 @@
  *   cli.ts verify-audit
  *   cli.ts ship-audit                 copy new audit lines to CloudWatch (ship.ts); a systemd timer runs it every minute
  *   cli.ts whois   --name N          read-only: N's Relay agent id and type (to pin delegatedApprovers[].agentId)
+ * Either mode:
+ *   cli.ts owner-delegates            read-only: how many owner-delegate grants are live, and what is wrong with the source
  * Identity flags (--from-*), stdin requests and the bare approve/refuse
  * commands are refused in this mode.
  *
@@ -25,6 +27,7 @@
  * Env: BROKER_STATE_DIR, BROKER_DELIVERY_DIR, BROKER_ALLOWLIST, BROKER_AWS_PROFILE,
  * BROKER_RELAY_TOKEN_FILE, BROKER_RELAY_API (default https://cast.agentrelay.com),
  * BROKER_RELAY_NAME (the broker's Relay identity; default layered-infra-ops),
+ * BROKER_OWNER_DELEGATES_FILE (the owner's grant file, owner-delegates.ts; default /etc/aws-cred-broker/owner-delegates.json),
  * BROKER_AUDIT_LOG_GROUP (CloudWatch group; unset: shipping off), BROKER_AUDIT_LOG_REGION (the group's
  * region; default AWS_REGION), BROKER_AUDIT_LOG_STREAM (default broker).
  */
@@ -36,6 +39,7 @@ import { fileURLToPath } from "node:url";
 import { verifyAudit } from "./audit.ts";
 import { Broker } from "./broker.ts";
 import { defaultDeliverer } from "./deliver.ts";
+import { DEFAULT_OWNER_DELEGATES_FILE, hostFileSource } from "./owner-delegates.ts";
 import type { Allowlist, CredentialRequest, Principal } from "./policy.ts";
 import { relaycastApi, RelayVerificationError, whois } from "./relay.ts";
 import { awsCliLogs, shipAudit, shipDir, type ShipResult } from "./ship.ts";
@@ -71,9 +75,17 @@ const stateDir = process.env.BROKER_STATE_DIR ?? join(homedir(), ".local", "stat
 const allowlistPath = process.env.BROKER_ALLOWLIST ?? fileURLToPath(new URL("../allowlist.json", import.meta.url));
 const allowlist = JSON.parse(readFileSync(allowlistPath, "utf8")) as Allowlist;
 const tokenFile = process.env.BROKER_RELAY_TOKEN_FILE;
+const ownerDelegates = hostFileSource(process.env.BROKER_OWNER_DELEGATES_FILE ?? DEFAULT_OWNER_DELEGATES_FILE, allowlist);
+if (positionals[0] === "owner-delegates") {
+  // Read-only: no state, no audit, no Relay call. Agent ids and expiries only; the file holds no secret.
+  const { grants, problems } = allowlist.ownerDelegates === undefined ? { grants: [], problems: ["owner delegation is off: the allowlist has no ownerDelegates block"] } : ownerDelegates.load(new Date());
+  process.stdout.write(JSON.stringify({ source: allowlist.ownerDelegates?.source ?? null, file: ownerDelegates.where, valid: grants.length, grants: grants.map((g) => ({ agentId: g.agentId, expiresAt: g.expiresAt })), problems }, null, 2) + "\n");
+  process.exit(0);
+}
 const broker = new Broker({
   allowlist,
   stateDir,
+  ownerDelegates,
   sts: awsCliSts(),
   deliverer: defaultDeliverer(process.env.BROKER_DELIVERY_DIR ?? join(homedir(), ".aws-broker", "creds")),
 });
@@ -126,13 +138,13 @@ else if (cmd === "verify-audit") {
   const brokerName = process.env.BROKER_RELAY_NAME ?? "layered-infra-ops";
   if (cmd === "request") out = await broker.requestViaRelay(api, messageId, brokerName);
   else if (cmd === "decide") out = await broker.decideViaRelay(api, messageId, brokerName);
-  else fail(`relay mode: ${cmd ?? "(none)"} is not a command; use request, decide, whois, sweep, verify-audit or ship-audit`);
+  else fail(`relay mode: ${cmd ?? "(none)"} is not a command; use request, decide, whois, owner-delegates, sweep, verify-audit or ship-audit`);
 } else if (cmd === "whois") fail("whois needs relay mode (BROKER_RELAY_TOKEN_FILE)");
 else if (cmd === "request") out = await broker.request(JSON.parse(readFileSync(0, "utf8")) as CredentialRequest, principal(), values["message-id"]);
 else if (cmd === "approve") out = await broker.approve(values["request-id"] ?? "", values.digest ?? "", principal(), values["message-id"]);
 else if (cmd === "refuse") out = await broker.refuse(values["request-id"] ?? "", principal(), values["message-id"]);
 else {
-  process.stderr.write("usage: cli.ts request|decide|approve|refuse|sweep|verify-audit|ship-audit (see the header of this file)\n");
+  process.stderr.write("usage: cli.ts request|decide|approve|refuse|owner-delegates|sweep|verify-audit|ship-audit (see the header of this file)\n");
   process.exit(2);
 }
 process.stdout.write(JSON.stringify(out, null, 2) + "\n");

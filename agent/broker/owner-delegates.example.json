@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "grantedBy": "khaliq-gant",
+  "delegates": [
+    {
+      "agentId": "300000000000000001",
+      "expiresAt": "2026-12-01T00:00:00Z",
+      "note": "some-delegate: a placeholder. The real file lives only on the broker host (root-owned, 0644), never in a repo."
+    },
+    {
+      "agentId": "300000000000000002",
+      "expiresAt": "2026-12-15T00:00:00Z"
+    }
+  ]
+}

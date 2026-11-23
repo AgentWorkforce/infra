@@ -54,6 +54,39 @@ export interface Allowlist {
    * nothing beyond the sandbox's auto rules is issued without approval.
    */
   workspaceAuto?: WorkspaceAuto;
+  /**
+   * Switches on approval by an owner delegate and says where the grants are
+   * read from. It never says who the delegates are: that lives outside the
+   * repo (owner-delegates.ts). Absent: only humanApprovers and
+   * delegatedApprovers approve, exactly as before.
+   */
+  ownerDelegates?: OwnerDelegates;
+}
+
+/**
+ * Khaliq's rule (2026-11-23): a Relay agent he names as his delegate may pass
+ * on his approval. The allowlist holds no delegate, only the switch: grants
+ * (immutable Relay agent ids, each with an expiry) come from `source`.
+ */
+export interface OwnerDelegates {
+  /** Where grants are read from. Only "host-file" exists (a root-owned file on the broker host). */
+  source: "host-file";
+  /** The human approver whose delegates these are. The grant source must name the same one. */
+  grantedBy: string;
+}
+
+/** One live grant, as a grant source returns it: an agent id, never a name. */
+export interface OwnerDelegateGrant {
+  agentId: string;
+  expiresAt: string;
+  grantedBy: string;
+  source: string;
+}
+
+/** What a grant source returns: the live grants, and what was wrong (with the source, or with entries it dropped). */
+export interface OwnerDelegateGrants {
+  grants: OwnerDelegateGrant[];
+  problems: string[];
 }
 
 /** Khaliq's standing rule (2026-11-16): verified workspace agents get a narrow set of credentials without asking him. */
@@ -871,4 +904,96 @@ export function workspaceAutoProblems(list: Allowlist): string[] {
   }
   problems.push(...capabilityProblems(w.capabilities ?? [], list, "workspaceAuto"));
   return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Owner delegates
+
+/** The allowlist's ownerDelegates keys. Anything else (a name, a list of delegates) is a config problem. */
+const OWNER_DELEGATES_KEYS = ["$comment", "source", "grantedBy"];
+
+/** Problems with the ownerDelegates block itself. Any problem turns owner delegation off (Khaliq's approvals are unaffected). */
+export function ownerDelegatesProblems(list: Allowlist): string[] {
+  const o: unknown = list.ownerDelegates;
+  if (o === undefined) return [];
+  if (!o || typeof o !== "object" || Array.isArray(o)) return ["ownerDelegates: must be an object"];
+  const block = o as Record<string, unknown>;
+  const problems: string[] = [];
+  for (const k of Object.keys(block)) if (!OWNER_DELEGATES_KEYS.includes(k)) problems.push(`ownerDelegates: ${JSON.stringify(k)} is not a key of this block (who the delegates are never goes in the allowlist)`);
+  if (block.source !== "host-file") problems.push('ownerDelegates: source must be "host-file"');
+  if (typeof block.grantedBy !== "string" || !list.humanApprovers.includes(block.grantedBy)) problems.push("ownerDelegates: grantedBy must be a human approver");
+  return problems;
+}
+
+/** Is this an action of an auto rule a capability could name in readOnlyRules (scope any, no resources of its own, read verbs only)? */
+function readOnlyRuleAction(action: string, list: Allowlist): boolean {
+  return list.autoRules.some((r) => r.scope === "any" && r.resources === undefined && r.actions.every((a) => READ_VERB_RE.test(a.split(":")[1] ?? "") && !neverDelegable(a, list)) && r.actions.some((a) => a.toLowerCase() === action.toLowerCase()));
+}
+
+/**
+ * Why no owner delegate can approve this request, or undefined when one could.
+ * An owner delegate has no capability list, so the limits are the ones no
+ * delegation can lift (neverDelegable: IAM, identity and audit controls,
+ * never-issue, deletes, wildcard actions), on the request and on every allowed
+ * action of the session policy, and literal resources: a wildcard resource is
+ * allowed only under the reads a capability's readOnlyRules could name and the
+ * actions IAM authorizes on "*" alone.
+ */
+export function ownerDelegableProblem(p: { request: CredentialRequest; sessionPolicy: SessionPolicy }, list: Allowlist): string | undefined {
+  const no = (why: string) => `owner delegates cannot approve this: ${why}; needs ${list.humanApprovers.join(", ")}'s own DM`;
+  for (const a of p.request.actions) {
+    const why = neverDelegable(a, list);
+    if (why) return no(why);
+  }
+  for (const r of p.request.resources ?? []) if (/[*?]/.test(r)) return no(`resource ${r} is a wildcard`);
+  for (const s of p.sessionPolicy.Statement) {
+    if (s.Effect !== "Allow") continue;
+    if (s.NotAction || s.NotResource || !s.Action) return no(`statement ${s.Sid} isn't a plain allow`);
+    for (const a of s.Action) {
+      const why = neverDelegable(a, list);
+      if (why) return no(why);
+    }
+    const wild = [s.Resource ?? "*"].flat().filter((r) => /[*?]/.test(r));
+    const open = s.Action.filter((a) => !readOnlyRuleAction(a, list) && !isResourceWildcardOnly(a));
+    if (wild.length && open.length) return no(`${open.join(", ")} on ${wild.join(", ")} is not on literal resources`);
+  }
+  return undefined;
+}
+
+export type OwnerDelegateCheck = { ok: true; grant: OwnerDelegateGrant } | { ok: false; reason: string };
+
+/**
+ * May this agent approve this pending request as an owner delegate? Only if
+ * all of:
+ * - the allowlist has a sound ownerDelegates block;
+ * - the approver and the requester were both verified by the Relay server,
+ *   and the approver's agent id (never its name) has a live grant from the
+ *   block's grantedBy, not expired and at most MAX_DELEGATION_DAYS out;
+ * - the approver is not the requester and not the broker's own Relay identity;
+ * - an owner delegate could approve the request at all (ownerDelegableProblem).
+ * No reason names a delegate. The caller still checks the digest and
+ * re-decides. `brokerName` is the broker's Relay identity, known only when the
+ * approval came through decideViaRelay.
+ */
+export function checkOwnerDelegateApproval(p: { request: CredentialRequest; requester: Principal; sessionPolicy: SessionPolicy }, approver: Principal, list: Allowlist, loaded: OwnerDelegateGrants, now: Date, brokerName: string | undefined): OwnerDelegateCheck {
+  const notApprover = `${approver.name} (${approver.kind}) is not an approver: only a human on humanApprovers can approve`;
+  const o = list.ownerDelegates;
+  if (o === undefined) return { ok: false, reason: notApprover };
+  const humans = list.humanApprovers.join(", ");
+  const config = ownerDelegatesProblems(list);
+  if (config.length) return { ok: false, reason: `${notApprover} (owner delegation is off: ${config.join("; ")})` };
+  if (!approver.agentId || brokerName === undefined) return { ok: false, reason: `${notApprover} (an owner delegate approves only by a message the Relay server verified)` };
+  const grant = loaded.grants.find((g) => g.agentId === approver.agentId);
+  if (!grant) return { ok: false, reason: `${notApprover} (${loaded.grants.length === 0 && loaded.problems.length ? `owner-delegate grants unavailable: ${loaded.problems.join("; ")}` : "no owner-delegate grant for this agent id"})` };
+  // The source already dropped these; a grant is checked again where it is used.
+  if (grant.grantedBy !== o.grantedBy || grant.source !== o.source) return { ok: false, reason: `the owner-delegate grant is not ${o.grantedBy}'s from ${o.source}; needs ${humans}'s own DM` };
+  const expires = Date.parse(grant.expiresAt);
+  if (!(now.getTime() < expires)) return { ok: false, reason: `the owner-delegate grant expired at ${grant.expiresAt}; needs ${humans}'s own DM` };
+  if (expires - now.getTime() > MAX_DELEGATION_DAYS * 86_400_000) return { ok: false, reason: `the owner-delegate grant runs past ${MAX_DELEGATION_DAYS} days; needs ${humans}'s own DM` };
+  if (approver.name === brokerName) return { ok: false, reason: `the broker's own Relay identity cannot approve as an owner delegate; needs ${humans}'s own DM` };
+  if (!p.requester.agentId) return { ok: false, reason: `owner delegates cannot approve this: the requester wasn't verified with the Relay server; needs ${humans}'s own DM` };
+  if (approver.agentId === p.requester.agentId || approver.name === p.requester.name) return { ok: false, reason: "a requester cannot approve its own request" };
+  const why = ownerDelegableProblem(p, list);
+  if (why) return { ok: false, reason: why };
+  return { ok: true, grant };
 }

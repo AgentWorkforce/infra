@@ -20,7 +20,8 @@ import { appendAudit, type AuditEvent } from "./audit.ts";
 import type { Deliverer, DeliveryRef } from "./deliver.ts";
 import { withLock } from "./lock.ts";
 import { decisionFromText, RelayVerificationError, requestFromText, verifiedMessage, type Decision as RelayDecision, type RelayApi, type Verified } from "./relay.ts";
-import { approverCounts, capabilityGuards, checkDelegatedApproval, checkWorkspaceAuto, SESSION_POLICY_MAX_CHARS, WORKSPACE_GUARD_PREFIX, workspaceAutoProblems, decide, NAMESPACE_TAG_KEY, newNamespace, sessionName, type Allowlist, type CredentialRequest, type Decision, type Principal, type RunClaim, type SessionPolicy } from "./policy.ts";
+import { noOwnerDelegates, type OwnerDelegateSource } from "./owner-delegates.ts";
+import { approverCounts, capabilityGuards, checkDelegatedApproval, checkOwnerDelegateApproval, checkWorkspaceAuto, ownerDelegableProblem, ownerDelegatesProblems, SESSION_POLICY_MAX_CHARS, WORKSPACE_GUARD_PREFIX, workspaceAutoProblems, decide, NAMESPACE_TAG_KEY, newNamespace, sessionName, type Allowlist, type CredentialRequest, type Decision, type OwnerDelegateGrant, type Principal, type RunClaim, type SessionPolicy } from "./policy.ts";
 import type { StsClient } from "./sts.ts";
 
 export { withLock };
@@ -34,6 +35,8 @@ export interface BrokerDeps {
   newId?: () => string;
   /** 8 hex characters for a new run namespace (random by default). */
   newNamespaceSuffix?: () => string;
+  /** Where owner-delegate grants are read from (owner-delegates.ts). Unset: there are none. Used only when the allowlist has an ownerDelegates block. */
+  ownerDelegates?: OwnerDelegateSource;
 }
 
 /** What the broker sends back over Relay. Never a credential: a pointer, the expiry and ids for CloudTrail. */
@@ -54,6 +57,10 @@ export interface Reply {
   approvalPrompt?: string;
   /** For pending-approval: who to send approvalPrompt to (the named delegate when it can approve this, else Khaliq). */
   approver?: string;
+  /** For pending-approval, when the allowlist has an ownerDelegates block: could an owner delegate with a live grant approve this one? `approver` stays the human either way. */
+  ownerDelegable?: boolean;
+  /** On an approval by an owner delegate: the one line the lead DMs to the owner, verbatim, so the owner sees what was approved in their name. */
+  ownerNotice?: string;
 }
 
 interface Pending {
@@ -104,7 +111,7 @@ export class Broker {
   readonly deps: Required<BrokerDeps>;
 
   constructor(deps: BrokerDeps) {
-    this.deps = { now: () => new Date(), newId: newRequestId, newNamespaceSuffix: () => randomBytes(4).toString("hex"), ...deps };
+    this.deps = { now: () => new Date(), newId: newRequestId, newNamespaceSuffix: () => randomBytes(4).toString("hex"), ownerDelegates: noOwnerDelegates, ...deps };
     for (const d of ["", "pending", "issued", "consumed"]) mkdirSync(join(deps.stateDir, d), { recursive: true, mode: 0o700 });
   }
 
@@ -195,7 +202,7 @@ export class Broker {
     } catch (e) {
       return this.relayRefused(messageId, e as Error);
     }
-    return d.verb === "approve" ? this.approve(d.requestId, d.digest, v.principal, messageId, true) : this.refuse(d.requestId, v.principal, messageId, true);
+    return d.verb === "approve" ? this.approve(d.requestId, d.digest, v.principal, messageId, true, brokerName) : this.refuse(d.requestId, v.principal, messageId, true);
   }
 
   private async relayRefused(messageId: string, e: Error): Promise<Reply> {
@@ -271,13 +278,25 @@ export class Broker {
           if (check.ok) approver = req.delegate;
           else reasons.push(check.reason);
         }
-        return { requestId, outcome: "pending-approval", reasons, account: req.account, roleArn: decision.roleArn, sessionName: name, policyDigest: digest, namespace: run.namespace, approver: approver ?? this.deps.allowlist.humanApprovers[0]!, approvalPrompt: approvalPrompt(pending, this.deps.allowlist, approver) };
+        return { requestId, outcome: "pending-approval", reasons, account: req.account, roleArn: decision.roleArn, sessionName: name, policyDigest: digest, namespace: run.namespace, approver: approver ?? this.deps.allowlist.humanApprovers[0]!, approvalPrompt: approvalPrompt(pending, this.deps.allowlist, approver), ...(this.deps.allowlist.ownerDelegates !== undefined ? { ownerDelegable: this.ownerDelegable(pending) } : {}) };
       }
       return this.issue(requestId, req, requester, name, run.namespace, decision.roleArn, decision.sessionPolicy, decision.durationSeconds, digest, base, decision.reasons);
     });
   }
 
-  approve(requestId: string, digestPrefix: string, approver: Principal, relayMessageId?: string, once = false): Promise<Reply> {
+  /** Could an owner delegate approve this pending request right now? False unless the config is sound, a grant is live, the requester is Relay-verified and nothing in it is beyond an owner delegate. */
+  private ownerDelegable(p: Pending): boolean {
+    const list = this.deps.allowlist;
+    if (ownerDelegatesProblems(list).length || !p.requester.agentId) return false;
+    const live = this.deps.ownerDelegates.load(this.deps.now()).grants.filter((g) => g.agentId !== p.requester.agentId);
+    return live.length > 0 && ownerDelegableProblem(p, list) === undefined;
+  }
+
+  /**
+   * `brokerName` is the broker's own Relay identity, passed only by
+   * decideViaRelay: an owner delegate counts only on that path.
+   */
+  approve(requestId: string, digestPrefix: string, approver: Principal, relayMessageId?: string, once = false, brokerName?: string): Promise<Reply> {
     return withLock(this.deps.stateDir, async () => {
       if (once && relayMessageId) {
         const used = this.useMessageOnce(relayMessageId);
@@ -292,12 +311,20 @@ export class Broker {
       const p = readJson<Pending>(path, undefined as unknown as Pending);
       // A human on humanApprovers exactly as before; otherwise only a delegate, inside its capability, before its expiry.
       let delegation: AuditEvent["delegation"];
+      // Or, when the allowlist has an ownerDelegates block, an owner delegate: an agent whose Relay agent id has a live grant (owner-delegates.ts).
+      let owner: OwnerDelegateGrant | undefined;
       if (!approverCounts(approver, this.deps.allowlist)) {
-        if (!(this.deps.allowlist.delegatedApprovers ?? []).some((d) => d.agent === approver.name)) return reject(`${approver.name} (${approver.kind}) is not an approver: only a human on humanApprovers can approve`, p);
-        if (approver.name === p.requester.name) return reject("a requester cannot approve its own request", p);
-        const check = checkDelegatedApproval(p, approver, this.deps.allowlist, this.deps.now());
-        if (!check.ok) return reject(check.reason, p);
-        delegation = { delegate: check.delegate.agent, capability: check.capability, grants: check.grants, expiresAt: check.delegate.expiresAt };
+        if (!(this.deps.allowlist.delegatedApprovers ?? []).some((d) => d.agent === approver.name)) {
+          if (this.deps.allowlist.ownerDelegates === undefined) return reject(`${approver.name} (${approver.kind}) is not an approver: only a human on humanApprovers can approve`, p);
+          const check = checkOwnerDelegateApproval(p, approver, this.deps.allowlist, this.deps.ownerDelegates.load(this.deps.now()), this.deps.now(), brokerName);
+          if (!check.ok) return reject(check.reason, p);
+          owner = check.grant;
+        } else {
+          if (approver.name === p.requester.name) return reject("a requester cannot approve its own request", p);
+          const check = checkDelegatedApproval(p, approver, this.deps.allowlist, this.deps.now());
+          if (!check.ok) return reject(check.reason, p);
+          delegation = { delegate: check.delegate.agent, capability: check.capability, grants: check.grants, expiresAt: check.delegate.expiresAt };
+        }
       }
       if (approver.name === p.requester.name) return reject("a requester cannot approve its own request", p);
       const ageMin = (this.deps.now().getTime() - Date.parse(p.createdAt)) / 60_000;
@@ -322,11 +349,26 @@ export class Broker {
         const recheck = checkDelegatedApproval({ request: p.request, requester: p.requester, sessionPolicy: again.sessionPolicy }, approver, this.deps.allowlist, this.deps.now());
         if (!recheck.ok) return reject(recheck.reason, p);
       }
+      // The same for an owner delegate, against the grants as they are now: one removed meanwhile no longer counts.
+      if (owner) {
+        const recheck = checkOwnerDelegateApproval({ request: p.request, requester: p.requester, sessionPolicy: again.sessionPolicy }, approver, this.deps.allowlist, this.deps.ownerDelegates.load(this.deps.now()), this.deps.now(), brokerName);
+        if (!recheck.ok) return reject(recheck.reason, p);
+        owner = recheck.grant;
+      }
       renameSync(path, join(this.deps.stateDir, "consumed", `${p.requestId}.json`));
       const base = this.base(p.requestId, p.request, p.requester, p.relayMessageId);
-      this.audit({ ...base, kind: "approved", approver: { name: approver.name, address: approver.address, kind: approver.kind }, ...(relayMessageId ? { relayMessageId } : {}), policyDigest: p.digest, ...(delegation ? { delegation } : {}) });
-      const by = delegation ? `approved by ${approver.name} (delegated by ${this.deps.allowlist.delegatedApprovers!.find((d) => d.agent === approver.name)!.grantedBy}, capability ${delegation.capability}, until ${delegation.expiresAt})` : `approved by ${approver.name}`;
-      return this.issue(p.requestId, p.request, p.requester, sessionName(p.requester), run.namespace, p.roleArn, p.sessionPolicy, p.durationSeconds, p.digest, base, [...p.reasons, by]);
+      this.audit({ ...base, kind: "approved", approver: { name: approver.name, address: approver.address, kind: approver.kind }, ...(relayMessageId ? { relayMessageId } : {}), policyDigest: p.digest, ...(delegation ? { delegation } : {}), ...(owner ? { ownerDelegation: { agentId: owner.agentId, grantedBy: owner.grantedBy, expiresAt: owner.expiresAt, source: owner.source } } : {}) });
+      const by = delegation
+        ? `approved by ${approver.name} (delegated by ${this.deps.allowlist.delegatedApprovers!.find((d) => d.agent === approver.name)!.grantedBy}, capability ${delegation.capability}, until ${delegation.expiresAt})`
+        : owner
+          ? `approved by ${approver.name} (owner delegate of ${owner.grantedBy}, grant until ${owner.expiresAt})`
+          : `approved by ${approver.name}`;
+      const reply = await this.issue(p.requestId, p.request, p.requester, sessionName(p.requester), run.namespace, p.roleArn, p.sessionPolicy, p.durationSeconds, p.digest, base, [...p.reasons, by]);
+      if (!owner) return reply;
+      // The broker verified who the delegate is, not that the owner said the words it relayed: the owner is told, every time.
+      const account = this.deps.allowlist.accounts[p.request.account];
+      const result = reply.outcome === "issued" ? `credentials expire ${reply.expiration}` : `no credentials were issued (${reply.reasons.join("; ")})`;
+      return { ...reply, ownerNotice: `AWS credential request ${p.requestId} from ${p.requester.name} for account ${p.request.account} (${account?.label ?? "?"}) was approved in your name by your owner delegate ${approver.name} (Relay agent id ${owner.agentId}, grant until ${owner.expiresAt}); ${result}. Not yours? Remove that agent id from the broker host's owner-delegates file.` };
     });
   }
 
