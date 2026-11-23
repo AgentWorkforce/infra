@@ -12,7 +12,7 @@ output "resource_policy_statements" {
   description = "Exact statements for the bucket owner to merge into the bucket and KMS key policies. The bucket stack must separately carve this role out of its result-delete Deny."
   value = {
     bucket_policy = [
-      { Sid = "SessionAnalysisLists", Effect = "Allow", Principal = { AWS = aws_iam_role.runner.arn }, Action = "s3:ListBucket", Resource = var.sessions_bucket_arn },
+      { Sid = "SessionAnalysisInspectsBucket", Effect = "Allow", Principal = { AWS = aws_iam_role.runner.arn }, Action = ["s3:ListBucket", "s3:GetBucketVersioning"], Resource = var.sessions_bucket_arn },
       { Sid = "SessionAnalysisReads", Effect = "Allow", Principal = { AWS = aws_iam_role.runner.arn }, Action = "s3:GetObject", Resource = local.session_objects },
       { Sid = "SessionAnalysisWritesResults", Effect = "Allow", Principal = { AWS = aws_iam_role.runner.arn }, Action = ["s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"], Resource = local.analysis_results },
       {

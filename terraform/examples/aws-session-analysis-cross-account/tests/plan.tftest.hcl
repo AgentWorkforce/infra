@@ -43,6 +43,20 @@ run "least_privilege" {
     error_message = "The runner must never touch the upload inbox."
   }
   assert {
+    condition = (anytrue([for s in jsondecode(aws_iam_role_policy.runner.policy).Statement :
+      s.Sid == "InspectCanonicalBucket" && contains(flatten([s.Action]), "s3:GetBucketVersioning")]) &&
+      anytrue([for s in output.resource_policy_statements.bucket_policy :
+    s.Sid == "SessionAnalysisInspectsBucket" && contains(flatten([s.Action]), "s3:GetBucketVersioning")]))
+    error_message = "Both accounts must allow the runner's startup bucket-versioning check."
+  }
+  assert {
+    condition = (anytrue([for s in jsondecode(aws_iam_role_policy.runner.policy).Statement :
+      s.Sid == "NoAdmissionInbox" && s.Effect == "Deny" && s.Resource == "arn:aws:s3:::sessions-bucket/96bulls/.admission-inbox/*"]) &&
+      anytrue([for s in jsondecode(aws_iam_role_policy.runner.policy).Statement :
+    s.Sid == "NoAdmissionJournalDecrypt" && s.Effect == "Deny" && s.Condition.StringLike["kms:EncryptionContext:aws:s3:arn"] == "arn:aws:s3:::sessions-bucket/96bulls/.admission-inbox/*"]))
+    error_message = "The runner must neither read nor decrypt native-ingest privacy journals."
+  }
+  assert {
     condition = (anytrue([for s in output.resource_policy_statements.key_policy :
       s.Sid == "SessionAnalysisDecryptsViaS3" && s.Condition.StringLike["kms:EncryptionContext:aws:s3:arn"] == "arn:aws:s3:::sessions-bucket/96bulls/*/v1/*"]) &&
       anytrue([for s in output.resource_policy_statements.key_policy :

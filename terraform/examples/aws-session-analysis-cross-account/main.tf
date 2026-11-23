@@ -5,12 +5,14 @@
 # explicit Deny, so that stack must also carve out this exact role for the
 # result prefix.
 locals {
-  bucket_name      = trimprefix(var.sessions_bucket_arn, "arn:aws:s3:::")
-  kms_region       = split(":", var.sessions_kms_key_arn)[3]
-  session_objects  = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*"
-  analysis_results = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*/normalized/session-analysis-v2/*"
-  result_prefix    = "${var.key_base}/*/v1/*/normalized/session-analysis-v2/*"
-  upload_inbox     = "${var.sessions_bucket_arn}/${var.key_base}/.upload-inbox/*"
+  bucket_name       = trimprefix(var.sessions_bucket_arn, "arn:aws:s3:::")
+  kms_region        = split(":", var.sessions_kms_key_arn)[3]
+  session_objects   = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*"
+  analysis_results  = "${var.sessions_bucket_arn}/${var.key_base}/*/v1/*/normalized/session-analysis-v2/*"
+  result_prefix     = "${var.key_base}/*/v1/*/normalized/session-analysis-v2/*"
+  upload_inbox      = "${var.sessions_bucket_arn}/${var.key_base}/.upload-inbox/*"
+  admission_inbox   = "${var.sessions_bucket_arn}/${var.key_base}/.admission-inbox/*"
+  admission_context = "arn:aws:s3:::${local.bucket_name}/${var.key_base}/.admission-inbox/*"
 }
 
 resource "aws_iam_role" "runner" {
@@ -42,7 +44,7 @@ resource "aws_iam_role_policy" "runner" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      { Sid = "ListForMissingKeySemantics", Effect = "Allow", Action = ["s3:ListBucket"], Resource = var.sessions_bucket_arn },
+      { Sid = "InspectCanonicalBucket", Effect = "Allow", Action = ["s3:ListBucket", "s3:GetBucketVersioning"], Resource = var.sessions_bucket_arn },
       { Sid = "ReadCanonicalSessions", Effect = "Allow", Action = ["s3:GetObject"], Resource = local.session_objects },
       { Sid = "WriteAnalysisResults", Effect = "Allow", Action = ["s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"], Resource = local.analysis_results },
       {
@@ -55,6 +57,16 @@ resource "aws_iam_role_policy" "runner" {
         } }
       },
       { Sid = "NoUploadInbox", Effect = "Deny", Action = ["s3:*"], Resource = local.upload_inbox },
+      { Sid = "NoAdmissionInbox", Effect = "Deny", Action = ["s3:*"], Resource = local.admission_inbox },
+      {
+        Sid      = "NoAdmissionJournalDecrypt"
+        Effect   = "Deny"
+        Action   = ["kms:Decrypt"]
+        Resource = var.sessions_kms_key_arn
+        Condition = {
+          StringLike = { "kms:EncryptionContext:aws:s3:arn" = local.admission_context }
+        }
+      },
       {
         Sid      = "DecryptCanonicalSessionsViaS3"
         Effect   = "Allow"
