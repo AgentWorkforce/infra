@@ -149,7 +149,9 @@ const NOT_APPROVER = `${DELEGATE} (agent) is not an approver: only a human on hu
 test("the repo names no owner delegate: the allowlist block only switches the rule on, and the example file holds placeholders", () => {
   assert.deepEqual(ownerDelegatesProblems(shipped), []);
   const block = shipped.ownerDelegates as unknown as Record<string, unknown>;
-  assert.deepEqual(Object.keys(block).sort(), ["$comment", "grantedBy", "source"]);
+  assert.deepEqual(Object.keys(block).sort(), ["$comment", "grantedBy", "notDelegable", "source"]);
+  // notDelegable holds IAM actions, never an agent.
+  for (const a of block.notDelegable as string[]) assert.match(a, /^[a-z0-9-]+:[A-Za-z*]+$/);
   for (const k of ["agent", "agents", "name", "names", "delegates", "agentId", "agentIds"]) assert.ok(!(k in block), `ownerDelegates must not have ${k}`);
   assert.equal(block.source, "host-file");
   assert.equal(block.grantedBy, OWNER);
@@ -508,6 +510,104 @@ test("IAM, identity and audit controls, deletes and wildcards are never an owner
     assert.equal(ok.outcome, "issued", JSON.stringify(over));
     assert.equal(calls.length, 1);
   }
+});
+
+/** A command on one named instance in a region no automatic rule covers: it needs an approval. */
+const WEST_INSTANCE = `arn:aws:ec2:us-west-2:${HOSTS}:instance/i-0123456789abcdef0`;
+const commandReq = (over: Partial<CredentialRequest> = {}): CredentialRequest =>
+  secretsReq({ purpose: "run one command on the host", actions: ["ssm:SendCommand"], resources: [WEST_INSTANCE, "arn:aws:ssm:us-west-2::document/AWS-RunShellScript"], regions: ["us-west-2"], runTag: "one-command", ...over });
+
+test("notDelegable: a command on a host is never an owner delegate's to approve, by exact action or by glob; Khaliq's own DM still is", async () => {
+  assert.ok(shipped.ownerDelegates!.notDelegable!.includes("ssm:SendCommand"));
+  assert.ok(shipped.ownerDelegates!.notDelegable!.includes("ec2-instance-connect:*"));
+  const cases: [Partial<CredentialRequest>, string][] = [
+    [{}, "ssm:SendCommand"],
+    [{ actions: ["ssm:StartSession"], resources: [WEST_INSTANCE] }, "ssm:StartSession"],
+    [{ actions: ["ssm:DescribeInstanceInformation", "ssm:sendcommand"] }, "ssm:sendcommand"],
+    [{ actions: ["ec2-instance-connect:SendSSHPublicKey"], resources: [WEST_INSTANCE] }, "ec2-instance-connect:SendSSHPublicKey"],
+    [{ actions: ["ec2:ModifyInstanceAttribute"], resources: [WEST_INSTANCE] }, "ec2:ModifyInstanceAttribute"],
+  ];
+  for (const [over, action] of cases) {
+    const { broker, calls, audit } = setup();
+    const { r, text } = await pend(broker, commandReq(over));
+    assert.equal(r.ownerDelegable, false, action);
+    assert.equal(r.approver, OWNER);
+    const d = await dm(broker, DELEGATE, text);
+    assert.equal(d.outcome, "error", action);
+    assert.equal(d.reasons[0], `owner delegates cannot approve this: ${action} is beyond an owner delegate (ownerDelegates.notDelegable); needs ${OWNER}'s own DM`);
+    assert.ok(!("ownerNotice" in d));
+    assert.equal(calls.length, 0);
+    assert.ok(!audit().some((l) => l.kind === "approved"));
+    const ok = await dm(broker, OWNER, text, "1000003");
+    assert.equal(ok.outcome, "issued", action);
+    assert.ok(!("ownerNotice" in ok));
+  }
+  // The fixed limits are checked first, so their reasons stay.
+  const fixed = setup();
+  const pf = await pend(fixed.broker, commandReq({ actions: ["ssm:SendCommand", "iam:PassRole"] }));
+  assert.match((await dm(fixed.broker, DELEGATE, pf.text)).reasons[0]!, /^owner delegates cannot approve this: iam:PassRole is IAM; /);
+  // The session policy is checked as well as the request: an allowed action on the list is refused whatever was asked.
+  const stmt = { Version: "2012-10-17" as const, Statement: [{ Sid: "Requested", Effect: "Allow" as const, Action: ["ssm:GetCommandInvocation", "SSM:SendCommand"], Resource: [WEST_INSTANCE] }] };
+  assert.match(ownerDelegableProblem({ request: secretsReq(), sessionPolicy: stmt }, allowlist())!, /SSM:SendCommand is beyond an owner delegate \(ownerDelegates\.notDelegable\)/);
+  // An action that only looks alike is not on the list.
+  const near = setup();
+  const pn = await pend(near.broker, commandReq({ actions: ["ssm:PutParameter"], resources: [`arn:aws:ssm:us-west-2:${HOSTS}:parameter/some/name`] }));
+  assert.equal(pn.r.ownerDelegable, true);
+  assert.equal((await dm(near.broker, DELEGATE, pn.text)).outcome, "issued");
+});
+
+test("notDelegable: a block without the key has only the fixed limits, as before", async () => {
+  const list = allowlist();
+  delete list.ownerDelegates!.notDelegable;
+  assert.deepEqual(ownerDelegatesProblems(list), []);
+  const { broker, calls } = setup({ list });
+  const { r, text } = await pend(broker, commandReq());
+  assert.equal(r.ownerDelegable, true);
+  const ok = await dm(broker, DELEGATE, text);
+  assert.equal(ok.outcome, "issued", ok.reasons.join("; "));
+  assert.match(ok.ownerNotice!, /by your owner delegate /);
+  assert.equal(calls.length, 1);
+  // The fixed limits are still there.
+  const iam = setup({ list });
+  const pi = await pend(iam.broker, secretsReq({ actions: ["iam:PassRole"], resources: [`arn:aws:iam::${HOSTS}:role/some-role`] }));
+  assert.equal(pi.r.ownerDelegable, false);
+  assert.match((await dm(iam.broker, DELEGATE, pi.text)).reasons[0]!, /iam:PassRole is IAM/);
+});
+
+test("notDelegable: a list that can't be read as written is a config problem and owner delegation is off, never a list that guards nothing", async () => {
+  const bad: [unknown, RegExp][] = [
+    [[], /notDelegable must be a non-empty list of actions/],
+    ["ssm:SendCommand", /notDelegable must be a non-empty list of actions/],
+    [null, /notDelegable must be a non-empty list of actions/],
+    [{ "ssm:SendCommand": true }, /notDelegable must be a non-empty list of actions/],
+    [["ssm:SendCommand", 5], /notDelegable 5 is not service:Action/],
+    [["ssm:SendCommand", ["ssm:StartSession"]], /notDelegable \["ssm:StartSession"\] is not service:Action/],
+    [["SendCommand"], /notDelegable "SendCommand" is not service:Action/],
+    [["ssm:SendCommand", ""], /notDelegable "" is not service:Action/],
+    [["ssm:Send?ommand"], /notDelegable "ssm:Send\?ommand" is not service:Action/],
+    [["*"], /notDelegable "\*" is not service:Action/],
+  ];
+  for (const [value, re] of bad) {
+    const list = allowlist();
+    (list.ownerDelegates as unknown as Record<string, unknown>).notDelegable = value;
+    assert.match(ownerDelegatesProblems(list).join("; "), re, JSON.stringify(value));
+    const { broker, calls, source } = setup({ list });
+    assert.deepEqual(source.load(NOW).grants, [], JSON.stringify(value));
+    // Off for every request, not only the ones the list was meant to catch.
+    const { r, text } = await pend(broker);
+    assert.equal(r.ownerDelegable, false, JSON.stringify(value));
+    const d = await dm(broker, DELEGATE, text);
+    assert.equal(d.outcome, "error", JSON.stringify(value));
+    assert.ok(d.reasons[0]!.startsWith(`${NOT_APPROVER} (owner delegation is off: `), d.reasons[0]);
+    assert.match(d.reasons[0]!, re);
+    assert.equal(calls.length, 0);
+    assert.equal((await dm(broker, OWNER, text, "1000003")).outcome, "issued");
+  }
+  // A sound list with a glob is fine.
+  const ok = allowlist();
+  ok.ownerDelegates!.notDelegable = ["ssm:Send*", "ec2-instance-connect:*"];
+  assert.deepEqual(ownerDelegatesProblems(ok), []);
+  assert.match(ownerDelegableProblem({ request: commandReq(), sessionPolicy: { Version: "2012-10-17", Statement: [] } }, ok)!, /ssm:SendCommand is beyond an owner delegate/);
 });
 
 test("never-issue actions never reach an approver at all, and the owner-delegate rule refuses them on its own", () => {

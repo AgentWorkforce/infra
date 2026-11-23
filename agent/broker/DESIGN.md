@@ -195,10 +195,12 @@ A run tag is claimed by the first agent that receives credentials for it
   `approve <id> <digest>` line. It has no capability list and no
   `requesters` list, and a request doesn't name it.
   - **Where grants live.** Never in this repo. The allowlist block holds
-    only the switch: `source` (only `host-file` exists) and `grantedBy`, a
-    human approver. A key that names anyone, an unknown `source`, or a
-    `grantedBy` who isn't a human approver makes the block unsound, and
-    owner delegation is off. Without the block the broker behaves exactly
+    only the switch: `source` (only `host-file` exists), `grantedBy`, a
+    human approver, and optionally `notDelegable`, a list of IAM actions
+    (below). A key that names anyone, an unknown `source`, a `grantedBy`
+    who isn't a human approver, or a `notDelegable` that isn't a non-empty
+    list of `service:Action` (`*` is the only wildcard) makes the block
+    unsound, and owner delegation is off. Without the block the broker behaves exactly
     as it did before this rule. The grants are Relay agent ids with an
     expiry, read from the host file below (`src/owner-delegates.ts`).
   - **What counts.** The approval arrives over the same verified path as
@@ -215,7 +217,9 @@ A run tag is claimed by the first agent that receives credentials for it
     - nothing in the request or in the session policy the broker built is
       never-delegable (the same test as above: IAM, `approvalOnly`,
       `neverIssue`, deletes, wildcard actions), every statement is a plain
-      allow, and the resources are literal. On a wildcard resource only two
+      allow, and the resources are literal. No action in the request or
+      the session policy matches an entry of `notDelegable`; that is checked
+      last, so the other reasons read the same. On a wildcard resource only two
       things pass: the reads of an auto rule a capability could list in
       `readOnlyRules`, and the actions IAM authorizes on `*` alone. A
       statement narrowed only by a tag or a name pattern needs Khaliq.
@@ -238,13 +242,19 @@ A run tag is claimed by the first agent that receives credentials for it
     the account, the delegate and when the credentials expire. An approval
     the owner doesn't recognize means the delegate was wrong or
     prompt-injected: remove its entry.
-  - **The risk.** With no capability list, an owner delegate can approve
-    any write the never-delegable test doesn't name, on literal resources,
-    in every account on the allowlist: a secret read or write, a parameter
-    write, an SSM command on a named instance (a root shell there). That is
-    wider than any `delegatedApprovers` capability. Grant it only to an
-    agent whose instructions the owner controls, keep the expiry short, and
-    read the notices.
+  - **The risk, and what `notDelegable` does about it.** With no
+    capability list, an owner delegate can approve any write the
+    never-delegable test doesn't name, on literal resources, in every
+    account on the allowlist. `notDelegable` takes out the direct routes to
+    a shell on a host: an SSM command, session, automation or association,
+    EC2 Instance Connect, and changing an instance's attributes (its user
+    data). Those need Khaliq's own DM, on the broker host as on any other.
+    It does not close the indirect routes. A grant is still about as strong
+    as the account's broker role minus IAM, deletes and this list: writing
+    a parameter, a secret or an object that a host reads at start is still
+    approvable, for example. That is wider than any `delegatedApprovers`
+    capability. So the real controls stay who is in the root-owned file,
+    the expiry, the audit line and the owner notice.
 - Approval-tier sessions use the account's `roles.elevated`. An account
   without one refuses approval-tier requests up front rather than parking
   them, and Khaliq isn't asked about something the broker can't issue.

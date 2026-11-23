@@ -166,8 +166,8 @@ Limits:
   you: the request JSON is the same and never names an owner delegate, the
   reply's `approver` is still Khaliq, and you can't approve your own
   request. The `pending-approval` reply may carry `ownerDelegable`, which
-  only says whether such an agent could approve it; IAM, deletes and
-  wildcards always need Khaliq himself.
+  only says whether such an agent could approve it; IAM, deletes,
+  wildcards and commands on a host always need Khaliq himself.
 
 The design and the security model are in [`DESIGN.md`](DESIGN.md). The
 allowlist is [`allowlist.json`](allowlist.json); changing what's automatic is

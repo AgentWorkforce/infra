@@ -73,6 +73,11 @@ export interface OwnerDelegates {
   source: "host-file";
   /** The human approver whose delegates these are. The grant source must name the same one. */
   grantedBy: string;
+  /**
+   * IAM action globs no owner delegate can approve, on top of the fixed limits
+   * (neverDelegable). Absent: only the fixed limits. Present: a non-empty list.
+   */
+  notDelegable?: string[];
 }
 
 /** One live grant, as a grant source returns it: an agent id, never a name. */
@@ -910,7 +915,7 @@ export function workspaceAutoProblems(list: Allowlist): string[] {
 // Owner delegates
 
 /** The allowlist's ownerDelegates keys. Anything else (a name, a list of delegates) is a config problem. */
-const OWNER_DELEGATES_KEYS = ["$comment", "source", "grantedBy"];
+const OWNER_DELEGATES_KEYS = ["$comment", "source", "grantedBy", "notDelegable"];
 
 /** Problems with the ownerDelegates block itself. Any problem turns owner delegation off (Khaliq's approvals are unaffected). */
 export function ownerDelegatesProblems(list: Allowlist): string[] {
@@ -922,6 +927,11 @@ export function ownerDelegatesProblems(list: Allowlist): string[] {
   for (const k of Object.keys(block)) if (!OWNER_DELEGATES_KEYS.includes(k)) problems.push(`ownerDelegates: ${JSON.stringify(k)} is not a key of this block (who the delegates are never goes in the allowlist)`);
   if (block.source !== "host-file") problems.push('ownerDelegates: source must be "host-file"');
   if (typeof block.grantedBy !== "string" || !list.humanApprovers.includes(block.grantedBy)) problems.push("ownerDelegates: grantedBy must be a human approver");
+  if (block.notDelegable !== undefined) {
+    // A list that can't be read as written would silently guard nothing: it turns owner delegation off instead.
+    if (!Array.isArray(block.notDelegable) || block.notDelegable.length === 0) problems.push("ownerDelegates: notDelegable must be a non-empty list of actions");
+    else for (const a of block.notDelegable as unknown[]) if (typeof a !== "string" || !ACTION_RE.test(a)) problems.push(`ownerDelegates: notDelegable ${JSON.stringify(a)} is not service:Action`);
+  }
   return problems;
 }
 
@@ -934,8 +944,9 @@ function readOnlyRuleAction(action: string, list: Allowlist): boolean {
  * Why no owner delegate can approve this request, or undefined when one could.
  * An owner delegate has no capability list, so the limits are the ones no
  * delegation can lift (neverDelegable: IAM, identity and audit controls,
- * never-issue, deletes, wildcard actions), on the request and on every allowed
- * action of the session policy, and literal resources: a wildcard resource is
+ * never-issue, deletes, wildcard actions) and the block's notDelegable list,
+ * on the request and on every allowed action of the session policy, and
+ * literal resources: a wildcard resource is
  * allowed only under the reads a capability's readOnlyRules could name and the
  * actions IAM authorizes on "*" alone.
  */
@@ -956,6 +967,12 @@ export function ownerDelegableProblem(p: { request: CredentialRequest; sessionPo
     const wild = [s.Resource ?? "*"].flat().filter((r) => /[*?]/.test(r));
     const open = s.Action.filter((a) => !readOnlyRuleAction(a, list) && !isResourceWildcardOnly(a));
     if (wild.length && open.length) return no(`${open.join(", ")} on ${wild.join(", ")} is not on literal resources`);
+  }
+  // The block's own list comes last, so every reason above reads as it did without it.
+  const listed = list.ownerDelegates?.notDelegable ?? [];
+  const allowed = p.sessionPolicy.Statement.filter((s) => s.Effect === "Allow").flatMap((s) => s.Action ?? []);
+  for (const a of [...p.request.actions, ...allowed]) {
+    if (listed.some((n) => globsIntersect(a, n))) return no(`${a} is beyond an owner delegate (ownerDelegates.notDelegable)`);
   }
   return undefined;
 }
