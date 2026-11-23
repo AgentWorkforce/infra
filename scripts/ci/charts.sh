@@ -1403,6 +1403,13 @@ for chart in "${charts[@]}"; do
         ! grep -Eq '(READ_API|INGEST)_UPSTREAM_ASSERTION' <<<"$(render "$chart" "$uav" --set global.relaygate.upstreamAuth.verify.mode=false)" || err "$chart: verify mode false (a bare YAML off) must render no verifier env"
         expect_render_failure "$chart" "$uav" "extraEnv overriding the reader's verify mode" "extraEnv must not set READ_API_UPSTREAM_ASSERTION_MODE" --set-json 'sessions-pipeline.sessionReadApi.extraEnv=[{"name":"READ_API_UPSTREAM_ASSERTION_MODE","value":"off"}]'
         expect_render_failure "$chart" charts/agent-relay/ci/gate-sessions-gke-values.yaml "extraEnv setting a reader verify variable with verification off" "extraEnv must not set READ_API_UPSTREAM_ASSERTION_PUBLIC_KEY" --set-json 'sessions-pipeline.sessionReadApi.extraEnv=[{"name":"READ_API_UPSTREAM_ASSERTION_PUBLIC_KEY","value":"x"}]'
+        expect_render_failure "$chart" "$uav" "verify enforce without gate-only" "verify.mode=enforce requires global.relaygate.gateOnly.enabled" --set global.relaygate.gateOnly.enabled=false
+        expect_render_failure "$chart" "$uav" "verify log without gate-only" "verify.mode=log requires global.relaygate.gateOnly.enabled" --set global.relaygate.gateOnly.enabled=false --set global.relaygate.upstreamAuth.verify.mode=log
+        expect_render_failure "$chart" "$v" "verify mode invalid with no verifier rendered" "verify.mode must be off, log or enforce" --set global.relaygate.upstreamAuth.verify.mode=required
+        # Unquoted numeric kids (YAML 1000000) render as integers, not 1e+06.
+        printf 'global:\n  relaygate:\n    upstreamAuth:\n      kid: 1000000\n      verify:\n        publicKeys:\n          currentKid: 1000000\n          previousKid: 999\n' > "${TMPDIR:-/tmp}/numeric-kid-values.yaml"
+        numk=$(render "$chart" "$uav" -f "${TMPDIR:-/tmp}/numeric-kid-values.yaml") || err "$chart: numeric kids did not render"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name | test("ASSERTION_KID")) | .value' <<<"$numk" | sed '/^---$/d;/^$/d' | sort -u | tr '\n' ' ')" = "1000000 999 " ] || err "$chart: numeric kids must render as integers"
         expect_render_failure "$chart" "$uav" "verify mode not off, log or enforce" "verify.mode must be off, log or enforce" --set global.relaygate.upstreamAuth.verify.mode=required
         expect_render_failure "$chart" "$uav" "verify on without the signer" "requires upstreamAuth.enabled" --set global.relaygate.upstreamAuth.enabled=false
         expect_render_failure "$chart" "$uav" "signer kid the verifiers do not accept" "must be verify.publicKeys.currentKid or previousKid" --set global.relaygate.upstreamAuth.kid=k9

@@ -199,7 +199,7 @@ global:
   relaygate:
     upstreamAuth:
       enabled: true                                       # relaygate signs
-      privateKey: { name: relaygate-upstream, key: private-key }   # base64 PKCS#8 DER
+      privateKey: { name: relaygate-upstream, key: private-key-1 } # base64 PKCS#8 DER
       kid: k1
       ttlSeconds: 30                                      # 5 to 60
       verify:
@@ -212,6 +212,35 @@ global:
           # previousKid: k0
 ```
 
+Make a key pair in the formats the services expect (standard base64 of the
+PKCS#8 DER private key, 48 bytes, and of the SPKI DER public key, 44 bytes;
+checked with OpenSSL 3), then store the private key in a Secret and the public
+key in a ConfigMap (or a separate Secret, never the private key's):
+
+```sh
+umask 077; mkdir -p keys && cd keys
+openssl genpkey -algorithm ed25519 -outform DER -out priv.der
+openssl pkey -in priv.der -inform DER -pubout -outform DER -out pub.der
+base64 -w0 priv.der > private-key-1 && base64 -w0 pub.der > public-key-1
+kubectl -n agent-relay create secret generic relaygate-upstream --from-file=private-key-1
+kubectl -n agent-relay create configmap relaygate-upstream-public --from-file=public-key-1
+shred -u priv.der private-key-1   # the private key now lives only in the Secret
+```
+
+Use `privateKey.key: private-key-1`, `currentKey: public-key-1` and a kid such
+as `k1`. (On macOS use `base64 -i priv.der` without `-w0`.) The key never goes
+on a command line. For a rotation, make a new pair the same way as
+`private-key-2`/`public-key-2` and add it next to the old one, leaving the
+existing keys in place:
+
+```sh
+printf '{"stringData":{"private-key-2":"%s"}}' "$(cat private-key-2)" > patch.json
+kubectl -n agent-relay patch secret relaygate-upstream --type merge --patch-file patch.json
+kubectl -n agent-relay patch configmap relaygate-upstream-public --type merge \
+  -p "{\"data\":{\"public-key-2\":\"$(cat public-key-2)\"}}"
+shred -u priv.der private-key-2 patch.json
+```
+
 | Workload | Env | Gets |
 | --- | --- | --- |
 | relaygate | `RELAYGATE_UPSTREAM_ASSERTION_KEY`, `_KID`, `_TTL_SECONDS` | the private key only |
@@ -220,13 +249,18 @@ global:
 
 `verify.mode: off` (the default; quote it, a bare `off` is a YAML boolean,
 which the chart reads as off) renders nothing on the verifiers. `log` accepts
-and logs what `enforce` would refuse: run `log` first. Each verifier carries a
+and logs what `enforce` would refuse: run `log` first. Both `log` and `enforce`
+need `global.relaygate.gateOnly.enabled` (either scope): without it the history
+host routes straight to the reader and ingest edge, so every public History
+request would arrive unsigned, flooding the log (`log`) or being refused
+(`enforce`). The chart refuses that combination. Kids may be unquoted numbers;
+the chart renders them as integers. Each verifier carries a
 `checksum/upstream-assertion` annotation over `verify`, so a change there (a
 new kid, key or source) rolls its pods.
 
 helm refuses to render when: `enabled` has no private key or kid, the kid or
 TTL is invalid, or relaygate has no Sessions proxy; `verify.mode` is not off,
-log or enforce; verification is on without `enabled`; relaygate's `kid` is
+log or enforce; verification is on without `enabled` or without gate-only; relaygate's `kid` is
 neither `currentKid` nor `previousKid`; there is not exactly one public-key
 source; the public keys are in the private key's Secret; or `previousKey` and
 `previousKid` are not set together or repeat the current kid. The chart does

@@ -122,8 +122,10 @@ global:
       verify:
         # The reader and ingest edge (READ_API_UPSTREAM_ASSERTION_* and
         # INGEST_UPSTREAM_ASSERTION_*): off (default, nothing rendered), log
-        # (accept, log what would be refused) or enforce. Quote it: a bare off
-        # is a YAML boolean (the chart reads false as off).
+        # (accept, log what would be refused) or enforce. log and enforce need
+        # global.relaygate.gateOnly.enabled (otherwise public History requests
+        # reach the services unsigned). Quote it: a bare off is a YAML boolean
+        # (the chart reads false as off).
         mode: "off"
         # The public keys (canonical base64 SPKI DER), from ONE Secret or
         # ConfigMap so a rotation is one object; not secret material.

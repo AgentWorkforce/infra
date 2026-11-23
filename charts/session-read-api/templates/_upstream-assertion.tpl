@@ -4,6 +4,11 @@ agent-relay umbrella): the service accepts only relaygate-signed requests
 default); log or enforce render READ_API_UPSTREAM_ASSERTION_MODE and the
 current (and, during a rotation, previous) public key, canonical base64 SPKI
 DER, from one Secret or ConfigMap, with their kids. */ -}}
+{{- /* A kid as a string: an unquoted number (YAML 1000000) would otherwise print as 1e+06. */ -}}
+{{- define "session-read-api.upstreamAssertion.kid" -}}
+{{- if or (kindIs "float64" .) (kindIs "int" .) (kindIs "int64" .) }}{{ printf "%.0f" (float64 .) }}{{ else }}{{ toString (. | default "") }}{{ end -}}
+{{- end }}
+
 {{- define "session-read-api.upstreamAssertion.mode" -}}
 {{- $m := dig "relaygate" "upstreamAuth" "verify" "mode" "off" (.Values.global | default dict) -}}
 {{- if kindIs "bool" $m }}{{ ternary "on" "off" $m }}{{ else }}{{ $m | toString }}{{ end -}}
@@ -19,7 +24,7 @@ DER, from one Secret or ConfigMap, with their kids. */ -}}
 {{- if include "session-read-api.upstreamAssertion.on" . }}
 {{- $pk := dig "relaygate" "upstreamAuth" "verify" "publicKeys" dict .Values.global -}}
 {{- if eq (empty (dig "secretName" "" $pk)) (empty (dig "configMapName" "" $pk)) }}{{ fail "session-read-api: global.relaygate.upstreamAuth.verify.mode log or enforce needs exactly one of verify.publicKeys.secretName or configMapName (the public keys)" }}{{ end -}}
-{{- if or (not (dig "currentKey" "" $pk)) (not (regexMatch "^[A-Za-z0-9._-]{1,64}$" (toString (dig "currentKid" "" $pk)))) }}{{ fail "session-read-api: global.relaygate.upstreamAuth.verify needs publicKeys.currentKey and currentKid (1-64 of A-Z a-z 0-9 . _ -)" }}{{ end -}}
+{{- if or (not (dig "currentKey" "" $pk)) (not (regexMatch "^[A-Za-z0-9._-]{1,64}$" (include "session-read-api.upstreamAssertion.kid" (dig "currentKid" "" $pk)))) }}{{ fail "session-read-api: global.relaygate.upstreamAuth.verify needs publicKeys.currentKey and currentKid (1-64 of A-Z a-z 0-9 . _ -)" }}{{ end -}}
 {{- end }}
 {{- end }}
 
@@ -30,11 +35,11 @@ DER, from one Secret or ConfigMap, with their kids. */ -}}
 - { name: READ_API_UPSTREAM_ASSERTION_MODE, value: {{ include "session-read-api.upstreamAssertion.mode" . | quote }} }
 - name: READ_API_UPSTREAM_ASSERTION_PUBLIC_KEY
   valueFrom: { {{ $ref }}, key: {{ $pk.currentKey | quote }} } }
-- { name: READ_API_UPSTREAM_ASSERTION_KID, value: {{ $pk.currentKid | toString | quote }} }
+- { name: READ_API_UPSTREAM_ASSERTION_KID, value: {{ include "session-read-api.upstreamAssertion.kid" $pk.currentKid | quote }} }
 {{- if dig "previousKey" "" $pk }}
 - name: READ_API_UPSTREAM_ASSERTION_PUBLIC_KEY_PREVIOUS
   valueFrom: { {{ $ref }}, key: {{ $pk.previousKey | quote }} } }
-- { name: READ_API_UPSTREAM_ASSERTION_KID_PREVIOUS, value: {{ $pk.previousKid | toString | quote }} }
+- { name: READ_API_UPSTREAM_ASSERTION_KID_PREVIOUS, value: {{ include "session-read-api.upstreamAssertion.kid" $pk.previousKid | quote }} }
 {{- end }}
 {{- end }}
 {{- end }}

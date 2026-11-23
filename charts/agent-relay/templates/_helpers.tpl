@@ -382,16 +382,29 @@ normal defaults and the missing/null-key fallback, with Chief off and on. */ -}}
 {{- /* Upstream verification across charts: verifiers on (log or enforce)
 need the signer on, and relaygate's kid must be one the verifiers accept, or
 every proxied request is refused (enforce) or logged (log). */ -}}
+{{- /* A kid as a string: an unquoted number (YAML 1000000) would otherwise print as 1e+06. */ -}}
+{{- define "agent-relay.kid" -}}
+{{- if or (kindIs "float64" .) (kindIs "int" .) (kindIs "int64" .) }}{{ printf "%.0f" (float64 .) }}{{ else }}{{ toString (. | default "") }}{{ end -}}
+{{- end }}
+
 {{- define "agent-relay.validateUpstreamAuth" -}}
 {{- $ua := dig "relaygate" "upstreamAuth" dict (.Values.global | default dict) | default dict -}}
 {{- $m := dig "verify" "mode" "off" $ua -}}
 {{- if kindIs "bool" $m }}{{ $m = ternary "on" "off" $m }}{{ end -}}
+{{- if not (has (toString $m) (list "off" "log" "enforce")) }}{{ fail (printf "global.relaygate.upstreamAuth.verify.mode must be off, log or enforce, got %q" (toString $m)) }}{{ end -}}
 {{- if has (toString $m) (list "log" "enforce") }}
 {{- if not (eq (dig "enabled" false $ua | toString) "true") }}{{ fail (printf "global.relaygate.upstreamAuth.verify.mode=%s requires upstreamAuth.enabled: relaygate must sign before the reader and ingest edge verify" $m) }}{{ end -}}
+{{- /* Without gate-only the history host routes straight to the reader and
+ingest edge, so every public History request would be unsigned: log would only
+flood the logs and enforce would refuse them all. */ -}}
+{{- if not (include "agent-relay.gateOnly" .) }}{{ fail (printf "global.relaygate.upstreamAuth.verify.mode=%s requires global.relaygate.gateOnly.enabled: without it public History requests reach the reader and ingest edge directly, unsigned, and would be logged (log) or refused (enforce)" $m) }}{{ end -}}
 {{- $pk := dig "verify" "publicKeys" dict $ua -}}
-{{- if not (has (toString (dig "kid" "" $ua)) (compact (list (toString (dig "currentKid" "" $pk)) (toString (dig "previousKid" "" $pk))))) }}{{ fail "global.relaygate.upstreamAuth.kid must be verify.publicKeys.currentKid or previousKid: the verifiers would not accept relaygate's assertions" }}{{ end -}}
+{{- $kid := include "agent-relay.kid" (dig "kid" "" $ua) -}}
+{{- $cur := include "agent-relay.kid" (dig "currentKid" "" $pk) -}}
+{{- $prev := include "agent-relay.kid" (dig "previousKid" "" $pk) -}}
+{{- if not (has $kid (compact (list $cur $prev))) }}{{ fail "global.relaygate.upstreamAuth.kid must be verify.publicKeys.currentKid or previousKid: the verifiers would not accept relaygate's assertions" }}{{ end -}}
 {{- if and (dig "secretName" "" $pk) (eq (toString $pk.secretName) (toString (dig "privateKey" "name" "" $ua))) }}{{ fail "global.relaygate.upstreamAuth.verify.publicKeys.secretName must not be the Secret holding the private key (upstreamAuth.privateKey.name): verifiers must never mount private key material" }}{{ end -}}
-{{- if ne (empty (dig "previousKey" "" $pk)) (empty (dig "previousKid" "" $pk)) }}{{ fail "global.relaygate.upstreamAuth.verify.publicKeys.previousKey and previousKid go together" }}{{ end -}}
-{{- if and (dig "previousKid" "" $pk) (eq (toString $pk.previousKid) (toString (dig "currentKid" "" $pk))) }}{{ fail "global.relaygate.upstreamAuth.verify.publicKeys.previousKid must differ from currentKid" }}{{ end -}}
+{{- if ne (empty (dig "previousKey" "" $pk)) (empty $prev) }}{{ fail "global.relaygate.upstreamAuth.verify.publicKeys.previousKey and previousKid go together" }}{{ end -}}
+{{- if and $prev (eq $prev $cur) }}{{ fail "global.relaygate.upstreamAuth.verify.publicKeys.previousKid must differ from currentKid" }}{{ end -}}
 {{- end }}
 {{- end }}
