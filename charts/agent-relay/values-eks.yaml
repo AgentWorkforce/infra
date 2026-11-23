@@ -224,8 +224,6 @@ sessions-pipeline:
       # REQUIRED OVERRIDE: the bare History origin (https://history.<your
       # domain>), the same as relay-control.services.sessionReadApiPublicUrl.
       historyOrigin: https://history.placeholder.company
-  # CloudNativePG HoopDb. Needs the CNPG operator (cloudnative-pg chart) in
-  # the cluster first, and a default StorageClass (EBS gp3).
   sessionReadApi:
     # Self-host defaults set by this profile (the subchart defaults stay off):
     # summaries.searchBackend postgres serves GET /v1/sessions/summaries/search
@@ -239,6 +237,8 @@ sessions-pipeline:
     # them (abd4e8a8 or later); an older image ignores them.
     summaries: { searchBackend: postgres }
     search: { sessionPartialRetryable: true }
+  # CloudNativePG HoopDb. Needs the CNPG operator (cloudnative-pg chart) in
+  # the cluster first, and a default StorageClass (EBS gp3).
   hoopdb:
     enabled: true
   runtimeRole:
