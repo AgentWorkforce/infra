@@ -187,7 +187,7 @@ class NativeNoRelayauth(unittest.TestCase):
             self.assertIn(name, deployments)
 
         services_image = ('ghcr.io/agentworkforce/sessions-pipeline@sha256:'
-                          'e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5')
+                          '459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f')
         services_pods = []
         for workload in [*deployments.values(), *jobs.values()]:
             pod = workload['spec']['template']['spec']
@@ -329,7 +329,7 @@ class NativeNoRelayauth(unittest.TestCase):
         for name in ('agent-relay-read-api', 'proof-ingest-edge', 'proof-search-indexer'):
             self.assertIn(name, deployments)
             self.assertTrue(deployments[name]['spec']['template']['spec']['containers'][0]['image'].startswith(
-                'ghcr.io/agentworkforce/sessions-pipeline@sha256:e51749eb'))
+                'ghcr.io/agentworkforce/sessions-pipeline@sha256:459104bc'))
         services = {doc['metadata']['name']: doc for doc in docs if doc.get('kind') == 'Service'}
         self.assertIn('agent-relay-read-api', services)
         self.assertEqual(

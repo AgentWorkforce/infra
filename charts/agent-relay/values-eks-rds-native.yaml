@@ -21,18 +21,20 @@
 # revision to become Ready before applying values-scrub-wasm-bindgen.yaml. A
 # fresh install with an empty Sessions database may apply both overlays at once.
 
-# Services image: relayhistory-pipeline efdd4bb2 (issue 610 Phase 3), signed
-# publish run 44489159041; vendors relayscrubber 0.5.0-alpha.9 under Khaliq's
-# recorded override (self-hosted/customer-images.yaml). Upgrading an existing
-# database: first re-run rds_migration_roles.sql from this image as the RDS
-# master (it adds the bulls96_legacy_export_privacy role), and on a populated
-# database prebuild the migration 058000 indexes or set
-# worker.migrations.allowBlockingIndexBuild once. The RDS separate-database
-# activation layout has no documented upgrade path for the new role yet.
+# Services image: relayhistory-pipeline abd4e8a8, publish run 45199432277;
+# vendors relayscrubber 0.5.0-alpha.10, the replacement the alpha.9 override
+# named (self-hosted/customer-images.yaml), and adds eight migrations
+# (062150-062220) over efdd4bb2. Upgrading a database that last ran an image
+# older than efdd4bb2: first re-run rds_migration_roles.sql from this image as
+# the RDS master (it adds the bulls96_legacy_export_privacy role; the file is
+# unchanged since efdd4bb2), and on a populated database prebuild the
+# migration 058000 indexes or set worker.migrations.allowBlockingIndexBuild
+# once. The RDS separate-database activation layout has no documented upgrade
+# path for that role yet.
 x-pins:
   services-image: &services_image
     repository: ghcr.io/agentworkforce/sessions-pipeline
-    digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
+    digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
 
 components:
   relayauth: false
