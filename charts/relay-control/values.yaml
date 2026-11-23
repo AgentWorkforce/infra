@@ -518,7 +518,7 @@ extraEnv: []
 desktopFeed:
   signingKeys:
     existingSecret: ""
-    # Profile ids with a key in the Secret, e.g. [f6b9x4unfg].
+    # Profile ids with a key in the Secret, e.g. [<profile-id>].
     profiles: []
 
 # OPTIONAL: a CA bundle that lets node-pg verify the Postgres server certificate

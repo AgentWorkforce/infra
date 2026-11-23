@@ -31,9 +31,9 @@ dependencies:
   version: 0.1.0
 - name: slack-relay
   repository: file://../slack-relay
-  version: 0.3.11
+  version: 0.3.12
 - name: relaygate
   repository: file://../relaygate
   version: 0.1.11
-digest: sha256:e67b48e2addae14cb669c6dc9cc625512c6b91139caef739533e736cf8ff544b
-generated: "2026-11-23T08:00:01.279128051-08:00"
+digest: sha256:312d9ed6ba870c034c51ba52d503aeb9067eff58dcb44b120297b84ae3d52ca6
+generated: "2026-11-23T08:00:46.806227958-08:00"

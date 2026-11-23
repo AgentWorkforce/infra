@@ -2201,7 +2201,7 @@ compatibility:
       charts: { agent-relay: 0.7.77, relay-control: 0.4.25, relay-webapp: 0.2.8 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.17, relayauth: 0.1.5, sessions-pipeline: 0.8.57, relay-control: 0.4.25, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.11 }
+        agent-relay: { relaycast: 0.3.17, relayauth: 0.1.5, sessions-pipeline: 0.8.57, relay-control: 0.4.25, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.12, relaygate: 0.1.11 }
       images:
         relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
         relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
@@ -4086,9 +4086,16 @@ compatibility:
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
       notes: First registered chart, rendered only; default-off in the agent-relay umbrella (components.relaygate). Build 1 of the server (registration, mode check, /v1/check, classifier, audit); the Relaycast/Sessions proxy follows. Ships no default digest.
-    - id: slack-relay-0.3.11
+    - id: slack-relay-0.3.12
       status: unreleased
       current: true
+      charts: { slack-relay: 0.3.12 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.11. Comment-only change in values-gcp-proof.yaml (a generic test-stack description). Renders are unchanged apart from the chart version.'
+    - id: slack-relay-0.3.11
+      status: planned
       charts: { slack-relay: 0.3.11 }
       app_versions: { slack-relay: 0.1.0 }
       images:
