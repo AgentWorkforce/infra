@@ -2083,7 +2083,7 @@ compatibility:
         sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5 }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.7.71 and default-off eksIngress.aliasDomains / additionalCertificateArns (serve a second public domain on the EKS ALB during a cutover).'
+      notes: 'Carries 0.7.71 and default-off eksIngress.extraEdges (more EKS ALB Ingresses with the same routes and explicit hostnames, for a public-name cutover).'
     - id: agent-relay-0.7.71
       status: planned
       charts: { agent-relay: 0.7.71, relay-control: 0.4.24, relay-webapp: 0.2.8 }
