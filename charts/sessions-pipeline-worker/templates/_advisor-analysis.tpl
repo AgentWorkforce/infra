@@ -85,6 +85,8 @@
 {{- $loopback := regexMatch (printf "^http://(localhost|127\\.0\\.0\\.1|\\[::1\\])%s$" $port) $endpoint -}}
 {{- $service := regexMatch (printf "^http://%s\\.%s\\.svc(\\.cluster\\.local)?%s$" $label $label $port) $endpoint -}}
 {{- if not (or $https $loopback $service) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Endpoint must be a bare lowercase origin: https://<host>[:port], or plain http only to loopback or a Kubernetes Service name <svc>.<ns>.svc[.cluster.local] (no credentials, path, query or fragment)" }}{{ end -}}
+{{- $explicitPort := regexFind ":[0-9]+/?$" $endpoint | trimPrefix ":" | trimSuffix "/" -}}
+{{- if and $explicitPort (or (lt (atoi $explicitPort) 1) (gt (atoi $explicitPort) 65535)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Endpoint port must be from 1 to 65535" }}{{ end -}}
 {{- if and $service (not $allowHttp) }}{{ fail "sessions-pipeline-worker: a plain-http in-cluster sessionAnalysis.s3Endpoint needs sessionAnalysis.allowInClusterHttp=true (the runner refuses it otherwise)" }}{{ end -}}
 {{- if regexMatch "^https?://(storage\\.googleapis\\.com|.+\\.storage\\.googleapis\\.com|storage\\.google\\.com)\\.?(:[0-9]+)?/?$" $endpoint }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Endpoint must not be the GCS API host (the runner refuses GCS as provider_unsupported)" }}{{ end -}}
 {{- else if $allowHttp -}}

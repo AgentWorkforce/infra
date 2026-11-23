@@ -399,7 +399,16 @@ put_secret session-analysis-db --from-file="$S/session-analysis-db"   # put_secr
 Uncomment the `sessionAnalysis` block under `sessions-pipeline.worker` in
 `values.yaml`. It reads the MinIO keys from the existing
 `sessions-pipeline-locker` Secret by name, and the chart never takes key
-values. Keep `run: false` for the first upgrade:
+values. Keep `run: false` for the first upgrade.
+
+The newer services image renames the worker `migrate` and `locker-init` Jobs,
+so Helm runs them again. On an install whose `~/.agent-relay-install/hoopdb-layout` is
+`legacy-admin`, the migration Job reads the temporary `hoopdb-admin-jobs` Secret,
+which no longer exists: do not run the command below. Keep `$CHART` and the
+updated `release-images.values.yaml`, set `NEW_DIR=release`, and run the
+script in [Upgrades](#upgrades-dedicated-owner-and-legacy-temporary-credentials)
+from `release_jobs()` on. It creates the Secret, upgrades with the new
+values, waits for the Jobs and deletes the Secret. Every other install:
 
 ```sh
 helm upgrade agent-relay "$CHART" --namespace agent-relay \
