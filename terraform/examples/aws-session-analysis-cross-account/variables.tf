@@ -27,7 +27,13 @@ variable "service_account" {
   type        = string
   default     = "agent-relay-worker-session-analysis"
   validation {
-    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.service_account)) && !contains(["default", "agent-relay-worker", "agent-relay-ingest-edge"], var.service_account)
+    condition = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.service_account)) && !contains([
+      "default",
+      "agent-relay-worker",
+      "agent-relay-ingest-edge",
+      "agent-relay-session-ingest-api",
+      "agent-relay-alleyoop",
+    ], var.service_account)
     error_message = "service_account must be a dedicated Kubernetes ServiceAccount name, not a shared worker or ingest identity."
   }
 }

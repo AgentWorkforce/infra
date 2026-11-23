@@ -66,6 +66,18 @@ run "refuses_shared_service_accounts" {
   expect_failures = [var.service_account]
 }
 
+run "refuses_session_ingest_service_account" {
+  command = plan
+  variables { service_account = "agent-relay-session-ingest-api" }
+  expect_failures = [var.service_account]
+}
+
+run "refuses_alleyoop_service_account" {
+  command = plan
+  variables { service_account = "agent-relay-alleyoop" }
+  expect_failures = [var.service_account]
+}
+
 run "refuses_a_key_path_as_bucket" {
   command = plan
   variables { sessions_bucket_arn = "arn:aws:s3:::sessions-bucket/96bulls" }
