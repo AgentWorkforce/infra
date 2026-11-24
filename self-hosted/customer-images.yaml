@@ -308,76 +308,89 @@ images:
       - Job/*-worker-migrate-*:migrate
     current:
       repository: ghcr.io/agentworkforce/sessions-pipeline
-      digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5
+      digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
       chartStatus: shipped
       note: >-
         Rendered by the GCP, EKS and EKS RDS-native profiles for read, ingest,
-        search, worker and migration workloads. relayhistory-pipeline efdd4bb2:
-        issue 610 Phase 3, the search indexer's staged reconcile and streaming
-        are on by default (needs migrations 20261105062110 and, with output
-        facts, 20261105062140, applied by the migrate Job). Over 7e9b2f0f it
-        adds 28 migrations (047010-062140) and HoopDb 0005/0006; an existing
-        database must first gain the bulls96_legacy_export_privacy role
-        (re-run the mode's migration-roles bootstrap from this image) and, when
-        populated, prebuild the 058000 indexes or allow one blocking build. No
-        upgrade rehearsal from a 7e9b2f0f database exists yet.
+        search, worker and migration workloads. relayhistory-pipeline abd4e8a8.
+        Over efdd4bb2 (issue 610 Phase 3) it carries the session-analysis
+        runner on any S3-compatible store (9b29a3dd, 745cc671) and the read
+        API's opt-in Postgres summary search backend and retryable
+        session_partial answer (549e6d38); the charts leave both read-API
+        settings off. It adds eight migrations (20261105062150-062220:
+        relayfacts claims, session-intel controls and workspace, claims
+        scheduler, coordination advisory pending priority and incarnation,
+        session directory list readiness, lazy ACK T2), applied by the migrate
+        Job; their source commits describe the features behind them as off by
+        default, which no run here has checked. The migration-roles
+        bootstraps are unchanged since efdd4bb2. A database
+        that last ran an image older than efdd4bb2 must first gain the
+        bulls96_legacy_export_privacy role (re-run the mode's migration-roles
+        bootstrap from this image) and, when populated, prebuild the 058000
+        indexes or allow one blocking build. No upgrade rehearsal from an
+        efdd4bb2 or a 7e9b2f0f database exists yet.
     source:
       repository: https://github.com/AgentWorkforce/relayhistory-pipeline
-      revision: efdd4bb2896e067124280c9068c6df69011fcfff
+      revision: abd4e8a811e57c2c6745b38e36fa2f9fb26ea843
       path: docker/services.Dockerfile
       reproducibleReference: true
       note: >-
-        Main at efdd4bb2 (Phase 3 slice 4 review fixes). Exact-head push CI
-        green: ci 44463603986 (incl. selfhost-e2e), pg-proof 44463604010
-        (PostgreSQL 15/16/17), opensearch-proof 44463604118, Agent CI
-        44463604008; two reviews recorded.
+        Main at abd4e8a8, 176 commits after efdd4bb2. Exact-head push CI
+        green: ci 45195583787, pg-proof 45195582643, Agent CI 45195582605. No
+        opensearch-proof run exists at this head.
     license:
       status: approved
       spdx: FSL-1.1-ALv2
-      evidence: https://github.com/AgentWorkforce/relayhistory-pipeline/blob/efdd4bb2896e067124280c9068c6df69011fcfff/LICENSE
+      evidence: https://github.com/AgentWorkforce/relayhistory-pipeline/blob/abd4e8a811e57c2c6745b38e36fa2f9fb26ea843/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relayhistory-pipeline/blob/efdd4bb2896e067124280c9068c6df69011fcfff/.github/workflows/publish-image.yml
-      run: https://github.com/AgentWorkforce/relayhistory-pipeline/actions/runs/44489159041
+      workflow: https://github.com/AgentWorkforce/relayhistory-pipeline/blob/abd4e8a811e57c2c6745b38e36fa2f9fb26ea843/.github/workflows/publish-image.yml
+      run: https://github.com/AgentWorkforce/relayhistory-pipeline/actions/runs/45199432277
       trigger: workflow_dispatch-with-approval-phrase
       buildsCommittedRevision: true
-      publishedTags: [sha-efdd4bb2896e067124280c9068c6df69011fcfff]
+      publishedTags: [sha-abd4e8a811e57c2c6745b38e36fa2f9fb26ea843]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-sigstore-signed-receipt
       note: >-
-        The successful release run (dispatched by khaliqgant on Khaliq's
-        approval) signed the exact-source OCI index, copied it to both
-        repository names (sessions-pipeline and 96bulls-services) and uploaded a
-        signed release receipt. The index has BuildKit SBOM and SLSA
-        provenance attestations for amd64 and arm64; OCI revision efdd4bb2 on
-        both; pulled anonymously.
+        The successful release run (workflow_dispatch on main by khaliqgant;
+        the workflow file is unchanged since efdd4bb2) published the
+        exact-source OCI index under both repository names (sessions-pipeline
+        and 96bulls-services) and uploaded a release receipt that names both
+        references at this digest, with a sigstore bundle whose SLSA
+        provenance subject is this index. The index has two attestation
+        manifests beside amd64 and arm64; OCI revision abd4e8a8 on both
+        platforms under both names; pulled anonymously. The bundle's
+        signature was not re-verified with cosign when this record was
+        written.
     customerAcquisition:
       status: available-public
       procedure: Mirror the public GHCR digest into the customer registry by digest and record the destination digest.
     approval:
       status: approved
       basis: >-
-        OVERRIDE, not a scrubber PASS. Khaliq, directly (relay khaliq-gant msg
-        249194370429870080, 2026-11-19): "override alpha 9, 10 is taking too
-        long". The image vendors relayscrubber 0.5.0-alpha.9 (tag
-        v0.5.0-alpha.9; wasm sha256 4228d2cd50334a6b714dcbd8cfc89220fdf36b1c903d170f873ad9b738fee090;
-        rulesetSourceSha256 7837062214ff56145c72999880179598244cff5f80554a4b697548920561c143;
+        Replaces the alpha.9 override recorded for efdd4bb2 (Khaliq, relay
+        khaliq-gant msg 249194370429870080, 2026-11-19) with its named
+        replacement: the image vendors relayscrubber 0.5.0-alpha.10 (tag
+        v0.5.0-alpha.10; tarball sha256 a6a30eb589f446b7e5153bb03d093a8758da048a422cb644683236b5e8cd2084;
+        wasm sha256 491fc18e691ea4549ba84739e1c1a3e56b76709bb85193a2606996b8f8c4528b;
+        rulesetSourceSha256 658c54d896815a919b36cf94fb364a08b4d16e524e34a56c5e405331246933e4;
         ruleset relayhistory-scrub 10, abi 2, profile relayhistory-secrets-v10),
-        which relayscrubber-lead keeps under a SECURITY BLOCK: no exact-head
-        PASS, and it still leaks the mandatory natural-language password
-        disclosure class (one-character, quoted and multi-word values; pw,
-        passcode and passphrase cues). The reviewed alpha.5 artifact leaks the
-        same class at a higher rate (6,119 versus 5,254 of 7,126 probe rows).
-        Replacement target: relayscrubber 0.5.0-alpha.10 (AgentWorkforce/relayscrubber
-        PR #24) once it passes; then re-pin. License FSL-1.1-ALv2, approved by
-        Khaliq 2026-11-19 for self-hosted distribution. Exact-source publish
-        run 44489159041 with signed receipt; amd64+arm64, OCI revision and
-        migrations 062110/062140 verified from the public registry.
+        read from the image's own scrub-bindgen-pin.json. AgentWorkforce/relayscrubber
+        PR #24 is merged (18de56c2) and the v0.5.0-alpha.10 release records
+        relayscrubber-lead's exact-head ENGINE/ARTIFACT SECURITY pass on
+        fcdc2087, merged with an identical tree; the release tarball digest
+        equals the pin. License FSL-1.1-ALv2, approved by Khaliq 2026-11-19
+        for self-hosted distribution; LICENSE is unchanged since efdd4bb2.
+        Exact-source publish run 45199432277 with a release receipt;
+        amd64+arm64, OCI revision, migrations 062150-062220 and the scrub pin
+        verified from the public registry. This record quotes no new owner
+        statement: the owner's merge of the change that pins this digest is
+        the approval.
       blockingReasons: []
 
   - id: sessions-migration-postgresql

@@ -34,7 +34,7 @@
       },
       {
         "decision": "approved",
-        "evidence": "Owner decision (Khaliq, 2026-11-19): FSL-1.1-ALv2 approved for self-hosted distribution. The pinned services image is built from relayhistory-pipeline efdd4bb2896e067124280c9068c6df69011fcfff, whose LICENSE is FSL-1.1-ALv2: https://github.com/AgentWorkforce/relayhistory-pipeline/blob/efdd4bb2896e067124280c9068c6df69011fcfff/LICENSE (earlier images from before the license change were Apache-2.0).",
+        "evidence": "Owner decision (Khaliq, 2026-11-19): FSL-1.1-ALv2 approved for self-hosted distribution. The pinned services image is built from relayhistory-pipeline abd4e8a811e57c2c6745b38e36fa2f9fb26ea843, whose LICENSE is FSL-1.1-ALv2 and unchanged since the efdd4bb2 revision that decision covered: https://github.com/AgentWorkforce/relayhistory-pipeline/blob/abd4e8a811e57c2c6745b38e36fa2f9fb26ea843/LICENSE (earlier images from before the license change were Apache-2.0).",
         "id": "sessions-services",
         "spdx": "FSL-1.1-ALv2"
       },
@@ -111,7 +111,7 @@
       "protected": false,
       "requiredApprovals": 0
     },
-    "imageManifestSha256": "sha256:da7e86a79af9871d183cd486046acf47d518882ffb424fcd611b577d5a7e45cb",
+    "imageManifestSha256": "sha256:a27478a6a4ab1412066ae57088d76d668681a46845c0347161a78b7e439253dc",
     "valuesFile": "charts/agent-relay/values-gcp.yaml"
   },
   "releaseDecision": "blocked",

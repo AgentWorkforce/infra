@@ -32,14 +32,22 @@ gcp-proof-flows|proof $p -n agent-relay -f $p/values-gcp-proof.yaml -f $p/ci/gcp
 gcp-durable-actors|agent-relay $p -n agent-relay -f $p/values-gcp-proof.yaml -f $p/values-gcp-proof-live.yaml -f $p/values-gcp-proof-durable-actors.yaml -f $p/values-gcp-proof-relayfile.yaml --set relaycast.runtime.durableActors.gateway.image.digest=$(da_digest a) --set relaycast.runtime.durableActors.deployer.image.digest=$(da_digest b) --set relayfile.runtime.durableActors.image.digest=$(da_digest c) --set relayfile.runtime.durableActors.workspaceImage.digest=$(da_digest d)
 kind-durable-actors|agent-relay $p -n agent-relay -f ci/agent-relay/kind-durable-actors-values.yaml
 eks-rds-native|proof $p -n agent-relay-placeholder -f $p/values-eks.yaml -f $p/values-eks-rds-native.yaml
+aks-native|agent-relay $p -n agent-relay -f $p/values-eks.yaml -f $aks_site -f $p/ci/aks-native-values.yaml
 relay-control|ci charts/relay-control -n ci -f charts/relay-control/ci/default-values.yaml
 relay-webapp|ci charts/relay-webapp -n ci -f charts/relay-webapp/ci/default-values.yaml
 P
 }
 render_all() { # root outdir
-  local root=$1 out=$2 name args previous arg missing
+  local root=$1 out=$2 name args previous arg missing aks_site
   mkdir -p "$out"
   ( cd "$root"
+    # The AKS profile renders docs/azure-install/values.yaml with its
+    # placeholders filled (ci/agent-relay/aks-native-site-values.sh); a ref
+    # without that script skips the profile below (missing values file).
+    aks_site=$out.aks-site-values.yaml
+    if [ -x ci/agent-relay/aks-native-site-values.sh ]; then
+      ci/agent-relay/aks-native-site-values.sh "$aks_site"
+    fi
     helm dependency build charts/sessions-pipeline >/dev/null
     helm dependency build charts/agent-relay >/dev/null
     profiles | while IFS='|' read -r name args; do

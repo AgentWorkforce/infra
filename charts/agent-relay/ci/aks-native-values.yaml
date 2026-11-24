@@ -1,0 +1,88 @@
+# RENDER ONLY: stands in for the two files an AKS install layers after
+# docs/azure-install/values.yaml (docs/azure-install/README.md steps 4 and 6):
+#   - the release's release-images.values.yaml, here generated from
+#     self-hosted/customer-images.yaml by
+#     scripts/release/build-agent-relay-release-manifest.py (profile eks) with
+#     the mirror root removed, as the guide's sed does; and
+#   - ~/.agent-relay-install/hoopdb-layout-values.yaml as postgres-setup.sh
+#     writes it for a fresh install (hoopdb_owner migrates).
+# Image pins and the HoopDb layout only, no behaviour values.
+# ci/agent-relay/test_native_no_relayauth.py fails when it drifts from either.
+relaycast:
+  image:
+    repository: ghcr.io/agentworkforce/relaycast-self-host
+    digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+  runtime:
+    postgres:
+      image:
+        repository: ghcr.io/agentworkforce/relaycast-self-host
+        digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+relayauth:
+  image:
+    repository: ghcr.io/agentworkforce/relayauth
+    digest: sha256:c23c92d25fdffef3b5838a1eef4c226925f859706365d9ccece229795b877288
+sessions-pipeline:
+  privilegedSql:
+    sqlImage:
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
+  searchWorkerRole:
+    bootstrapJob:
+      sqlImage:
+        repository: ghcr.io/agentworkforce/sessions-pipeline
+        digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
+  runtimeRole:
+    bootstrapJob:
+      sqlImage:
+        repository: ghcr.io/agentworkforce/sessions-pipeline
+        digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
+  functionDefaultRevoke:
+    bootstrapJob:
+      sqlImage:
+        repository: ghcr.io/agentworkforce/sessions-pipeline
+        digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
+  worker:
+    image:
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
+    migrations:
+      waitForRole:
+        image: ghcr.io/cloudnative-pg/postgresql@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3
+      roleBootstrap: false
+      hoopdb:
+        existingSecret: agent-relay-secrets
+        key: HOOPDB_MIGRATION_URL
+  alleyoop:
+    image:
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
+  sessionReadApi:
+    image:
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
+  searchIndexer:
+    image:
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
+    bootstrap:
+      existingSecret: search-indexer-owner
+      key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+  ingestEdge:
+    image:
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
+  nativeConsumer:
+    image:
+      repository: ghcr.io/agentworkforce/sessions-pipeline
+      digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
+  hoopdb:
+    cluster:
+      imageName: ghcr.io/cloudnative-pg/postgresql@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3
+relay-control:
+  image:
+    repository: ghcr.io/agentworkforce/relay-control
+    digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9
+relay-webapp:
+  image:
+    repository: ghcr.io/agentworkforce/relay-webapp
+    digest: sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e
