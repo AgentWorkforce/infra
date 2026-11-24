@@ -364,6 +364,17 @@ services:
   # roles rule. Off by default (unset); needs a relay-control image with the
   # role-mint change. When true, extraEnv may not also set it.
   sessionReadMintIncludeRole: false
+  # SESSION_READ_MINT_INCLUDE_READER_KIND: whether read-token mints carry
+  # reader_kind, which relaygate needs for policy.controlPrincipals rules on
+  # readerKinds. Unset (null, the default) renders nothing and keeps Control's
+  # rule: reader_kind is sent exactly when SELFHOST_RELAYGATE_PUBLIC_URL is set
+  # (gate-only scope all). true always sends it; false never does. true needs
+  # global.relaygate.gateOnly.enabled (either scope) so SESSION_READ_API_URL is
+  # relaygate's Sessions listener: the read API refuses mints carrying the
+  # field. Needs relay-control 0.5.38 or later (older images ignore it); the
+  # chart's pinned image is older, so it has no effect until that pin moves.
+  # When set, extraEnv may not also set it.
+  sessionReadMintIncludeReaderKind: null
 
 # Operator per-session erase handoff to the private Sessions ingest Service.
 # Off by default. The bearer lives only in the referenced Secret; the chart

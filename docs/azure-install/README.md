@@ -265,7 +265,8 @@ Cilium dataplane enforces the NetworkPolicy it relies on.
 
 1. In `relaygate-values.yaml`, replace `__HOST_HISTORY__` and `__HOST_ROOT__`,
    and fill `policy.controlPrincipals` (your org
-   id, the admins' emails; no `readerKinds`). helm refuses to render until they
+   id, the admins' emails; `readerKinds` only with relay-control 0.5.38 or
+   later and `relay-control.services.sessionReadMintIncludeReaderKind: true`). helm refuses to render until they
    are set.
 2. Create the admin Secret (used once, for the adopt in 4):
 

@@ -150,14 +150,26 @@ paths answer `relaygate_route_not_proxied`, no worse than the edge deny.
 
 Limits, until the images named here ship:
 
-- **Do not use `readerKinds` in `controlPrincipals` with scope sessions.**
-  relay-control puts the reader kind on read-token mints only when
-  `SELFHOST_RELAYGATE_PUBLIC_URL` is set, which scope sessions leaves unset
-  (it belongs to the Relaycast gate). relaygate fails closed, so a rule with
-  `readerKinds` matches no dashboard read. relay-control #273 (held, in no
-  image yet) adds `SESSION_READ_MINT_INCLUDE_READER_KIND`; it is safe only where
-  `SESSION_READ_API_URL` is relaygate's 8081 listener, which is what
-  sessions-only renders. The chart gets a key for it once #273 ships in an image.
+- **`readerKinds` in `controlPrincipals` with scope sessions needs
+  `relay-control.services.sessionReadMintIncludeReaderKind: true` and
+  relay-control 0.5.38 or later.** By default relay-control puts the reader
+  kind on read-token mints only when `SELFHOST_RELAYGATE_PUBLIC_URL` is set,
+  which scope sessions leaves unset (it belongs to the Relaycast gate), and
+  relaygate fails closed, so a rule with `readerKinds` matches no dashboard
+  read. The key renders `SESSION_READ_MINT_INCLUDE_READER_KIND` (read in
+  relay-control `src/config.ts`, `loadSessionReadMintIncludeReaderKind`, since
+  0.5.38 / main 707fe5cd):
+  - unset (default): nothing renders; Control sends `reader_kind` exactly when
+    `SELFHOST_RELAYGATE_PUBLIC_URL` is set (gate-only scope all);
+  - `true`: always sent. The chart refuses it without gate-only, because only
+    relaygate's Sessions listener (the `SESSION_READ_API_URL` gate-only renders)
+    accepts it: relaygate reads and strips the field, and the read API's strict
+    mint schema refuses it;
+  - `false`: never sent, even with scope all (then no rule may use `readerKinds`).
+
+  **The chart's pinned relay-control image is older than 0.5.38, so the key does
+  nothing until that pin moves** (older images ignore the variable). Until
+  then, keep `readerKinds` out of the policy.
 - **Rules on `roles` need the role on read tokens:** set
   `relay-control.services.sessionReadMintIncludeRole: true` (renders
   `SESSION_READ_MINT_INCLUDE_ROLE=true`; off by default). Without it, list

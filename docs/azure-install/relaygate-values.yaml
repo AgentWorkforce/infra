@@ -34,8 +34,8 @@ relaygate:
     # REQUIRED: map dashboard and desktop users (Control principals) to groups.
     # First match wins; no match is refused. List admins by emails or userIds
     # (rules on roles also need relay-control.services.sessionReadMintIncludeRole).
-    # Do not use readerKinds with scope sessions until your relay-control image
-    # sends the reader kind on read mints without the Relaycast gate.
+    # Rules on readerKinds need relay-control 0.5.38 or later and
+    # relay-control.services.sessionReadMintIncludeReaderKind: true.
     controlPrincipals:
       - { match: { orgIds: ["<org id>"], emails: ["<admin email>"] }, gid: 33 }
       - { match: { orgIds: ["<org id>"] }, gid: 11 }

@@ -351,7 +351,7 @@ Use the release packet's complete RDS values overlay. The historical
    upgrade (`tar -xOzf "$CHART_PACKAGE" agent-relay/values-eks-relaygate.yaml`),
    set its REQUIRED values in the customer values (the relaygate image mirrored by
    its pinned digest, the history
-   and dashboard hosts, `policy.controlPrincipals` without `readerKinds`,
+   and dashboard hosts, `policy.controlPrincipals` (no `readerKinds` unless relay-control is 0.5.38 or later with `relay-control.services.sessionReadMintIncludeReaderKind: true`),
    `eksIngress.domain` or `hosts` and `certificateArn`), and render the ALB from
    the release (`eksIngress.enabled`, which the profile sets):
    `scripts/selfhost/eks-alb-ingress.sh` has no gate mode. Hand a

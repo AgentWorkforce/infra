@@ -668,6 +668,21 @@ for chart in "${charts[@]}"; do
         v=charts/relay-control/ci/default-values.yaml
         check_postgres_ca "$chart" "$v"
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
+        # services.sessionReadMintIncludeReaderKind: unset renders nothing; true and
+        # false render the string; any other type is refused; set, it is reserved
+        # from extraEnv; true needs gate-only (SESSION_READ_API_URL on relaygate's
+        # Sessions listener), standalone as well as in the umbrella.
+        ! grep -q SESSION_READ_MINT_INCLUDE_READER_KIND <<<"$(render "$chart" "$v")" || err "$chart: SESSION_READ_MINT_INCLUDE_READER_KIND must be unset by default"
+        grep -Fq '{ name: SESSION_READ_MINT_INCLUDE_READER_KIND, value: "false" }' <<<"$(render "$chart" "$v" --set services.sessionReadMintIncludeReaderKind=false)" || err "$chart: sessionReadMintIncludeReaderKind=false must render the string false"
+        rkgate=(--set global.relaygate.gateOnly.enabled=true --set global.relaygate.gateOnly.sessionsPort=8081 --set services.sessionReadApiUrl=http://read-api --set services.sessionReadApiPublicUrl=https://history.gcp-proof.agentrelay.com --set secretKeys.sessionReadApiSecret=session-read-api-secret)
+        rkout=$(render "$chart" "$v" "${rkgate[@]}" --set services.sessionReadMintIncludeReaderKind=true) || err "$chart: sessionReadMintIncludeReaderKind=true with gate-only must render"
+        grep -Fq '{ name: SESSION_READ_MINT_INCLUDE_READER_KIND, value: "true" }' <<<"$rkout" && grep -Fq 'value: "http://ci-relaygate-sessions.ci.svc.cluster.local:8081"' <<<"$rkout" \
+          || err "$chart: sessionReadMintIncludeReaderKind=true must render with SESSION_READ_API_URL on relaygate's Sessions listener"
+        expect_render_failure "$chart" "$v" "reader kind true without gate-only" "sessionReadMintIncludeReaderKind=true needs global.relaygate.gateOnly.enabled" --set services.sessionReadMintIncludeReaderKind=true --set services.sessionReadApiUrl=http://read-api --set services.sessionReadApiPublicUrl=https://history.gcp-proof.agentrelay.com --set secretKeys.sessionReadApiSecret=session-read-api-secret
+        expect_render_failure "$chart" "$v" "reader kind true with gate-only but no read API handoff" "sessionReadMintIncludeReaderKind=true needs global.relaygate.gateOnly.enabled" --set services.sessionReadMintIncludeReaderKind=true --set global.relaygate.gateOnly.enabled=true --set global.relaygate.gateOnly.sessionsPort=8081
+        expect_render_failure "$chart" "$v" "reader kind as a string" "sessionReadMintIncludeReaderKind must be true, false or unset" --set-string services.sessionReadMintIncludeReaderKind=true
+        expect_render_failure "$chart" "$v" "reader kind also in extraEnv" "SESSION_READ_MINT_INCLUDE_READER_KIND is managed by structured chart values" --set services.sessionReadMintIncludeReaderKind=false --set-json 'extraEnv=[{"name":"SESSION_READ_MINT_INCLUDE_READER_KIND","value":"true"}]'
+        render "$chart" "$v" --set-json 'extraEnv=[{"name":"SESSION_READ_MINT_INCLUDE_READER_KIND","value":"false"}]' >/dev/null || err "$chart: with the key unset, extraEnv may still carry SESSION_READ_MINT_INCLUDE_READER_KIND"
         # services.sessionReadMintIncludeRole: unset by default, "true" when on, and then reserved from extraEnv.
         ! grep -q SESSION_READ_MINT_INCLUDE_ROLE <<<"$(render "$chart" "$v")" || err "$chart: SESSION_READ_MINT_INCLUDE_ROLE must be unset by default"
         grep -Fq '{ name: SESSION_READ_MINT_INCLUDE_ROLE, value: "true" }' <<<"$(render "$chart" "$v" --set services.sessionReadMintIncludeRole=true)" || err "$chart: sessionReadMintIncludeRole=true must render SESSION_READ_MINT_INCLUDE_ROLE=true"
@@ -1381,6 +1396,12 @@ for chart in "${charts[@]}"; do
           out=$(render "$chart" charts/agent-relay/ci/gate-sessions-$edge-values.yaml)
           ! grep -Eq '/v1/(relayfacts|coordination) ' <<<"$(routes history.gcp-proof.agentrelay.com)" || err "$chart: without relayfactsRoutes ($edge) the history host must not route /v1/relayfacts or /v1/coordination"
         done
+        # relay-control.services.sessionReadMintIncludeReaderKind in the umbrella:
+        # true renders with both gate scopes and is refused without the gate.
+        for gf in charts/agent-relay/ci/gate-sessions-gke-values.yaml charts/agent-relay/ci/gate-only-values.yaml; do
+          grep -Fq '{ name: SESSION_READ_MINT_INCLUDE_READER_KIND, value: "true" }' <<<"$(render "$chart" "$gf" --set relay-control.services.sessionReadMintIncludeReaderKind=true)" || err "$chart: reader kind true must render with $gf"
+        done
+        expect_render_failure "$chart" "$v" "umbrella reader kind true without the gate" "sessionReadMintIncludeReaderKind=true needs global.relaygate.gateOnly.enabled" --set relay-control.services.sessionReadMintIncludeReaderKind=true
         # Upstream verification in the umbrella (ci/gate-sessions-upstream-auth-values.yaml):
         # relaygate signs; the reader and ingest edge get MODE, the current and
         # previous public keys from one ConfigMap with their kids, and a
