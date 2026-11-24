@@ -426,11 +426,14 @@ bundled MinIO with static keys. It is off by default. Before you start:
 
 - **Image.** Static keys and the MinIO endpoint need a services image with the
   runner's S3-compatible store support (relayhistory-pipeline 9b29a3dd or
-  later). The services image this release pins predates it. On that image
-  the pod exits 2 at startup with `credentials_mode_invalid`, so pin a newer,
-  reviewed repository plus digest under `sessionAnalysis.image`. This changes
-  only the session-analysis Deployment; do not replace the shared worker image
-  merely to start this optional worker.
+  later). The services image agent-relay-2026.11.19 pins is built from
+  relayhistory-pipeline `abd4e8a8`, which is after it, so with this release the
+  worker uses the shared image and needs no `sessionAnalysis.image`. An older
+  release's image predates it: the pod exits 2 at startup with
+  `credentials_mode_invalid`, so there pin a newer, reviewed repository plus
+  digest under `sessionAnalysis.image`. That changes only the session-analysis
+  Deployment; do not replace the shared worker image merely to start this
+  optional worker. The worker has not been run on AKS from this release.
 - **Versioning.** The runner checks at startup that the bucket is versioned
   and refuses to start otherwise (`bucket_not_versioned`). The worker's
   `locker-init` Job (`lockerInit.enabled: true` in `values.yaml`) runs the
@@ -709,7 +712,7 @@ afterwards). Times are UTC.
 ## What was not proven
 
 - Any release other than agent-relay-2026.11.0 (patched); `values.yaml` renders
-  against agent-relay-2026.11.16 but was not installed from it.
+  against agent-relay-2026.11.19 but was not installed from it.
 - The output facts bootstrap (step 10).
 - Azure Database for PostgreSQL, Azure Blob Storage, Application Gateway.
 - NetworkPolicy enforcement beyond a default install, private clusters,
