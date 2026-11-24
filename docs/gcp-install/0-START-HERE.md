@@ -652,7 +652,7 @@ pins (0.7.54) has no sessions-only mode, so with it skip this subsection.
    ```yaml
    relaygate:
      policy:
-       controlPrincipals:   # no readerKinds (see the relaygate guide)
+       controlPrincipals:   # readerKinds need relay-control 0.5.38+ (see the relaygate guide)
          - { match: { orgIds: [<org id>], emails: [<admin email>] }, gid: 33 }
          - { match: { orgIds: [<org id>] }, gid: 11 }
      proxy:
