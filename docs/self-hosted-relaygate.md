@@ -309,7 +309,10 @@ the ingest edge (or a reloader), and keep the same step order:
    on the old key would refuse new-kid assertions under `enforce`):
    `kubectl -n agent-relay rollout status deployment/agent-relay-read-api` and
    `kubectl -n agent-relay rollout status deployment/agent-relay-ingest-edge`
-   (`<release>-read-api`, `<release>-ingest-edge`), or `helm upgrade --wait`.
+   (`<release>-read-api`, `<release>-ingest-edge`). Run both checks even when
+   the upgrade used `--wait`: Helm 3 treats a Deployment as ready once
+   replicas minus maxUnavailable are, so it can return while an old-key pod
+   still serves.
 2. Add the new private key to its Secret under a new key, and point
    `privateKey.key` and `kid` at it. Upgrade: relaygate rolls and signs with
    the new kid.

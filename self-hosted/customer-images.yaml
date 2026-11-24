@@ -597,7 +597,7 @@ images:
       note: >-
         relaygate main 8ae66ac8 (merge of #51; GitHub release and git tag
         v0.1.0, no registry tag of that name: the published tags are
-        sha-8ae66ac8 and main). Carries #48 (Ed25519 upstream assertions,
+        sha-8ae66ac873b8baf967b1929d64d4ee19d93464ba and main). Carries #48 (Ed25519 upstream assertions,
         RELAYGATE_UPSTREAM_ASSERTION_KEY/_KID/_TTL_SECONDS), #49 (relayfacts
         and coordination proxy), #50 (user grants, cross-session enforcement)
         and #51 (event-query scope parity), per git ancestry.
