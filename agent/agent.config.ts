@@ -60,6 +60,9 @@ export default defineLayeredAgent({
   // New issues in the infra repo wake the lead, which DMs khaliq-gant (Khaliq, 2026-11-14).
   issueWatch: { repos: ["AgentWorkforce/infra"], notify: "khaliq-gant" },
   relayDescription: "infra-ops layered lead: AWS, Cloudflare, GCP, PostHog and Azure operator for AgentWorkforce/infra",
+  // Codex until the Anthropic credit is topped up (Khaliq, 2026-11-24). Must match
+  // layered-agents infra/agents.ts (#69), which lets the host read this key.
+  lead: { harness: "codex", model: "gpt-6.2-astra", openaiKeyParam: `/relaycast-agent-host/${stage}/openai-api-key-infra-ops` },
   names: { platformPrefix: `/relaycast-agent-host/${stage}` },
   // The A2A card the lead publishes on the relay (set_relay_agent_card), so a
   // peer can see what to hand it before delegating. Delivered by hot update.
