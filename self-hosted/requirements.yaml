@@ -2245,9 +2245,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.79
+    - id: agent-relay-0.7.80
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.80, relay-control: 0.4.26, relay-webapp: 0.2.8 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.17, relayauth: 0.1.5, sessions-pipeline: 0.8.58, relay-control: 0.4.26, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.12, relaygate: 0.1.12 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.79. The GCP, EKS and EKS RDS-native profiles move the services image from relayhistory-pipeline efdd4bb2 to abd4e8a8 (ghcr.io/agentworkforce/sessions-pipeline@sha256:459104bc, publish run 45199432277). The image carries the session-analysis runner on any S3-compatible store and the read API summary search backend and retryable session_partial answer. Every native self-host profile (values-eks.yaml and so EKS, EKS RDS native and AKS; values-gcp.yaml and so GCP native and GCP supported-100; values-gcp-proof.yaml; docs/gcp-install/values.yaml; docs/azure-install/values.yaml) now sets session-read-api summaries.searchBackend postgres and search.sessionPartialRetryable true, rendering READ_API_SUMMARY_SEARCH_BACKEND=postgres and READ_API_SESSION_PARTIAL_RETRYABLE=true on the read API: the first page of a session-scoped read of a partially indexed session answers a retryable 503 session_partial (Retry-After 60) instead of 501, and clients must cap retries. The backend takes effect only once summary search is enabled (READ_API_SUMMARY_SEARCH_ENABLED=true in extraEnv), which no profile sets, so summary search stays off. The session-read-api and sessions-pipeline chart defaults are unchanged, so the sessions-pipeline profiles (external Supabase and the rest) render as before; the GCP proof overlays still pin an older services image that ignores both variables. Adds the agent-relay-aks-native registry profile: values-eks.yaml, docs/azure-install/values.yaml and the CI stand-in ci/aks-native-values.yaml for the release image overlay and HoopDb layout, rendered as the aks-native golden profile and in scripts/ci/charts.sh. It vendors relayscrubber 0.5.0-alpha.10, the replacement the alpha.9 override named (customer-images.yaml), and adds eight migrations (20261105062150-062220) that the migrate Job applies. A database that last ran an image older than efdd4bb2 keeps the pre-steps of 0.7.63 (the bulls96_legacy_export_privacy role and the 058000 index prebuild or one allowBlockingIndexBuild). No upgrade rehearsal from an efdd4bb2 database exists yet. Chart templates, subchart versions and base default images are unchanged.'
+    - id: agent-relay-0.7.79
+      status: planned
       charts: { agent-relay: 0.7.79, relay-control: 0.4.26, relay-webapp: 0.2.8 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
