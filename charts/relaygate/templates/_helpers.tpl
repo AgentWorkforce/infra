@@ -84,7 +84,32 @@ and the file and ConfigMap go away. */ -}}
 {{- end -}}
 {{- end }}
 
+{{- /* Upstream verification (global.relaygate.upstreamAuth): relaygate signs
+proxied Sessions requests. "enabled" without a current key fails the render. */ -}}
+{{- define "relaygate.upstreamAuth" -}}
+{{- dig "relaygate" "upstreamAuth" dict (.Values.global | default dict) | default dict | toJson -}}
+{{- end }}
+
+{{- /* A kid as a string: an unquoted number (YAML 1000000) would otherwise print as 1e+06. */ -}}
+{{- define "relaygate.kid" -}}
+{{- if or (kindIs "float64" .) (kindIs "int" .) (kindIs "int64" .) }}{{ printf "%.0f" (float64 .) }}{{ else }}{{ toString (. | default "") }}{{ end -}}
+{{- end }}
+
+{{- define "relaygate.validateUpstreamAuth" -}}
+{{- $ua := include "relaygate.upstreamAuth" . | fromJson -}}
+{{- $on := dig "enabled" false $ua -}}
+{{- if not (kindIs "bool" $on) }}{{ fail "relaygate: global.relaygate.upstreamAuth.enabled must be true or false" }}{{ end -}}
+{{- if $on }}
+{{- if or (not (dig "privateKey" "name" "" $ua)) (not (dig "privateKey" "key" "" $ua)) }}{{ fail "relaygate: global.relaygate.upstreamAuth.enabled needs upstreamAuth.privateKey.name and privateKey.key (the Secret holding the Ed25519 private key, canonical base64 PKCS#8 DER)" }}{{ end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]{1,64}$" (include "relaygate.kid" (dig "kid" "" $ua))) }}{{ fail "relaygate: global.relaygate.upstreamAuth.kid is required: the signing key's id, 1-64 of A-Z a-z 0-9 . _ -" }}{{ end -}}
+{{- $ttl := dig "ttlSeconds" 30 $ua -}}
+{{- if or (not (or (kindIs "int" $ttl) (kindIs "int64" $ttl) (kindIs "float64" $ttl))) (ne (float64 $ttl) (float64 (int $ttl))) (lt (int $ttl) 5) (gt (int $ttl) 60) }}{{ fail "relaygate: global.relaygate.upstreamAuth.ttlSeconds must be a whole number of seconds from 5 to 60" }}{{ end -}}
+{{- if not (trim .Values.proxy.sessionsUrl) }}{{ fail "relaygate: global.relaygate.upstreamAuth.enabled signs proxied Sessions requests; it needs proxy.sessionsUrl (the Sessions proxy)" }}{{ end -}}
+{{- end }}
+{{- end }}
+
 {{- define "relaygate.validate" -}}
+{{- include "relaygate.validateUpstreamAuth" . -}}
 {{- $cp := include "relaygate.controlPolicy" . | fromJson -}}
 {{- if dig "enabled" false $cp }}
 {{- if not (include "relaygate.gateOnly" .) }}{{ fail "relaygate: global.relaygate.controlPolicy.enabled needs global.relaygate.gateOnly.enabled (relay-control manages the policy only on gate-only installs)" }}{{ end }}
@@ -100,8 +125,13 @@ and the file and ConfigMap go away. */ -}}
 Relaycast and Sessions admit only relaygate, so a proxy or the Control
 mapping left off would cut clients off instead of gating them. */ -}}
 {{- $g := .Values.global.relaygate.gateOnly -}}
-{{- if or (not (trim .Values.proxy.relaycastUrl)) (not (trim .Values.proxy.sessionsUrl)) (not (trim .Values.proxy.sessionsUploadUrl)) (not (trim .Values.proxy.sessionsReadUrl)) (not .Values.proxy.sessionsHosts) }}
+{{- $scope := dig "scope" "all" $g | default "all" | toString -}}
+{{- if not (has $scope (list "all" "sessions")) }}{{ fail (printf "relaygate: global.relaygate.gateOnly.scope must be all or sessions, got %q" $scope) }}{{ end -}}
+{{- if and (eq $scope "all") (not (trim .Values.proxy.relaycastUrl)) }}
 {{- fail "relaygate: global.relaygate.gateOnly.enabled needs proxy.relaycastUrl, proxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl (the in-cluster Services) and proxy.sessionsHosts (the history host)" }}
+{{- end }}
+{{- if or (not (trim .Values.proxy.sessionsUrl)) (not (trim .Values.proxy.sessionsUploadUrl)) (not (trim .Values.proxy.sessionsReadUrl)) (not .Values.proxy.sessionsHosts) }}
+{{- fail (printf "relaygate: global.relaygate.gateOnly.enabled needs %sproxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl (the in-cluster Services) and proxy.sessionsHosts (the history host)" (ternary "proxy.relaycastUrl, " "" (eq $scope "all"))) }}
 {{- end }}
 {{- if not (trim .Values.control.introspectUrl) }}
 {{- fail "relaygate: global.relaygate.gateOnly.enabled needs control.introspectUrl, control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret (dashboard and desktop callers reach Sessions through relaygate)" }}

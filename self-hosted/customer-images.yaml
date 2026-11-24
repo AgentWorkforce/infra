@@ -38,6 +38,11 @@ scope:
       reason: all three privileged SQL bootstrap Jobs are disabled
     - image: ghcr.io/agentworkforce/relayauth
       reason: components.relayauth=false in values-gcp-native.yaml
+    - image: ghcr.io/agentworkforce/relaygate
+      reason: >-
+        components.relaygate=false in the GCP profile (the built-in gate is an
+        opt-in profile, values-gcp-relaygate.yaml); recorded below as an
+        inactive entry with the relaygate chart's pinned digest.
     - image: ghcr.io/agentworkforce/durable-actors-control-plane
       reason: >-
         components.durableActors and the Relaycast/Relayfile actor modes are
@@ -564,6 +569,61 @@ images:
         recorded main revision. Its GitHub build-provenance attestation resolves
         to be770cac, and the public OCI index exposes linux/amd64 and linux/arm64
         manifests plus BuildKit SBOM/provenance attestations.
+      blockingReasons: []
+
+  # relaygate (charts/relaygate, agent-relay components.relaygate): the
+  # built-in History gate. Inactive here: the GCP customer profile keeps it
+  # off; the opt-in profiles values-gcp-relaygate.yaml, values-eks-relaygate.yaml
+  # and the AKS guide's relaygate-values.yaml turn it on. The chart pins this
+  # digest. Verified 2026-11-23: anonymous crane digest of the index, an OCI
+  # index with linux/amd64 and linux/arm64 manifests, built by the successful
+  # main push run below at the recorded revision.
+  - id: relaygate
+    active: false
+    firstParty: true
+    component: relaygate
+    workloads:
+      - Deployment/<release>-relaygate:relaygate
+    current:
+      repository: ghcr.io/agentworkforce/relaygate
+      digest: sha256:79d20158e921d8785470af209ebc33c8c117e6a6ca157cc421287949e1a31ef5
+      chartStatus: optional-preview
+      valuesFile: charts/relaygate/values.yaml
+    source:
+      repository: https://github.com/AgentWorkforce/relaygate
+      revision: 1279d7b4699f042b3d7705f2654a7400cb7c0626
+      reproducibleReference: true
+      note: >-
+        relaygate main 1279d7b4 (merge of #50). Carries #48 (Ed25519 upstream
+        assertions, RELAYGATE_UPSTREAM_ASSERTION_KEY/_KID/_TTL_SECONDS), #49
+        (relayfacts and coordination proxy) and #50 (user grants, cross-session
+        enforcement), per git ancestry.
+    license:
+      status: recorded
+      spdx: FSL-1.1-ALv2
+      evidence: https://github.com/AgentWorkforce/relaygate/blob/1279d7b4699f042b3d7705f2654a7400cb7c0626/LICENSE
+    platforms:
+      expected: [linux/amd64, linux/arm64]
+      verifiedFromRegistry: [linux/amd64, linux/arm64]
+      status: verified
+      verificationAccess: anonymous
+    release:
+      run: https://github.com/AgentWorkforce/relaygate/actions/runs/45133166289
+      trigger: push (main)
+      buildsCommittedRevision: true
+      publishedTags: []
+      verifiesAnonymousPull: true
+    customerAcquisition:
+      status: available-public
+      procedure: Mirror the public GHCR digest into the customer registry by digest and record the destination digest.
+    approval:
+      status: not-in-gated-profile
+      basis: >-
+        Optional component, off by default and outside the gated GCP profile.
+        Not part of the release-candidate component set yet (follow-up): a
+        release that turns the gate on must add relaygate to the signed
+        customer image inventory and get its license approved for self-hosted
+        distribution.
       blockingReasons: []
 
   # Optional durable-actors images (agent-relay 0.3.12, values-eks-actors.yaml).

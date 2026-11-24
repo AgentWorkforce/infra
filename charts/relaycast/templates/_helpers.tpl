@@ -75,8 +75,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 /run/secrets/relaycast
 {{- end }}
 
+{{- /* Relaycast is gated only with global.relaygate.gateOnly.scope all (the
+default); scope sessions gates History and leaves Relaycast direct. */ -}}
 {{- define "relaycast.gateOnly" -}}
-{{- if dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict) }}true{{ end -}}
+{{- $g := dig "relaygate" "gateOnly" dict (.Values.global | default dict) | default dict -}}
+{{- if and (dig "enabled" false $g) (eq (dig "scope" "all" $g | default "all" | toString) "all") }}true{{ end -}}
 {{- end }}
 
 {{- /* The relaygate Service public routes point at under gate-only. */ -}}

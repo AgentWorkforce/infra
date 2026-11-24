@@ -23,7 +23,8 @@
 #   OpenSearch (SigV4)               PostgreSQL search, as on GKE
 #   ALB + ACM                        Traefik Ingress + cert-manager (Let's
 #                                    Encrypt), one Azure public IP DNS label per
-#                                    host (ingress.yaml)
+#                                    host (ingress.yaml, generated from
+#                                    the chart; traefikIngress on 0.7.77+)
 #
 # This file holds no secret values: it only names Secrets and keys.
 # postgres-setup.sh creates the database roles and writes the credential files.
@@ -38,6 +39,20 @@ x-anchors:
     bucket: __SESSIONS_BUCKET__
     region: us-east-1
     endpoint: http://session-object-storage.agent-relay.svc.cluster.local:9000
+
+# The public edge from the release (agent-relay chart 0.7.77 or later): one
+# Traefik Ingress and the edge-deny Service, the same objects as ingress.yaml
+# (which is generated from this template for older charts). Set enabled: true
+# instead of applying ingress.yaml; an install that applied ingress.yaml first
+# hands those two objects to the release (README, "Moving the edge into the
+# release").
+traefikIngress:
+  enabled: false
+  hosts:
+    root: __HOST_ROOT__
+    api: __HOST_API__
+    cast: __HOST_CAST__
+    history: __HOST_HISTORY__
 
 components:
   relaycast: true

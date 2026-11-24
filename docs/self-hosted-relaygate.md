@@ -5,8 +5,10 @@ Relaycast/Sessions. Agents register into a **group** with an enrollment key;
 every request is checked against owner/group/other **mode bits**; writes that
 cross a group boundary or leave through an external stream (a Slack thread, a
 knowledge base) go through a **classifier** (rules, plus an optional Claude
-model). Denials never reach upstream. It is opt-in: `components.relaygate` in
-the umbrella, or its own release.
+model). Denials never reach upstream. It is part of the agent-relay umbrella
+(`components.relaygate`), off by default; the install guides for GKE, EKS and
+AKS turn it on in [sessions-only](#built-in-sessions-only) mode. It can also
+run as its own release.
 
 > **Status: build 2.** Registration, mode checks and ACLs, the classifier,
 > `/v1/check` and the audit log, plus proxies in front of Relaycast (REST
@@ -77,6 +79,238 @@ takes `relaygate.url` and the bridge key. With the proxy below, agents reach
 Relaycast and Sessions only through the gate and need no Relaycast credential
 of their own (Relaycast should then accept traffic only from the gate, by
 NetworkPolicy).
+
+## Built in: sessions-only
+
+The umbrella deploys relaygate and routes `history.*` through it on every
+edge it renders: GKE (`gkeIngress`), EKS (`eksIngress`, the ALB) and AKS
+(`traefikIngress`, Traefik). One switch, one model for all three:
+
+```yaml
+global:
+  relaygate:
+    gateOnly:
+      enabled: true
+      scope: sessions   # all: Relaycast (cast.*) through relaygate as well
+components:
+  relaygate: true
+```
+
+**Sessions-only** (`scope: sessions`) means:
+
+- the history host sends only relaygate's Sessions routes to relaygate and
+  denies everything else at the edge (`/internal` and `/admin` explicitly);
+- the Sessions reader and the ingest edge admit only relaygate
+  (NetworkPolicy), so uploads and reads are checked against the policy;
+- relay-control reads Sessions through relaygate's internal listener
+  (`SESSION_READ_API_URL=http://<relaygate>-sessions.<ns>.svc.cluster.local:8081`),
+  so dashboard and MCP reads are mapped to groups by `policy.controlPrincipals`;
+- Relaycast is untouched: the cast host, Relaycast's NetworkPolicy and its
+  ingress render as without the gate, Control does not set
+  `SELFHOST_RELAYGATE_PUBLIC_URL`, `relaygate.proxy.relaycastUrl` is optional
+  and `slack-relay.relaygate.url` is not required. CLI, desktop, Chief and
+  other direct Relaycast clients keep working.
+
+`scope: all` is the [gate-only](#gate-only-one-switch) mode below: the cast
+host goes through relaygate too. Every gate-only check below applies to both
+scopes except the Relaycast ones.
+
+It needs agent-relay chart **0.7.77 or later**. The install guides keep their
+pinned releases and describe it as the recommended next step once the release
+carries that chart. On EKS the attested pull-based upgrade also needs a release
+whose signed image inventory pins relaygate (none does yet).
+
+The example values per platform (release name `agent-relay`):
+
+| Platform | Edge | Example values |
+| --- | --- | --- |
+| GKE | `gkeIngress`: the history host goes to a `<gkeIngress.name>-gate` NEG Service on the relaygate pods (BackendConfig health check `/healthz`) | [`charts/agent-relay/values-gcp-relaygate.yaml`](../charts/agent-relay/values-gcp-relaygate.yaml), a profile after `values-gcp-native.yaml`; site values in the GCP guide, step 11 |
+| EKS | `eksIngress` (render the ALB from the release; `scripts/selfhost/eks-alb-ingress.sh` has no gate mode): the history host goes to the relaygate Service, ALB health check `/healthz` | [`charts/agent-relay/values-eks-relaygate.yaml`](../charts/agent-relay/values-eks-relaygate.yaml) |
+| AKS | `traefikIngress` (the release-rendered form of `docs/azure-install/ingress.yaml`): the history host goes to the relaygate Service; denials go to the endpoint-less `edge-deny` Service (Traefik 503) | [`docs/azure-install/relaygate-values.yaml`](azure-install/relaygate-values.yaml), after the guide's `values.yaml`; AKS guide step 8b |
+
+helm refuses to render until each file's REQUIRED values are set (the history
+host, the dashboard origin and your `controlPrincipals`), and names what is
+missing. The relaygate chart pins the published relaygate image by digest
+(recorded in `self-hosted/customer-images.yaml`); override `relaygate.image`
+only with your mirror of it. `charts/agent-relay/ci/gate-sessions-{gke,eks,aks}-values.yaml`
+are complete render examples.
+
+History routes relaygate serves on the history host: `/v1/sessions`,
+`/v1/delivery` (batches, limits, admission, sessions/selection, records) and
+`/v1/digest` (Prefix; plus `/v1/relayfacts` and `/v1/coordination` with
+`relayfactsRoutes`), and `/v1/events`, `/v1/ingest`, `/v1/auth/token/refresh`,
+`/v1/auth/token/revoke`, `/v1/onboarding/heartbeat` and `/v1/upload-consent`
+(Exact). relaygate refuses any child it does not proxy with
+`404 relaygate_route_not_proxied`; `/v1/delivery/records` and `/v1/digest/*`
+are aggregate reads, allowed only to `policy.sessionAggregates` groups.
+Everything else on that host is denied at the edge, `/internal` and `/admin`
+included. Revoke, admission, upload consent, sessions/selection and records
+need relaygate #23 or later; digest needs #21 or later. On an older image those
+paths answer `relaygate_route_not_proxied`, no worse than the edge deny.
+
+Limits, until the images named here ship:
+
+- **`readerKinds` in `controlPrincipals` with scope sessions needs
+  `relay-control.services.sessionReadMintIncludeReaderKind: true` and
+  relay-control 0.5.38 or later.** By default relay-control puts the reader
+  kind on read-token mints only when `SELFHOST_RELAYGATE_PUBLIC_URL` is set,
+  which scope sessions leaves unset (it belongs to the Relaycast gate), and
+  relaygate fails closed, so a rule with `readerKinds` matches no dashboard
+  read. The key renders `SESSION_READ_MINT_INCLUDE_READER_KIND` (read in
+  relay-control `src/config.ts`, `loadSessionReadMintIncludeReaderKind`, since
+  0.5.38 / main 707fe5cd):
+  - unset (default): nothing renders; Control sends `reader_kind` exactly when
+    `SELFHOST_RELAYGATE_PUBLIC_URL` is set (gate-only scope all);
+  - `true`: always sent. The chart refuses it without gate-only, because only
+    relaygate's Sessions listener (the `SESSION_READ_API_URL` gate-only renders)
+    accepts it: relaygate reads and strips the field, and the read API's strict
+    mint schema refuses it;
+  - `false`: never sent, even with scope all (then no rule may use `readerKinds`).
+
+  **The chart's pinned relay-control image is older than 0.5.38, so the key does
+  nothing until that pin moves** (older images ignore the variable). Until
+  then, keep `readerKinds` out of the policy.
+- **Rules on `roles` need the role on read tokens:** set
+  `relay-control.services.sessionReadMintIncludeRole: true` (renders
+  `SESSION_READ_MINT_INCLUDE_ROLE=true`; off by default). Without it, list
+  admins by `emails` or `userIds`, as the examples do.
+- **`global.relaygate.controlPolicy` stays off:** no relay-control image reads
+  its settings yet.
+- **`/v1/relayfacts` and `/v1/coordination`** are denied at the edge unless
+  `global.relaygate.gateOnly.relayfactsRoutes: true` (off by default), which
+  routes both (Prefix) to relaygate on every edge. Turn it on only with a
+  relaygate image that proxies them (relaygate #49, 8d0e6897, or later); older images
+  answer `404 relaygate_route_not_proxied` after authentication.
+- relay-control's health check calls `GET /healthz` on its
+  `SESSION_READ_API_URL`, so relaygate's internal listener must answer it
+  without credentials.
+- The isolation holds only on a cluster that enforces NetworkPolicy (GKE
+  Dataplane V2 or the NetworkPolicy add-on, the EKS VPC CNI with network policy
+  on, AKS with the Cilium dataplane as in the AKS guide). Elsewhere public
+  clients still go through relaygate, but a pod in the cluster can reach the
+  reader directly.
+
+Turn it on for an existing install in this order: deploy a relaygate image with
+Control-principal mapping, prepare the policy, then upgrade with the example
+values and [adopt the existing sessions](#existing-sessions-adopt-them-once)
+(dry run first). Sessions uploaded before the switch are invisible through the
+gate until they are adopted.
+
+## Upstream verification (off by default)
+
+NetworkPolicy keeps other pods away from the Sessions reader and ingest edge
+only on a cluster that enforces it. Upstream verification makes the services
+themselves accept only requests relaygate signed: relaygate adds a short-lived
+Ed25519 assertion (header `X-Relaygate-Assertion`, token
+`v1.<base64url-json>.<base64url-signature>`) to every request it proxies, and
+the reader and ingest edge verify it. relaygate alone holds the private key;
+the verifiers get only public keys.
+
+```yaml
+global:
+  relaygate:
+    upstreamAuth:
+      enabled: true                                       # relaygate signs
+      privateKey: { name: relaygate-upstream, key: private-key-1 } # base64 PKCS#8 DER
+      kid: k1
+      ttlSeconds: 30                                      # 5 to 60
+      verify:
+        mode: "log"                                       # off | log | enforce
+        publicKeys:                                       # base64 SPKI DER, one Secret or ConfigMap
+          configMapName: relaygate-upstream-public
+          currentKey: public-key-1
+          currentKid: k1
+          # previousKey: public-key-0                     # during a rotation only
+          # previousKid: k0
+```
+
+Make a key pair in the formats the services expect (standard base64 of the
+PKCS#8 DER private key, 48 bytes, and of the SPKI DER public key, 44 bytes;
+checked with OpenSSL 3), then store the private key in a Secret and the public
+key in a ConfigMap (or a separate Secret, never the private key's):
+
+```sh
+umask 077; mkdir -p keys && cd keys
+openssl genpkey -algorithm ed25519 -outform DER -out priv.der
+openssl pkey -in priv.der -inform DER -pubout -outform DER -out pub.der
+base64 < priv.der | tr -d '\n' > private-key-1   # one line, no trailing newline
+base64 < pub.der | tr -d '\n' > public-key-1
+kubectl -n agent-relay create secret generic relaygate-upstream --from-file=private-key-1
+kubectl -n agent-relay create configmap relaygate-upstream-public --from-file=public-key-1
+shred -u priv.der private-key-1   # macOS: rm -P (or rm); the private key now lives only in the Secret
+```
+
+Use `privateKey.key: private-key-1`, `currentKey: public-key-1` and a kid such
+as `k1`. The key never goes on a command line, and the commands work the same
+with GNU and BSD (macOS) `base64`. For a rotation, make a new pair the same way as
+`private-key-2`/`public-key-2` and add it next to the old one, leaving the
+existing keys in place:
+
+```sh
+printf '{"stringData":{"private-key-2":"%s"}}' "$(cat private-key-2)" > patch.json
+kubectl -n agent-relay patch secret relaygate-upstream --type merge --patch-file patch.json
+kubectl -n agent-relay patch configmap relaygate-upstream-public --type merge \
+  -p "{\"data\":{\"public-key-2\":\"$(cat public-key-2)\"}}"
+shred -u priv.der private-key-2 patch.json   # macOS: rm -P (or rm)
+```
+
+| Workload | Env | Gets |
+| --- | --- | --- |
+| relaygate | `RELAYGATE_UPSTREAM_ASSERTION_KEY`, `_KID`, `_TTL_SECONDS` | the private key only |
+| read API | `READ_API_UPSTREAM_ASSERTION_MODE`, `_PUBLIC_KEY`, `_KID`, `_PUBLIC_KEY_PREVIOUS`, `_KID_PREVIOUS` | public keys only |
+| ingest edge | the same under `INGEST_UPSTREAM_ASSERTION_` | public keys only |
+
+`verify.mode: off` (the default; quote it, a bare `off` is a YAML boolean,
+which the chart reads as off) renders nothing on the verifiers. `log` accepts
+and logs what `enforce` would refuse: run a period on `log` with relaygate in
+front first, count the refusal reasons by route, and switch to `enforce` only
+when they are explained. Both `log` and `enforce`
+need `global.relaygate.gateOnly.enabled` (either scope): without it the history
+host routes straight to the reader and ingest edge, so every public History
+request would arrive unsigned, flooding the log (`log`) or being refused
+(`enforce`). The chart refuses that combination. Quote kids; an unquoted
+whole number also works (the chart renders it as an integer, exact up to 2^53). Each verifier carries a
+`checksum/upstream-assertion` annotation over `verify`, so a change there (a
+new kid, key or source) rolls its pods.
+
+helm refuses to render when: `enabled` has no private key or kid, the kid or
+TTL is invalid, or relaygate has no Sessions proxy; `verify.mode` is not off,
+log or enforce; verification is on without `enabled` or without gate-only; relaygate's `kid` is
+neither `currentKid` nor `previousKid`; there is not exactly one public-key
+source; the public keys are in the private key's Secret; or `previousKey` and
+`previousKid` are not set together or repeat the current kid. The chart does
+not check key length or format; relaygate and the services parse them at
+startup.
+
+The verifiers let health endpoints and CORS preflight through; exempt the
+ingest edge's `POST /v1/auth/token/refresh` stub and the reader's exact
+`POST /v1/auth/token/revoke` (a presented assertion is still validated there;
+relaygate proxies revoke without an assertion);
+and skip the assertion on `/internal/v1/session-read/*` (the reader's mints)
+and `/internal/v1/session-erase/*` (relay-control's per-session erase, sent
+directly, not through relaygate) only after their own internal authentication
+succeeds. In log or enforce a service refuses to start on a non-canonical or
+non-Ed25519 key, an empty kid, a half-set previous pair or equal kids. `/internal` stays denied at every edge. No path rewrite
+may sit between relaygate and the services (relaygate's upstreams are their
+Services, directly).
+
+**Rotation.** relaygate and the verifiers read their keys at startup, and
+changing a Secret's or ConfigMap's contents under the same name and key rolls
+nothing (the chart cannot see values). Rotate by key name and kid, which
+changes the pod templates, one upgrade per step. If you must replace a value in
+place, follow it with `kubectl rollout restart` of relaygate, the read API and
+the ingest edge (or a reloader), and keep the same step order:
+
+1. Add the new public key to the public-key object under a new key. Make it
+   `currentKey`/`currentKid` and the old one `previousKey`/`previousKid`.
+   Upgrade: every verifier replica rolls and accepts both keys, and relaygate
+   still signs with the old kid (now the previous one).
+2. Add the new private key to its Secret under a new key, and point
+   `privateKey.key` and `kid` at it. Upgrade: relaygate rolls and signs with
+   the new kid.
+3. Once every relaygate pod signs with the new kid, wait at least `ttlSeconds`
+   plus 5 s (65 s at TTL 60). Then clear `previous*` and upgrade. Remove the
+   old keys.
 
 ## Proxying Relaycast and Sessions (build 2)
 
@@ -207,7 +441,9 @@ tells the desktop where the gate is when `SELFHOST_RELAYGATE_PUBLIC_URL` is set
 ## Gate-only (one switch)
 
 The steps above narrow each policy by hand. In the agent-relay umbrella,
-`global.relaygate.gateOnly.enabled` does it from one switch, and helm refuses to
+`global.relaygate.gateOnly.enabled` does it from one switch (`scope: all`, the
+default, gates Relaycast and Sessions; `scope: sessions` is
+[sessions-only](#built-in-sessions-only)), and helm refuses to
 render while any part of it is missing, rather than leaving a door open. It is
 off by default; with it off every render is unchanged.
 
@@ -360,12 +596,22 @@ Both Secrets are read by relaygate and relay-control from this one place, so the
 
 Sessions uploaded before relaygate was in front of Sessions have no relaygate
 owner, so they are invisible through the gate. At the switch, adopt them with
-the admin token (relaygate `sha256:c64d6d9b` or later), dry run first:
+the admin token (relaygate `sha256:c64d6d9b` or later, `relaygate.secrets.adminToken`),
+dry run first. `/admin` is never routed publicly (every edge denies it), so
+reach relaygate through a port-forward:
 
-```
-POST /admin/v1/sessions/adopt?dryRun=1
-Authorization: Bearer <admin token>
-{"readToken": "rth_st_read_...", "orgId": "<org>", "workspaceId": "<ws>"}
+```sh
+kubectl -n agent-relay port-forward svc/agent-relay-relaygate 18080:8080 &
+ADMIN_TOKEN=$(kubectl -n agent-relay get secret relaygate-admin -o jsonpath='{.data.token}' | base64 -d)
+# 1. Dry run: reports what would be adopted, changes nothing.
+curl -fsS -X POST 'http://127.0.0.1:18080/admin/v1/sessions/adopt?dryRun=1' \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"readToken": "rth_st_read_...", "orgId": "<org>", "workspaceId": "<ws>"}'
+# 2. Check the report (every session maps to the principal you expect), then
+#    run the same request without dryRun.
+curl -fsS -X POST 'http://127.0.0.1:18080/admin/v1/sessions/adopt' \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"readToken": "rth_st_read_...", "orgId": "<org>", "workspaceId": "<ws>"}'
 ```
 
 relaygate pages the read API's session list with that read service token and
@@ -383,8 +629,11 @@ proxy with `404 relaygate_route_not_proxied`). Every proxied route needs an
 `rg_` token.
 
 History host, to relaygate: `/v1/sessions` (prefix: list, `turns` uploads and
-the per-session views), `/v1/events`, `/v1/ingest`, `/v1/delivery/batches`,
-`/v1/delivery/limits`, `/v1/auth/token/refresh`, `/v1/onboarding/heartbeat`.
+the per-session views), `/v1/delivery` and `/v1/digest` (prefix),
+`/v1/relayfacts` and `/v1/coordination` (prefix, only with
+`global.relaygate.gateOnly.relayfactsRoutes`), and `/v1/events`, `/v1/ingest`,
+`/v1/auth/token/refresh`, `/v1/auth/token/revoke`, `/v1/onboarding/heartbeat`,
+`/v1/upload-consent` (exact).
 
 Not proxied, so gate-only breaks them for public clients:
 
@@ -399,11 +648,15 @@ Not proxied, so gate-only breaks them for public clients:
   Clients holding a workspace key or Relaycast agent token (the CLI, Relay
   Chief, relayflows workers, the desktop app's Relaycast connection) stop
   working until they register through relaygate.
-- Sessions: `/v1/turns/batches`, `/v1/delivery/records`,
-  `/v1/delivery/admission` (async/drain admission), `/v1/cli/login`,
-  `/v1/auth/token/revoke`, `/v1/digest/*`, `/v1/sessions/users` and
-  `/activity` (aggregates, until relaygate's `sessionAggregates`), and the public
-  `/healthz`.
+- Sessions: `/v1/turns/batches`, `/v1/cli/login` and the public `/healthz`.
+  relaygate also answers `404 relaygate_route_not_proxied` to two read routes
+  under the `/v1/sessions` prefix the history host sends it:
+  `GET /v1/sessions/summaries/search` and `GET /v1/sessions/:id/sources`. Their
+  read-API flags (`READ_API_SUMMARY_SEARCH_ENABLED`,
+  `READ_API_SESSION_SOURCES_ENABLED`) therefore have no effect for public
+  clients behind gate-only.
+  Aggregate reads (`/v1/delivery/records`, `/v1/digest/*`, `/v1/sessions/users`,
+  `/activity`) work only for `policy.sessionAggregates` groups.
 - relaycast `runtime.backend: durable-actors`: actors fetch Relaycast's public
   URL from their sandbox, which now reaches relaygate; gate-only is not verified
   with that backend.

@@ -1,10 +1,14 @@
 nameOverride: ""
 fullnameOverride: ""
 
-# REQUIRED: image.digest. Deployed by immutable digest only.
+# Deployed by immutable digest only. The default is the published multi-arch
+# index (linux/amd64, linux/arm64) built from relaygate main 1279d7b4 (#48
+# Ed25519 upstream assertions, #49 relayfacts/coordination, #50); see
+# self-hosted/customer-images.yaml. Mirror it by digest and override for your
+# registry.
 image:
   repository: ghcr.io/agentworkforce/relaygate
-  digest: ""
+  digest: sha256:79d20158e921d8785470af209ebc33c8c117e6a6ca157cc421287949e1a31ef5
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
@@ -145,7 +149,9 @@ proxy:
 #
 # Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay
 # umbrella) makes relaygate the only way into Relaycast and Sessions and needs
-# both proxies, proxy.sessionsHosts and this block. The chart then also
+# both proxies, proxy.sessionsHosts and this block. With
+# global.relaygate.gateOnly.scope=sessions (sessions-only) only Sessions is
+# gated and proxy.relaycastUrl is optional. The chart then also
 # renders the internal Sessions listener (SESSIONS_PORT =
 # global.relaygate.gateOnly.sessionsPort, default 8081; relaygate #28 or
 # later), a ClusterIP Service <fullname>-sessions on it (never on an Ingress
@@ -222,6 +228,14 @@ affinity: {}
 # (global.relaygate.controlPolicy; see docs/self-hosted-relaygate.md).
 global:
   relaygate:
+    # Upstream verification signer (set in the agent-relay umbrella; see its
+    # values.yaml): RELAYGATE_UPSTREAM_ASSERTION_KEY (Ed25519 private key), _KID
+    # and _TTL_SECONDS.
+    upstreamAuth:
+      enabled: false
+      privateKey: { name: "", key: private-key }
+      kid: ""
+      ttlSeconds: 30
     controlPolicy:
       adminToken: { key: token }
       policySecret: { key: secret }

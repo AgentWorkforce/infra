@@ -39,10 +39,12 @@ creates them):
 {{- $loginPath := dig "runtime" "loginPath" "" $dashboard -}}
 {{- if and $loginPath (ne $loginPath "/login") }}{{ fail "gkeIngress routes /login to relay-control; relay-webapp.runtime.loginPath must be /login" }}{{ end -}}
 {{- $gateOnly := include "agent-relay.gateOnly" . -}}
+{{- $gateCast := include "agent-relay.gateCast" . -}}
 {{- $policyBackends := dict "relay-control" $cloudApi "relay-webapp" $dashboard -}}
 {{- /* Gate-only: the load balancer reaches relaygate, not Relaycast or the
-native Sessions services, whose policies then admit relaygate alone. */ -}}
-{{- if not $gateOnly }}{{ $_ := set $policyBackends "relaycast" $relaycast }}{{ end -}}
+native Sessions services, whose policies then admit relaygate alone. With
+scope sessions Relaycast stays behind the load balancer directly. */ -}}
+{{- if not $gateCast }}{{ $_ := set $policyBackends "relaycast" $relaycast }}{{ end -}}
 {{- if and (dig "hosts" "files" "" $gke) $components.relayfile }}
 {{- /* Relayfile behind the public files host gets the same GKE-only policy
 shape (hosts.files without components.relayfile fails further down). */ -}}
@@ -621,17 +623,17 @@ spec:
     - host: {{ $hostCast | quote }}
       http:
         paths:
-          {{- if $gateOnly }}
+          {{- if $gateCast }}
           # Gate-only: the routes relaygate proxies (Relaycast REST allowlist,
           # registration, the node WebSocket) go to relaygate; every other
           # path is denied at the edge (docs/self-hosted-relaygate.md lists them).
-          {{- range $path := list "/v1/register" "/v1/check" "/v1/whoami" "/v1/agent" "/v1/agent/node-token" "/v1/node/ws" "/v1/search" "/v1/inbox" }}
+          {{- range $path := include "agent-relay.gate.castExact" . | fromJsonArray }}
           - path: {{ $path }}
             pathType: Exact
             backend:
               service: { name: {{ $gateEdge }}, port: { number: 8080 } }
           {{- end }}
-          {{- range $path := list "/v1/agents" "/v1/channels" "/v1/messages" "/v1/dm" "/v1/streams" "/v1/deliveries" }}
+          {{- range $path := include "agent-relay.gate.castPrefix" . | fromJsonArray }}
           - path: {{ $path }}
             pathType: Prefix
             backend:
@@ -677,11 +679,13 @@ spec:
           # this host (relaygate.proxy.sessionsHosts) go to relaygate, which
           # forwards them to the reader and ingest Services; everything else
           # falls through to deny.
-          - path: /v1/sessions
+          {{- range $path := include "agent-relay.gate.historyPrefix" . | fromJsonArray }}
+          - path: {{ $path }}
             pathType: Prefix
             backend:
               service: { name: {{ $gateEdge }}, port: { number: 8080 } }
-          {{- range $path := list "/v1/events" "/v1/ingest" "/v1/delivery/batches" "/v1/delivery/limits" "/v1/auth/token/refresh" "/v1/onboarding/heartbeat" }}
+          {{- end }}
+          {{- range $path := include "agent-relay.gate.historyExact" . | fromJsonArray }}
           - path: {{ $path }}
             pathType: Exact
             backend:

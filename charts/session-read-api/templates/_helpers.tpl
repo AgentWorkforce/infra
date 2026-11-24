@@ -252,6 +252,10 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- range $e := $c.extraEnv -}}
 {{- $envName := required "session-read-api: extraEnv entries require name" $e.name -}}
 {{- if eq $envName "SESSION_ERASE_FENCE_ENFORCED" }}{{ fail "session-read-api: extraEnv duplicates a managed or repeated variable: SESSION_ERASE_FENCE_ENFORCED" }}{{ end -}}
+{{- /* Upstream verification is owned by global.relaygate.upstreamAuth.verify: an
+extraEnv entry must never weaken or replace it (e.g. MODE=off after enforce). */ -}}
+{{- /* Compared in lower case so the env registry scan does not read the prefix as a variable name. */ -}}
+{{- if hasPrefix "read_api_upstream_assertion_" (lower $envName) }}{{ fail (printf "session-read-api: extraEnv must not set %s; upstream verification is managed by global.relaygate.upstreamAuth.verify" $envName) }}{{ end -}}
 {{- if or (and (has $envName $reserved) (not (has $envName $legacyBoolNames))) (hasKey $seen $envName) (hasPrefix "ANALYTICS_" $envName) (and $c.analytics.enabled (eq $envName "NODE_EXTRA_CA_CERTS")) }}{{ fail (printf "session-read-api: extraEnv duplicates a managed or repeated variable: %s" $envName) }}{{ end -}}
 {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" $envName) }}{{ fail "session-read-api: extraEnv has an invalid variable name" }}{{ end -}}
 {{- if hasPrefix "CLICKHOUSE_" $envName }}{{ fail "session-read-api: the service reads no CLICKHOUSE_* environment; put ClickHouse in the read API Secret's clickhouse block" }}{{ end -}}

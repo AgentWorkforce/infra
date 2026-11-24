@@ -336,9 +336,15 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: session-read-api-0.2.16
+    - id: session-read-api-0.2.17
       status: unreleased
       current: true
+      charts: { session-read-api: 0.2.17 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Carries 0.2.16. global.relaygate.upstreamAuth.verify.mode log or enforce (agent-relay umbrella; default off renders nothing) renders READ_API_UPSTREAM_ASSERTION_MODE, _PUBLIC_KEY, _KID and, during a rotation, _PUBLIC_KEY_PREVIOUS and _KID_PREVIOUS (Ed25519 public keys, canonical base64 SPKI DER, from one Secret or ConfigMap), reserves those names from extraEnv, and adds a checksum annotation that rolls the pods when verify changes. Needs a read API image with upstream assertions. Default renders are unchanged apart from the chart version.'
+    - id: session-read-api-0.2.16
+      status: planned
       charts: { session-read-api: 0.2.16 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
@@ -431,9 +437,65 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.56
+    - id: sessions-pipeline-0.8.58
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.58, sessions-pipeline-worker: 0.7.15, session-ingest-api: 0.4.5, session-read-api: 0.2.17 }
+      depends:
+        sessions-pipeline: { worker: 0.7.15, alleyoop: 0.4.5, sessionReadApi: 0.2.17, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: fresh PG16+ installs use the membership-free separate-database owner graph; legacy and PG15 installs remain master-owner }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: the administrator runs the one-time bootstrap and the migration Job uses hoopdb_owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline-worker/templates/session-analysis.yaml:1"
+        - "ci/sessions-pipeline-worker-advisor-analysis/test_chart.py:1"
+      notes: 'Carries 0.8.57 and session-read-api 0.2.17. global.relaygate.upstreamAuth.verify.mode log or enforce renders the ingest edge''s INGEST_UPSTREAM_ASSERTION_MODE, _PUBLIC_KEY, _KID (and _PREVIOUS pair) from one Secret or ConfigMap, reserved from extraEnv, with a checksum annotation; off (the default) renders nothing. Needs an ingest image with upstream assertions. Default renders differ only in the helm.sh/chart label.'
+    - id: sessions-pipeline-0.8.57
+      status: planned
+      charts: { sessions-pipeline: 0.8.57, sessions-pipeline-worker: 0.7.15, session-ingest-api: 0.4.5, session-read-api: 0.2.16 }
+      depends:
+        sessions-pipeline: { worker: 0.7.15, alleyoop: 0.4.5, sessionReadApi: 0.2.16, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: fresh PG16+ installs use the membership-free separate-database owner graph; legacy and PG15 installs remain master-owner }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: the administrator runs the one-time bootstrap and the migration Job uses hoopdb_owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline-worker/templates/session-analysis.yaml:1"
+        - "ci/sessions-pipeline-worker-advisor-analysis/test_chart.py:1"
+      notes: 'Carries 0.8.56. The gate-only nativeRouting Ingress routes the history paths relaygate serves: Prefix /v1/sessions, /v1/delivery, /v1/digest (plus /v1/relayfacts and /v1/coordination with global.relaygate.gateOnly.relayfactsRoutes, default off) and Exact /v1/events, /v1/ingest, /v1/auth/token/refresh, /v1/auth/token/revoke, /v1/onboarding/heartbeat, /v1/upload-consent. Default renders differ only in the helm.sh/chart label; gate-only renders gain the added paths.'
+    - id: sessions-pipeline-0.8.56
+      status: planned
       charts: { sessions-pipeline: 0.8.56, sessions-pipeline-worker: 0.7.15, session-ingest-api: 0.4.5, session-read-api: 0.2.16 }
       depends:
         sessions-pipeline: { worker: 0.7.15, alleyoop: 0.4.5, sessionReadApi: 0.2.16, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -1998,9 +2060,16 @@ compatibility:
       images_note: not built for the charts yet
       notes: 'Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped.'
       db_combos: []
-    - id: relaycast-0.3.16
+    - id: relaycast-0.3.17
       status: unreleased
       current: true
+      charts: { relaycast: 0.3.17 }
+      app_versions: { relaycast: 12.10.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+      notes: 'Carries 0.3.16. The gate-only Ingress and NetworkPolicy apply only with global.relaygate.gateOnly.scope all (the default); scope sessions leaves Relaycast direct and renders it as with the gate off. Default renders differ only in the helm.sh/chart label.'
+    - id: relaycast-0.3.16
+      status: planned
       charts: { relaycast: 0.3.16 }
       app_versions: { relaycast: 12.10.0 }
       images:
@@ -2176,20 +2245,46 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.77
+    - id: agent-relay-0.7.79
       status: unreleased
       current: true
-      charts: { agent-relay: 0.7.77, relay-control: 0.4.24, relay-webapp: 0.2.8 }
+      charts: { agent-relay: 0.7.79, relay-control: 0.4.26, relay-webapp: 0.2.8 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
-        agent-relay: { relaycast: 0.3.16, relayauth: 0.1.5, sessions-pipeline: 0.8.56, relay-control: 0.4.24, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.11, relaygate: 0.1.10 }
+        agent-relay: { relaycast: 0.3.17, relayauth: 0.1.5, sessions-pipeline: 0.8.58, relay-control: 0.4.26, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.12, relaygate: 0.1.12 }
       images:
         relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
         relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
-        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5 }
         relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
         relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
-      notes: 'Carries 0.7.76. The GCP, EKS and EKS RDS-native profiles move the services image from relayhistory-pipeline efdd4bb2 to abd4e8a8 (ghcr.io/agentworkforce/sessions-pipeline@sha256:459104bc, publish run 45199432277). The image carries the session-analysis runner on any S3-compatible store and the read API summary search backend and retryable session_partial answer. Every native self-host profile (values-eks.yaml and so EKS, EKS RDS native and AKS; values-gcp.yaml and so GCP native and GCP supported-100; values-gcp-proof.yaml; docs/gcp-install/values.yaml; docs/azure-install/values.yaml) now sets session-read-api summaries.searchBackend postgres and search.sessionPartialRetryable true, rendering READ_API_SUMMARY_SEARCH_BACKEND=postgres and READ_API_SESSION_PARTIAL_RETRYABLE=true on the read API: the first page of a session-scoped read of a partially indexed session answers a retryable 503 session_partial (Retry-After 60) instead of 501, and clients must cap retries. The backend takes effect only once summary search is enabled (READ_API_SUMMARY_SEARCH_ENABLED=true in extraEnv), which no profile sets, so summary search stays off. The session-read-api and sessions-pipeline chart defaults are unchanged, so the sessions-pipeline profiles (external Supabase and the rest) render as before; the GCP proof overlays still pin an older services image that ignores both variables. Adds the agent-relay-aks-native registry profile: values-eks.yaml, docs/azure-install/values.yaml and the CI stand-in ci/aks-native-values.yaml for the release image overlay and HoopDb layout, rendered as the aks-native golden profile and in scripts/ci/charts.sh. It vendors relayscrubber 0.5.0-alpha.10, the replacement the alpha.9 override named (customer-images.yaml), and adds eight migrations (20261105062150-062220) that the migrate Job applies. A database that last ran an image older than efdd4bb2 keeps the pre-steps of 0.7.63 (the bulls96_legacy_export_privacy role and the 058000 index prebuild or one allowBlockingIndexBuild). No upgrade rehearsal from an efdd4bb2 database exists yet. Chart templates, subchart versions and base default images are unchanged.'
+      notes: 'Carries 0.7.78 and relay-control 0.4.26: services.sessionReadMintIncludeReaderKind renders SESSION_READ_MINT_INCLUDE_READER_KIND (unset by default, so nothing renders; true or false otherwise). true needs global.relaygate.gateOnly.enabled, so SESSION_READ_API_URL is relaygate''s Sessions listener. Needs relay-control 0.5.38 or later; the chart''s pinned image is older. Default and ci renders are unchanged apart from chart versions.'
+    - id: agent-relay-0.7.78
+      status: planned
+      charts: { agent-relay: 0.7.78, relay-control: 0.4.25, relay-webapp: 0.2.8 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.17, relayauth: 0.1.5, sessions-pipeline: 0.8.58, relay-control: 0.4.25, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.12, relaygate: 0.1.12 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.77, relaygate 0.1.12 and sessions-pipeline 0.8.58: global.relaygate.upstreamAuth, upstream verification with Ed25519 assertions (relaygate signs; the reader and ingest edge verify with verify.mode off, log or enforce). Off by default; default and ci renders are unchanged apart from chart versions.'
+    - id: agent-relay-0.7.77
+      status: planned
+      charts: { agent-relay: 0.7.77, relay-control: 0.4.25, relay-webapp: 0.2.8 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.17, relayauth: 0.1.5, sessions-pipeline: 0.8.57, relay-control: 0.4.25, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.12, relaygate: 0.1.11 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5 }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.76 and the built-in relaygate: global.relaygate.gateOnly.scope (all, the default and today''s gate-only; sessions, sessions-only: History through relaygate, Relaycast direct), gate routing on every edge (gkeIngress, eksIngress and the new traefikIngress for AKS; docs/azure-install/ingress.yaml is generated from it), the full set of history paths relaygate serves (adds /v1/delivery and /v1/digest Prefix, /v1/auth/token/revoke and /v1/upload-consent Exact), global.relaygate.gateOnly.relayfactsRoutes (default off), and relay-control 0.4.25 services.sessionReadMintIncludeRole (SESSION_READ_MINT_INCLUDE_ROLE, default off). Default renders are unchanged apart from chart versions; gate-only renders gain the added history paths.'
     - id: agent-relay-0.7.76
       status: planned
       charts: { agent-relay: 0.7.76, relay-control: 0.4.24, relay-webapp: 0.2.8 }
@@ -3982,9 +4077,23 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
-    - id: relaygate-0.1.10
+    - id: relaygate-0.1.12
       status: unreleased
       current: true
+      charts: { relaygate: 0.1.12 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest: sha256:79d20158e921d8785470af209ebc33c8c117e6a6ca157cc421287949e1a31ef5 }
+      notes: 'Carries 0.1.11. global.relaygate.upstreamAuth (default off) renders RELAYGATE_UPSTREAM_ASSERTION_KEY (the Ed25519 private key Secret, upstreamAuth.privateKey), RELAYGATE_UPSTREAM_ASSERTION_KID and RELAYGATE_UPSTREAM_ASSERTION_TTL_SECONDS: relaygate signs proxied Sessions requests. Enabled without the private key or kid, a bad TTL or without proxy.sessionsUrl fails the render. Needs a relaygate image with upstream assertions. Default renders differ only in the helm.sh/chart label.'
+    - id: relaygate-0.1.11
+      status: planned
+      charts: { relaygate: 0.1.11 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest: sha256:79d20158e921d8785470af209ebc33c8c117e6a6ca157cc421287949e1a31ef5 }
+      notes: 'Carries 0.1.10. global.relaygate.gateOnly.scope sessions (sessions-only) makes proxy.relaycastUrl optional; an unknown scope fails the render. image.digest now defaults to the published relaygate index sha256:79d20158 (relaygate main 1279d7b4: #48 Ed25519 upstream assertions, #49 relayfacts and coordination, #50), recorded in self-hosted/customer-images.yaml; the chart previously had no default image.'
+    - id: relaygate-0.1.10
+      status: planned
       charts: { relaygate: 0.1.10 }
       app_versions: { relaygate: 0.1.0 }
       images:
@@ -4060,9 +4169,16 @@ compatibility:
       images:
         relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest_required: true }
       notes: First registered chart, rendered only; default-off in the agent-relay umbrella (components.relaygate). Build 1 of the server (registration, mode check, /v1/check, classifier, audit); the Relaycast/Sessions proxy follows. Ships no default digest.
-    - id: slack-relay-0.3.11
+    - id: slack-relay-0.3.12
       status: unreleased
       current: true
+      charts: { slack-relay: 0.3.12 }
+      app_versions: { slack-relay: 0.1.0 }
+      images:
+        slack-relay: { repository: ghcr.io/agentworkforce/slack-relay, digest_required: true }
+      notes: 'Carries 0.3.11. Comment-only change in values-gcp-proof.yaml (a generic test-stack description). Renders are unchanged apart from the chart version.'
+    - id: slack-relay-0.3.11
+      status: planned
       charts: { slack-relay: 0.3.11 }
       app_versions: { slack-relay: 0.1.0 }
       images:
@@ -5558,8 +5674,8 @@ entries:
       introspection.existingSecret reference enables token introspection, and
       introspection.audiences lists the accepted origins.
     chart: relay-control
-    values: [services.relayhistoryBackend, services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
-    env: [RELAYHISTORY_BACKEND, SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
+    values: [services.relayhistoryBackend, services.sessionReadApiUrl, services.sessionReadApiPublicUrl, services.sessionReadApiMcpReads, services.sessionReadMintIncludeRole, services.sessionReadMintIncludeReaderKind, secretKeys.sessionReadApiSecret, secretKeys.introspectSecret, introspection.audiences]
+    env: [RELAYHISTORY_BACKEND, SESSION_READ_API_URL, SESSION_READ_API_PUBLIC_URL, SESSION_READ_API_SECRET_FILE, SESSION_READ_API_MCP_READS, SESSION_READ_MINT_INCLUDE_ROLE, SESSION_READ_MINT_INCLUDE_READER_KIND, RELAYCONTROL_INTROSPECT_SECRET_FILE, SELFHOST_INTROSPECT_AUDIENCES]
     profiles: [relay-control]
     status: shipped
     provided_by: operator
@@ -8770,6 +8886,82 @@ entries:
       - "charts/relaygate/templates/relaygate.yaml"
       - "charts/relaygate/templates/_helpers.tpl"
       - "charts/relay-control/templates/_helpers.tpl"
+
+  - id: opt.relaygate.upstream-auth
+    kind: option
+    title: Upstream verification signer (relaygate)
+    description: 'Off by default. global.relaygate.upstreamAuth (agent-relay umbrella): enabled makes relaygate sign every proxied Sessions request with a short-lived Ed25519 assertion (X-Relaygate-Assertion; RELAYGATE_UPSTREAM_ASSERTION_KEY from upstreamAuth.privateKey, canonical base64 PKCS#8 DER, RELAYGATE_UPSTREAM_ASSERTION_KID, RELAYGATE_UPSTREAM_ASSERTION_TTL_SECONDS 5 to 60). verify.mode log or enforce gives the read API (READ_API_UPSTREAM_ASSERTION_*) and the ingest edge (INGEST_UPSTREAM_ASSERTION_*) MODE, the current and previous public keys (canonical base64 SPKI DER) from one Secret or ConfigMap with their kids, and a checksum that rolls them. Verifiers exempt health, preflight, the reader mints and, after its own secret, per-session erase. Needs relaygate and Sessions images with upstream assertions.'
+    chart: relaygate
+    values: [global.relaygate.upstreamAuth.enabled, global.relaygate.upstreamAuth.privateKey, global.relaygate.upstreamAuth.kid, global.relaygate.upstreamAuth.ttlSeconds]
+    env: [RELAYGATE_UPSTREAM_ASSERTION_KEY, RELAYGATE_UPSTREAM_ASSERTION_KID, RELAYGATE_UPSTREAM_ASSERTION_TTL_SECONDS]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: enabled, note: global.relaygate.upstreamAuth.enabled (relaygate signs; the verifiers are opt.session-read-api.upstream-assertion and opt.sessions-pipeline.ingest-upstream-assertion) }
+    secrets:
+      - name: "<relaygate upstream assertion private key Secret>"
+        name_paths: ["relaygate:global.relaygate.upstreamAuth.privateKey.name"]
+        keys:
+          - { key: private-key, key_path: "relaygate:global.relaygate.upstreamAuth.privateKey.key" }
+    verify: 'scripts/ci/charts.sh static relaygate asserts the signer env and refusals; agent-relay (ci/gate-sessions-upstream-auth-values.yaml) asserts both verifiers'' env and checksum, that only relaygate gets the private key and only the verifiers the public keys, a kid change rolls the verifiers, off renders nothing, and refusals for a mode other than off, log or enforce, verify without the signer, a signer kid the verifiers do not accept, zero or two key sources, and an incomplete or repeated previous key'
+    sources:
+      - "charts/relaygate/values.yaml"
+      - "charts/relaygate/templates/relaygate.yaml"
+      - "charts/relaygate/templates/_helpers.tpl"
+      - "charts/agent-relay/templates/_helpers.tpl"
+
+  - id: opt.session-read-api.upstream-assertion
+    kind: option
+    title: Upstream verification on the read API
+    description: 'Off by default. global.relaygate.upstreamAuth (agent-relay umbrella): enabled makes relaygate sign every proxied Sessions request with a short-lived Ed25519 assertion (X-Relaygate-Assertion; RELAYGATE_UPSTREAM_ASSERTION_KEY from upstreamAuth.privateKey, canonical base64 PKCS#8 DER, RELAYGATE_UPSTREAM_ASSERTION_KID, RELAYGATE_UPSTREAM_ASSERTION_TTL_SECONDS 5 to 60). verify.mode log or enforce gives the read API (READ_API_UPSTREAM_ASSERTION_*) and the ingest edge (INGEST_UPSTREAM_ASSERTION_*) MODE, the current and previous public keys (canonical base64 SPKI DER) from one Secret or ConfigMap with their kids, and a checksum that rolls them. Verifiers exempt health, preflight, the reader mints and, after its own secret, per-session erase. Needs relaygate and Sessions images with upstream assertions.'
+    chart: session-read-api
+    values: [global.relaygate.upstreamAuth.verify.mode, global.relaygate.upstreamAuth.verify.publicKeys]
+    env: [READ_API_UPSTREAM_ASSERTION_MODE, READ_API_UPSTREAM_ASSERTION_PUBLIC_KEY, READ_API_UPSTREAM_ASSERTION_KID, READ_API_UPSTREAM_ASSERTION_PUBLIC_KEY_PREVIOUS, READ_API_UPSTREAM_ASSERTION_KID_PREVIOUS]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: log }
+      - { value: enforce }
+    secrets:
+      - name: "<upstream assertion public keys Secret, or a ConfigMap>"
+        name_paths: ["session-read-api:global.relaygate.upstreamAuth.verify.publicKeys.secretName"]
+        keys:
+          - { key: public-key, key_path: "session-read-api:global.relaygate.upstreamAuth.verify.publicKeys.currentKey" }
+    verify: 'scripts/ci/charts.sh static relaygate asserts the signer env and refusals; agent-relay (ci/gate-sessions-upstream-auth-values.yaml) asserts both verifiers'' env and checksum, that only relaygate gets the private key and only the verifiers the public keys, a kid change rolls the verifiers, off renders nothing, and refusals for a mode other than off, log or enforce, verify without the signer, a signer kid the verifiers do not accept, zero or two key sources, and an incomplete or repeated previous key'
+    sources:
+      - "charts/session-read-api/templates/_upstream-assertion.tpl"
+      - "charts/session-read-api/templates/deployment.yaml"
+
+  - id: opt.sessions-pipeline.ingest-upstream-assertion
+    kind: option
+    title: Upstream verification on the ingest edge
+    description: 'Off by default. global.relaygate.upstreamAuth (agent-relay umbrella): enabled makes relaygate sign every proxied Sessions request with a short-lived Ed25519 assertion (X-Relaygate-Assertion; RELAYGATE_UPSTREAM_ASSERTION_KEY from upstreamAuth.privateKey, canonical base64 PKCS#8 DER, RELAYGATE_UPSTREAM_ASSERTION_KID, RELAYGATE_UPSTREAM_ASSERTION_TTL_SECONDS 5 to 60). verify.mode log or enforce gives the read API (READ_API_UPSTREAM_ASSERTION_*) and the ingest edge (INGEST_UPSTREAM_ASSERTION_*) MODE, the current and previous public keys (canonical base64 SPKI DER) from one Secret or ConfigMap with their kids, and a checksum that rolls them. Verifiers exempt health, preflight, the reader mints and, after its own secret, per-session erase. Needs relaygate and Sessions images with upstream assertions.'
+    chart: sessions-pipeline
+    values: [global.relaygate.upstreamAuth.verify.mode, global.relaygate.upstreamAuth.verify.publicKeys]
+    env: [INGEST_UPSTREAM_ASSERTION_MODE, INGEST_UPSTREAM_ASSERTION_PUBLIC_KEY, INGEST_UPSTREAM_ASSERTION_KID, INGEST_UPSTREAM_ASSERTION_PUBLIC_KEY_PREVIOUS, INGEST_UPSTREAM_ASSERTION_KID_PREVIOUS]
+    profiles: [relaygate]
+    status: shipped
+    provided_by: operator
+    default: disabled
+    choices:
+      - { value: disabled }
+      - { value: log }
+      - { value: enforce }
+    secrets:
+      - name: "<upstream assertion public keys Secret, or a ConfigMap>"
+        name_paths: ["sessions-pipeline:global.relaygate.upstreamAuth.verify.publicKeys.secretName"]
+        keys:
+          - { key: public-key, key_path: "sessions-pipeline:global.relaygate.upstreamAuth.verify.publicKeys.currentKey" }
+    verify: 'scripts/ci/charts.sh static relaygate asserts the signer env and refusals; agent-relay (ci/gate-sessions-upstream-auth-values.yaml) asserts both verifiers'' env and checksum, that only relaygate gets the private key and only the verifiers the public keys, a kid change rolls the verifiers, off renders nothing, and refusals for a mode other than off, log or enforce, verify without the signer, a signer kid the verifiers do not accept, zero or two key sources, and an incomplete or repeated previous key'
+    sources:
+      - "charts/sessions-pipeline/templates/_upstream-assertion.tpl"
+      - "charts/sessions-pipeline/templates/ingest-edge.yaml"
 
   - id: opt.relaygate.image-pull-secrets
     kind: option

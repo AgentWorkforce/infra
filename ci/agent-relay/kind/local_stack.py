@@ -151,6 +151,11 @@ def operator():
         "cast": {"name": "local-cast", "internalKey": "internal-secret", "bootstrapKey": "workspace-bootstrap-secret"}}
 
 
+# Images before relayhistory-pipeline 81518b01 (e.g. release candidates up to 2026.11.15) lack this
+# bootstrap and the migration (062030) that needs it, so it runs only when the selected image ships it.
+LEGACY_EXPORT_BOOTSTRAP = "supabase/bootstrap/legacy_export_privacy_roles.sql"
+
+
 class LocalStack(Stack):
     def identity_layout(self, profile):
         return "agent-relay-local", ROOT / ".kind" / "local"
@@ -217,8 +222,10 @@ class LocalStack(Stack):
     def sql(self, database, text, variables=()):
         return self.psql(database, text, variables=variables, sensitive=True)
 
-    def source_files(self, paths):
-        code = "import fs from 'node:fs';console.log(JSON.stringify(Object.fromEntries(" + json.dumps(paths) + ".map(p=>[p,fs.readFileSync('/app/'+p,'utf8')]))));"
+    def source_files(self, paths, optional=()):
+        # Every path is required unless listed in optional; an optional path the image lacks is omitted.
+        code = ("import fs from 'node:fs';const optional=new Set(" + json.dumps(list(optional)) + ");console.log(JSON.stringify(Object.fromEntries("
+            + json.dumps(paths) + ".filter(p=>!optional.has(p)||fs.existsSync('/app/'+p)).map(p=>[p,fs.readFileSync('/app/'+p,'utf8')]))));")
         return json.loads(self.cmd([*self.docker_args, "run", "--rm", "--network", "none", "--entrypoint", "bun", PIPELINE, "-e", code]).stdout)
 
     def job(self, name, image_ref, command=None, env=None, mounts=None, volumes=None):
@@ -295,12 +302,14 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
         self.job("local-locker-init", PIPELINE, ["bun", "src/locker/init.ts"], locker_env())
 
     def pipeline_schema(self, c):
-        names = ["session_directory_search_worker", "session_token_verifier", "session_ingest_roles", "session_read_api_roles", "session_consumer_roles", "hoopdb_runtime_role", "hoopdb_function_default_revoke", "session_consumer_credential_probe"]
+        names = ["session_directory_search_worker", "session_token_verifier", "session_ingest_roles", "session_read_api_roles", "legacy_export_privacy_roles", "session_consumer_roles", "hoopdb_runtime_role", "hoopdb_function_default_revoke", "session_consumer_credential_probe"]
         paths = ["supabase/tests/supabase_shim.sql"] + ["supabase/bootstrap/" + n + ".sql" for n in names]
-        files = self.source_files(paths)
+        files = self.source_files(paths, optional=[LEGACY_EXPORT_BOOTSTRAP])
         self.sql("hoopdb", files[paths[0]])
-        for name in names[:4]:
-            self.sql("hoopdb", files["supabase/bootstrap/" + name + ".sql"])
+        for name in names[:5]:
+            path = "supabase/bootstrap/" + name + ".sql"
+            if path in files:
+                self.sql("hoopdb", files[path])
         self.sql("hoopdb", "ALTER ROLE hoop CREATEROLE; SET ROLE hoop; SET createrole_self_grant=''; CREATE SCHEMA sessions; CREATE SCHEMA search_index;\n" + files["supabase/bootstrap/session_consumer_roles.sql"])
         self.sql("hoopdb", files["supabase/bootstrap/hoopdb_runtime_role.sql"], ["runtime_role=sessions_pipeline_runtime", "runtime_login=true"])
         self.sql("hoopdb", files["supabase/bootstrap/hoopdb_function_default_revoke.sql"], ["migration_owner=hoop"])
@@ -310,8 +319,9 @@ GRANT TEMP ON DATABASE relaycast TO relaycast_owner;""")
         # New migrations may name new principals; repeat the image's idempotent
         # privileged pre-migrate bootstraps before the unprivileged migrator.
         paths = ["supabase/bootstrap/" + n + ".sql" for n in (
-            "session_directory_search_worker", "session_token_verifier", "session_ingest_roles", "session_read_api_roles")]
-        for sql in self.source_files(paths).values():
+            "session_directory_search_worker", "session_token_verifier", "session_ingest_roles", "session_read_api_roles",
+            "legacy_export_privacy_roles")]
+        for sql in self.source_files(paths, optional=[LEGACY_EXPORT_BOOTSTRAP]).values():
             self.sql("hoopdb", sql)
         migrate_env = [env("SERVICE", "hoopdb-migrate"), secret_env("HOOPDB_URL", "local-pipeline-owner", "url"),
             env("HOOPDB_DB_MODE", "selfhosted"), env("HOOPDB_SUPABASE_SHIM", "false"), env("HOOPDB_ROLE_BOOTSTRAP", "false"),

@@ -106,7 +106,15 @@ class Routes(unittest.TestCase):
                     self.assert_routes(dashboard(docs), chief=chief)
 
     def test_azure(self):
-        self.assert_routes(dashboard(documents((ROOT / "docs/azure-install/ingress.yaml").read_text()), "__HOST_ROOT__"))
+        # The AKS edge is rendered by the chart (traefikIngress); the frozen
+        # pre-chart file stays a fixture (ci/agent-relay/test_traefik_ingress.py).
+        self.assert_routes(dashboard(documents((ROOT / "ci/agent-relay/fixtures/aks-traefik-ingress.yaml").read_text()), "__HOST_ROOT__"))
+        docs = documents(run(
+            "helm", "template", "ci", "charts/agent-relay", "-n", "agent-relay",
+            "-f", "charts/agent-relay/values-gcp-proof.yaml",
+            "-f", "charts/agent-relay/ci/traefik-ingress-values.yaml",
+            "--show-only", "templates/traefik-ingress.yaml"))
+        self.assert_routes(dashboard(docs, "gcp-proof.agentrelay.com"))
 
 
 if __name__ == "__main__":

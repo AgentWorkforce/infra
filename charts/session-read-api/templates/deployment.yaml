@@ -1,4 +1,5 @@
 {{- include "session-read-api.validate" . -}}
+{{- include "session-read-api.upstreamAssertion.validate" . -}}
 {{- $c := .Values -}}
 {{- $timingCompat := include "session-read-api.compatLegacyBool" (dict "structured" $c.timing.assumeNoTurns "path" "timing.assumeNoTurns" "name" "READ_API_TIMING_ASSUME_NO_TURNS" "extraEnv" $c.extraEnv) | fromJson -}}
 {{- $canonicalCompat := include "session-read-api.compatLegacyBool" (dict "structured" $c.canonical.pinLaggingPointer "path" "canonical.pinLaggingPointer" "name" "READ_API_CANONICAL_PIN_LAGGING_POINTER" "extraEnv" $c.extraEnv) | fromJson -}}
@@ -26,9 +27,15 @@ spec:
         {{- if $c.analytics.enabled }}
         agentworkforce.dev/analytics-producer: "true"
         {{- end }}
-      {{- with $c.podAnnotations }}
+      {{- $uaSum := include "session-read-api.upstreamAssertion.checksum" . }}
+      {{- if or $c.podAnnotations $uaSum }}
       annotations:
+        {{- with $c.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with $uaSum }}
+        checksum/upstream-assertion: {{ . | quote }}
+        {{- end }}
       {{- end }}
     spec:
       automountServiceAccountToken: false
@@ -72,6 +79,7 @@ spec:
             - { name: SESSION_ERASE_FENCE_ENFORCED, value: "1" }
             {{- end }}
             - { name: SERVICE, value: session-read-api }
+            {{- with include "session-read-api.upstreamAssertion.env" . }}{{ . | nindent 12 }}{{ end }}
             {{- include "session-read-api.scrubEngine" (dict "root" . "localReader" $c.readerMaxRuleset "localName" "readerMaxRuleset") | nindent 12 }}
             - { name: RELAYHISTORY_SELFHOST_READ_API, value: "true" }
             - { name: RELAYHISTORY_READ_API_PORT, value: {{ $c.port | quote }} }
