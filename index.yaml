@@ -1295,6 +1295,33 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-24T01:15:28.781662761Z"
+    description: Self-hosted Agent Relay control-plane API for messaging and sessions
+    digest: 3a578e6408030609c17137dca8c8cb634751fea7b5b7591d962694504276db50
+    home: https://github.com/AgentWorkforce/relay-control
+    keywords:
+    - agent-relay
+    - control-plane
+    - api
+    - self-hosted
+    kubeVersion: '>=1.28.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relay-control
+    sources:
+    - https://github.com/AgentWorkforce/relay-control
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relay-control-0.4.25/relay-control-0.4.25.tgz
+    version: 0.4.25
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      agentworkforce.dev/min-helm-version: 3.10.0
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-22T23:56:33.88326247Z"
     description: Self-hosted Agent Relay control-plane API for messaging and sessions
     digest: 33d4651d71d9a5064d6d78c4e9c06e95a612f4327c71390dd6882ee5074f62d8
@@ -2479,6 +2506,34 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 12.10.0
+    created: "2026-11-24T01:15:28.946310009Z"
+    description: Portable Relaycast core for self-hosted Agent Relay deployments
+    digest: d85eb7e37f32e9221aa2e0cd5d96f2bf6fabd47d812d8b2dca29970b869f96ee
+    home: https://github.com/AgentWorkforce/relaycast
+    keywords:
+    - relaycast
+    - agents
+    - realtime
+    - self-hosted
+    - agentworkforce
+    kubeVersion: '>=1.22.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: relaycast
+    sources:
+    - https://github.com/AgentWorkforce/relaycast
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relaycast
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relaycast-0.3.17/relaycast-0.3.17.tgz
+    version: 0.3.17
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 12.10.0
     created: "2026-11-16T01:26:46.660432294Z"
     description: Portable Relaycast core for self-hosted Agent Relay deployments
     digest: a822b86c47b006d5b2922f10ffc2bb5b4f19e7173dc5f94a7ad95de15716b461
@@ -3440,6 +3495,34 @@ entries:
     - https://github.com/AgentWorkforce/helm-charts/releases/download/relayflows-0.1.0/relayflows-0.1.0.tgz
     version: 0.1.0
   relaygate:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-24T01:15:29.108647236Z"
+    description: 'Optional governance gate for Agent Relay: agents register into a
+      group, every request is checked against mode bits, and writes that cross a group
+      boundary or leave through an external stream (Slack, a knowledge base) are classified.'
+    digest: a1455079cd145dd3301a4344f7cc6583dfc0226a225e0359b6e996081d992c7d
+    home: https://github.com/AgentWorkforce/relaygate
+    keywords:
+    - relaygate
+    - governance
+    - agent-relay
+    kubeVersion: '>=1.27.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce
+    name: relaygate
+    sources:
+    - https://github.com/AgentWorkforce/relaygate
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/relaygate
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/relaygate-0.1.11/relaygate-0.1.11.tgz
+    version: 0.1.11
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
         and images retain their own licenses.
@@ -4481,6 +4564,65 @@ entries:
     - https://github.com/AgentWorkforce/infra/releases/download/session-read-api-0.1.0/session-read-api-0.1.0.tgz
     version: 0.1.0
   sessions-pipeline:
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-24T01:15:29.292952781Z"
+    dependencies:
+    - alias: worker
+      name: sessions-pipeline-worker
+      repository: file://../sessions-pipeline-worker
+      version: 0.7.15
+    - alias: alleyoop
+      name: session-ingest-api
+      repository: file://../session-ingest-api
+      version: 0.4.5
+    - alias: sessionReadApi
+      condition: sessionReadApi.enabled
+      name: session-read-api
+      repository: file://../session-read-api
+      version: 0.2.16
+    - alias: hoopdb
+      condition: hoopdb.enabled
+      name: cluster
+      repository: https://cloudnative-pg.github.io/charts
+      version: 0.9.0
+    - alias: session-object-storage
+      condition: session-object-storage.enabled
+      name: minio
+      repository: https://charts.min.io/
+      version: 5.4.0
+    - alias: otel
+      condition: otel.enabled
+      name: opentelemetry-collector
+      repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+      version: 0.178.0
+    description: 'The sessions pipeline in one release: the sessions-pipeline-worker
+      and session-ingest-api app charts, plus optional Postgres (CloudNativePG Cluster),
+      session-object-storage (MinIO) and an OpenTelemetry collector. Hook-free, so
+      `helm install` and Alchemy''s `helm template --no-hooks` + server-side apply
+      behave the same. Requires the CloudNativePG operator when hoopdb.enabled (see
+      deps/PINS.md). '
+    digest: 3d5912d05c298384bf30412ff47157cb7f8c441421e1f7902ab4bebb2f5f7464
+    home: https://github.com/AgentWorkforce/sessions-pipeline
+    keywords:
+    - sessions-pipeline
+    - sessions
+    - pipeline
+    - agentworkforce
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: sessions-pipeline
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/sessions-pipeline
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/sessions-pipeline-0.8.57/sessions-pipeline-0.8.57.tgz
+    version: 0.8.57
   - annotations:
       agentworkforce.dev/license-scope: First-party chart code only; dependencies
         and images retain their own licenses.
@@ -8607,6 +8749,35 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-11-24T01:15:29.437053337Z"
+    description: 'Optional Slack app for Agent Relay: a router that maps Slack threads
+      to per-thread agents through a ledger, a Claude orchestrator for new threads,
+      and an agent host that runs the agents on the relay.'
+    digest: 6c2748c0d39ed074172842494b3a55107af9734dc273f4621cd360b25e706410
+    home: https://github.com/AgentWorkforce/infra
+    keywords:
+    - slack
+    - agents
+    - agent-relay
+    - relaycast
+    kubeVersion: '>=1.27.0-0'
+    maintainers:
+    - name: AgentWorkforce
+      url: https://github.com/AgentWorkforce/infra
+    name: slack-relay
+    sources:
+    - https://github.com/AgentWorkforce/infra/tree/main/components/slack-relay
+    - https://github.com/AgentWorkforce/infra/tree/main/charts/slack-relay
+    type: application
+    urls:
+    - https://github.com/AgentWorkforce/infra/releases/download/slack-relay-0.3.12/slack-relay-0.3.12.tgz
+    version: 0.3.12
+  - annotations:
+      agentworkforce.dev/license-scope: First-party chart code only; dependencies
+        and images retain their own licenses.
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-11-17T02:22:28.398284837Z"
     description: 'Optional Slack app for Agent Relay: a router that maps Slack threads
       to per-thread agents through a ledger, a Claude orchestrator for new threads,
@@ -9155,4 +9326,4 @@ entries:
     urls:
     - https://github.com/AgentWorkforce/infra/releases/download/telemetry-collector-0.1.0/telemetry-collector-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-23T16:12:25.68143782Z"
+generated: "2026-11-24T01:15:29.437781838Z"
