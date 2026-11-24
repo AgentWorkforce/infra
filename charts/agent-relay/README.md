@@ -568,8 +568,9 @@ front of History on all three edges this chart renders, with one model:
 leaves the cast host on Relaycast; `scope: all` (the default when the gate is
 on, today's gate-only) routes the cast host through relaygate as well. Off by
 default: with `gateOnly.enabled=false` every render is unchanged.
-`gateOnly.relayfactsRoutes` (off by default) also routes `/v1/relayfacts` and
-`/v1/coordination` to relaygate; it needs a relaygate image that proxies them.
+`gateOnly.relayfactsRoutes` (on by default) also routes `/v1/relayfacts` and
+`/v1/coordination` to relaygate; set it to `false` for an external relaygate on
+an image older than relaygate #49 that does not proxy them.
 
 | Edge | History host with the gate on | Cast host with `scope: all` |
 | --- | --- | --- |

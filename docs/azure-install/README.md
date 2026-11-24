@@ -239,6 +239,31 @@ curl -fsS -o /dev/null -w "dashboard %{http_code}\n" "https://<root host>/"
 curl -s -o /dev/null -w "history %{http_code}\n" "https://<history host>/v1/sessions"
 ```
 
+#### Upgrading an edge applied from an older `ingress.yaml`
+
+A chart upgrade does not change an Ingress that was applied by hand. An
+`ingress.yaml` from a guide older than chart 0.7.68 has no rule for
+`/v1/relayfacts` or `/v1/coordination` on the history host, so Traefik answers
+both with 503 from `edge-deny` and relay-control's relayfacts and coordination
+tools report "temporarily unavailable", whatever chart version runs. Count the
+two rules:
+
+```sh
+kubectl -n agent-relay get ingress agent-relay \
+  -o jsonpath='{range .spec.rules[*].http.paths[*]}{.path}{"\n"}{end}' \
+  | grep -c -x -E '/v1/(relayfacts|coordination)'
+```
+
+`2` means both are routed; `0` means the Ingress predates them. After the
+chart upgrade, either apply this release's `ingress.yaml` again (placeholders
+replaced, as above) or move the edge into the release as below. The answer
+then comes from the read API instead of the edge: `501 relayfacts_disabled`
+for a signed-in reader until the feature is turned on.
+
+With the gate on (8b), charts 0.7.77 to 0.7.81 deny both paths at the edge
+unless `global.relaygate.gateOnly.relayfactsRoutes: true` is set; from 0.7.82
+they are routed to relaygate by default.
+
 #### Moving the edge into the release (chart 0.7.77 or later)
 
 With a chart that has `traefikIngress`, the release renders the same edge.

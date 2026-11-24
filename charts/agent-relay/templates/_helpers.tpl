@@ -49,15 +49,15 @@ chart's gate-only ingress (docs/self-hosted-relaygate.md lists them). */ -}}
 {{- define "agent-relay.gate.historyExact" -}}
 {{- list "/v1/events" "/v1/ingest" "/v1/auth/token/refresh" "/v1/auth/token/revoke" "/v1/onboarding/heartbeat" "/v1/upload-consent" | toJson -}}
 {{- end }}
-{{- /* /v1/relayfacts and /v1/coordination only with
-global.relaygate.gateOnly.relayfactsRoutes (off by default): they need a
-relaygate image that proxies them; older images answer 404
-relaygate_route_not_proxied after authentication. */ -}}
+{{- /* /v1/relayfacts and /v1/coordination are routed unless
+global.relaygate.gateOnly.relayfactsRoutes is false (on by default): the
+relaygate image the relaygate chart pins (relaygate #49 and later) proxies them;
+older images answer 404 relaygate_route_not_proxied after authentication. */ -}}
 {{- define "agent-relay.gate.historyPrefix" -}}
 {{- /* /v1/delivery covers batches, limits, admission, sessions/selection and
 records; relaygate answers relaygate_route_not_proxied for any other child. */ -}}
 {{- $p := list "/v1/sessions" "/v1/delivery" "/v1/digest" -}}
-{{- if eq (dig "relaygate" "gateOnly" "relayfactsRoutes" false (.Values.global | default dict) | toString) "true" }}{{ $p = concat $p (list "/v1/relayfacts" "/v1/coordination") }}{{ end -}}
+{{- if ne (dig "relaygate" "gateOnly" "relayfactsRoutes" true (.Values.global | default dict) | toString) "false" }}{{ $p = concat $p (list "/v1/relayfacts" "/v1/coordination") }}{{ end -}}
 {{- $p | toJson -}}
 {{- end }}
 {{- define "agent-relay.gate.castExact" -}}

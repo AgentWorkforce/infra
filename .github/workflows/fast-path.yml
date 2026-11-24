@@ -707,6 +707,7 @@ jobs:
         python3 ci/agent-relay/test_control_webapp_names.py -v
         python3 ci/agent-relay/test_eks_alb_ingress.py -v
         python3 ci/agent-relay/test_traefik_ingress.py -v
+        python3 ci/agent-relay/test_gate_relayfacts_routes.py -v
         python3 ci/agent-relay/test_release_candidate.py -v
         python3 ci/agent-relay/test_release_candidate_gate.py -v
         python3 ci/agent-relay/test_install_pack.py -v

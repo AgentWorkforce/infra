@@ -77,11 +77,12 @@ global:
       # nativeRouting follow it.
       scope: all
       # Also route /v1/relayfacts and /v1/coordination (Prefix) on the history
-      # host to relaygate (every edge and nativeRouting). Off by default: needs
-      # a relaygate image that proxies them (relaygate #49, 8d0e6897, or later); older
-      # images answer 404 relaygate_route_not_proxied after authentication.
-      # Off, those paths are denied at the edge, as before.
-      relayfactsRoutes: false
+      # host to relaygate (every edge and nativeRouting). On by default: the
+      # relaygate image the relaygate chart pins (relaygate #49 and later)
+      # proxies them. Set false for an external relaygate on an older image,
+      # which answers 404 relaygate_route_not_proxied after authentication;
+      # false denies those paths at the edge.
+      relayfactsRoutes: true
       # The relaygate Service; empty derives <release>-relaygate (or the
       # release name when it contains "relaygate"). Set it to match
       # relaygate.fullnameOverride.

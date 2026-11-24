@@ -137,8 +137,8 @@ are complete render examples.
 
 History routes relaygate serves on the history host: `/v1/sessions`,
 `/v1/delivery` (batches, limits, admission, sessions/selection, records) and
-`/v1/digest` (Prefix; plus `/v1/relayfacts` and `/v1/coordination` with
-`relayfactsRoutes`), and `/v1/events`, `/v1/ingest`, `/v1/auth/token/refresh`,
+`/v1/digest` (Prefix; plus `/v1/relayfacts` and `/v1/coordination` unless
+`relayfactsRoutes` is `false`), and `/v1/events`, `/v1/ingest`, `/v1/auth/token/refresh`,
 `/v1/auth/token/revoke`, `/v1/onboarding/heartbeat` and `/v1/upload-consent`
 (Exact). relaygate refuses any child it does not proxy with
 `404 relaygate_route_not_proxied`; `/v1/delivery/records` and `/v1/digest/*`
@@ -176,11 +176,17 @@ Limits, until the images named here ship:
   admins by `emails` or `userIds`, as the examples do.
 - **`global.relaygate.controlPolicy` stays off:** no relay-control image reads
   its settings yet.
-- **`/v1/relayfacts` and `/v1/coordination`** are denied at the edge unless
-  `global.relaygate.gateOnly.relayfactsRoutes: true` (off by default), which
-  routes both (Prefix) to relaygate on every edge. Turn it on only with a
-  relaygate image that proxies them (relaygate #49, 8d0e6897, or later); older images
-  answer `404 relaygate_route_not_proxied` after authentication.
+- **`/v1/relayfacts` and `/v1/coordination`** are routed (Prefix) to relaygate
+  on every edge unless `global.relaygate.gateOnly.relayfactsRoutes: false`
+  (on by default; with `false` they are denied at the edge). The relaygate
+  image the chart pins (relaygate #49, 8d0e6897, or later) proxies them; an
+  external relaygate on an older image answers
+  `404 relaygate_route_not_proxied` after authentication, so set `false`
+  there. relaygate serves `GET /v1/relayfacts`, `GET /v1/relayfacts/<topic>`,
+  `GET /v1/coordination/overlaps`, `GET /v1/coordination/advisories` and
+  `POST /v1/coordination/advisories/<id>/ack`, each only for a caller who can
+  read every session (otherwise `403 relaygate_denied`). The read API still
+  answers `501 relayfacts_disabled` until it enables the feature.
 - relay-control's health check calls `GET /healthz` on its
   `SESSION_READ_API_URL`, so relaygate's internal listener must answer it
   without credentials.
@@ -638,8 +644,8 @@ proxy with `404 relaygate_route_not_proxied`). Every proxied route needs an
 
 History host, to relaygate: `/v1/sessions` (prefix: list, `turns` uploads and
 the per-session views), `/v1/delivery` and `/v1/digest` (prefix),
-`/v1/relayfacts` and `/v1/coordination` (prefix, only with
-`global.relaygate.gateOnly.relayfactsRoutes`), and `/v1/events`, `/v1/ingest`,
+`/v1/relayfacts` and `/v1/coordination` (prefix, unless
+`global.relaygate.gateOnly.relayfactsRoutes` is `false`), and `/v1/events`, `/v1/ingest`,
 `/v1/auth/token/refresh`, `/v1/auth/token/revoke`, `/v1/onboarding/heartbeat`,
 `/v1/upload-consent` (exact).
 

@@ -32,8 +32,8 @@ spec:
           # Keep in step with the agent-relay umbrella's gate routes
           # (agent-relay.gate.historyPrefix and historyExact).
           {{- $prefixes := list "/v1/sessions" "/v1/delivery" "/v1/digest" }}
-          {{- /* global.relaygate.gateOnly.relayfactsRoutes: needs a relaygate image that proxies them. */}}
-          {{- if eq (dig "relaygate" "gateOnly" "relayfactsRoutes" false (.Values.global | default dict) | toString) "true" }}{{ $prefixes = concat $prefixes (list "/v1/relayfacts" "/v1/coordination") }}{{ end }}
+          {{- /* global.relaygate.gateOnly.relayfactsRoutes (on unless false): the pinned relaygate image proxies them. */}}
+          {{- if ne (dig "relaygate" "gateOnly" "relayfactsRoutes" true (.Values.global | default dict) | toString) "false" }}{{ $prefixes = concat $prefixes (list "/v1/relayfacts" "/v1/coordination") }}{{ end }}
           {{- range $path := $prefixes }}
           - path: {{ $path }}
             pathType: Prefix
