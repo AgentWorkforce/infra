@@ -2245,9 +2245,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.80
+    - id: agent-relay-0.7.81
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.81, relay-control: 0.4.26, relay-webapp: 0.2.8 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.17, relayauth: 0.1.5, sessions-pipeline: 0.8.58, relay-control: 0.4.26, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.12, relaygate: 0.1.13 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.80. Docs only in the chart: the global.relaygate.upstreamAuth rotation comment in values.yaml now says to wait until both verifier Deployments have finished rolling out before step 2 switches the signer kid (also in docs/self-hosted-relaygate.md). Renders are unchanged apart from chart versions. Also relaygate 0.1.13: the relaygate image pin moves to sha256:429c811a (relaygate 8ae66ac8, v0.1.0, #51); with components.relaygate on only the relaygate image line changes.'
+    - id: agent-relay-0.7.80
+      status: planned
       charts: { agent-relay: 0.7.80, relay-control: 0.4.26, relay-webapp: 0.2.8 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -4090,9 +4103,16 @@ compatibility:
       charts: { relay-chief: 0.1.0 }
       app_versions: { relay-chief: 0.1.0 }
       notes: First chart, rendered only. No Relay Chief image is published and the digest is operator-supplied until one exists.
-    - id: relaygate-0.1.12
+    - id: relaygate-0.1.13
       status: unreleased
       current: true
+      charts: { relaygate: 0.1.13 }
+      app_versions: { relaygate: 0.1.0 }
+      images:
+        relaygate: { repository: ghcr.io/agentworkforce/relaygate, digest: sha256:429c811acf1a37bfd12269d698f116bcade50050b3ef7ea4040e34d4336064cf }
+      notes: 'Carries 0.1.12. image.digest moves to the published relaygate index sha256:429c811a (relaygate main 8ae66ac8, release v0.1.0: adds #51 event-query scope parity over 1279d7b4), recorded in self-hosted/customer-images.yaml. Renders change only in the relaygate image line and the helm.sh/chart label.'
+    - id: relaygate-0.1.12
+      status: planned
       charts: { relaygate: 0.1.12 }
       app_versions: { relaygate: 0.1.0 }
       images:

@@ -138,7 +138,9 @@ global:
           previousKey: ""
           previousKid: ""
       # Rotation, one upgrade per step: 1) the new public key becomes current
-      # and the old one previous (verifiers roll and accept both); 2) switch
+      # and the old one previous (verifiers roll and accept both; wait until
+      # both verifier Deployments, <release>-read-api and
+      # <release>-ingest-edge, have finished rolling out); 2) switch
       # relaygate to the new private key and kid; 3) once every relaygate pod
       # signs with it, wait ttlSeconds + 5 s and clear previous. The verifier
       # pods roll whenever verify changes.
