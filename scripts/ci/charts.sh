@@ -1396,15 +1396,15 @@ for chart in "${charts[@]}"; do
             || err "$chart: the $stack relaygate example must deploy the relaygate chart's pinned digest"
           unset -n st
         done
-        # global.relaygate.gateOnly.relayfactsRoutes (off by default) adds
+        # global.relaygate.gateOnly.relayfactsRoutes (on by default) routes
         # /v1/relayfacts and /v1/coordination (Prefix) to relaygate on every edge.
         for edge in gke eks aks; do
-          out=$(render "$chart" charts/agent-relay/ci/gate-sessions-$edge-values.yaml --set global.relaygate.gateOnly.relayfactsRoutes=true) || { err "$chart: relayfactsRoutes ($edge) did not render"; continue; }
+          out=$(render "$chart" charts/agent-relay/ci/gate-sessions-$edge-values.yaml) || { err "$chart: relayfactsRoutes ($edge) did not render"; continue; }
           for p in /v1/relayfacts /v1/coordination; do
             grep -Eq "(^|;)$p Prefix [^;]*(-gate|relaygate);" <<<"$(routes history.gcp-proof.agentrelay.com)" || err "$chart: relayfactsRoutes ($edge) must route $p to relaygate"
           done
-          out=$(render "$chart" charts/agent-relay/ci/gate-sessions-$edge-values.yaml)
-          ! grep -Eq '/v1/(relayfacts|coordination) ' <<<"$(routes history.gcp-proof.agentrelay.com)" || err "$chart: without relayfactsRoutes ($edge) the history host must not route /v1/relayfacts or /v1/coordination"
+          out=$(render "$chart" charts/agent-relay/ci/gate-sessions-$edge-values.yaml --set global.relaygate.gateOnly.relayfactsRoutes=false)
+          ! grep -Eq '/v1/(relayfacts|coordination) ' <<<"$(routes history.gcp-proof.agentrelay.com)" || err "$chart: with relayfactsRoutes=false ($edge) the history host must not route /v1/relayfacts or /v1/coordination"
         done
         # relay-control.services.sessionReadMintIncludeReaderKind in the umbrella:
         # true renders with both gate scopes and is refused without the gate.

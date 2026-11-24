@@ -23,7 +23,8 @@ HOSTS = {'root': 'relay.example.com', 'api': 'api.relay.example.com',
 NAMESPACE = 'agent-relay'
 HISTORY_GATE = [('/v1/events', 'Exact'), ('/v1/ingest', 'Exact'), ('/v1/auth/token/refresh', 'Exact'),
                 ('/v1/auth/token/revoke', 'Exact'), ('/v1/onboarding/heartbeat', 'Exact'), ('/v1/upload-consent', 'Exact'),
-                ('/v1/sessions', 'Prefix'), ('/v1/delivery', 'Prefix'), ('/v1/digest', 'Prefix')]
+                ('/v1/sessions', 'Prefix'), ('/v1/delivery', 'Prefix'), ('/v1/digest', 'Prefix'),
+                ('/v1/relayfacts', 'Prefix'), ('/v1/coordination', 'Prefix')]
 CAST_GATE = [(p, 'Exact') for p in ('/v1/register', '/v1/check', '/v1/whoami', '/v1/agent', '/v1/agent/node-token',
                                     '/v1/node/ws', '/v1/search', '/v1/inbox')] + \
             [(p, 'Prefix') for p in ('/v1/agents', '/v1/channels', '/v1/messages', '/v1/dm', '/v1/streams', '/v1/deliveries')]

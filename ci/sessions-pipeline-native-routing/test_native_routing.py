@@ -120,10 +120,17 @@ class NativeRouting(unittest.TestCase):
         docs = self.render(gate)
         paths = self.ingress(docs)["spec"]["rules"][0]["http"]["paths"]
         self.assertEqual([(p["path"], p["pathType"]) for p in paths], [
-            ("/v1/sessions", "Prefix"), ("/v1/delivery", "Prefix"), ("/v1/digest", "Prefix"), ("/v1/events", "Exact"), ("/v1/ingest", "Exact"),
+            ("/v1/sessions", "Prefix"), ("/v1/delivery", "Prefix"), ("/v1/digest", "Prefix"), ("/v1/relayfacts", "Prefix"), ("/v1/coordination", "Prefix"),
+            ("/v1/events", "Exact"), ("/v1/ingest", "Exact"),
             ("/v1/auth/token/refresh", "Exact"), ("/v1/auth/token/revoke", "Exact"), ("/v1/onboarding/heartbeat", "Exact"), ("/v1/upload-consent", "Exact")])
         self.assertEqual({p["backend"]["service"]["name"] for p in paths}, {"routing-test-relaygate"})
         self.assertEqual({p["backend"]["service"]["port"]["number"] for p in paths}, {8080})
+        # relayfactsRoutes=false (an external relaygate on an image that does not proxy them) drops exactly those two.
+        off = {**gate, "global": {"relaygate": {"gateOnly": {"enabled": True, "relayfactsRoutes": False}}}}
+        off_paths = [p["path"] for p in self.ingress(self.render(off))["spec"]["rules"][0]["http"]["paths"]]
+        self.assertNotIn("/v1/relayfacts", off_paths)
+        self.assertNotIn("/v1/coordination", off_paths)
+        self.assertEqual(len(off_paths), len(paths) - 2)
         relaygate = [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "relaygate", "app.kubernetes.io/instance": "routing-test"}}}]
         for name in ("routing-test-read-api", "routing-test-ingest-edge"):
             policy = next(d for d in docs if d["kind"] == "NetworkPolicy" and d["metadata"]["name"] == name)
