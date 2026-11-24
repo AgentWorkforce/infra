@@ -304,7 +304,12 @@ the ingest edge (or a reloader), and keep the same step order:
 1. Add the new public key to the public-key object under a new key. Make it
    `currentKey`/`currentKid` and the old one `previousKey`/`previousKid`.
    Upgrade: every verifier replica rolls and accepts both keys, and relaygate
-   still signs with the old kid (now the previous one).
+   still signs with the old kid (now the previous one). Wait until both
+   verifier Deployments have finished rolling out before step 2 (a pod still
+   on the old key would refuse new-kid assertions under `enforce`):
+   `kubectl -n agent-relay rollout status deployment/agent-relay-read-api` and
+   `kubectl -n agent-relay rollout status deployment/agent-relay-ingest-edge`
+   (`<release>-read-api`, `<release>-ingest-edge`), or `helm upgrade --wait`.
 2. Add the new private key to its Secret under a new key, and point
    `privateKey.key` and `kid` at it. Upgrade: relaygate rolls and signs with
    the new kid.
