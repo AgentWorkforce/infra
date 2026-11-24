@@ -1231,7 +1231,7 @@ for chart in "${charts[@]}"; do
         want=""; for p in /v1/register /v1/check /v1/whoami /v1/agent /v1/agent/node-token /v1/node/ws /v1/search /v1/inbox; do want+="$p Exact $gate;"; done
         for p in /v1/agents /v1/channels /v1/messages /v1/dm /v1/streams /v1/deliveries; do want+="$p Prefix $gate;"; done
         [ "$(routes cast.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only cast routes: $(routes cast.gcp-proof.agentrelay.com)"
-        want=""; for p in /v1/sessions /v1/delivery /v1/digest; do want+="$p Prefix $gate;"; done; for p in /v1/events /v1/ingest /v1/auth/token/refresh /v1/auth/token/revoke /v1/onboarding/heartbeat /v1/upload-consent; do want+="$p Exact $gate;"; done
+        want=""; for p in /v1/sessions /v1/delivery /v1/digest /v1/relayfacts /v1/coordination; do want+="$p Prefix $gate;"; done; for p in /v1/events /v1/ingest /v1/auth/token/refresh /v1/auth/token/revoke /v1/onboarding/heartbeat /v1/upload-consent; do want+="$p Exact $gate;"; done
         [ "$(routes history.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only history routes: $(routes history.gcp-proof.agentrelay.com)"
         # Gate-only (scope all) on every edge: no route sends /internal or /admin
         # anywhere but a deny backend, and relaygate never gets either.
@@ -1349,7 +1349,7 @@ for chart in "${charts[@]}"; do
         # routes; the cast host, Relaycast's policy and Control's discovery stay
         # as without the gate; the reader and ingest edge admit only relaygate.
         hist_want=""; for p in /v1/events /v1/ingest /v1/auth/token/refresh /v1/auth/token/revoke /v1/onboarding/heartbeat /v1/upload-consent; do hist_want+="$p Exact ci-relaygate;"; done
-        for p in /v1/sessions /v1/delivery /v1/digest; do hist_want+="$p Prefix ci-relaygate;"; done
+        for p in /v1/sessions /v1/delivery /v1/digest /v1/relayfacts /v1/coordination; do hist_want+="$p Prefix ci-relaygate;"; done
         base=$(render "$chart" "$v")
         for edge in gke eks aks; do
           sv=charts/agent-relay/ci/gate-sessions-$edge-values.yaml
@@ -1357,7 +1357,7 @@ for chart in "${charts[@]}"; do
           kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$out" >/dev/null || err "$chart: sessions-only ($edge) failed kubeconform"
           hist=$(routes history.gcp-proof.agentrelay.com)
           case $edge in
-            gke) want=""; for p in /v1/sessions /v1/delivery /v1/digest; do want+="$p Prefix $gate;"; done
+            gke) want=""; for p in /v1/sessions /v1/delivery /v1/digest /v1/relayfacts /v1/coordination; do want+="$p Prefix $gate;"; done
                  for p in /v1/events /v1/ingest /v1/auth/token/refresh /v1/auth/token/revoke /v1/onboarding/heartbeat /v1/upload-consent; do want+="$p Exact $gate;"; done
                  want+="/ Prefix $deny;" ;;
             eks) want="$hist_want/internal Prefix edge-deny;//internal* ImplementationSpecific edge-deny;/admin Prefix edge-deny;//admin* ImplementationSpecific edge-deny;/* ImplementationSpecific edge-deny;" ;;
