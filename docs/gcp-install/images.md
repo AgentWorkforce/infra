@@ -2,7 +2,7 @@
 
 Step 5 of 0-START-HERE.md mirrors every image in the release's
 `release-manifest.json` into your Artifact Registry, by digest. These are the
-eight images, plus relaygate (below) in releases after agent-relay-2026.11.19. A GKE install runs five of them; the other three (RelayAuth and
+eight images; releases after agent-relay-2026.11.19 may add relaygate (last row) once it is approved for release. A GKE install runs five of them; the other three (RelayAuth and
 the two other Relaycast names) are in the release for other profiles. Mirroring them is harmless and keeps the step identical
 to the release manifest. In this release the three Relaycast names
 (`relaycast`, `relaycast-eks-collector`, `relaycast-postgres`) share one image
@@ -18,7 +18,7 @@ digest.
 | relaycast | `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc` | no |
 | relaycast-postgres | `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc` | yes (Relaycast 12.10.0 on the PostgreSQL backend, Cloud SQL here) |
 | relayauth | `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdffef3b5838a1eef4c226925f859706365d9ccece229795b877288` | no |
-| relaygate | `ghcr.io/agentworkforce/relaygate@sha256:429c811acf1a37bfd12269d698f116bcade50050b3ef7ea4040e34d4336064cf` | no (the optional built-in gate, `charts/relaygate`; in the `release-manifest.json` of the first release after agent-relay-2026.11.19, which did not list it) |
+| relaygate | `ghcr.io/agentworkforce/relaygate@sha256:429c811acf1a37bfd12269d698f116bcade50050b3ef7ea4040e34d4336064cf` | no (the optional built-in gate, `charts/relaygate`; not in the 2026.11.16 or 2026.11.19 manifests; listed from the first release that approves it) |
 
 Copy each image by digest and keep the whole multi-architecture index, so the
 digests stay the same in your registry (`crane copy` does this). The release
