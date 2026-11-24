@@ -1,6 +1,6 @@
 # GCP operator reference files
 
-Customer-neutral install guide for **agent-relay-2026.11.16** on an existing GKE
+Customer-neutral install guide for **agent-relay-2026.11.19** on an existing GKE
 cluster, the GCP counterpart of the AWS EKS guide. For customer setup start with [the short guide](README.md).
 For operator commands use [0-START-HERE.md](0-START-HERE.md).
 

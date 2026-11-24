@@ -14,7 +14,7 @@ Use a dedicated production project and production Desktop identity, separate
 from the POC.
 
 Use **chart 0.7.59 or newer**, with Terraform and scripts from the same reviewed
-infra commit. The operator reference's older 0.7.54 chart ignores the TLS Secret
+infra commit. Charts older than 0.7.59 (for example 0.7.54, from agent-relay-2026.11.16) ignore the TLS Secret
 and security-policy keys needed here. Keep `name = "agent-relay"` in both
 Terraform roots for the prepared resource names; verify `gkeIngress.staticIpName`
 matches `vpn_network.ingress.name` or the manual reservation.

@@ -16,8 +16,8 @@ database and Relaycast's SQLite volume around it, were qualified separately on
 agent-relay-2026.11.8: see
 [AKS receipts upgrade qualification](#aks-receipts-upgrade-qualification).
 
-This guide installs release **agent-relay-2026.11.16** (chart agent-relay 0.7.54,
-sessions-pipeline 0.8.47). `searchIndexer.locker.credentials` first shipped
+This guide installs release **agent-relay-2026.11.19** (chart agent-relay 0.7.81,
+sessions-pipeline 0.8.58). `searchIndexer.locker.credentials` first shipped
 in agent-relay-2026.11.2. Earlier releases do not render the
 indexer's MinIO keys, so its uploads are never indexed.
 
@@ -62,11 +62,11 @@ pinned `deps/` values. Every later command runs in `docs/azure-install`:
 
 ```sh
 git clone https://github.com/AgentWorkforce/infra.git && cd infra/docs/azure-install
-mkdir release && gh release download agent-relay-2026.11.16 -R AgentWorkforce/infra -D release
-(cd release && shasum -a 256 -c SHA256SUMS && tar -xzf agent-relay-0.7.54.tgz) | tail -1
+mkdir release && gh release download agent-relay-2026.11.19 -R AgentWorkforce/infra -D release
+(cd release && shasum -a 256 -c SHA256SUMS && tar -xzf agent-relay-0.7.81.tgz) | tail -1
 # Public GHCR images: no mirror root.
 sed 's#__IMAGE_MIRROR_ROOT__/##' release/release-images.values.yaml > release-images.values.yaml
-CHART=release/agent-relay-0.7.54.tgz
+CHART=release/agent-relay-0.7.81.tgz
 ```
 
 **Done when:** every checksum line ends in `OK` (the last is
@@ -366,7 +366,7 @@ By default the search indexer indexes a session whole only up to 64 MiB and
 100,000 events. A larger session is recorded as partial. A workspace search that
 would include it then answers 501 `session_partial`, unless the read API is set
 to skip partial sessions. These settings need **agent-relay-2026.11.11 or
-later** (chart 0.7.25+). This guide installs 2026.11.16, which supports them.
+later** (chart 0.7.25+). This guide installs 2026.11.19, which supports them.
 If you run an older release, upgrade first.
 
 All are unset by default. When it renders, the chart checks only the format of

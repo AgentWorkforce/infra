@@ -53,8 +53,9 @@ From the platform root, pass the non-secret output to the application operator:
 ## 3. Configure DNS and hand over to the application operator
 
 Cloudflare requires **chart 0.7.59 or newer**, with Terraform and scripts from
-the same reviewed infra commit. Do not use the operator reference's older
-0.7.54 chart for this profile; it ignores the required TLS and policy keys.
+the same reviewed infra commit. Do not use an older chart (for example
+0.7.54, from agent-relay-2026.11.16) for this profile; it ignores the required TLS
+and policy keys.
 
 Point the four names at the reserved Ingress IP. For Cloudflare, configure
 proxied DNS, Full (strict), Origin CA TLS and the origin header using the

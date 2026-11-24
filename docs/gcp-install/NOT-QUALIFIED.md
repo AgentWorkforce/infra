@@ -58,11 +58,12 @@ that release was not installed on GKE.
    and upgrades are manual Helm upgrades too, with a Cloud SQL backup or
    export taken first.
 
-4. **`values-gcp.yaml` at the tag pins the previous release's images**
-   (sessions-pipeline `77022c5b`, relay-control 0.5.24). Only the release
-   overlay brings the 2026.11.16 images. Always apply
-   `release-images.values.yaml` last; without it you would install older
-   images.
+4. **`values-gcp.yaml` at the tag pins a different relay-control image from
+   the release's.** It names relay-control 0.5.35 (`1cb5bd71`); the release
+   pins `0e50e62e`. Its sessions-pipeline digest (`459104bc`) matches the
+   release. Only the release overlay brings the 2026.11.19 relay-control
+   image. Always apply `release-images.values.yaml` last; without it you would
+   install a different relay-control image from the release's.
 
 5. **Search runs in Cloud SQL, not OpenSearch.** The chart's OpenSearch
    backend signs requests with AWS SigV4 only, so the `gcp/search` Terraform
@@ -87,7 +88,7 @@ that release was not installed on GKE.
 8. **Not HA.** Relay control, the dashboard, Relaycast (PostgreSQL backend)
    and the search indexer each run one replica, as on EKS.
 
-9. **Release notes.** The GitHub release notes for agent-relay-2026.11.16, with
+9. **Release notes.** The GitHub release notes for agent-relay-2026.11.19, with
    `docs/releases/agent-relay-2026.11.5.md` and the 2026.11.2 notes before it,
    describe the changes; the published GitHub release and its signed assets
    are final.
@@ -98,8 +99,8 @@ that release was not installed on GKE.
    this install (the upload path was proven with the e2e driver).
 
 11. **Desktop builds for a GKE install update themselves only from relay-control
-   0.5.25.** agent-relay-2026.11.16 pins relay-control 0.5.34. From 0.5.25
-   relay-control stores the signed desktop feed in a GCS bucket
+   0.5.25.** agent-relay-2026.11.19 pins a relay-control built after the
+   2026.11.16 pin (0.5.34), so past 0.5.25. From 0.5.25 relay-control stores the signed desktop feed in a GCS bucket
    (`desktop_feed_bucket_name`, step 4) and signs it with a key file
    (`relay-control.desktopFeed.signingKeys`). On a release that pins an older
    relay-control, a newer desktop version means installing the new build over
