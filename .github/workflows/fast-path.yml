@@ -715,6 +715,7 @@ jobs:
         python3 ci/agent-relay/test_release_candidate_gate.py -v
         python3 ci/agent-relay/test_install_pack.py -v
         python3 ci/agent-relay/test_release_manifest.py -v
+        python3 ci/agent-relay/test_release_images_cover_pins.py -v
         python3 ci/agent-relay/test_search_limits.py -v
         python3 ci/agent-relay/test_search_streaming.py -v
         python3 ci/agent-relay/test_search_staged.py -v
