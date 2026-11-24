@@ -29,11 +29,18 @@ spec:
           # Gate-only: the Sessions routes relaygate serves at the root for this
           # host (its proxy.sessionsHosts) go to relaygate, which forwards them
           # to the reader and ingest Services. Nothing else is routed.
-          - path: /v1/sessions
+          # Keep in step with the agent-relay umbrella's gate routes
+          # (agent-relay.gate.historyPrefix and historyExact).
+          {{- $prefixes := list "/v1/sessions" "/v1/delivery" "/v1/digest" }}
+          {{- /* global.relaygate.gateOnly.relayfactsRoutes: needs a relaygate image that proxies them. */}}
+          {{- if eq (dig "relaygate" "gateOnly" "relayfactsRoutes" false (.Values.global | default dict) | toString) "true" }}{{ $prefixes = concat $prefixes (list "/v1/relayfacts" "/v1/coordination") }}{{ end }}
+          {{- range $path := $prefixes }}
+          - path: {{ $path }}
             pathType: Prefix
             backend:
               service: { name: {{ $gate }}, port: { number: {{ $gatePort }} } }
-          {{- range $path := list "/v1/events" "/v1/ingest" "/v1/delivery/batches" "/v1/delivery/limits" "/v1/auth/token/refresh" "/v1/onboarding/heartbeat" }}
+          {{- end }}
+          {{- range $path := list "/v1/events" "/v1/ingest" "/v1/auth/token/refresh" "/v1/auth/token/revoke" "/v1/onboarding/heartbeat" "/v1/upload-consent" }}
           - path: {{ $path }}
             pathType: Exact
             backend:

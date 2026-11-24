@@ -1,0 +1,76 @@
+# Built-in relaygate for GKE (gkeIngress), a profile applied after
+# values-gcp.yaml and values-gcp-native.yaml and before your site values,
+# which set the REQUIRED values (docs/gcp-install/0-START-HERE.md, step 11). The GKE edge routes the history
+# host to a <gkeIngress.name>-gate NEG Service on the relaygate pods.
+#
+# Sessions-only (global.relaygate.gateOnly.scope=sessions): the history host
+# reaches relaygate only, and only relaygate reaches the Sessions reader and
+# ingest edge (NetworkPolicy); Relaycast (the cast host) stays direct, so CLI,
+# desktop and Chief Relaycast clients keep working. Control reads Sessions
+# through relaygate's internal listener. helm refuses to render until every
+# REQUIRED value is set. docs/self-hosted-relaygate.md, "Built in".
+#
+# Before the first upgrade with this file on an install that already has
+# sessions: adopt them (dry run first), or they disappear from reads. See
+# docs/self-hosted-relaygate.md, "Existing sessions: adopt them once".
+components:
+  relaygate: true
+global:
+  relaygate:
+    gateOnly:
+      enabled: true
+      scope: sessions
+relaygate:
+  # image.digest: the chart pins the published relaygate image; set it only
+  # to your mirror of that digest.
+  persistence:
+    size: 1Gi
+  policy:
+    groups:
+      - { gid: 11, name: local }
+      - { gid: 22, name: pit }
+      - { gid: 33, name: admins }
+    # REQUIRED: map dashboard and desktop users (Control principals) to groups.
+    # First match wins; no match is refused. List admins by emails or userIds
+    # (rules on roles also need relay-control.services.sessionReadMintIncludeRole).
+    # Do not use readerKinds with scope sessions until your relay-control image
+    # sends the reader kind on read mints without the Relaycast gate.
+    controlPrincipals:
+      - { match: { orgIds: ["<org id>"], emails: ["<admin email>"] }, gid: 33 }
+      - { match: { orgIds: ["<org id>"] }, gid: 11 }
+    sessionAggregates: { gids: [33] }
+    # Admins read every session (r on each default), or their per-person view is empty.
+    sessionDefaults:
+      - { gid: 11, mode: "660", acl: [{ gid: 22, perm: r }, { gid: 33, perm: r }] }
+      - { gid: 22, mode: "660", acl: [{ gid: 33, perm: r }] }
+      - { gid: 33, mode: "660" }
+  proxy:
+    # REQUIRED OVERRIDE: the history origin (sessions-pipeline.ingestEdge.origin).
+    sessionsUrl: https://history.placeholder.company
+    # The in-cluster Services (<release>-ingest-edge, <release>-read-api; these
+    # are for release agent-relay), never the history host (which now reaches relaygate).
+    sessionsUploadUrl: http://agent-relay-ingest-edge
+    sessionsReadUrl: http://agent-relay-read-api
+    # REQUIRED OVERRIDE: the history host.
+    sessionsHosts: [history.placeholder.company]
+    # REQUIRED OVERRIDE: = sessions-pipeline.sessionReadApi.cors.allowedOrigins.
+    sessionsCorsOrigins: [https://dashboard.placeholder.company]
+  control:
+    introspectUrl: http://relay-control/internal/v1/auth/introspect
+    # REQUIRED OVERRIDE: = sessions-pipeline.ingestEdge.origin.
+    sessionIngestAudience: https://history.placeholder.company
+  secrets:
+    # The ingest edge's Control introspection secret (sessions-pipeline.ingestEdge.config).
+    relaycontrolIntrospectSecret: { name: agent-relay-ingest-edge-runtime, key: introspect-secret }
+    # The read API's internal secret (sessions-pipeline.sessionReadApi.auth.selfIssued.internalSecret).
+    sessionsInternalSecret: { name: example-agent-relay-secrets, key: session-read-api-secret }
+    # The admin endpoints (audit, explain, sessions/adopt), for the one-time
+    # session adopt. Create the Secret first (at least 24 characters); reach
+    # the endpoints only through kubectl port-forward, /admin is never routed.
+    adminToken: { name: relaygate-admin, key: token }
+sessions-pipeline:
+  ingestEdge:
+    networkPolicy:
+      # Gate-only admits relaygate alone (ingressFrom is ignored).
+      enabled: true
+

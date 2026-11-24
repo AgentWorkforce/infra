@@ -1,0 +1,22 @@
+# The AKS Traefik edge (traefikIngress) rendered from the release with the
+# gate off. Layered on values-gcp-proof.yaml by scripts/ci/charts.sh;
+# ci/agent-relay/test_traefik_ingress.py holds the Traefik objects equal to
+# the ones the hand-edited docs/azure-install/ingress.yaml used to hold.
+gkeIngress:
+  enabled: false
+traefikIngress:
+  enabled: true
+  hosts:
+    root: gcp-proof.agentrelay.com
+    api: api.gcp-proof.agentrelay.com
+    cast: cast.gcp-proof.agentrelay.com
+    history: history.gcp-proof.agentrelay.com
+# Render identities, as in gcp-proof-values.yaml.
+relay-control:
+  image:
+    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+  encryption:
+    keyId: proof-1
+relay-webapp:
+  image:
+    digest: sha256:9bfc0c6b873411c7a0da60d746883bdef6aafd86a9b733c719500a603890b6fe

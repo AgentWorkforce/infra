@@ -1,0 +1,62 @@
+# Built-in relaygate, sessions-only, on the EKS ALB edge (eksIngress): the
+# history host routes only to relaygate, the cast host to Relaycast directly.
+# Layered on values-gcp-proof.yaml by scripts/ci/charts.sh.
+gkeIngress:
+  enabled: false
+eksIngress:
+  enabled: true
+  domain: gcp-proof.agentrelay.com
+  certificateArn: arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000
+components:
+  relaygate: true
+global:
+  relaygate:
+    gateOnly:
+      enabled: true
+      scope: sessions
+relaygate:
+  image:
+    digest: sha256:0ca54cddf43b4771fade43d06d280405574ea77280eb0fde392fdb90ee29e248
+  policy:
+    # Control callers (dashboard, desktop): admins by email until the read
+    # mint carries a role; gid 33 reads every session and the aggregates.
+    groups:
+      - { gid: 11, name: local }
+      - { gid: 22, name: pit }
+      - { gid: 33, name: admins }
+    controlPrincipals:
+      - { match: { orgIds: [org_gcp_proof], emails: [platform-admin@example.com] }, gid: 33 }
+      - { match: { orgIds: [org_gcp_proof] }, gid: 11 }
+    sessionAggregates: { gids: [33] }
+    sessionDefaults:
+      - { gid: 11, mode: "660", acl: [{ gid: 22, perm: r }, { gid: 33, perm: r }] }
+      - { gid: 22, mode: "660", acl: [{ gid: 33, perm: r }] }
+      - { gid: 33, mode: "660" }
+    enrollmentKeys:
+      - { id: local, gid: 11, sha256: "2222222222222222222222222222222222222222222222222222222222222222", namePrefix: "local-" }
+      - { id: pit, gid: 22, sha256: "1111111111111111111111111111111111111111111111111111111111111111", namePrefix: "pit-" }
+  proxy:
+    sessionsUrl: https://history.gcp-proof.agentrelay.com
+    # The in-cluster Services, never the history host (which now reaches relaygate).
+    sessionsUploadUrl: http://agent-relay-ingest-edge
+    sessionsReadUrl: http://agent-relay-read-api
+    sessionsHosts: [history.gcp-proof.agentrelay.com]
+    # = sessions-pipeline.sessionReadApi.cors.allowedOrigins (the dashboard origin).
+    sessionsCorsOrigins: [https://gcp-proof.agentrelay.com]
+  control:
+    introspectUrl: http://relay-control.ci.svc.cluster.local/internal/v1/auth/introspect
+    sessionIngestAudience: https://history.gcp-proof.agentrelay.com
+  secrets:
+    # The ingest edge's Control introspection secret (sessions-pipeline.ingestEdge.config).
+    relaycontrolIntrospectSecret: { name: agent-relay-gcp-proof, key: relaycontrol-introspect-secret }
+    # The read API's READ_API_INTERNAL_SECRET (sessionReadApi.auth.selfIssued.internalSecret).
+    sessionsInternalSecret: { name: agent-relay-gcp-proof, key: session-read-api-secret }
+# Render identities, as in gcp-proof-values.yaml.
+relay-control:
+  image:
+    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+  encryption:
+    keyId: proof-1
+relay-webapp:
+  image:
+    digest: sha256:9bfc0c6b873411c7a0da60d746883bdef6aafd86a9b733c719500a603890b6fe

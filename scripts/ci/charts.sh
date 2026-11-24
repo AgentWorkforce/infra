@@ -561,6 +561,11 @@ for chart in "${charts[@]}"; do
         [ "$(yq 'select(.kind == "NetworkPolicy") | [.spec.ingress[0].from[].podSelector.matchLabels["app.kubernetes.io/name"]] | join(" ")' <<<"$out" | sed '/^---$/d;/^$/d')" = "relaygate relaycast-migration relay-control relayauth" ] \
           || err "$chart: gate-only policy must admit relaygate, the migration Job and networkPolicy.gateOnlyFrom only"
         expect_render_failure "$chart" "$v" "gate-only without a policy" "requires networkPolicy.enabled=true" "${gate[@]}" --set networkPolicy.enabled=false
+        # Sessions-only (gateOnly.scope=sessions) leaves Relaycast direct: the
+        # Ingress and policy render as with the gate off.
+        nogate=("${gate[@]/global.relaygate.gateOnly.enabled=true/global.relaygate.gateOnly.enabled=false}")
+        [ "$(render "$chart" "$v" "${gate[@]}" --set global.relaygate.gateOnly.scope=sessions)" = "$(render "$chart" "$v" "${nogate[@]}")" ] \
+          || err "$chart: gateOnly.scope=sessions must render Relaycast as with the gate off"
         ;;
       relayfile)
         v=charts/relayfile/ci/durable-actors-values.yaml
@@ -663,6 +668,11 @@ for chart in "${charts[@]}"; do
         v=charts/relay-control/ci/default-values.yaml
         check_postgres_ca "$chart" "$v"
         expect_render_failure "$chart" "$v" "mutable image" "image.digest is required" --set image.digest=
+        # services.sessionReadMintIncludeRole: unset by default, "true" when on, and then reserved from extraEnv.
+        ! grep -q SESSION_READ_MINT_INCLUDE_ROLE <<<"$(render "$chart" "$v")" || err "$chart: SESSION_READ_MINT_INCLUDE_ROLE must be unset by default"
+        grep -Fq '{ name: SESSION_READ_MINT_INCLUDE_ROLE, value: "true" }' <<<"$(render "$chart" "$v" --set services.sessionReadMintIncludeRole=true)" || err "$chart: sessionReadMintIncludeRole=true must render SESSION_READ_MINT_INCLUDE_ROLE=true"
+        expect_render_failure "$chart" "$v" "role mint as a string" "services.sessionReadMintIncludeRole must be true or false" --set-string services.sessionReadMintIncludeRole=true
+        expect_render_failure "$chart" "$v" "role mint also in extraEnv" "SESSION_READ_MINT_INCLUDE_ROLE is managed by structured chart values" --set services.sessionReadMintIncludeRole=true --set-json 'extraEnv=[{"name":"SESSION_READ_MINT_INCLUDE_ROLE","value":"true"}]'
         expect_render_failure "$chart" "$v" "malformed digest" "image.digest must be sha256:<64 lowercase hex characters>" --set image.digest=sha256:abc
         expect_render_failure "$chart" "$v" "missing Secret" "existingSecret is required" --set existingSecret=
         expect_render_failure "$chart" "$v" "multiple replicas" "replicaCount must be 1" --set replicaCount=2
@@ -1077,6 +1087,11 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "gate-only with an ipBlock listener peer" "never an ipBlock" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{"ipBlock":{"cidr":"0.0.0.0/0"}}]'
 
         render "$chart" "$v" "${gate[@]}" --set fullnameOverride=gate --set global.relaygate.gateOnly.serviceName=gate >/dev/null || err "$chart: gate-only with a matching serviceName must render"
+        # Sessions-only (gateOnly.scope=sessions): the Relaycast proxy is optional.
+        out=$(render "$chart" "$v" "${gate[@]}" --set global.relaygate.gateOnly.scope=sessions --set proxy.relaycastUrl=) || err "$chart: sessions-only without the Relaycast proxy must render"
+        ! grep -q 'name: RELAYCAST_URL' <<<"$out" || err "$chart: sessions-only without proxy.relaycastUrl must not render RELAYCAST_URL"
+        expect_render_failure "$chart" "$v" "sessions-only without sessionsHosts" "global.relaygate.gateOnly.enabled needs proxy.sessionsUrl" "${gate[@]}" --set global.relaygate.gateOnly.scope=sessions --set proxy.sessionsHosts=null
+        expect_render_failure "$chart" "$v" "gate-only with an unknown scope" "global.relaygate.gateOnly.scope must be all or sessions" "${gate[@]}" --set global.relaygate.gateOnly.scope=everything
         ;;
       agent-relay)
         v=charts/agent-relay/ci/gcp-proof-values.yaml
@@ -1172,8 +1187,16 @@ for chart in "${charts[@]}"; do
         want=""; for p in /v1/register /v1/check /v1/whoami /v1/agent /v1/agent/node-token /v1/node/ws /v1/search /v1/inbox; do want+="$p Exact $gate;"; done
         for p in /v1/agents /v1/channels /v1/messages /v1/dm /v1/streams /v1/deliveries; do want+="$p Prefix $gate;"; done
         [ "$(routes cast.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only cast routes: $(routes cast.gcp-proof.agentrelay.com)"
-        want="/v1/sessions Prefix $gate;"; for p in /v1/events /v1/ingest /v1/delivery/batches /v1/delivery/limits /v1/auth/token/refresh /v1/onboarding/heartbeat; do want+="$p Exact $gate;"; done
+        want=""; for p in /v1/sessions /v1/delivery /v1/digest; do want+="$p Prefix $gate;"; done; for p in /v1/events /v1/ingest /v1/auth/token/refresh /v1/auth/token/revoke /v1/onboarding/heartbeat /v1/upload-consent; do want+="$p Exact $gate;"; done
         [ "$(routes history.gcp-proof.agentrelay.com)" = "$want/ Prefix $deny;" ] || err "$chart: gate-only history routes: $(routes history.gcp-proof.agentrelay.com)"
+        # Gate-only (scope all) on every edge: no route sends /internal or /admin
+        # anywhere but a deny backend, and relaygate never gets either.
+        for gf in "$g" "$g --set gkeIngress.enabled=false --set traefikIngress.enabled=true --set traefikIngress.hosts.root=gcp-proof.agentrelay.com --set traefikIngress.hosts.api=api.gcp-proof.agentrelay.com --set traefikIngress.hosts.cast=cast.gcp-proof.agentrelay.com --set traefikIngress.hosts.history=history.gcp-proof.agentrelay.com" "$g --set gkeIngress.enabled=false --set eksIngress.enabled=true --set eksIngress.domain=gcp-proof.agentrelay.com --set eksIngress.certificateArn=arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000"; do
+          # shellcheck disable=SC2086
+          ga=$(render "$chart" $gf) || { err "$chart: gate-only edge variant did not render: $gf"; continue; }
+          bad=$(yq 'select(.kind == "Ingress") | .spec.rules[] | .host as $h | .http.paths[] | select(.path | test("^/+(internal|admin)")) | select(.backend.service.name | test("deny") | not) | $h + .path' <<<"$ga" | sed '/^---$/d;/^$/d')
+          [ -z "$bad" ] || err "$chart: gate-only routes /internal or /admin to a backend: $bad"
+        done
         # Desktop on a gate-only install uses the sign-in origin as control_url
         # and opens GET /relay-node/v1/ws there; relay-control serves the
         # relay-node routes only at the root path, so the root host must send
@@ -1257,7 +1280,7 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$g" "gate-only without the sessions port" "needs global.relaygate.gateOnly.sessionsPort" --set global.relaygate.gateOnly.sessionsPort=0
         expect_render_failure "$chart" "$g" "gate-only sessions port on the main port" "needs global.relaygate.gateOnly.sessionsPort" --set global.relaygate.gateOnly.sessionsPort=8080
         expect_render_failure "$chart" "$g" "gate-only with relaycastPublicUrl off the cast host" "requires relay-control.services.relaycastPublicUrl=https://cast.gcp-proof.agentrelay.com" --set relay-control.services.relaycastPublicUrl=https://relay.gcp-proof.agentrelay.com
-        expect_render_failure "$chart" "$g" "gate-only Relaycast upstream on the public host" "relaygate.proxy.relaycastUrl to be the relaycast Service" --set relaygate.proxy.relaycastUrl=https://cast.gcp-proof.agentrelay.com
+        expect_render_failure "$chart" "$g" "gate-only Relaycast upstream on the public host" "relaygate.proxy.relaycastUrl to be the relaycast Service" --set relaygate.proxy.relaycastUrl=https://cast.gcp-proof.agentrelay.com --set relaygate.secrets.relaycastWorkspaceKey.name=k --set relaygate.secrets.relaygateSecret.name=s
         expect_render_failure "$chart" "$g" "gate-only reader upstream not the reader Service" "relaygate.proxy.sessionsReadUrl to be the Sessions reader Service" --set relaygate.proxy.sessionsReadUrl=http://other-read
         expect_render_failure "$chart" "$g" "gate-only upload upstream not the ingest Service" "relaygate.proxy.sessionsUploadUrl to be the ingest edge Service" --set relaygate.proxy.sessionsUploadUrl=http://agent-relay-read-api
         expect_render_failure "$chart" "$g" "gate-only reader upstream on the history host" "requests would loop back to relaygate" --set relaygate.proxy.sessionsReadUrl=https://history.gcp-proof.agentrelay.com
@@ -1276,6 +1299,85 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$g" "gate-only without a reader policy" "session-read-api: global.relaygate.gateOnly.enabled requires networkPolicy.enabled=true" --set sessions-pipeline.sessionReadApi.networkPolicy.enabled=false
         expect_render_failure "$chart" "$g" "gate-only without an ingest policy" "requires ingestEdge.networkPolicy.enabled=true" --set sessions-pipeline.ingestEdge.networkPolicy.enabled=false
         expect_render_failure "$chart" "$g" "gate-only with a renamed relaygate" "global.relaygate.gateOnly.serviceName" --set relaygate.fullnameOverride=gate
+        # Built-in relaygate, sessions-only (global.relaygate.gateOnly.scope=sessions),
+        # on each edge: GKE (gkeIngress), EKS (eksIngress ALB) and AKS
+        # (traefikIngress). The history host reaches relaygate on exactly its
+        # routes; the cast host, Relaycast's policy and Control's discovery stay
+        # as without the gate; the reader and ingest edge admit only relaygate.
+        hist_want=""; for p in /v1/events /v1/ingest /v1/auth/token/refresh /v1/auth/token/revoke /v1/onboarding/heartbeat /v1/upload-consent; do hist_want+="$p Exact ci-relaygate;"; done
+        for p in /v1/sessions /v1/delivery /v1/digest; do hist_want+="$p Prefix ci-relaygate;"; done
+        base=$(render "$chart" "$v")
+        for edge in gke eks aks; do
+          sv=charts/agent-relay/ci/gate-sessions-$edge-values.yaml
+          out=$(render "$chart" "$sv") || { err "$chart: sessions-only ($edge) did not render"; continue; }
+          kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version "${KUBE_VERSION:-1.33.0}" <<<"$out" >/dev/null || err "$chart: sessions-only ($edge) failed kubeconform"
+          hist=$(routes history.gcp-proof.agentrelay.com)
+          case $edge in
+            gke) want=""; for p in /v1/sessions /v1/delivery /v1/digest; do want+="$p Prefix $gate;"; done
+                 for p in /v1/events /v1/ingest /v1/auth/token/refresh /v1/auth/token/revoke /v1/onboarding/heartbeat /v1/upload-consent; do want+="$p Exact $gate;"; done
+                 want+="/ Prefix $deny;" ;;
+            eks) want="$hist_want/internal Prefix edge-deny;//internal* ImplementationSpecific edge-deny;/admin Prefix edge-deny;//admin* ImplementationSpecific edge-deny;/* ImplementationSpecific edge-deny;" ;;
+            aks) want="$hist_want/internal Prefix edge-deny;/admin Prefix edge-deny;/ Prefix edge-deny;" ;;
+          esac
+          [ "$hist" = "$want" ] || err "$chart: sessions-only ($edge) history routes: $hist"
+          [[ "$(routes cast.gcp-proof.agentrelay.com)" == *" relaycast;" ]] || err "$chart: sessions-only ($edge) cast host must stay on Relaycast: $(routes cast.gcp-proof.agentrelay.com)"
+          ! grep -q relaygate <<<"$(routes cast.gcp-proof.agentrelay.com)" || err "$chart: sessions-only ($edge) cast host must not reach relaygate"
+          # No edge route sends /internal or /admin anywhere but a deny backend.
+          bad=$(yq 'select(.kind == "Ingress") | .spec.rules[] | .host as $h | .http.paths[] | select(.path | test("^/+(internal|admin)")) | select(.backend.service.name | test("deny") | not) | $h + .path' <<<"$out" | sed '/^---$/d;/^$/d')
+          [ -z "$bad" ] || err "$chart: sessions-only ($edge) routes /internal or /admin to a backend: $bad"
+          [ "$(peers agent-relay-ingest-edge)" = relaygate ] || err "$chart: sessions-only ($edge) ingest peers: $(peers agent-relay-ingest-edge)"
+          [ "$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "relaycast") | .spec' <<<"$out")" = "$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "relaycast") | .spec' <<<"$base")" ] \
+            || err "$chart: sessions-only ($edge) must leave Relaycast's NetworkPolicy as without the gate"
+          [ -z "$(ctl_env SELFHOST_RELAYGATE_PUBLIC_URL "$out")" ] || err "$chart: sessions-only ($edge) must not set SELFHOST_RELAYGATE_PUBLIC_URL (Relaycast stays direct)"
+          [ "$(ctl_env SESSION_READ_API_URL "$out")" = http://ci-relaygate-sessions.ci.svc.cluster.local:8081 ] || err "$chart: sessions-only ($edge) SESSION_READ_API_URL must be relaygate's internal Sessions listener"
+          [ -z "$(gate_env ci-relaygate RELAYCAST_URL "$out")" ] || err "$chart: sessions-only ($edge) relaygate must not proxy Relaycast"
+          check_control_origins "$chart (sessions-only $edge)" "$out"
+        done
+        # The platform example overlays (values-gcp-relaygate.yaml,
+        # values-eks-relaygate.yaml) render, route the history host to
+        # relaygate, and deploy the relaygate chart's pinned digest, which must
+        # match its self-hosted/customer-images.yaml entry.
+        rg_digest=sha256:0ca54cddf43b4771fade43d06d280405574ea77280eb0fde392fdb90ee29e248
+        [ "$(yq '.images[] | select(.id == "relaygate") | .current.digest' self-hosted/customer-images.yaml)" = "$(yq '.image.digest' charts/relaygate/values.yaml)" ] \
+          || err "$chart: charts/relaygate image.digest must match its self-hosted/customer-images.yaml entry"
+        gcp_stack=(-f charts/agent-relay/values-gcp.yaml -f charts/agent-relay/values-gcp-native.yaml -f charts/agent-relay/ci/gcp-native-values.yaml -f charts/agent-relay/values-gcp-relaygate.yaml)
+        eks_stack=(-f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-rds-native.yaml -f charts/agent-relay/values-eks-relaygate.yaml --set eksIngress.domain=placeholder.company --set eksIngress.certificateArn=arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000)
+        for stack in gcp eks; do
+          declare -n st="${stack}_stack"
+          ex=$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${st[@]}" --set relaygate.image.digest=$rg_digest) || { err "$chart: the $stack relaygate example did not render"; unset -n st; continue; }
+          [ "$(yq 'select(.kind == "Ingress") | .spec.rules[] | select(.host == "history.placeholder.company") | .http.paths[] | select(.path == "/v1/sessions") | .backend.service.name' <<<"$ex" | sed '/^---$/d;/^$/d')" = "$([ $stack = gcp ] && echo example-agent-relay-gate || echo agent-relay-relaygate)" ] \
+            || err "$chart: the $stack relaygate example must route the history host to relaygate"
+          # No digest in the example: the relaygate chart's pinned image (self-hosted/customer-images.yaml).
+          [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "agent-relay-relaygate") | .spec.template.spec.containers[0].image' <<<"$(helm template agent-relay charts/agent-relay -n agent-relay --no-hooks "${st[@]}")")" = "ghcr.io/agentworkforce/relaygate@$(yq '.image.digest' charts/relaygate/values.yaml)" ] \
+            || err "$chart: the $stack relaygate example must deploy the relaygate chart's pinned digest"
+          unset -n st
+        done
+        # global.relaygate.gateOnly.relayfactsRoutes (off by default) adds
+        # /v1/relayfacts and /v1/coordination (Prefix) to relaygate on every edge.
+        for edge in gke eks aks; do
+          out=$(render "$chart" charts/agent-relay/ci/gate-sessions-$edge-values.yaml --set global.relaygate.gateOnly.relayfactsRoutes=true) || { err "$chart: relayfactsRoutes ($edge) did not render"; continue; }
+          for p in /v1/relayfacts /v1/coordination; do
+            grep -Eq "(^|;)$p Prefix [^;]*(-gate|relaygate);" <<<"$(routes history.gcp-proof.agentrelay.com)" || err "$chart: relayfactsRoutes ($edge) must route $p to relaygate"
+          done
+          out=$(render "$chart" charts/agent-relay/ci/gate-sessions-$edge-values.yaml)
+          ! grep -Eq '/v1/(relayfacts|coordination) ' <<<"$(routes history.gcp-proof.agentrelay.com)" || err "$chart: without relayfactsRoutes ($edge) the history host must not route /v1/relayfacts or /v1/coordination"
+        done
+        # The same edges with the gate off route no path to relaygate.
+        for f in eks-ingress traefik-ingress; do
+          ! yq 'select(.kind == "Ingress") | .. | select(. == "ci-relaygate")' <<<"$(render "$chart" "charts/agent-relay/ci/$f-values.yaml")" | grep -q . || err "$chart: $f without the gate must not route to relaygate"
+        done
+        s=charts/agent-relay/ci/gate-sessions-eks-values.yaml
+        expect_render_failure "$chart" "$s" "gate scope not all or sessions" "global.relaygate.gateOnly.scope must be all" --set global.relaygate.gateOnly.scope=cast
+        expect_render_failure "$chart" "$s" "sessions-only without relaygate" "requires components.relaygate" --set components.relaygate=false
+        expect_render_failure "$chart" "$s" "sessions-only without a relaygate image" "relaygate: image.digest is required" --set relaygate.image.digest=
+        expect_render_failure "$chart" "$s" "sessions-only on a read-only EKS history host" "eksIngress.history.readOnly=true cannot be combined with global.relaygate.gateOnly.enabled" --set eksIngress.history.readOnly=true --set eksIngress.ingest.enabled=false
+        expect_render_failure "$chart" "$s" "sessions-only without the EKS history host in sessionsHosts" "sessionsHosts must include history.relay.example.com" --set eksIngress.domain=relay.example.com
+        expect_render_failure "$chart" "$s" "sessions-only without sessionsHosts" "global.relaygate.gateOnly.enabled needs proxy.sessionsUrl" --set relaygate.proxy.sessionsHosts=null
+        expect_render_failure "$chart" "$s" "sessions-only without controlPrincipals" "requires relaygate.policy.controlPrincipals" --set relaygate.policy.controlPrincipals=null
+        expect_render_failure "$chart" "$s" "sessions-only Relaycast upstream on the public host" "relaygate.proxy.relaycastUrl to be the relaycast Service" --set relaygate.proxy.relaycastUrl=https://cast.gcp-proof.agentrelay.com --set relaygate.secrets.relaycastWorkspaceKey.name=k --set relaygate.secrets.relaygateSecret.name=s
+        expect_render_failure "$chart" charts/agent-relay/ci/gate-sessions-aks-values.yaml "sessions-only without the Traefik history host in sessionsHosts" "sessionsHosts must include history.other.example.com" --set traefikIngress.hosts.history=history.other.example.com
+        expect_render_failure "$chart" charts/agent-relay/ci/gate-sessions-aks-values.yaml "scope all on Traefik with relaycastPublicUrl off the cast host" "the traefikIngress cast host is relaygate's public origin" --set global.relaygate.gateOnly.scope=all --set relaygate.proxy.relaycastUrl=http://relaycast:8787 --set relaygate.secrets.relaycastWorkspaceKey.name=k --set relaygate.secrets.relaygateSecret.name=s --set relay-control.services.relaycastPublicUrl=https://relay.gcp-proof.agentrelay.com
+        expect_render_failure "$chart" charts/agent-relay/ci/gate-sessions-eks-values.yaml "scope all on EKS with relaycastPublicUrl off the cast host" "the eksIngress cast host is relaygate's public origin" --set global.relaygate.gateOnly.scope=all --set relaygate.proxy.relaycastUrl=http://relaycast:8787 --set relaygate.secrets.relaycastWorkspaceKey.name=k --set relaygate.secrets.relaygateSecret.name=s --set relay-control.services.relaycastPublicUrl=https://relay.gcp-proof.agentrelay.com
         expect_render_failure "$chart" "$v" "ar_ authority without relayauth" "relaycast.credentials.authority=relayauth requires components.relayauth=true" --set components.relayauth=false --set relaycast.credentials.format=ar --set relaycast.credentials.authority=relayauth --set relaycast.credentials.relayauth.url=http://relayauth:8787 --set relaycast.secretKeys.relayauthToken=relaycast-relayauth-token
         ;;
     esac

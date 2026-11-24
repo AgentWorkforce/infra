@@ -464,8 +464,8 @@ networkPolicy:
   # Empty allows callers only from the release namespace. With ingress enabled,
   # list the ingress controller's namespace/pods here (required).
   ingressFrom: []
-  # Gate-only (global.relaygate.gateOnly.enabled, set in the agent-relay
-  # umbrella): ingressFrom is ignored and Relaycast admits only relaygate, this
+  # Gate-only (global.relaygate.gateOnly.enabled with scope all, set in the
+  # agent-relay umbrella; scope sessions leaves Relaycast direct): ingressFrom is ignored and Relaycast admits only relaygate, this
   # chart's own migration Job, and these in-cluster callers that talk to
   # Relaycast directly with server credentials. Agents and people reach
   # Relaycast through relaygate. Add a caller here only if it must bypass the

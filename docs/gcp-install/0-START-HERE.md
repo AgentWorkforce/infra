@@ -631,6 +631,47 @@ helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.54.tg
 The order matters: the two GCP profiles, Terraform's managed services, your
 site values, the setup script's HoopDb layout, then the release images last.
 
+### Built-in relaygate, sessions-only (agent-relay chart 0.7.77 or later)
+
+The recommended setup puts relaygate in front of History: the history host
+goes through relaygate, the cast host stays on Relaycast
+([relaygate](../self-hosted-relaygate.md#built-in-sessions-only)). It needs a
+release whose chart is agent-relay **0.7.77 or later**; the chart this guide
+pins (0.7.54) has no sessions-only mode, so with it skip this subsection.
+
+1. Create the admin Secret (used once, for the session adopt):
+
+   ```sh
+   kubectl -n $NAMESPACE get secret relaygate-admin >/dev/null 2>&1 || \
+     openssl rand -hex 32 | tr -d '\n' | kubectl -n $NAMESPACE create secret generic relaygate-admin --from-file=token=/dev/stdin
+   ```
+
+2. Add the site values to the end of `values.yaml` (your domain, org and
+   admins; the chart pins the relaygate image):
+
+   ```yaml
+   relaygate:
+     policy:
+       controlPrincipals:   # no readerKinds (see the relaygate guide)
+         - { match: { orgIds: [<org id>], emails: [<admin email>] }, gid: 33 }
+         - { match: { orgIds: [<org id>] }, gid: 11 }
+     proxy:
+       sessionsUrl: https://history.<domain>
+       sessionsHosts: [history.<domain>]
+       sessionsCorsOrigins: [https://<domain>]
+     control:
+       sessionIngestAudience: https://history.<domain>
+     secrets:
+       sessionsInternalSecret: { name: agent-relay-secrets, key: session-read-api-secret }
+   ```
+
+3. Add `-f "$CHART/values-gcp-relaygate.yaml"` right after
+   `-f "$CHART/values-gcp-native.yaml"` in **every** `helm upgrade` of this
+   install, this one and all later ones. An upgrade without it turns the gate
+   off and restores direct History routes.
+4. An install that already has sessions adopts them after the upgrade, dry run
+   first ([existing sessions](../self-hosted-relaygate.md#existing-sessions-adopt-them-once)).
+
 **Done when:** it prints `STATUS: deployed`. Don't add `--wait`.
 
 ## 12. Wait for the database migrations

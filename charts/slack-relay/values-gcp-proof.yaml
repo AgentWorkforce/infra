@@ -1,4 +1,4 @@
-# The f6b9x4unfg GCP test stack: a separate `slack-relay` release in namespace
+# The GCP test stack: a separate `slack-relay` release in namespace
 # agent-relay, next to (not inside) the agent-relay release. The operator
 # mirrors the image into the install's Artifact Registry and overrides
 # image.repository; the digest stays the same.

@@ -81,6 +81,7 @@ check what is rendered, including the gate-only SESSION_READ_API_URL. */ -}}
 {{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaCount must be 1: the self-host API pilot has process-local login/device rate limits and is not HA" }}{{ end -}}
 {{- if not .Values.existingSecret }}{{ fail "existingSecret is required; inline credentials are not supported" }}{{ end -}}
 {{- if not (kindIs "bool" .Values.services.relayauthEnabled) }}{{ fail "services.relayauthEnabled must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" .Values.services.sessionReadMintIncludeRole) }}{{ fail "services.sessionReadMintIncludeRole must be true or false" }}{{ end -}}
 {{- $optionalSecretKeys := list "previousEncryptionKey" "internalToken" "telemetryInstallKey" "relaycastInternalSecret" "oidcClientSecret" "microsoftClientSecret" "smtpPassword" "passwordPepper" "introspectSecret" "sessionReadApiSecret" "setupKey" -}}
 {{- if and .Values.secretKeys.passwordPepper (eq (toString .Values.secretKeys.passwordPepper) (toString .Values.secretKeys.databaseMigrationsUrl)) }}{{ fail "secretKeys.passwordPepper must not name secretKeys.databaseMigrationsUrl" }}{{ end -}}
 {{- if not .Values.services.relayauthEnabled }}{{ $optionalSecretKeys = append $optionalSecretKeys "relayauthApiKey" }}{{ end -}}
@@ -142,6 +143,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
   "SESSION_READ_API_URL" "SESSION_READ_API_PUBLIC_URL" "SESSION_READ_API_MCP_READS" "SELFHOST_INTROSPECT_AUDIENCES" "SELFHOST_RELAYGATE_PUBLIC_URL" "SELFHOST_RELAYGATE_ADMIN_URL" "SELFHOST_RELAYGATE_ADMIN_TOKEN" "SELFHOST_RELAYGATE_POLICY_SECRET"
   "RELAYHISTORY_BACKEND" "SESSION_ERASE_API_URL" "SESSION_ERASE_API_SECRET" -}}
 {{- if not (kindIs "invalid" .Values.selectedFeatures) }}{{ $managed = append $managed "SELFHOST_FEATURES" }}{{ end -}}
+{{- if .Values.services.sessionReadMintIncludeRole }}{{ $managed = append $managed "SESSION_READ_MINT_INCLUDE_ROLE" }}{{ end -}}
 {{- if .Values.services.relayhistoryReadApiUrl }}{{ $managed = concat $managed (list "RELAYHISTORY_READ_API_URL" "RELAYHISTORY_READ_API_EVENTS") }}{{ end -}}
 {{- /* The sharing.* values own these names whether or not they are set, so extraEnv cannot shadow or duplicate them. */ -}}
 {{- $managed = concat $managed (list "SELFHOST_DEFAULT_SHARING_MODE" "SELFHOST_SHARING_MODE_OVERRIDE_ROLES") -}}
@@ -276,6 +278,9 @@ telemetry.deployment is checked in validateRuntime before it is merged. */ -}}
 {{- end }}
 {{- if .Values.services.sessionReadApiMcpReads }}
 - { name: SESSION_READ_API_MCP_READS, value: "true" }
+{{- end }}
+{{- if .Values.services.sessionReadMintIncludeRole }}
+- { name: SESSION_READ_MINT_INCLUDE_ROLE, value: "true" }
 {{- end }}
 {{- with .Values.introspection.audiences }}
 - { name: SELFHOST_INTROSPECT_AUDIENCES, value: {{ join "," . | quote }} }

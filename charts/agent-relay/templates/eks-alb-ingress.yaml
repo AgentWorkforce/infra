@@ -101,6 +101,18 @@ an absent or null key, but preserve an explicitly empty list. */ -}}
 {{- $flowsRoutes := list -}}
 {{- if $flows }}{{ range $r := list "flows" "workers" "workflows" }}{{ $flowsRoutes = append $flowsRoutes $r }}{{ end }}{{ end -}}
 {{- $deny := "backend: { service: { name: edge-deny, port: { name: use-annotation } } }" -}}
+{{- /* Gate-only (global.relaygate.gateOnly): the history host (both scopes)
+and, with scope all, the cast host send only the routes relaygate serves to
+the relaygate Service; everything else on those hosts is a fixed 404, /internal
+and /admin explicitly. Not available with history.readOnly (the reader then
+belongs to another release, which relaygate cannot front). The script has no
+gate mode: render the edge from the chart (eksIngress.enabled). */ -}}
+{{- $gateOnly := include "agent-relay.gateOnly" . -}}
+{{- $gateCast := include "agent-relay.gateCast" . -}}
+{{- $gateSvc := include "agent-relay.gate.serviceName" . -}}
+{{- $gatePort := include "agent-relay.gate.servicePort" . -}}
+{{- if and $gateOnly $readOnly }}{{ fail "eksIngress.history.readOnly=true cannot be combined with global.relaygate.gateOnly.enabled: relaygate fronts this release's reader and ingest edge; publish this release's history host (readOnly=false)" }}{{ end -}}
+{{- $gateBackend := printf "backend: { service: { name: %s, port: { number: %s } } }" $gateSvc $gatePort -}}
 {{- /* The primary edge is <domain>, api., cast. and history. on one ALB.
 Each eksIngress.extraEdges entry is another Ingress with the same routes on its
 own ALB (so the listener-rule quota is per edge), with explicit hostnames: for
@@ -259,6 +271,29 @@ spec:
     - host: {{ $edge.cast }}
       http:
         paths:
+          {{- if $gateCast }}
+          {{- range $p := include "agent-relay.gate.castExact" $ | fromJsonArray }}
+          - path: {{ $p }}
+            pathType: Exact
+            {{ $gateBackend }}
+          {{- end }}
+          {{- range $p := include "agent-relay.gate.castPrefix" $ | fromJsonArray }}
+          - path: {{ $p }}
+            pathType: Prefix
+            {{ $gateBackend }}
+          {{- end }}
+          {{- range $p := list "/internal" "/admin" }}
+          - path: {{ $p }}
+            pathType: Prefix
+            {{ $deny }}
+          - path: "/{{ $p }}*"
+            pathType: ImplementationSpecific
+            {{ $deny }}
+          {{- end }}
+          - path: "/*"
+            pathType: ImplementationSpecific
+            {{ $deny }}
+          {{- else }}
           - path: /internal
             pathType: Prefix
             {{ $deny }}
@@ -274,10 +309,31 @@ spec:
           - path: "/*"
             pathType: ImplementationSpecific
             backend: { service: { name: relaycast, port: { number: 8787 } } }
+          {{- end }}
     {{- if $history }}
     - host: {{ $edge.history }}
       http:
         paths:
+          {{- if $gateOnly }}
+          {{- range $p := include "agent-relay.gate.historyExact" $ | fromJsonArray }}
+          - path: {{ $p }}
+            pathType: Exact
+            {{ $gateBackend }}
+          {{- end }}
+          {{- range $p := include "agent-relay.gate.historyPrefix" $ | fromJsonArray }}
+          - path: {{ $p }}
+            pathType: Prefix
+            {{ $gateBackend }}
+          {{- end }}
+          {{- range $p := list "/internal" "/admin" }}
+          - path: {{ $p }}
+            pathType: Prefix
+            {{ $deny }}
+          - path: "/{{ $p }}*"
+            pathType: ImplementationSpecific
+            {{ $deny }}
+          {{- end }}
+          {{- else }}
           {{- if not $readOnly }}
           {{- range $p := list "/v1/delivery/batches" "/v1/turns/batches" "/v1/delivery/limits" "/v1/auth/token/refresh" }}
           - path: {{ $p }}
@@ -310,6 +366,7 @@ spec:
           - path: "//internal*"
             pathType: ImplementationSpecific
             {{ $deny }}
+          {{- end }}
           {{- /* Everything not named above is a fixed 404 at the edge. */}}
           - path: "/*"
             pathType: ImplementationSpecific

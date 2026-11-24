@@ -100,8 +100,13 @@ and the file and ConfigMap go away. */ -}}
 Relaycast and Sessions admit only relaygate, so a proxy or the Control
 mapping left off would cut clients off instead of gating them. */ -}}
 {{- $g := .Values.global.relaygate.gateOnly -}}
-{{- if or (not (trim .Values.proxy.relaycastUrl)) (not (trim .Values.proxy.sessionsUrl)) (not (trim .Values.proxy.sessionsUploadUrl)) (not (trim .Values.proxy.sessionsReadUrl)) (not .Values.proxy.sessionsHosts) }}
+{{- $scope := dig "scope" "all" $g | default "all" | toString -}}
+{{- if not (has $scope (list "all" "sessions")) }}{{ fail (printf "relaygate: global.relaygate.gateOnly.scope must be all or sessions, got %q" $scope) }}{{ end -}}
+{{- if and (eq $scope "all") (not (trim .Values.proxy.relaycastUrl)) }}
 {{- fail "relaygate: global.relaygate.gateOnly.enabled needs proxy.relaycastUrl, proxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl (the in-cluster Services) and proxy.sessionsHosts (the history host)" }}
+{{- end }}
+{{- if or (not (trim .Values.proxy.sessionsUrl)) (not (trim .Values.proxy.sessionsUploadUrl)) (not (trim .Values.proxy.sessionsReadUrl)) (not .Values.proxy.sessionsHosts) }}
+{{- fail (printf "relaygate: global.relaygate.gateOnly.enabled needs %sproxy.sessionsUrl, proxy.sessionsUploadUrl, proxy.sessionsReadUrl (the in-cluster Services) and proxy.sessionsHosts (the history host)" (ternary "proxy.relaycastUrl, " "" (eq $scope "all"))) }}
 {{- end }}
 {{- if not (trim .Values.control.introspectUrl) }}
 {{- fail "relaygate: global.relaygate.gateOnly.enabled needs control.introspectUrl, control.sessionIngestAudience and secrets.relaycontrolIntrospectSecret (dashboard and desktop callers reach Sessions through relaygate)" }}

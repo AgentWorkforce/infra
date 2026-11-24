@@ -120,8 +120,8 @@ class NativeRouting(unittest.TestCase):
         docs = self.render(gate)
         paths = self.ingress(docs)["spec"]["rules"][0]["http"]["paths"]
         self.assertEqual([(p["path"], p["pathType"]) for p in paths], [
-            ("/v1/sessions", "Prefix"), ("/v1/events", "Exact"), ("/v1/ingest", "Exact"), ("/v1/delivery/batches", "Exact"),
-            ("/v1/delivery/limits", "Exact"), ("/v1/auth/token/refresh", "Exact"), ("/v1/onboarding/heartbeat", "Exact")])
+            ("/v1/sessions", "Prefix"), ("/v1/delivery", "Prefix"), ("/v1/digest", "Prefix"), ("/v1/events", "Exact"), ("/v1/ingest", "Exact"),
+            ("/v1/auth/token/refresh", "Exact"), ("/v1/auth/token/revoke", "Exact"), ("/v1/onboarding/heartbeat", "Exact"), ("/v1/upload-consent", "Exact")])
         self.assertEqual({p["backend"]["service"]["name"] for p in paths}, {"routing-test-relaygate"})
         self.assertEqual({p["backend"]["service"]["port"]["number"] for p in paths}, {8080})
         relaygate = [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "relaygate", "app.kubernetes.io/instance": "routing-test"}}}]

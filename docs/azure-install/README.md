@@ -27,7 +27,8 @@ indexer's MinIO keys, so its uploads are never indexed.
 | `postgres-tls.yaml` | cert-manager Issuers and Certificates: a 10-year CA and the server certificate for the in-cluster Postgres |
 | `postgres-values.yaml` | Overrides for `deps/cnpg-cluster-values.yaml` (the pinned HoopDb Postgres) |
 | `postgres-setup.sh` | Databases, roles and credential files: the `selfhosted` counterpart of `rds-setup.sh` and `cloud-sql-setup.sh` |
-| `ingress.yaml` | The edge: one Traefik Ingress, the host and path rules of `scripts/selfhost/eks-alb-ingress.sh` |
+| `ingress.yaml` | The edge: one Traefik Ingress, the host and path rules of `scripts/selfhost/eks-alb-ingress.sh`. Generated from the chart's `traefikIngress` template by `scripts/selfhost/aks-traefik-ingress.sh`; do not hand-edit. With agent-relay chart 0.7.77 or later, set `traefikIngress.enabled` in `values.yaml` instead |
+| `relaygate-values.yaml` | Built-in relaygate in sessions-only mode (agent-relay chart 0.7.77 or later): the history host goes through relaygate, Relaycast stays direct ([step 8b](#8b-built-in-relaygate-sessions-only-chart-0777-or-later)) |
 
 ## How Azure differs
 
@@ -237,6 +238,53 @@ curl -fsS "https://<cast host>/health" && echo " cast ok"
 curl -fsS -o /dev/null -w "dashboard %{http_code}\n" "https://<root host>/"
 curl -s -o /dev/null -w "history %{http_code}\n" "https://<history host>/v1/sessions"
 ```
+
+#### Moving the edge into the release (chart 0.7.77 or later)
+
+With a chart that has `traefikIngress`, the release renders the same edge.
+An install that applied `ingress.yaml` owns an Ingress `agent-relay` and a
+Service `edge-deny` that Helm did not create, so hand both to the release,
+then set `traefikIngress.enabled: true` in `values.yaml` and upgrade. With the
+gate off the release renders the same objects, so nothing changes on the wire:
+
+```sh
+for o in ingress/agent-relay service/edge-deny; do
+  kubectl -n agent-relay label "$o" app.kubernetes.io/managed-by=Helm --overwrite
+  kubectl -n agent-relay annotate "$o" meta.helm.sh/release-name=agent-relay meta.helm.sh/release-namespace=agent-relay --overwrite
+done
+```
+
+### 8b. Built-in relaygate, sessions-only (chart 0.7.77 or later)
+
+The recommended setup puts relaygate in front of History: the history host
+goes through relaygate, the cast host stays on Relaycast
+([relaygate](../self-hosted-relaygate.md#built-in-sessions-only)). It needs
+agent-relay chart **0.7.77 or later** and the release-rendered edge above
+(`traefikIngress.enabled: true`); skip this step on older charts. The guide's
+Cilium dataplane enforces the NetworkPolicy it relies on.
+
+1. In `relaygate-values.yaml`, replace `__HOST_HISTORY__` and `__HOST_ROOT__`,
+   and fill `policy.controlPrincipals` (your org
+   id, the admins' emails; no `readerKinds`). helm refuses to render until they
+   are set.
+2. Create the admin Secret (used once, for the adopt in 4):
+
+   ```sh
+   kubectl -n agent-relay get secret relaygate-admin >/dev/null 2>&1 || \
+     openssl rand -hex 32 | tr -d '\n' | kubectl -n agent-relay create secret generic relaygate-admin --from-file=token=/dev/stdin
+   ```
+
+3. Add `-f relaygate-values.yaml` right after `-f values.yaml` in **every**
+   `helm upgrade` of this install from now on, including the ones in the later
+   steps and in the upgrade flow below. **An upgrade without it turns the gate
+   off** and restores direct History routes and direct access to the reader
+   and ingest edge.
+4. Check the edge, then adopt the sessions that existed before the gate, dry
+   run first ([existing sessions](../self-hosted-relaygate.md#existing-sessions-adopt-them-once)):
+
+   ```sh
+   curl -s -o /dev/null -w "history /admin %{http_code} (503 expected)\n" "https://<history host>/admin/v1/audit"
+   ```
 
 **Done when:** `api ok`, `cast ok`, `dashboard 200` and `history 401`.
 

@@ -358,6 +358,12 @@ services:
   # SESSION_READ_API_MCP_READS: send MCP session reads to the read API
   # (relay-control #14/#18, first image 0.5.1). Requires the handoff above.
   sessionReadApiMcpReads: false
+  # SESSION_READ_MINT_INCLUDE_ROLE: put the caller's org role on minted
+  # session read tokens. relaygate policy.controlPrincipals rules that match
+  # on roles need it; without it a read token carries no role and matches no
+  # roles rule. Off by default (unset); needs a relay-control image with the
+  # role-mint change. When true, extraEnv may not also set it.
+  sessionReadMintIncludeRole: false
 
 # Operator per-session erase handoff to the private Sessions ingest Service.
 # Off by default. The bearer lives only in the referenced Secret; the chart
@@ -512,7 +518,7 @@ extraEnv: []
 desktopFeed:
   signingKeys:
     existingSecret: ""
-    # Profile ids with a key in the Secret, e.g. [f6b9x4unfg].
+    # Profile ids with a key in the Secret, e.g. [<profile-id>].
     profiles: []
 
 # OPTIONAL: a CA bundle that lets node-pg verify the Postgres server certificate
