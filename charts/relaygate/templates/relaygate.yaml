@@ -153,6 +153,16 @@ spec:
             - name: SESSION_INGEST_AUDIENCE
               value: {{ $.Values.control.sessionIngestAudience | trim | quote }}
             {{- end }}
+            {{- $ua := include "relaygate.upstreamAuth" . | fromJson }}
+            {{- if dig "enabled" false $ua }}
+            # Upstream verification: Ed25519 assertions on proxied Sessions requests.
+            - name: RELAYGATE_UPSTREAM_ASSERTION_KEY
+              valueFrom: { secretKeyRef: { name: {{ $ua.privateKey.name | quote }}, key: {{ $ua.privateKey.key | quote }} } }
+            - name: RELAYGATE_UPSTREAM_ASSERTION_KID
+              value: {{ include "relaygate.kid" $ua.kid | quote }}
+            - name: RELAYGATE_UPSTREAM_ASSERTION_TTL_SECONDS
+              value: {{ dig "ttlSeconds" 30 $ua | int | toString | quote }}
+            {{- end }}
             {{- if include "relaygate.gateOnly" . }}
             # Gate-only: the internal Sessions listener (relaygate #28 or later).
             - name: SESSIONS_PORT

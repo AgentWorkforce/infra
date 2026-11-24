@@ -1,0 +1,13 @@
+# Upstream verification signer (global.relaygate.upstreamAuth) on the Sessions
+# proxy: relaygate signs with an Ed25519 private key from a Secret.
+image:
+  digest: sha256:0ca54cddf43b4771fade43d06d280405574ea77280eb0fde392fdb90ee29e248
+proxy:
+  sessionsUrl: https://history.example.com
+global:
+  relaygate:
+    upstreamAuth:
+      enabled: true
+      privateKey: { name: relaygate-upstream, key: private-key-2 }
+      kid: k2
+      ttlSeconds: 20

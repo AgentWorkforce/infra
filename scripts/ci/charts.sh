@@ -1087,6 +1087,25 @@ for chart in "${charts[@]}"; do
         expect_render_failure "$chart" "$v" "gate-only with an ipBlock listener peer" "never an ipBlock" "${gate[@]}" --set-json 'sessionsListener.controlFrom=[{"ipBlock":{"cidr":"0.0.0.0/0"}}]'
 
         render "$chart" "$v" "${gate[@]}" --set fullnameOverride=gate --set global.relaygate.gateOnly.serviceName=gate >/dev/null || err "$chart: gate-only with a matching serviceName must render"
+        # Upstream verification signer (global.relaygate.upstreamAuth): off renders
+        # nothing; on renders the Ed25519 private key Secret, the kid and the TTL;
+        # refused without the key or kid, with a bad kid or TTL, or without the
+        # Sessions proxy.
+        ! grep -q RELAYGATE_UPSTREAM_ASSERTION <<<"$(render "$chart" charts/relaygate/ci/proxy-values.yaml)" || err "$chart: upstreamAuth off must render no assertion env"
+        ua=charts/relaygate/ci/upstream-auth-values.yaml
+        out=$(render "$chart" "$ua") || err "$chart: upstreamAuth did not render"
+        ua_env() { yq "select(.kind == \"Deployment\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | (.value // (.valueFrom.secretKeyRef.name + \"/\" + .valueFrom.secretKeyRef.key))" <<<"$out" | sed '/^---$/d;/^ *$/d'; }
+        [ "$(ua_env RELAYGATE_UPSTREAM_ASSERTION_KEY)|$(ua_env RELAYGATE_UPSTREAM_ASSERTION_KID)|$(ua_env RELAYGATE_UPSTREAM_ASSERTION_TTL_SECONDS)" = "relaygate-upstream/private-key-2|k2|20" ] \
+          || err "$chart: upstreamAuth must sign with the private key Secret, kid k2 and TTL 20"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "RELAYGATE_UPSTREAM_ASSERTION_KEY") | .valueFrom.secretKeyRef.key | type' <<<"$(render "$chart" "$ua" --set-string global.relaygate.upstreamAuth.privateKey.key=20261123)")" = '!!str' ] \
+          || err "$chart: upstreamAuth must render a numeric-looking Secret key as a string"
+        expect_render_failure "$chart" "$ua" "upstreamAuth without a private key" "needs upstreamAuth.privateKey.name and privateKey.key" --set global.relaygate.upstreamAuth.privateKey.name=
+        expect_render_failure "$chart" "$ua" "upstreamAuth without a kid" "upstreamAuth.kid is required" --set global.relaygate.upstreamAuth.kid=
+        expect_render_failure "$chart" "$ua" "upstreamAuth bad kid" "upstreamAuth.kid is required" --set 'global.relaygate.upstreamAuth.kid=a b'
+        expect_render_failure "$chart" "$ua" "upstreamAuth TTL too long" "ttlSeconds must be a whole number of seconds from 5 to 60" --set global.relaygate.upstreamAuth.ttlSeconds=61
+        expect_render_failure "$chart" "$ua" "upstreamAuth TTL too short" "ttlSeconds must be a whole number of seconds from 5 to 60" --set global.relaygate.upstreamAuth.ttlSeconds=4
+        expect_render_failure "$chart" "$ua" "upstreamAuth string enabled" "upstreamAuth.enabled must be true or false" --set-string global.relaygate.upstreamAuth.enabled=true
+        expect_render_failure "$chart" "$ua" "upstreamAuth without the Sessions proxy" "it needs proxy.sessionsUrl" --set proxy.sessionsUrl=
         # Sessions-only (gateOnly.scope=sessions): the Relaycast proxy is optional.
         out=$(render "$chart" "$v" "${gate[@]}" --set global.relaygate.gateOnly.scope=sessions --set proxy.relaycastUrl=) || err "$chart: sessions-only without the Relaycast proxy must render"
         ! grep -q 'name: RELAYCAST_URL' <<<"$out" || err "$chart: sessions-only without proxy.relaycastUrl must not render RELAYCAST_URL"
@@ -1362,6 +1381,54 @@ for chart in "${charts[@]}"; do
           out=$(render "$chart" charts/agent-relay/ci/gate-sessions-$edge-values.yaml)
           ! grep -Eq '/v1/(relayfacts|coordination) ' <<<"$(routes history.gcp-proof.agentrelay.com)" || err "$chart: without relayfactsRoutes ($edge) the history host must not route /v1/relayfacts or /v1/coordination"
         done
+        # Upstream verification in the umbrella (ci/gate-sessions-upstream-auth-values.yaml):
+        # relaygate signs; the reader and ingest edge get MODE, the current and
+        # previous public keys from one ConfigMap with their kids, and a
+        # checksum that rolls them. Off by default: no assertion env anywhere.
+        ! grep -Eq '(RELAYGATE|READ_API|INGEST)_UPSTREAM_ASSERTION' <<<"$(render "$chart" charts/agent-relay/ci/gate-sessions-gke-values.yaml)" || err "$chart: upstream verification must be off by default"
+        uav=charts/agent-relay/ci/gate-sessions-upstream-auth-values.yaml
+        out=$(render "$chart" "$uav") || err "$chart: upstream verification did not render"
+        dep_env() { yq "select(.kind == \"Deployment\" and .metadata.name == \"$1\") | .spec.template.spec.containers[0].env[] | select(.name | test(\"UPSTREAM_ASSERTION\")) | .name + \"=\" + (.value // ((.valueFrom.configMapKeyRef // .valueFrom.secretKeyRef).name + \"/\" + (.valueFrom.configMapKeyRef // .valueFrom.secretKeyRef).key))" <<<"$out" | sed '/^---$/d;/^ *$/d' | tr '\n' ' '; }
+        for pair in agent-relay-read-api:READ_API agent-relay-ingest-edge:INGEST; do
+          d=${pair%%:*}; p=${pair##*:}
+          [ "$(dep_env "$d")" = "${p}_UPSTREAM_ASSERTION_MODE=enforce ${p}_UPSTREAM_ASSERTION_PUBLIC_KEY=relaygate-upstream-public/public-key-2 ${p}_UPSTREAM_ASSERTION_KID=k2 ${p}_UPSTREAM_ASSERTION_PUBLIC_KEY_PREVIOUS=relaygate-upstream-public/public-key-1 ${p}_UPSTREAM_ASSERTION_KID_PREVIOUS=k1 " ] \
+            || err "$chart: $d verifier env: $(dep_env "$d")"
+          [ -n "$(yq "select(.kind == \"Deployment\" and .metadata.name == \"$d\") | .spec.template.metadata.annotations[\"checksum/upstream-assertion\"] // \"\"" <<<"$out" | sed '/^---$/d;/^$/d')" ] || err "$chart: $d must roll on verify changes (checksum/upstream-assertion)"
+        done
+        [ "$(dep_env ci-relaygate)" = "RELAYGATE_UPSTREAM_ASSERTION_KEY=relaygate-upstream/private-key RELAYGATE_UPSTREAM_ASSERTION_KID=k2 RELAYGATE_UPSTREAM_ASSERTION_TTL_SECONDS=30 " ] || err "$chart: relaygate signer env: $(dep_env ci-relaygate)"
+        ! grep -q 'public-key' <<<"$(yq 'select(.kind == "Deployment" and .metadata.name == "ci-relaygate")' <<<"$out")" || err "$chart: relaygate must not get the public keys"
+        ! yq 'select(.kind == "Deployment" and (.metadata.name == "agent-relay-read-api" or .metadata.name == "agent-relay-ingest-edge"))' <<<"$out" | grep -q 'private-key' || err "$chart: verifiers must never get the private key"
+        [ "$(yq 'select(.kind == "Deployment" and .metadata.name == "agent-relay-read-api") | .spec.template.metadata.annotations["checksum/upstream-assertion"]' <<<"$out")" != "$(yq 'select(.kind == "Deployment" and .metadata.name == "agent-relay-read-api") | .spec.template.metadata.annotations["checksum/upstream-assertion"]' <<<"$(render "$chart" "$uav" --set global.relaygate.upstreamAuth.verify.publicKeys.previousKid=k0)")" ] \
+          || err "$chart: a rotation (kid change) must change the verifier checksum"
+        ! grep -Eq '(READ_API|INGEST)_UPSTREAM_ASSERTION' <<<"$(render "$chart" "$uav" --set global.relaygate.upstreamAuth.verify.mode=false)" || err "$chart: verify mode false (a bare YAML off) must render no verifier env"
+        expect_render_failure "$chart" "$uav" "extraEnv overriding the reader's verify mode" "extraEnv must not set READ_API_UPSTREAM_ASSERTION_MODE" --set-json 'sessions-pipeline.sessionReadApi.extraEnv=[{"name":"READ_API_UPSTREAM_ASSERTION_MODE","value":"off"}]'
+        expect_render_failure "$chart" charts/agent-relay/ci/gate-sessions-gke-values.yaml "extraEnv setting a reader verify variable with verification off" "extraEnv must not set READ_API_UPSTREAM_ASSERTION_PUBLIC_KEY" --set-json 'sessions-pipeline.sessionReadApi.extraEnv=[{"name":"READ_API_UPSTREAM_ASSERTION_PUBLIC_KEY","value":"x"}]'
+        # The verifier charts installed on their own check the previous pair too
+        # (the service refuses a half-set pair or equal kids at startup).
+        vp=global.relaygate.upstreamAuth.verify.publicKeys
+        vstd=(--set global.relaygate.upstreamAuth.verify.mode=enforce --set $vp.configMapName=pk --set $vp.currentKid=k2)
+        for vc in "session-read-api charts/session-read-api/ci/default-values.yaml" "sessions-pipeline charts/sessions-pipeline/ci/ingest-edge-values.yaml"; do
+          read -r vchart vfile <<<"$vc"
+          expect_render_failure "$vchart" "$vfile" "standalone verifier with previousKey but no previousKid" "previousKey and previousKid go together" "${vstd[@]}" --set $vp.previousKey=public-key-1
+          expect_render_failure "$vchart" "$vfile" "standalone verifier with previousKid equal to currentKid" "previousKid must differ from currentKid" "${vstd[@]}" --set $vp.previousKey=public-key-1 --set $vp.previousKid=k2
+          render "$vchart" "$vfile" "${vstd[@]}" --set $vp.previousKey=public-key-1 --set $vp.previousKid=k1 >/dev/null || err "$vchart: a complete previous pair must render standalone"
+        done
+        expect_render_failure "$chart" "$uav" "verify enforce without gate-only" "verify.mode=enforce requires global.relaygate.gateOnly.enabled" --set global.relaygate.gateOnly.enabled=false
+        expect_render_failure "$chart" "$uav" "verify log without gate-only" "verify.mode=log requires global.relaygate.gateOnly.enabled" --set global.relaygate.gateOnly.enabled=false --set global.relaygate.upstreamAuth.verify.mode=log
+        expect_render_failure "$chart" "$v" "verify mode invalid with no verifier rendered" "verify.mode must be off, log or enforce" --set global.relaygate.upstreamAuth.verify.mode=required
+        # Unquoted numeric kids (YAML 1000000) render as integers, not 1e+06.
+        printf 'global:\n  relaygate:\n    upstreamAuth:\n      kid: 1000000\n      verify:\n        publicKeys:\n          currentKid: 1000000\n          previousKid: 999\n' > "${TMPDIR:-/tmp}/numeric-kid-values.yaml"
+        numk=$(render "$chart" "$uav" -f "${TMPDIR:-/tmp}/numeric-kid-values.yaml") || err "$chart: numeric kids did not render"
+        [ "$(yq 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name | test("ASSERTION_KID")) | .value' <<<"$numk" | sed '/^---$/d;/^$/d' | sort -u | tr '\n' ' ')" = "1000000 999 " ] || err "$chart: numeric kids must render as integers"
+        expect_render_failure "$chart" "$uav" "verify mode not off, log or enforce" "verify.mode must be off, log or enforce" --set global.relaygate.upstreamAuth.verify.mode=required
+        expect_render_failure "$chart" "$uav" "verify on without the signer" "requires upstreamAuth.enabled" --set global.relaygate.upstreamAuth.enabled=false
+        expect_render_failure "$chart" "$uav" "signer kid the verifiers do not accept" "must be verify.publicKeys.currentKid or previousKid" --set global.relaygate.upstreamAuth.kid=k9
+        expect_render_failure "$chart" "$uav" "verify without a public key source" "needs exactly one of verify.publicKeys.secretName or configMapName" --set global.relaygate.upstreamAuth.verify.publicKeys.configMapName=
+        expect_render_failure "$chart" "$uav" "verify with two public key sources" "needs exactly one of verify.publicKeys.secretName or configMapName" --set global.relaygate.upstreamAuth.verify.publicKeys.secretName=s
+        expect_render_failure "$chart" "$uav" "public keys in the private key Secret" "must not be the Secret holding the private key" --set global.relaygate.upstreamAuth.verify.publicKeys.configMapName= --set global.relaygate.upstreamAuth.verify.publicKeys.secretName=relaygate-upstream
+        expect_render_failure "$chart" "$uav" "verify previous key without kid" "previousKey and previousKid go together" --set global.relaygate.upstreamAuth.verify.publicKeys.previousKid=
+        expect_render_failure "$chart" "$uav" "verify previous kid equal to current" "previousKid must differ from currentKid" --set global.relaygate.upstreamAuth.verify.publicKeys.previousKid=k2
+        expect_render_failure "$chart" "$uav" "upstreamAuth without relaygate" "global.relaygate.upstreamAuth.enabled requires components.relaygate" --set components.relaygate=false --set global.relaygate.gateOnly.enabled=false
         # The same edges with the gate off route no path to relaygate.
         for f in eks-ingress traefik-ingress; do
           ! yq 'select(.kind == "Ingress") | .. | select(. == "ci-relaygate")' <<<"$(render "$chart" "charts/agent-relay/ci/$f-values.yaml")" | grep -q . || err "$chart: $f without the gate must not route to relaygate"

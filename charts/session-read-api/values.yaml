@@ -2,6 +2,14 @@
 # default-off dependency under the sessionReadApi key.
 
 global:
+  # Upstream verification (set in the agent-relay umbrella,
+  # global.relaygate.upstreamAuth.verify; these are only the key defaults):
+  # log or enforce makes this service verify relaygate's Ed25519 assertions.
+  relaygate:
+    upstreamAuth:
+      verify:
+        mode: "off"
+        publicKeys: { secretName: "", configMapName: "", currentKey: public-key, currentKid: "", previousKey: "", previousKid: "" }
   # Inherited from the sessions-pipeline umbrella. Direct installs may set it
   # here. Empty preserves the legacy runtime selection and reader ceiling.
   scrubEngine:

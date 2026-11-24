@@ -184,6 +184,122 @@ values and [adopt the existing sessions](#existing-sessions-adopt-them-once)
 (dry run first). Sessions uploaded before the switch are invisible through the
 gate until they are adopted.
 
+## Upstream verification (off by default)
+
+NetworkPolicy keeps other pods away from the Sessions reader and ingest edge
+only on a cluster that enforces it. Upstream verification makes the services
+themselves accept only requests relaygate signed: relaygate adds a short-lived
+Ed25519 assertion (header `X-Relaygate-Assertion`, token
+`v1.<base64url-json>.<base64url-signature>`) to every request it proxies, and
+the reader and ingest edge verify it. relaygate alone holds the private key;
+the verifiers get only public keys.
+
+```yaml
+global:
+  relaygate:
+    upstreamAuth:
+      enabled: true                                       # relaygate signs
+      privateKey: { name: relaygate-upstream, key: private-key-1 } # base64 PKCS#8 DER
+      kid: k1
+      ttlSeconds: 30                                      # 5 to 60
+      verify:
+        mode: "log"                                       # off | log | enforce
+        publicKeys:                                       # base64 SPKI DER, one Secret or ConfigMap
+          configMapName: relaygate-upstream-public
+          currentKey: public-key-1
+          currentKid: k1
+          # previousKey: public-key-0                     # during a rotation only
+          # previousKid: k0
+```
+
+Make a key pair in the formats the services expect (standard base64 of the
+PKCS#8 DER private key, 48 bytes, and of the SPKI DER public key, 44 bytes;
+checked with OpenSSL 3), then store the private key in a Secret and the public
+key in a ConfigMap (or a separate Secret, never the private key's):
+
+```sh
+umask 077; mkdir -p keys && cd keys
+openssl genpkey -algorithm ed25519 -outform DER -out priv.der
+openssl pkey -in priv.der -inform DER -pubout -outform DER -out pub.der
+base64 < priv.der | tr -d '\n' > private-key-1   # one line, no trailing newline
+base64 < pub.der | tr -d '\n' > public-key-1
+kubectl -n agent-relay create secret generic relaygate-upstream --from-file=private-key-1
+kubectl -n agent-relay create configmap relaygate-upstream-public --from-file=public-key-1
+shred -u priv.der private-key-1   # macOS: rm -P (or rm); the private key now lives only in the Secret
+```
+
+Use `privateKey.key: private-key-1`, `currentKey: public-key-1` and a kid such
+as `k1`. The key never goes on a command line, and the commands work the same
+with GNU and BSD (macOS) `base64`. For a rotation, make a new pair the same way as
+`private-key-2`/`public-key-2` and add it next to the old one, leaving the
+existing keys in place:
+
+```sh
+printf '{"stringData":{"private-key-2":"%s"}}' "$(cat private-key-2)" > patch.json
+kubectl -n agent-relay patch secret relaygate-upstream --type merge --patch-file patch.json
+kubectl -n agent-relay patch configmap relaygate-upstream-public --type merge \
+  -p "{\"data\":{\"public-key-2\":\"$(cat public-key-2)\"}}"
+shred -u priv.der private-key-2 patch.json   # macOS: rm -P (or rm)
+```
+
+| Workload | Env | Gets |
+| --- | --- | --- |
+| relaygate | `RELAYGATE_UPSTREAM_ASSERTION_KEY`, `_KID`, `_TTL_SECONDS` | the private key only |
+| read API | `READ_API_UPSTREAM_ASSERTION_MODE`, `_PUBLIC_KEY`, `_KID`, `_PUBLIC_KEY_PREVIOUS`, `_KID_PREVIOUS` | public keys only |
+| ingest edge | the same under `INGEST_UPSTREAM_ASSERTION_` | public keys only |
+
+`verify.mode: off` (the default; quote it, a bare `off` is a YAML boolean,
+which the chart reads as off) renders nothing on the verifiers. `log` accepts
+and logs what `enforce` would refuse: run a period on `log` with relaygate in
+front first, count the refusal reasons by route, and switch to `enforce` only
+when they are explained. Both `log` and `enforce`
+need `global.relaygate.gateOnly.enabled` (either scope): without it the history
+host routes straight to the reader and ingest edge, so every public History
+request would arrive unsigned, flooding the log (`log`) or being refused
+(`enforce`). The chart refuses that combination. Quote kids; an unquoted
+whole number also works (the chart renders it as an integer, exact up to 2^53). Each verifier carries a
+`checksum/upstream-assertion` annotation over `verify`, so a change there (a
+new kid, key or source) rolls its pods.
+
+helm refuses to render when: `enabled` has no private key or kid, the kid or
+TTL is invalid, or relaygate has no Sessions proxy; `verify.mode` is not off,
+log or enforce; verification is on without `enabled` or without gate-only; relaygate's `kid` is
+neither `currentKid` nor `previousKid`; there is not exactly one public-key
+source; the public keys are in the private key's Secret; or `previousKey` and
+`previousKid` are not set together or repeat the current kid. The chart does
+not check key length or format; relaygate and the services parse them at
+startup.
+
+The verifiers let health endpoints and CORS preflight through; exempt the
+ingest edge's `POST /v1/auth/token/refresh` stub and the reader's exact
+`POST /v1/auth/token/revoke` (a presented assertion is still validated there;
+relaygate proxies revoke without an assertion);
+and skip the assertion on `/internal/v1/session-read/*` (the reader's mints)
+and `/internal/v1/session-erase/*` (relay-control's per-session erase, sent
+directly, not through relaygate) only after their own internal authentication
+succeeds. In log or enforce a service refuses to start on a non-canonical or
+non-Ed25519 key, an empty kid, a half-set previous pair or equal kids. `/internal` stays denied at every edge. No path rewrite
+may sit between relaygate and the services (relaygate's upstreams are their
+Services, directly).
+
+**Rotation.** relaygate and the verifiers read their keys at startup, and
+changing a Secret's or ConfigMap's contents under the same name and key rolls
+nothing (the chart cannot see values). Rotate by key name and kid, which
+changes the pod templates, one upgrade per step. If you must replace a value in
+place, follow it with `kubectl rollout restart` of relaygate, the read API and
+the ingest edge (or a reloader), and keep the same step order:
+
+1. Add the new public key to the public-key object under a new key. Make it
+   `currentKey`/`currentKid` and the old one `previousKey`/`previousKid`.
+   Upgrade: every verifier replica rolls and accepts both keys, and relaygate
+   still signs with the old kid (now the previous one).
+2. Add the new private key to its Secret under a new key, and point
+   `privateKey.key` and `kid` at it. Upgrade: relaygate rolls and signs with
+   the new kid.
+3. Once every relaygate pod signs with the new kid, wait at least `ttlSeconds`
+   plus 5 s (65 s at TTL 60). Then clear `previous*` and upgrade. Remove the
+   old keys.
+
 ## Proxying Relaycast and Sessions (build 2)
 
 ```yaml
@@ -521,6 +637,12 @@ Not proxied, so gate-only breaks them for public clients:
   Chief, relayflows workers, the desktop app's Relaycast connection) stop
   working until they register through relaygate.
 - Sessions: `/v1/turns/batches`, `/v1/cli/login` and the public `/healthz`.
+  relaygate also answers `404 relaygate_route_not_proxied` to two read routes
+  under the `/v1/sessions` prefix the history host sends it:
+  `GET /v1/sessions/summaries/search` and `GET /v1/sessions/:id/sources`. Their
+  read-API flags (`READ_API_SUMMARY_SEARCH_ENABLED`,
+  `READ_API_SESSION_SOURCES_ENABLED`) therefore have no effect for public
+  clients behind gate-only.
   Aggregate reads (`/v1/delivery/records`, `/v1/digest/*`, `/v1/sessions/users`,
   `/activity`) work only for `policy.sessionAggregates` groups.
 - relaycast `runtime.backend: durable-actors`: actors fetch Relaycast's public

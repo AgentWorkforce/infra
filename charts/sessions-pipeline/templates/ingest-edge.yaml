@@ -65,6 +65,7 @@
 {{- if hasKey $c "extraEnv" }}{{ fail "ingestEdge.extraEnv is not supported; use the managed configuration and Secret references" }}{{ end -}}
 {{- if not (kindIs "bool" $c.networkPolicy.enabled) }}{{ fail "ingestEdge.networkPolicy.enabled must be a boolean" }}{{ end -}}
 {{- $gateOnly := include "sessions-pipeline.gateOnly" . -}}
+{{- include "sessions-pipeline.upstreamAssertion.validate" . -}}
 {{- if and $gateOnly (not $c.networkPolicy.enabled) }}{{ fail "ingestEdge: global.relaygate.gateOnly.enabled requires ingestEdge.networkPolicy.enabled=true; without it every pod can upload without relaygate" }}{{ end -}}
 {{- if not (kindIs "slice" ($c.networkPolicy.gateOnlyFrom | default list)) }}{{ fail "ingestEdge.networkPolicy.gateOnlyFrom must be a list" }}{{ end -}}
 {{- if and $c.networkPolicy.enabled (not $gateOnly) (or (not (kindIs "slice" $c.networkPolicy.ingressFrom)) (empty $c.networkPolicy.ingressFrom)) }}{{ fail "ingestEdge.networkPolicy.enabled=true requires networkPolicy.ingressFrom" }}{{ end -}}
@@ -182,9 +183,15 @@ spec:
         {{- if $c.analytics.enabled }}
         agentworkforce.dev/analytics-producer: "true"
         {{- end }}
-      {{- with $c.podAnnotations }}
+      {{- $uaSum := include "sessions-pipeline.upstreamAssertion.checksum" . }}
+      {{- if or $c.podAnnotations $uaSum }}
       annotations:
+        {{- with $c.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with $uaSum }}
+        checksum/upstream-assertion: {{ . | quote }}
+        {{- end }}
       {{- end }}
     spec:
       automountServiceAccountToken: false
@@ -230,6 +237,7 @@ spec:
             {{- include "sessions-pipeline.operatorSessionErase.ingestEnv" . | nindent 12 }}
             {{- end }}
             - { name: SERVICE, value: session-ingest }
+            {{- with include "sessions-pipeline.upstreamAssertion.env" . }}{{ . | nindent 12 }}{{ end }}
             {{- include "sessions-pipeline.scrubEngine" (dict "root" . "localReader" $c.readerMaxRuleset "localName" "ingestEdge.readerMaxRuleset") | nindent 12 }}
             - { name: RELAYHISTORY_SELFHOST_INGEST, value: "true" }
             - { name: RELAYHISTORY_INGEST_PORT, value: {{ $c.port | quote }} }
