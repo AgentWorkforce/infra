@@ -575,9 +575,10 @@ images:
   # built-in History gate. Inactive here: the GCP customer profile keeps it
   # off; the opt-in profiles values-gcp-relaygate.yaml, values-eks-relaygate.yaml
   # and the AKS guide's relaygate-values.yaml turn it on. The chart pins this
-  # digest. Verified 2026-11-23: anonymous crane digest of the index, an OCI
-  # index with linux/amd64 and linux/arm64 manifests, built by the successful
-  # main push run below at the recorded revision.
+  # digest. Verified 2026-11-24: anonymous crane digest of the index, an OCI
+  # index with linux/amd64 (sha256:09d1d2df...) and linux/arm64
+  # (sha256:03ffd5bc...) manifests, built by the successful main push run
+  # below at the recorded revision.
   - id: relaygate
     active: false
     firstParty: true
@@ -586,29 +587,31 @@ images:
       - Deployment/<release>-relaygate:relaygate
     current:
       repository: ghcr.io/agentworkforce/relaygate
-      digest: sha256:79d20158e921d8785470af209ebc33c8c117e6a6ca157cc421287949e1a31ef5
+      digest: sha256:429c811acf1a37bfd12269d698f116bcade50050b3ef7ea4040e34d4336064cf
       chartStatus: optional-preview
       valuesFile: charts/relaygate/values.yaml
     source:
       repository: https://github.com/AgentWorkforce/relaygate
-      revision: 1279d7b4699f042b3d7705f2654a7400cb7c0626
+      revision: 8ae66ac873b8baf967b1929d64d4ee19d93464ba
       reproducibleReference: true
       note: >-
-        relaygate main 1279d7b4 (merge of #50). Carries #48 (Ed25519 upstream
-        assertions, RELAYGATE_UPSTREAM_ASSERTION_KEY/_KID/_TTL_SECONDS), #49
-        (relayfacts and coordination proxy) and #50 (user grants, cross-session
-        enforcement), per git ancestry.
+        relaygate main 8ae66ac8 (merge of #51; GitHub release and git tag
+        v0.1.0, no registry tag of that name: the published tags are
+        sha-8ae66ac8 and main). Carries #48 (Ed25519 upstream assertions,
+        RELAYGATE_UPSTREAM_ASSERTION_KEY/_KID/_TTL_SECONDS), #49 (relayfacts
+        and coordination proxy), #50 (user grants, cross-session enforcement)
+        and #51 (event-query scope parity), per git ancestry.
     license:
       status: recorded
       spdx: FSL-1.1-ALv2
-      evidence: https://github.com/AgentWorkforce/relaygate/blob/1279d7b4699f042b3d7705f2654a7400cb7c0626/LICENSE
+      evidence: https://github.com/AgentWorkforce/relaygate/blob/8ae66ac873b8baf967b1929d64d4ee19d93464ba/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      run: https://github.com/AgentWorkforce/relaygate/actions/runs/45133166289
+      run: https://github.com/AgentWorkforce/relaygate/actions/runs/45238503140
       trigger: push (main)
       buildsCommittedRevision: true
       publishedTags: []
