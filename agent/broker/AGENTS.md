@@ -239,7 +239,8 @@ a PR to it.
 
 ## Staging summaries application sessions
 
-Run `aws-cred-broker staging-summary-profile` to inspect the profile for the paired
+From the repository root, run `node agent/broker/src/cli.ts staging-summary-profile`
+to inspect the profile for the paired
 Cloud #6658 and Control #342 check. Its three identities expire after four hours.
 The profile currently refuses issuance. Activation requires the staging issuer
 contract, fixture owner’s exact synthetic workspace/session binding, a distinct
