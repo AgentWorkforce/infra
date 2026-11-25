@@ -215,7 +215,7 @@ chaos() { # action out
     kill-actor)
       # One busy actor host (sandbox namespace <NS>-agent-relay).
       local an="${ACTOR_NS:-${NS}-agent-relay}" p
-      p="$(kubectl -n "$an" get pods -l "${ACTOR_SELECTOR:-terse.ai/purpose=actor}" --field-selector=status.phase=Running -o name | head -1)"
+      p="$(kubectl -n "$an" get pods -l "${ACTOR_SELECTOR:-terse.ai/purpose=actor}" --field-selector=status.phase=Running -o name | { grep -v -- '-spare-' || true; } | head -1)"
       if [[ -n "$p" ]]; then echo "$p" >>"$out.pods"; kubectl -n "$an" delete "$p" --wait=false >/dev/null; else log "no actor host to kill"; fi ;;
     node-drain)
       # Drain the app node hosting relaycast (PG) or the gateway (actors),

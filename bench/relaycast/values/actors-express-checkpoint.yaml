@@ -1,0 +1,23 @@
+# S3 Express state + async regional checkpoint soak (AgentWorkforce/durable-actors#4,
+# AgentWorkforce/infra#328). Values from the durable-actors-express module output;
+# images are branch-built from selfhost/aws-s3 (08b1cc8e) in the sandbox ECR, never published.
+durable-actors:
+  placement: {zone: us-west-2b}
+  storage:
+    bucket: relaycast-actors-bench--usw2-az1--x-s3
+    artifactBucket: relaycast-actors-bench-805532413586-regional
+    s3:
+      actorCredentials: assume-role
+      actorRoleArn: arn:aws:iam::805532413586:role/relaycast-actors-bench-actor-storage
+      checkpoint: {bucket: relaycast-actors-bench-805532413586-regional, maxLagMs: 5000}
+  images:
+    controlPlane: {repository: 805532413586.dkr.ecr.us-west-2.amazonaws.com/relaycast-actors-bench/durable-actors, digest: 2e3e15b83f5331e004d41772ab14d19fe653b0aca0f448eab7978160ec5b5750}
+    typescript: {repository: 805532413586.dkr.ecr.us-west-2.amazonaws.com/relaycast-actors-bench/durable-actors, digest: 75eb1c60f1e215626c17366f7d90deaa4935405a39aadb204551d482a82bcd6c}
+relaycast:
+  runtime:
+    durableActors:
+      deployer: {artifactBucket: relaycast-actors-bench-805532413586-regional}
+relayfile:
+  runtime:
+    durableActors:
+      deployer: {artifactBucket: relaycast-actors-bench-805532413586-regional}
