@@ -399,3 +399,11 @@ test("session name is the agent name, in STS's character set", () => {
   assert.equal(sessionName({ ...agent, name: "a b/c" }), "a-b-c");
   assert.throws(() => sessionName({ ...agent, name: "x" }));
 });
+
+test("the staging summaries application profile cannot fall through to sandbox AWS issuance", () => {
+  const aws = req();
+  assert.equal(decide(aws, agent, allowlist).outcome, "auto");
+  const result = decide({ ...aws, profile: "staging-short-summary-status" }, agent, allowlist);
+  assert.equal(result.outcome, "deny");
+  assert.match(result.reasons.join(" "), /Staging application issuer/);
+});

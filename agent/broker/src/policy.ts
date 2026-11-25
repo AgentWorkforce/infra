@@ -8,6 +8,8 @@
  * tests can pin every tier.
  */
 
+import { stagingSummaryProfile } from "./staging-summary-profile.ts";
+
 export type Scope = "any" | "resource-tag" | "request-tag";
 
 export interface AutoRule {
@@ -182,6 +184,7 @@ export interface Principal {
 }
 
 export interface CredentialRequest {
+  profile?: string;
   account: string;
   purpose: string;
   actions: string[];
@@ -282,6 +285,7 @@ export function sessionName(principal: Principal): string {
 }
 
 export function validate(req: CredentialRequest, list: Allowlist): string[] {
+  if (req.profile === stagingSummaryProfile.name) return [stagingSummaryProfile.reason];
   const problems: string[] = [];
   if (!ACCOUNT_RE.test(String(req.account))) problems.push("account must be a 12-digit AWS account id");
   if (typeof req.purpose !== "string" || req.purpose.trim().length < 8 || req.purpose.length > 500) problems.push("purpose must say what the credentials are for (8 to 500 characters)");

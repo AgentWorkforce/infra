@@ -236,3 +236,13 @@ Limits:
 The design and the security model are in [`DESIGN.md`](DESIGN.md). The
 allowlist is [`allowlist.json`](allowlist.json); changing what's automatic is
 a PR to it.
+
+## Staging summaries application sessions
+
+Run `aws-cred-broker staging-summary-profile` to inspect the profile for the paired
+Cloud #6658 and Control #342 check. Its three identities expire after four hours.
+The profile currently refuses issuance. Activation requires the staging issuer
+contract, fixture owner’s exact synthetic workspace/session binding, a distinct
+audience for each read-only caller, and a verified private handoff to each
+operator. Check for a covering lease before issuing. Integrate and test these
+bindings through a reviewed broker change before advancing `agent/broker.ref`.

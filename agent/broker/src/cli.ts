@@ -37,6 +37,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { verifyAudit } from "./audit.ts";
+import { stagingSummaryProfile } from "./staging-summary-profile.ts";
 import { Broker } from "./broker.ts";
 import { defaultDeliverer } from "./deliver.ts";
 import { DEFAULT_OWNER_DELEGATES_FILE, hostFileSource } from "./owner-delegates.ts";
@@ -69,6 +70,11 @@ function principal(): Principal {
   const kind = values["from-kind"];
   if (!name || !address || (kind !== "agent" && kind !== "human")) fail("--from-name, --from-address and --from-kind agent|human are required (local mode)");
   return { name, address, kind };
+}
+
+if (positionals[0] === "staging-summary-profile") {
+  process.stdout.write(JSON.stringify(stagingSummaryProfile, null, 2) + "\n");
+  process.exit(0);
 }
 
 const stateDir = process.env.BROKER_STATE_DIR ?? join(homedir(), ".local", "state", "aws-cred-broker");
