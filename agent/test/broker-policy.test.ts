@@ -37,8 +37,9 @@ const req = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
 
 test("the shipped allowlist: auto only in the sandbox, the agent-hosts account approval-only, Khaliq the only approver, 15 to 60 minutes", () => {
   const PROD = Object.keys(allowlist.accounts).find((k) => allowlist.accounts[k]!.label === "agentrelay-prod")!;
-  assert.deepEqual(Object.keys(allowlist.accounts), [SANDBOX, "500268966557", "154551280135", PROD]);
-  assert.deepEqual(Object.values(allowlist.accounts).map((a) => a.label), ["sandbox", "agent-hosts", "agentrelay-dev", "agentrelay-prod"]);
+  const SESSIONS = Object.keys(allowlist.accounts).find((k) => allowlist.accounts[k]!.label === "sessions-prod")!;
+  assert.deepEqual(Object.keys(allowlist.accounts), [SANDBOX, "500268966557", "154551280135", PROD, SESSIONS]);
+  assert.deepEqual(Object.values(allowlist.accounts).map((a) => a.label), ["sandbox", "agent-hosts", "agentrelay-dev", "agentrelay-prod", "sessions-prod"]);
   assert.equal(allowlist.accounts[SANDBOX]!.tier, "sandbox");
   assert.equal(allowlist.accounts[SANDBOX]!.roles.scoped, `arn:aws:iam::${SANDBOX}:role/agent-broker-sandbox-scoped`);
   assert.equal(allowlist.accounts[SANDBOX]!.roles.elevated, undefined, "no approval-tier role in the sandbox");
@@ -56,6 +57,14 @@ test("the shipped allowlist: auto only in the sandbox, the agent-hosts account a
   assert.equal(prod.tier, "prod");
   assert.deepEqual(prod.regions, ["us-west-2"]);
   assert.deepEqual(prod.roles, { elevated: `arn:aws:iam::${PROD}:role/agent-broker-prod-read` });
+  // The sessions account: approval-tier role only, us-east-1 only, and no workspaceAuto capability, so every request there goes to the approver.
+  // The role itself can read one Lambda's configuration and its one log group (terraform/sessions).
+  const sessions = allowlist.accounts[SESSIONS]!;
+  assert.equal(sessions.tier, "prod");
+  assert.deepEqual(sessions.regions, ["us-east-1"]);
+  assert.deepEqual(sessions.roles, { elevated: `arn:aws:iam::${SESSIONS}:role/agent-broker-sessions-read` });
+  assert.ok(!JSON.stringify(allowlist.workspaceAuto ?? {}).includes(SESSIONS), "nothing in the sessions account is issued without approval");
+  assert.ok(!JSON.stringify(allowlist.delegatedApprovers ?? []).includes(SESSIONS), "no delegate approves in the sessions account");
   assert.deepEqual(allowlist.humanApprovers, ["khaliq-gant"]);
   assert.deepEqual(allowlist.duration, { minMinutes: 15, maxMinutes: 60, autoMaxMinutes: 60 });
   for (const r of allowlist.autoRules) for (const a of r.actions) {
@@ -341,6 +350,42 @@ test("a runner request in the agent-hosts account: approval only, named resource
   assert.deepEqual(mixedBy("ApprovedAccountWide").Action, ["ssm:SendCommand"]);
   assert.deepEqual(mixedBy("ApprovedWithoutResourceLevelPermissions").Action, ["ssm:getcommandinvocation", "ssm:DESCRIBESESSIONS"]);
   assert.equal(mixedBy("ApprovedWithoutResourceLevelPermissions").Resource, "*");
+});
+
+test("the session pipeline Lambda in the sessions account: approval only, its configuration and its log group, nothing else", () => {
+  // The account id comes from the allowlist by label; the names are the ones terraform/sessions grants.
+  const SESSIONS = Object.keys(allowlist.accounts).find((k) => allowlist.accounts[k]!.label === "sessions-prod")!;
+  const FN = `arn:aws:lambda:us-east-1:${SESSIONS}:function:96bulls-aws-sessions-prod-session-pipeline`;
+  const LOGS = `arn:aws:logs:us-east-1:${SESSIONS}:log-group:/aws/lambda/96bulls-aws-sessions-prod-session-pipeline`;
+  const read = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
+    account: SESSIONS,
+    purpose: "read the indexing Lambda's configuration and logs",
+    actions: ["lambda:GetFunctionConfiguration", "lambda:ListVersionsByFunction", "lambda:ListAliases", "logs:DescribeLogStreams", "logs:GetLogEvents", "logs:FilterLogEvents"],
+    durationMinutes: 60,
+    runTag: "example-pipeline-read",
+    scope: "account",
+    resources: [FN, LOGS, `${LOGS}:*`],
+    regions: ["us-east-1"],
+    delivery: { kind: "encrypted", publicKey: Buffer.alloc(32, 9).toString("base64") },
+    ...over,
+  });
+  const d = decide(read(), agent, allowlist);
+  assert.equal(d.outcome, "approval", d.reasons.join("; "));
+  if (d.outcome !== "approval") return;
+  assert.equal(d.roleArn, `arn:aws:iam::${SESSIONS}:role/agent-broker-sessions-read`);
+  assert.match(d.reasons.join("; "), /sessions-prod is a prod account/);
+  const by = (sid: string) => d.sessionPolicy.Statement.find((s) => s.Sid === sid)!;
+  // One statement per service: the Lambda reads only on the function, the log reads only on the log group and its streams.
+  assert.deepEqual(by("ApprovedAccountWideLambda").Action, ["lambda:GetFunctionConfiguration", "lambda:ListVersionsByFunction", "lambda:ListAliases"]);
+  assert.equal(by("ApprovedAccountWideLambda").Resource, FN);
+  assert.deepEqual(by("ApprovedAccountWideLogs").Action, ["logs:DescribeLogStreams", "logs:GetLogEvents", "logs:FilterLogEvents"]);
+  assert.deepEqual(by("ApprovedAccountWideLogs").Resource, [LOGS, `${LOGS}:*`]);
+  assert.equal(by("ApprovedWithoutResourceLevelPermissions"), undefined, "none of the six actions needs \"*\"");
+  assert.deepEqual(by("DenyOutsideRegions").Condition, { StringNotEquals: { "aws:RequestedRegion": ["us-east-1"] } });
+  assert.ok(JSON.stringify(d.sessionPolicy).length <= SESSION_POLICY_MAX_CHARS);
+  // Never automatic, whoever asks and whatever the scope; another region is refused.
+  assert.equal(decide(read({ scope: undefined, resources: undefined, actions: ["logs:DescribeLogStreams"] }), agent, allowlist).outcome, "approval");
+  assert.equal(decide(read({ regions: ["us-west-2"] }), agent, allowlist).outcome, "deny");
 });
 
 test("only a human on the list approves; an agent never does, whatever its name", () => {

@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars (gitignored). No secrets here.
+# The sessions account: allowed_account_ids stops a run with the wrong profile before it changes anything.
+sessions_account_id = "<the sessions account id, from broker/allowlist.json (label sessions-prod)>"
+# From ../sandbox (output broker_role_arn): the broker role, the only principal the new role trusts.
+broker_role_arn = "arn:aws:iam::<broker account id>:role/agent-cred-broker"
+# function_name = "96bulls-aws-sessions-prod-session-pipeline"
+# profile       = "<AWS CLI profile with IAM rights and Lambda and Logs read in the sessions account>"

@@ -135,6 +135,16 @@
       "roles": {
         "elevated": "arn:aws:iam::786098391924:role/agent-broker-prod-read"
       }
+    },
+    "941433935742": {
+      "label": "sessions-prod",
+      "tier": "prod",
+      "regions": [
+        "us-east-1"
+      ],
+      "roles": {
+        "elevated": "arn:aws:iam::941433935742:role/agent-broker-sessions-read"
+      }
     }
   },
   "neverIssue": [
