@@ -1,0 +1,88 @@
+# Arm 5: relaycast workspaces as single-writer SQLite files with a synchronous
+# S3 Express commit log, no durable-actors runtime (AgentWorkforce/relaycast#717).
+# Installed next to the actors arm's release, in its namespace, with the
+# gateway pointed at the router (values/sqlite-arm.yaml). envsubst:
+#   NS, SQLITE_IMAGE (repo@digest), EXPRESS_BUCKET, AWS_REGION, SQLITE_HOSTS (replicas), SQLITE_DURABILITY
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: sqlite-host, namespace: ${NS}, labels: {purpose: relaycast-actors-bench}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: sqlite-host, namespace: ${NS}, labels: {purpose: relaycast-actors-bench}}
+spec:
+  clusterIP: None
+  selector: {app: sqlite-host}
+  ports: [{name: http, port: 8080}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: sqlite-router, namespace: ${NS}, labels: {purpose: relaycast-actors-bench}}
+spec:
+  selector: {app: sqlite-router}
+  ports: [{name: http, port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: sqlite-arm, namespace: ${NS}}
+spec:
+  podSelector: {matchExpressions: [{key: app, operator: In, values: [sqlite-host, sqlite-router]}]}
+  policyTypes: [Ingress, Egress]
+  ingress: [{from: [{namespaceSelector: {}}]}]
+  egress: [{}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: sqlite-host, namespace: ${NS}, labels: {purpose: relaycast-actors-bench}}
+spec:
+  serviceName: sqlite-host
+  replicas: ${SQLITE_HOSTS}
+  podManagementPolicy: Parallel
+  selector: {matchLabels: {app: sqlite-host}}
+  template:
+    metadata: {labels: {app: sqlite-host, purpose: relaycast-actors-bench}}
+    spec:
+      serviceAccountName: sqlite-host
+      nodeSelector: {durable-actors/role: actor-host}
+      tolerations: [{key: durable-actors/actor-host, operator: Exists, effect: NoSchedule}]
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: host
+          image: ${SQLITE_IMAGE}
+          args: [host]
+          ports: [{containerPort: 8080}]
+          envFrom: [{secretRef: {name: relaycast-actor-env}}]
+          env:
+            - {name: SQLITE_HOST_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: SQLITE_HOST_SOCKET_ORIGIN, value: "http://sqlite-router.${NS}.svc.cluster.local:8080"}
+            - {name: SQLITE_HOST_STORE, value: "s3://${EXPRESS_BUCKET}/sqlite"}
+            - {name: SQLITE_HOST_DURABILITY, value: "${SQLITE_DURABILITY}"}
+            - {name: SQLITE_HOST_GRANT_SECRET, valueFrom: {secretKeyRef: {name: relaycast-actor-env, key: RELAYCAST_FILE_SIGNING_SECRET}}}
+            - {name: AWS_REGION, value: "${AWS_REGION}"}
+          readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 2}
+          resources: {requests: {cpu: "1", memory: 1Gi}, limits: {memory: 4Gi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes: [{name: data, emptyDir: {sizeLimit: 8Gi}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sqlite-router, namespace: ${NS}, labels: {purpose: relaycast-actors-bench}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: sqlite-router}}
+  template:
+    metadata: {labels: {app: sqlite-router, purpose: relaycast-actors-bench}}
+    spec:
+      nodeSelector: {bench/role: app}
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: router
+          image: ${SQLITE_IMAGE}
+          args: [router]
+          ports: [{containerPort: 8080}]
+          env:
+            - {name: SQLITE_ROUTER_HOSTS, value: "${SQLITE_ROUTER_HOSTS}"}
+          readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 2}
+          resources: {requests: {cpu: 500m, memory: 256Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}

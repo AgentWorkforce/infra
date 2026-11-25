@@ -138,6 +138,8 @@ gen_actors_secrets() {
   put relaycast-actor-env RELAYCAST_FILE_SIGNING_SECRET <"$f/relaycast-secrets/file-signing-secret"
   put relaycast-actor-env RELAYCAST_INTERNAL_SECRET <"$f/agent-relay-secrets/relaycast-internal-secret"
   printf '20000' | put relaycast-actor-env RELAYCAST_MAILBOX_DEPTH_CAP
+  # Arm 4 (relaycast#716): settle coalescing in the Workspace actor; unset keeps it off.
+  if [[ -n "${SETTLE_FLUSH_MS:-}" ]]; then printf '%s' "$SETTLE_FLUSH_MS" | put relaycast-actor-env RELAYCAST_ACTOR_SETTLE_FLUSH_MS; fi
 }
 
 BENCH_DOMAIN="${BENCH_DOMAIN:-relaycast-bench.agentrelay.com}"

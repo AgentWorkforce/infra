@@ -1,0 +1,8 @@
+# Arm 5 (AgentWorkforce/relaycast#717): the actors gateway talks to the SQLite
+# router instead of the durable-actors control plane. Same gateway image as arm 2;
+# infra/sqlite-arm.yaml.tmpl installs the router and hosts in this namespace.
+relaycast:
+  runtime:
+    durableActors:
+      controlPlaneUrl: http://sqlite-router.arm-actors.svc.cluster.local:8080
+      socketOrigin: http://sqlite-router.arm-actors.svc.cluster.local:8080
