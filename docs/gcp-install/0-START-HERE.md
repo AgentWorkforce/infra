@@ -11,7 +11,7 @@ Numbered steps, in order. Copy each block, replace `<...>`, and check the
 **Done when** line before moving on. This takes about 1½ hours, most of it
 waiting on Google Cloud (the HTTPS certificate alone can take up to an hour).
 
-Release: **agent-relay-2026.11.16** (infra commit `ece71b9d`, chart 0.7.54).
+Release: **agent-relay-2026.11.19** (infra commit `34352d40`, chart 0.7.81).
 
 **You need:**
 
@@ -48,10 +48,10 @@ git clone https://github.com/AgentWorkforce/infra.git
 # tag predates them. Terraform and the chart come from the tag below.
 git -C infra archive origin/main docs/gcp-install | tar -x --strip-components=2
 ls 0-START-HERE.md values.yaml cloud-sql-setup.sh helm-secrets-prepare.sh first-admin.sh add-user.sh >/dev/null && echo "guide ok"
-git -C infra checkout agent-relay-2026.11.16
-test "$(git -C infra rev-parse HEAD)" = ece71b9df93df64cb63676d2a0ca2767eccc6599 && echo "release ok"
-mkdir release && gh release download agent-relay-2026.11.16 -R AgentWorkforce/infra -D release
-(cd release && sha256sum -c SHA256SUMS && tar -xzf agent-relay-0.7.54.tgz) | tail -1
+git -C infra checkout agent-relay-2026.11.19
+test "$(git -C infra rev-parse HEAD)" = 34352d40aa77750f28b5fd551a6a7240a201315a && echo "release ok"
+mkdir release && gh release download agent-relay-2026.11.19 -R AgentWorkforce/infra -D release
+(cd release && sha256sum -c SHA256SUMS && tar -xzf agent-relay-0.7.81.tgz) | tail -1
 ```
 
 **Got this guide as a gist?** Replace the `mkdir agent-relay-install ...` line
@@ -60,7 +60,7 @@ and delete the `git -C infra archive ...` line: the gist already holds the
 guide's files.
 
 No `gh`? Download the same assets from
-https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.16 into
+https://github.com/AgentWorkforce/infra/releases/tag/agent-relay-2026.11.19 into
 `release/`. On macOS use `shasum -a 256 -c SHA256SUMS`.
 
 **Installing the chart from a checkout instead of the released `.tgz`?** (A
@@ -219,7 +219,7 @@ jq 'del(.["relay-control"].extraEnv)' managed-values.json > managed-values.tmp &
 Also remove any `SELFHOST_DESKTOP_FEED_*` entries you copied into
 `values.yaml`. The service account annotations can stay. When the key is in
 place, write `managed-values.json` again (the `terraform output` line above)
-and run step 11's command. The Terraform on `main` (after the pinned release)
+and run step 11's command. The Terraform from the pinned release
 does the same with `desktop_feed_has_signing_keys = false` in
 `terraform.tfvars`: the output then leaves the storage settings out. Outputs
 change only on apply, so after adding or removing that line run
@@ -322,7 +322,7 @@ export MIRROR_ROOT=<region>-docker.pkg.dev/<project id>/agent-relay-mirror
 export NAMESPACE=agent-relay
 export HELM_RELEASE=agent-relay
 export STATIC_IP_NAME=agent-relay-ingress
-export SERVICES_IMAGE=$MIRROR_ROOT/ghcr.io/agentworkforce/sessions-pipeline@sha256:fd2efd61dca4761dfb55256aa4797cb7f61c3434cc8af4833287e0e7bb7b59a9
+export SERVICES_IMAGE=$MIRROR_ROOT/ghcr.io/agentworkforce/sessions-pipeline@sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f
 export PSQL_IMAGE=$MIRROR_ROOT/ghcr.io/cloudnative-pg/postgresql@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3
 export INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 export CHART="$INSTALL_DIR/release/agent-relay"
@@ -340,8 +340,8 @@ source settings.sh
 bash -c 'source ./settings.sh; for v in DOMAIN ORG_ID ORG_NAME ADMIN_EMAIL GCP_PROJECT_ID REGION MIRROR_ROOT CLOUD_SQL_INSTANCE CLOUD_SQL_HOST CLOUD_SQL_ADMIN_USER CLOUD_SQL_ADMIN_SECRET_ID CLOUD_SQL_CA_SHA256 SESSIONS_BUCKET; do [ -n "${!v}" ] && [ "${!v}" != null ] && [[ "${!v}" != *"<"* ]] || echo "MISSING: $v"; done; echo "settings checked"'
 ```
 
-**`SERVICES_IMAGE`, `PSQL_IMAGE` and `agent-relay-0.7.54.tgz` belong to the
-pinned release,** agent-relay-2026.11.16 (chart 0.7.54). Installing another
+**`SERVICES_IMAGE`, `PSQL_IMAGE` and `agent-relay-0.7.81.tgz` belong to the
+pinned release,** agent-relay-2026.11.19 (chart 0.7.81). Installing another
 release or chart? Don't reuse these digests: the Jobs in steps 8, 13 and 16
 would run an older services image than the workloads. Read the three values
 from that release's own assets in `release/` (step 1, with its tag):
@@ -353,7 +353,7 @@ jq -r '.images[] | select(.name == "sessions-pipeline" or .name == "sessions-mig
 
 `SERVICES_IMAGE` is `$MIRROR_ROOT/` followed by the `sessions-pipeline` ref,
 `PSQL_IMAGE` is `$MIRROR_ROOT/` followed by the `sessions-migration-postgresql`
-ref, and the `.tgz` name replaces `agent-relay-0.7.54.tgz` in steps 11, 13 and
+ref, and the `.tgz` name replaces `agent-relay-0.7.81.tgz` in steps 11, 13 and
 16.
 
 A chart from a checkout (step 1) has no release assets. Read the same two
@@ -530,12 +530,9 @@ your own way, `vals eval -f secrets.yaml` resolves the same file.
 in Secret Manager and the cluster syncs them; nothing secret passes through
 Helm).
 
-**Not with this guide's pinned release.** Option d needs the `agent-relay`
-chart 0.7.57 or later. The release this guide installs (chart 0.7.54) has no
-`externalSecrets` support: Helm would ignore the settings without an error,
-create no Secret, and the pods would never start. Use a, b or c with the
-pinned release, and option d from the first release whose chart is 0.7.57 or
-later.
+Option d needs the `agent-relay` chart 0.7.57 or later. The release this guide
+installs (chart 0.7.81) supports it. With an older chart, Helm would ignore the
+settings without an error, create no Secret, and the pods would never start.
 
 You also need [External Secrets Operator](https://external-secrets.io)
 installed in the cluster with the `external-secrets.io/v1` API. This path is
@@ -621,7 +618,7 @@ start by themselves once it does.
 ## 11. Install with Helm
 
 ```sh
-helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.54.tgz" --namespace $NAMESPACE \
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.81.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
   -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
@@ -637,7 +634,8 @@ The recommended setup puts relaygate in front of History: the history host
 goes through relaygate, the cast host stays on Relaycast
 ([relaygate](../self-hosted-relaygate.md#built-in-sessions-only)). It needs a
 release whose chart is agent-relay **0.7.77 or later**; the chart this guide
-pins (0.7.54) has no sessions-only mode, so with it skip this subsection.
+pins (0.7.81) meets that. With an older chart, which has no sessions-only
+mode, skip this subsection.
 
 1. Create the admin Secret (used once, for the session adopt):
 
@@ -693,7 +691,7 @@ done
 bash cloud-sql-setup.sh post
 kubectl -n $NAMESPACE rollout restart deploy/agent-relay-read-api deploy/agent-relay-ingest-edge deploy/agent-relay-search-indexer
 for j in $(kubectl -n $NAMESPACE get jobs -o name | grep search-indexer-bootstrap); do kubectl -n $NAMESPACE delete "$j"; done
-helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.54.tgz" --namespace $NAMESPACE \
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.81.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
   -f ~/.agent-relay-install/hoopdb-layout-values.yaml \
@@ -761,8 +759,8 @@ warning still repeats, after about 20 minutes; then send us the events.
 
 The load balancer accepts TLS 1.0 and later until it has an SSL policy. To
 require TLS 1.2, add Cloud Armor, or put Cloudflare in front, see
-[3-EDGE-HARDENING.md](3-EDGE-HARDENING.md) (from the first release with chart
-0.7.59; not the release this guide pins).
+[3-EDGE-HARDENING.md](3-EDGE-HARDENING.md) (needs chart 0.7.59 or later, which
+the release this guide pins has).
 
 ## 15. First sign-in, then add users
 
@@ -900,7 +898,7 @@ replaces the chart's default, so it holds only these two entries.
 **16d.** Apply it, with the same files and order as step 11:
 
 ```sh
-helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.54.tgz" --namespace $NAMESPACE \
+helm upgrade --install $HELM_RELEASE "$INSTALL_DIR/release/agent-relay-0.7.81.tgz" --namespace $NAMESPACE \
   -f "$CHART/values-gcp.yaml" -f "$CHART/values-gcp-native.yaml" \
   -f "$INSTALL_DIR/managed-values.json" -f "$INSTALL_DIR/values.yaml" \
   -f ~/.agent-relay-install/hoopdb-layout-values.yaml \

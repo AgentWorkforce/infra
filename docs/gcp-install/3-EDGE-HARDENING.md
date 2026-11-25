@@ -14,7 +14,7 @@ after step 14 of [0-START-HERE.md](0-START-HERE.md), in any order.
 
 | Release | TLS policy, TLS Secret (sections 1, 3 item 1) | Internal mode (section 4) | Cloud Armor (sections 2, 3) |
 | --- | --- | --- | --- |
-| agent-relay-2026.11.16 and earlier (chart 0.7.54, the one 0-START-HERE.md pins) | No: the chart ignores the keys without an error, and the Terraform has no `edge_*` inputs | No | No |
+| agent-relay-2026.11.16 and earlier (chart 0.7.54) | No: the chart ignores the keys without an error, and the Terraform has no `edge_*` inputs | No | No |
 | agent-relay-2026.11.18 (chart 0.7.63) | Yes | Yes | **No. Do not create the policy with this release's Terraform** |
 | Later than agent-relay-2026.11.18 | Yes | Yes | Yes |
 

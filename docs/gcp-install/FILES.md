@@ -1,6 +1,6 @@
 # GCP operator reference files
 
-Customer-neutral install guide for **agent-relay-2026.11.16** on an existing GKE
+Customer-neutral install guide for **agent-relay-2026.11.19** on an existing GKE
 cluster, the GCP counterpart of the AWS EKS guide. For customer setup start with [the short guide](README.md).
 For operator commands use [0-START-HERE.md](0-START-HERE.md).
 
@@ -16,7 +16,7 @@ from the foundation's Serverless VPC Access connector.
 | `2-SERVICE-ACCOUNTS.md` | Workload Identity: every grant the install needs, and who needs which roles |
 | `3-EDGE-HARDENING.md` | Optional: the load balancer's TLS policy, Cloud Armor, and Cloudflare in front |
 | `EDGE-DESKTOP-CONFIG.md` | Optional: prepare consistent edge, Desktop and signed-feed configuration |
-| `NOT-QUALIFIED.md` | What 2026.11.16 does not yet qualify on GKE. Read before a production rollout |
+| `NOT-QUALIFIED.md` | What 2026.11.19 does not yet qualify on GKE. Read before a production rollout |
 | `REGULATED-PROFILE.md` | Optional: customer-managed encryption keys (Kubernetes Secrets, Cloud SQL, bucket, Pub/Sub, Redis, disks) and Binary Authorization |
 | `images.md` | The release images and how they are mirrored |
 | `values.yaml` | Site values template (placeholders filled in step 9) |

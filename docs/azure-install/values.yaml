@@ -268,12 +268,15 @@ sessions-pipeline:
           - { name: BOB_COSTAS_MODEL, value: "off" }
     # Session analysis (optional, off): README step 13. Static keys against the
     # bundled MinIO; needs a services image that carries the runner's
-    # S3-compatible store support (the release's pinned image predates it).
+    # S3-compatible store support (agent-relay-2026.11.19's image has it; an
+    # older release's does not, so set `image` below for those).
     # sessionAnalysis:
     #   enabled: true
-    #   image:                         # this Deployment only; siblings keep worker.image
-    #     repository: ghcr.io/agentworkforce/96bulls-services
-    #     digest: sha256:__REVIEWED_SESSION_ANALYSIS_IMAGE_DIGEST__
+    #   # Optional with agent-relay-2026.11.19 (falls back to worker.image). For an
+    #   # older release, uncomment: this Deployment only; siblings keep worker.image.
+    #   # image:
+    #   #   repository: ghcr.io/agentworkforce/96bulls-services
+    #   #   digest: sha256:__REVIEWED_SESSION_ANALYSIS_IMAGE_DIGEST__
     #   run: false                     # ship dormant first; true starts claiming jobs
     #   bucket: __SESSIONS_BUCKET__
     #   bucketRegion: us-east-1        # MinIO's default region

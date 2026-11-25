@@ -1,4 +1,4 @@
-# What agent-relay-2026.11.16 does not yet qualify on GKE
+# What agent-relay-2026.11.19 does not yet qualify on GKE
 
 The steps in 0-START-HERE.md were run end to end on a private regional GKE
 cluster (Kubernetes 1.35, Workload Identity, IAP-only control plane) with the
@@ -6,7 +6,9 @@ release assets of agent-relay-2026.11.1, then again in a new Google Cloud
 project (regional GKE 1.36) on 2026.11.1. The first install was then upgraded
 through 2026.11.4 to 2026.11.6 and rechecked. These are the places where the GKE
 path differs from what the release itself qualifies. Read them before a
-production rollout. The guide's values render against agent-relay-2026.11.16;
+production rollout. The guide's values render against agent-relay-2026.11.19
+(`helm template` of chart 0.7.81 with the GCP profile files, the guide's
+`values.yaml` and the release overlay last: every image at the release digest);
 that release was not installed on GKE.
 
 1. **GCS session reads: fixed in 2026.11.6; installs upgraded from
@@ -58,11 +60,12 @@ that release was not installed on GKE.
    and upgrades are manual Helm upgrades too, with a Cloud SQL backup or
    export taken first.
 
-4. **`values-gcp.yaml` at the tag pins the previous release's images**
-   (sessions-pipeline `77022c5b`, relay-control 0.5.24). Only the release
-   overlay brings the 2026.11.16 images. Always apply
-   `release-images.values.yaml` last; without it you would install older
-   images.
+4. **`values-gcp.yaml` at the tag pins a different relay-control image from
+   the release's.** It names relay-control 0.5.35 (`1cb5bd71`); the release
+   pins `0e50e62e`. Its sessions-pipeline digest (`459104bc`) matches the
+   release. Only the release overlay brings the 2026.11.19 relay-control
+   image. Always apply `release-images.values.yaml` last; without it you would
+   install a different relay-control image from the release's.
 
 5. **Search runs in Cloud SQL, not OpenSearch.** The chart's OpenSearch
    backend signs requests with AWS SigV4 only, so the `gcp/search` Terraform
@@ -70,13 +73,13 @@ that release was not installed on GKE.
    guide uses `search.backend: postgres`. Fine for a proof of concept; search
    at large scale on GKE isn't load tested.
 
-6. **Use this guide's `cloud-sql-setup.sh`, not the tag's
-   `scripts/selfhost/cloud-sql-setup.sh`.** The tag's copy writes `HOOPDB_URL`
-   without the CA file the session-brief worker needs
-   (`sslrootcert=/etc/postgres-ca/ca.crt`, AgentWorkforce/infra#359); this
-   guide's copy adds it. (The two defects fixed by AgentWorkforce/infra#276,
-   the `admin_password_secret_id` 404 and the CA bundle's extra trailing
-   newline, are fixed in both copies.)
+6. **Use this guide's `cloud-sql-setup.sh`.** At 2026.11.19 it is identical to
+   the tag's `scripts/selfhost/cloud-sql-setup.sh`: both write `HOOPDB_URL` with
+   the CA file the session-brief worker needs
+   (`sslrootcert=/etc/postgres-ca/ca.crt`, AgentWorkforce/infra#359). Tags before
+   that fix lack it, so with an older tag use this guide's copy. (The two
+   defects fixed by AgentWorkforce/infra#276, the `admin_password_secret_id` 404
+   and the CA bundle's extra trailing newline, are fixed in both copies.)
 
    It also refuses to rerun `pre` after `post` (by design: nothing changes).
 
@@ -87,7 +90,7 @@ that release was not installed on GKE.
 8. **Not HA.** Relay control, the dashboard, Relaycast (PostgreSQL backend)
    and the search indexer each run one replica, as on EKS.
 
-9. **Release notes.** The GitHub release notes for agent-relay-2026.11.16, with
+9. **Release notes.** The GitHub release notes for agent-relay-2026.11.19, with
    `docs/releases/agent-relay-2026.11.5.md` and the 2026.11.2 notes before it,
    describe the changes; the published GitHub release and its signed assets
    are final.
@@ -98,9 +101,11 @@ that release was not installed on GKE.
    this install (the upload path was proven with the e2e driver).
 
 11. **Desktop builds for a GKE install update themselves only from relay-control
-   0.5.25.** agent-relay-2026.11.16 pins relay-control 0.5.34. From 0.5.25
-   relay-control stores the signed desktop feed in a GCS bucket
-   (`desktop_feed_bucket_name`, step 4) and signs it with a key file
+   0.5.25.** agent-relay-2026.11.19 pins relay-control at source revision
+   `707fe5cd` (`releases/agent-relay-2026.11.19/pins.json`), 97 commits after
+   `b985c6f6`, the 0.5.35 build in `self-hosted/customer-images.yaml`, so it is
+   past 0.5.25. From 0.5.25 relay-control stores the signed desktop feed in a
+   GCS bucket (`desktop_feed_bucket_name`, step 4) and signs it with a key file
    (`relay-control.desktopFeed.signingKeys`). On a release that pins an older
    relay-control, a newer desktop version means installing the new build over
    the old one.
