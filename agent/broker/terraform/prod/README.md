@@ -107,7 +107,8 @@ this root does not need the mode changed.
    host still runs the old `agent/broker.ref`, so nothing is issued yet.
 2. On the owner's approval, `layered-infra-ops` applies this root (below).
    The role and its access entry then exist.
-3. `layered-infra-ops` applies `../sandbox` from `main`, plan first: the
+3. On Khaliq's own OK (an IAM change), `layered-infra-ops` applies
+   `../sandbox` from `main`, plan first: the
    broker role's `vend-agent-sessions` policy must list the new role in its
    `sts:AssumeRole` targets (an in-place update). That root has to carry the
    role's ARN before this step. It reads both prod roles (`roles.elevated`
