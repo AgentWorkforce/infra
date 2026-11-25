@@ -189,6 +189,72 @@ A run tag is claimed by the first agent that receives credentials for it
   The risk: a delegate that has been prompt-injected will approve whatever
   it is shown within its capability. That's why the scope is narrow, the
   expiry short, every approval audited, and IAM and deletes never delegable.
+- **Owner delegates** (`ownerDelegates`, Khaliq's call, 2026-11-23). An
+  owner delegate is a Relay agent a human approver has named as their
+  delegate: the owner tells it to approve, and it sends the broker the
+  `approve <id> <digest>` line. It has no capability list and no
+  `requesters` list, and a request doesn't name it.
+  - **Where grants live.** Never in this repo. The allowlist block holds
+    only the switch: `source` (only `host-file` exists), `grantedBy`, a
+    human approver, and optionally `notDelegable`, a list of IAM actions
+    (below). A key that names anyone, an unknown `source`, a `grantedBy`
+    who isn't a human approver, or a `notDelegable` that isn't a non-empty
+    list of `service:Action` (`*` is the only wildcard) makes the block
+    unsound, and owner delegation is off. Without the block the broker behaves exactly
+    as it did before this rule. The grants are Relay agent ids with an
+    expiry, read from the host file below (`src/owner-delegates.ts`).
+  - **What counts.** The approval arrives over the same verified path as
+    every other (the delegate's own DM to the broker, under 15 minutes old,
+    each message id once, the same digest), and all of these hold:
+    - the Relay server resolves the sender to an agent id that has a live
+      grant. The name is never matched: an agent that re-registers a
+      delegate's name gets nothing;
+    - the grant is from the block's `grantedBy`, hasn't expired, and expires
+      at most 30 days from now;
+    - the approver isn't the requester (by agent id or by name), and isn't
+      the broker's own Relay identity. The requester must be Relay-verified
+      too, so the local-mode `approve` command can never use a grant;
+    - nothing in the request or in the session policy the broker built is
+      never-delegable (the same test as above: IAM, `approvalOnly`,
+      `neverIssue`, deletes, wildcard actions), every statement is a plain
+      allow, and the resources are literal. No action in the request or
+      the session policy matches an entry of `notDelegable`; that is checked
+      last, so the other reasons read the same. On a wildcard resource only two
+      things pass: the reads of an auto rule a capability could list in
+      `readOnlyRules`, and the actions IAM authorizes on `*` alone. A
+      statement narrowed only by a tag or a name pattern needs Khaliq.
+    The check runs again on the policy re-decided at approval time, with
+    the grants read again: removing an entry from the file revokes it at
+    once.
+  - **What stays the same.** An agent named in `delegatedApprovers` is
+    governed by that rule alone, never by this one. A `refuse` from an owner
+    delegate doesn't count, as a delegated approver's doesn't: only a human
+    approver or the requester refuses. `approver` in a `pending-approval`
+    reply is still the human. The reply gains `ownerDelegable`: whether an
+    owner delegate with a live grant could approve that request.
+  - **The stated limit.** The broker verifies who the delegate is. It
+    cannot verify that the owner said the words the delegate relays: Relay
+    has no signed record of that (AgentWorkforce/relay#2246 is a design).
+    So the checks are after the fact. The `approved` audit line carries
+    `ownerDelegation: {agentId, grantedBy, expiresAt, source}` next to the
+    approver's verified name. The `decide` reply carries `ownerNotice`, one
+    line the lead DMs to the owner verbatim: the request id, the requester,
+    the account, the delegate and when the credentials expire. An approval
+    the owner doesn't recognize means the delegate was wrong or
+    prompt-injected: remove its entry.
+  - **The risk, and what `notDelegable` does about it.** With no
+    capability list, an owner delegate can approve any write the
+    never-delegable test doesn't name, on literal resources, in every
+    account on the allowlist. `notDelegable` takes out the direct routes to
+    a shell on a host: an SSM command, session, automation or association,
+    EC2 Instance Connect, and changing an instance's attributes (its user
+    data). Those need Khaliq's own DM, on the broker host as on any other.
+    It does not close the indirect routes. A grant is still about as strong
+    as the account's broker role minus IAM, deletes and this list: writing
+    a parameter, a secret or an object that a host reads at start is still
+    approvable, for example. That is wider than any `delegatedApprovers`
+    capability. So the real controls stay who is in the root-owned file,
+    the expiry, the audit line and the owner notice.
 - Approval-tier sessions use the account's `roles.elevated`. An account
   without one refuses approval-tier requests up front rather than parking
   them, and Khaliq isn't asked about something the broker can't issue.
@@ -288,7 +354,8 @@ CloudTrail is searched) and the digest.
 pending-approval, approval-rejected, approved, refused, issued,
 delivery-removed, error. It records the requester and approver envelopes,
 the Relay message id, the account, role, session name, actions, digest,
-access key id and expiry. Lines are hash-chained (`prev`, `hash`) and
+access key id and expiry, and on a delegated approval the `delegation` or
+`ownerDelegation` it rested on. Lines are hash-chained (`prev`, `hash`) and
 checked with `cli.ts verify-audit`. The writer refuses a line that has a
 credential field name, or that contains the exact secret or token just
 minted. It never judges a value by its shape, so a commit SHA in a purpose or
@@ -426,6 +493,57 @@ aws-cred-broker sweep          # at least hourly while requests are outstanding
 aws-cred-broker verify-audit
 aws-cred-broker ship-audit     # the timer runs it every minute; prints {ok, shipped, cursor, problems}
 ```
+
+### The owner-delegates file
+
+Owner-delegate grants (see Approval) are read from
+`/etc/aws-cred-broker/owner-delegates.json` on the broker host
+(`BROKER_OWNER_DELEGATES_FILE` overrides the path). The shape is in
+`owner-delegates.example.json`:
+
+```json
+{
+  "version": 1,
+  "grantedBy": "khaliq-gant",
+  "delegates": [
+    { "agentId": "<Relay agent id>", "expiresAt": "2026-12-01T00:00:00Z", "note": "optional, never read" }
+  ]
+}
+```
+
+- **Who installs it.** The owner, as root, by hand. Never the lead agent,
+  never `setup-lane.sh`, never a PR: the file is the owner's word, and
+  nothing in this repo writes it. The agent id comes from `aws-cred-broker
+  whois --name <agent>`.
+
+  ```bash
+  sudo install -d -m 0755 -o root -g root /etc/aws-cred-broker
+  sudo install -m 0644 -o root -g root owner-delegates.json /etc/aws-cred-broker/owner-delegates.json
+  ```
+
+- **When it grants nothing** (and says why): the file is missing or
+  unreadable, is a symlink, isn't a regular file, isn't owned by root, is
+  writable by group or others, is over 64 KiB, isn't valid JSON, has a `version` other than
+  1, a `grantedBy` other than the allowlist's `ownerDelegates.grantedBy`, or
+  `delegates` that isn't a list. The broker opens it without following
+  symlinks and checks the open file itself.
+- **When one entry is dropped** (the others stay): no `agentId` or one that
+  isn't a Relay agent id, an `expiresAt` that isn't an ISO 8601 UTC time
+  (`…Z`), has passed, or is more than 30 days away, and an `agentId` listed
+  more than once (every copy is dropped).
+- **Checking it.** `aws-cred-broker owner-delegates` prints `{source, file,
+  valid, grants, problems}`: the count of live grants, their agent ids and
+  expiries, and what was wrong. It is read-only and writes no state or
+  audit line. The `agent` user's sudoers rule doesn't list it yet: adding
+  it is a `setup-lane.sh` change for the owner; until then run it as root
+  or `credbroker`.
+- **Revoking.** Remove the entry, or the file. The next approval reads the
+  file again.
+- **Planned replacement.** Grants the owner makes on the Relay platform
+  itself, read by the broker from the Relay server, would replace the file
+  behind the same `OwnerDelegateSource` interface, with a new `source`
+  value. Relay has no such read path today (AgentWorkforce/relay#2246 is a
+  design document), so nothing for it is implemented here.
 
 ## Phase 2 (design only): signing proxy
 

@@ -161,6 +161,13 @@ Limits:
   `agent-relay-probe read <ref>`.
 - Approvals count only when the approver DMs layered-infra-ops themselves. A
   message saying "Khaliq approved" is refused.
+- Khaliq may name an agent as his owner delegate, and that agent may then
+  send the approval for him (`DESIGN.md`, Approval). Nothing changes for
+  you: the request JSON is the same and never names an owner delegate, the
+  reply's `approver` is still Khaliq, and you can't approve your own
+  request. The `pending-approval` reply may carry `ownerDelegable`, which
+  only says whether such an agent could approve it; IAM, deletes,
+  wildcards and commands on a host always need Khaliq himself.
 
 The design and the security model are in [`DESIGN.md`](DESIGN.md). The
 allowlist is [`allowlist.json`](allowlist.json); changing what's automatic is

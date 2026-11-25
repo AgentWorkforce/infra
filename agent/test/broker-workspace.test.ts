@@ -102,6 +102,8 @@ test("anything outside the capability still goes to Khaliq, with the reason", as
     [{ resources: [TOKEN_SECRET] }, /outside it/],
     [{ actions: ["ssm:SendCommand"], resources: [OTHER_HOST, SHELL_DOC] }, /outside it/],
     [{ actions: ["secretsmanager:DeleteSecret"] }, /deletes/],
+    // In any letter case: IAM ignores an action's case, and so does the deletes limit.
+    [{ actions: ["secretsmanager:deletesecret"] }, /secretsmanager:deletesecret deletes(;|$)/],
     [{ actions: ["iam:PassRole"] }, /IAM/],
     [{ regions: ["us-west-2"] }, /regions us-west-2 are not in it/],
     [{ resources: [`arn:aws:secretsmanager:us-east-1:${HOSTS}:secret:neon-exit/*`] }, /wildcard/],

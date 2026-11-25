@@ -5,6 +5,21 @@
   "humanApprovers": [
     "khaliq-gant"
   ],
+  "ownerDelegates": {
+    "$comment": "Switches on approval by an owner delegate: a Relay agent grantedBy has named as their delegate. Who the delegates are never goes in this file or this repo: grants (Relay agent ids, each with an expiry) are read from source, a root-owned file on the broker host that only the owner installs. No grant file, no delegate. Never approvable by an owner delegate: IAM, identity and audit controls, never-issue actions, deletes, wildcard actions or resources, its own request, and the actions in notDelegable (commands on a host are never approvable by an owner delegate). Every such approval is audited and reported to the owner. See broker/DESIGN.md.",
+    "source": "host-file",
+    "grantedBy": "khaliq-gant",
+    "notDelegable": [
+      "ssm:SendCommand",
+      "ssm:StartSession",
+      "ssm:ResumeSession",
+      "ssm:StartAutomationExecution",
+      "ssm:CreateAssociation",
+      "ssm:UpdateAssociation",
+      "ec2-instance-connect:*",
+      "ec2:ModifyInstanceAttribute"
+    ]
+  },
   "delegatedApprovers": [
     {
       "$comment": "A standing delegation: this agent may approve requests that name it as delegate and fall entirely inside one capability, until expiresAt. Never delegable whatever is listed here: IAM, identity and audit controls, never-issue actions, deletes, wildcard actions or resources, accounts not on this allowlist. Every delegated approval is audited with the delegate, request id, digest and capability. See broker/DESIGN.md.",

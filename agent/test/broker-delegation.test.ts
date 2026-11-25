@@ -320,6 +320,35 @@ test("wildcards, IAM and deletes are never delegable", async () => {
   assert.ok(!grantCovers({ id: "s", actions: [], secretPrefixes: ["neon-exit/"] }, `arn:aws:secretsmanager:us-east-1:${HOSTS}:secret:neon-exit/*`, HOSTS, "us-east-1"));
 });
 
+test("letter case never gets a delete past a delegated approver: not in a request, and not in a capability's grant", async () => {
+  // IAM ignores the case of an action name, so the deletes limit does too.
+  const cases: [Partial<CredentialRequest>, string][] = [
+    [{ actions: ["secretsmanager:deletesecret"] }, "secretsmanager:deletesecret deletes, never delegable"],
+    [{ actions: ["secretsmanager:GetSecretValue", "secretsmanager:DELETESECRET"] }, "secretsmanager:DELETESECRET deletes, never delegable"],
+    [{ actions: ["ec2:TERMINATEINSTANCES"], resources: [INSTANCE] }, "ec2:TERMINATEINSTANCES deletes, never delegable"],
+  ];
+  for (const [over, why] of cases) {
+    const { broker, calls } = setup();
+    const { text } = await pend(broker, secretsReq(over));
+    const d = await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER);
+    assert.equal(d.outcome, "error", JSON.stringify(over));
+    assert.ok(d.reasons[0]!.includes(`: ${why}; `), `${JSON.stringify(over)}: ${d.reasons[0]}`);
+    assert.equal(calls.length, 0);
+  }
+  // A grant that lists a delete in another case is as unsound as one in IAM's own spelling: the config is
+  // refused, so the delegate can't approve the delete the grant would otherwise cover.
+  const cap = allowlist.delegatedApprovers![0]!.capabilities[0]!;
+  const bad = withDelegate({ capabilities: [{ ...cap, grants: [...cap.grants, { id: "lowercase-delete", actions: ["secretsmanager:deletesecret"], secretPrefixes: ["neon-exit/"] }] }] });
+  assert.match(delegationConfigProblems(bad).join("; "), /grant lowercase-delete: secretsmanager:deletesecret deletes, never delegable/);
+  for (const action of ["secretsmanager:deletesecret", "secretsmanager:DeleteSecret"]) {
+    const { broker, calls } = setup(bad);
+    const { text } = await pend(broker, secretsReq({ actions: [action], resources: [SECRET] }));
+    const d = await broker.decideViaRelay(fakeRelay([msg("1000002", DELEGATE, text)]), "1000002", BROKER);
+    assert.equal(d.outcome, "error", action);
+    assert.equal(calls.length, 0, action);
+  }
+});
+
 test("a replayed approval message id is refused", async () => {
   const { broker, calls } = setup();
   const first = await pend(broker, secretsReq());
