@@ -34,7 +34,12 @@ export interface AccountPolicy {
   label: string;
   tier: "sandbox" | "prod";
   regions?: string[];
-  roles: { scoped?: string; elevated?: string };
+  /**
+   * scoped: automatic sandbox sessions. elevated: every approval-tier request.
+   * edgeDns: approval-tier requests that name "profile": "edge-dns" and fall
+   * entirely inside EDGE_DNS_PROFILE (agentrelay-prod only; terraform/prod).
+   */
+  roles: { scoped?: string; elevated?: string; edgeDns?: string };
 }
 
 export interface Allowlist {
@@ -198,6 +203,12 @@ export interface CredentialRequest {
   delivery: Delivery;
   /** A delegated approver (allowlist delegatedApprovers) the requester asks to approve this instead of Khaliq. */
   delegate?: string;
+  /**
+   * A named target-role profile (ROLE_PROFILES), e.g. "edge-dns". Asked for
+   * explicitly, never inferred from the actions. The request must then fall
+   * entirely inside the profile, or it is refused; it is still approval-only.
+   */
+  profile?: string;
 }
 
 export type Delivery = { kind: "file" } | { kind: "1password"; vault: string } | { kind: "encrypted"; publicKey: string };
@@ -311,7 +322,106 @@ export function validate(req: CredentialRequest, list: Allowlist): string[] {
   else if (del.kind === "1password" && (typeof del.vault !== "string" || !/^[\w .-]{1,64}$/.test(del.vault))) problems.push("delivery.vault must name a 1Password vault");
   else if (del.kind === "encrypted" && !isPublicKey((del as { publicKey?: unknown }).publicKey)) problems.push("delivery.publicKey must be a base64 32-byte X25519 key (client.ts keygen)");
   if (req.delegate !== undefined && (typeof req.delegate !== "string" || !(list.delegatedApprovers ?? []).some((d) => d.agent === req.delegate))) problems.push(`delegate ${JSON.stringify(req.delegate)} is not a delegated approver on the allowlist`);
+  if (req.profile !== undefined && (typeof req.profile !== "string" || !Object.hasOwn(ROLE_PROFILES, req.profile))) problems.push(`profile ${JSON.stringify(req.profile)} is not a known profile (${Object.keys(ROLE_PROFILES).join(", ")})`);
   return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Target-role profiles
+
+/** One profile grant: these actions, on exactly these resources ("*" only for actions IAM authorizes on "*" alone). */
+export interface ProfileGrant {
+  actions: string[];
+  resources: string[];
+}
+
+/**
+ * A narrow, purpose-built target role in one account, used instead of
+ * roles.elevated for requests that name it with "profile". The request must
+ * be entirely inside it (account, exact regions, scope account, actions,
+ * resources) or it is refused: never a silent fallback to the elevated role.
+ * Outcome is always approval. The role's own identity policy holds the same
+ * grants (terraform/prod tests pin both sides).
+ */
+export interface RoleProfile {
+  id: string;
+  account: string;
+  /** The request's regions must be exactly these. */
+  regions: string[];
+  /** The account's roles key holding the profile's role ARN. */
+  roleKey: "edgeDns";
+  grants: ProfileGrant[];
+}
+
+const EDGE_DNS_BUCKET = "arn:aws:s3:::agentrelay-prod-tfstate-786098391924";
+const EDGE_DNS_STATE = `${EDGE_DNS_BUCKET}/786098391924/us-west-2/prod/edge-dns/terraform.tfstate`;
+const EDGE_DNS_LOCK = `${EDGE_DNS_STATE}.tflock`;
+
+/**
+ * The agentrelay-edge-dns Terraform root in prod (enterprise-onboarding,
+ * environments/agentrelay-edge-dns, prod.backend.hcl): its state and S3
+ * lockfile, the state's KMS key, the load balancer lookups (data.aws_lb by
+ * tags) and its one ACM certificate. Role: terraform/prod agent-broker-prod-edge-dns.
+ */
+export const EDGE_DNS_PROFILE: RoleProfile = {
+  id: "edge-dns",
+  account: "786098391924",
+  regions: ["us-west-2"],
+  roleKey: "edgeDns",
+  grants: [
+    { actions: ["s3:GetObject", "s3:PutObject"], resources: [EDGE_DNS_STATE, EDGE_DNS_LOCK] },
+    // Terraform deletes the lockfile on unlock; never the state.
+    { actions: ["s3:DeleteObject"], resources: [EDGE_DNS_LOCK] },
+    // The role narrows this to the S3 backend's one listing (prefix env:/).
+    { actions: ["s3:ListBucket"], resources: [EDGE_DNS_BUCKET] },
+    // The role adds kms:ViaService s3.us-west-2.amazonaws.com.
+    { actions: ["kms:Decrypt", "kms:GenerateDataKey"], resources: ["arn:aws:kms:us-west-2:786098391924:key/717fa644-8436-4042-abfa-0ddaa9b696c9"] },
+    // ELBv2 Describe actions have no resource-level permissions: "*" only, in their own statement.
+    { actions: ["elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeLoadBalancerAttributes"], resources: ["*"] },
+    { actions: ["acm:DescribeCertificate", "acm:ListTagsForCertificate"], resources: ["arn:aws:acm:us-west-2:786098391924:certificate/4a0284eb-d27f-4aaa-8185-0cc2dd87cac0"] },
+  ],
+};
+
+export const ROLE_PROFILES: Record<string, RoleProfile> = { [EDGE_DNS_PROFILE.id]: EDGE_DNS_PROFILE };
+
+const ROLE_ARN_RE = /^arn:aws:iam::(\d{12}):role\/[\w+=,.@/-]+$/;
+
+/** The profile's grants for an action (case-insensitive, like IAM). */
+function profileGrantsFor(profile: RoleProfile, action: string): ProfileGrant[] {
+  return profile.grants.filter((g) => g.actions.some((a) => a.toLowerCase() === action.toLowerCase()));
+}
+
+/** Actions the profile grants only on "*". */
+function profileWildcardOnly(profile: RoleProfile, action: string): boolean {
+  const gs = profileGrantsFor(profile, action);
+  return gs.length > 0 && gs.every((g) => g.resources.length === 1 && g.resources[0] === "*");
+}
+
+/**
+ * Why this request doesn't fit the profile it names (empty: it fits), and the
+ * profile's role. Every check, so the requester sees all of them at once.
+ */
+export function profileProblems(req: CredentialRequest, profile: RoleProfile, list: Allowlist): { problems: string[]; roleArn?: string } {
+  const problems: string[] = [];
+  const no = (m: string) => problems.push(`profile ${profile.id}: ${m}`);
+  const account = list.accounts[String(req.account)];
+  if (String(req.account) !== profile.account) no(`only in account ${profile.account}, not ${req.account}`);
+  const roleArn = account?.roles[profile.roleKey];
+  const m = typeof roleArn === "string" ? ROLE_ARN_RE.exec(roleArn) : null;
+  if (String(req.account) === profile.account && (!m || m[1] !== profile.account)) no(`roles.${profile.roleKey} for ${profile.account} is missing or not an exact role ARN in that account`);
+  if (!req.regions || req.regions.length !== profile.regions.length || profile.regions.some((r) => !req.regions!.includes(r))) no(`regions must be exactly ${profile.regions.join(", ")}`);
+  if (req.scope !== "account") no(`scope must be "account"`);
+  if (req.delegate !== undefined) no("a delegate can't approve a profile request");
+  for (const a of req.actions) if (!profileGrantsFor(profile, a).length) no(`${a} is not in it`);
+  const resources = req.resources ?? [];
+  const allowedFor = (a: string) => profileGrantsFor(profile, a).flatMap((g) => g.resources);
+  const named = req.actions.filter((a) => profileGrantsFor(profile, a).length && !profileWildcardOnly(profile, a));
+  for (const r of resources) {
+    if (!profile.grants.some((g) => g.resources.includes(r))) no(`resource ${r} is not in it`);
+    else if (!named.some((a) => allowedFor(a).includes(r))) no(`resource ${r} is not used by any requested action`);
+  }
+  for (const a of named) if (!resources.some((r) => allowedFor(a).includes(r))) no(`${a} needs one of its resources: ${allowedFor(a).join(", ")}`);
+  return { problems, ...(m && m[1] === profile.account ? { roleArn: roleArn! } : {}) };
 }
 
 function regionsFor(req: CredentialRequest, account: AccountPolicy): { regions?: string[]; problem?: string } {
@@ -547,8 +657,11 @@ function accountWideStatements(actions: string[], resources: string[]): PolicySt
 function approvalStatements(req: CredentialRequest, list: Allowlist, namespace: string): PolicyStatement[] {
   const resources = req.resources?.length ? req.resources : ["*"];
   if (req.scope === "account") {
-    const wildcardOnly = req.actions.filter(isResourceWildcardOnly);
-    const named = req.actions.filter((a) => !isResourceWildcardOnly(a));
+    // A profile's "*"-only actions (ELB Describe for edge-dns) get their own "*" statement too.
+    const profile = req.profile !== undefined ? ROLE_PROFILES[req.profile] : undefined;
+    const isWildcard = (a: string) => isResourceWildcardOnly(a) || (profile !== undefined && profileWildcardOnly(profile, a));
+    const wildcardOnly = req.actions.filter(isWildcard);
+    const named = req.actions.filter((a) => !isWildcard(a));
     return [
       ...(named.length ? accountWideStatements(named, resources) : []),
       ...(wildcardOnly.length ? [statement("approved-without-resource-level-permissions", wildcardOnly, ["*"], undefined)] : []),
@@ -582,7 +695,16 @@ export function decide(req: CredentialRequest, requester: Principal, list: Allow
   if (problem) return { outcome: "deny", reasons: [problem] };
   const durationSeconds = req.durationMinutes * 60;
 
+  // A named profile: the request fits it entirely, or it is refused (never the elevated role instead).
+  let profileRole: string | undefined;
+  if (req.profile !== undefined) {
+    const fit = profileProblems(req, ROLE_PROFILES[req.profile]!, list);
+    if (fit.problems.length || !fit.roleArn) return { outcome: "deny", reasons: fit.problems.length ? fit.problems : [`profile ${req.profile}: no role`] };
+    profileRole = fit.roleArn;
+  }
+
   const needs: string[] = [];
+  if (profileRole) needs.push(`profile ${req.profile}: owner approval per request, on ${profileRole}`);
   if (account.tier !== "sandbox") needs.push(`${account.label} is a ${account.tier} account`);
   for (const a of req.actions) {
     if (a.includes("*")) needs.push(`${a} is a wildcard`);
@@ -599,6 +721,7 @@ export function decide(req: CredentialRequest, requester: Principal, list: Allow
   }
   for (const a of auto.unmatched) if (!a.includes("*") && !list.approvalOnly.some((p) => globsIntersect(a, p))) needs.push(`${a} is not on the auto allowlist`);
 
+  // A profile request always has a need (above), so it never takes the automatic path.
   if (needs.length === 0 && account.roles.scoped) {
     const policy: SessionPolicy = { Version: "2012-10-17", Statement: [...auto.statements, ...guardStatements(list.tagKey, req.runTag, namespace, auto.statements), ...regionStatement(regions)] };
     const size = JSON.stringify(policy).length;
@@ -606,12 +729,13 @@ export function decide(req: CredentialRequest, requester: Principal, list: Allow
     return { outcome: "auto", roleArn: account.roles.scoped, sessionPolicy: policy, durationSeconds, reasons: [`${account.label}: allowlisted actions on run tag ${req.runTag}`] };
   }
   if (needs.length === 0) needs.push(`${account.label} has no scoped role for automatic issue`);
-  if (!account.roles.elevated) return { outcome: "deny", reasons: [...needs, `${account.label} has no approval-tier role configured, so this cannot be issued even with approval`] };
+  const approvalRole = profileRole ?? account.roles.elevated;
+  if (!approvalRole) return { outcome: "deny", reasons: [...needs, `${account.label} has no approval-tier role configured, so this cannot be issued even with approval`] };
   const allows = approvalStatements(req, list, namespace);
   const policy: SessionPolicy = { Version: "2012-10-17", Statement: [...allows, ...guardStatements(list.tagKey, req.runTag, namespace, allows), ...regionStatement(regions), ...delegateGuards(req, list)] };
   const size = JSON.stringify(policy).length;
   if (size > SESSION_POLICY_MAX_CHARS) return { outcome: "deny", reasons: [`session policy is ${size} characters, over AWS's ${SESSION_POLICY_MAX_CHARS}: split the request`] };
-  return { outcome: "approval", roleArn: account.roles.elevated, sessionPolicy: policy, durationSeconds, reasons: needs };
+  return { outcome: "approval", roleArn: approvalRole, sessionPolicy: policy, durationSeconds, reasons: needs };
 }
 
 /** A new run namespace: "<runTag>-<8 random hex>". */
@@ -882,6 +1006,8 @@ export function checkWorkspaceAuto(p: { request: CredentialRequest; requester: P
   if (p.requester.kind !== "agent") return no("only workspace agents get credentials without approval");
   const req = p.request;
   if (req.delegate) return no("the request names a delegate");
+  // A profile's role is approval-only, whatever a capability says.
+  if (req.profile !== undefined) return no(`the request names profile ${JSON.stringify(req.profile)}, which is always approved per request`);
   if (p.runTagOwner && p.runTagOwner !== p.requester.name) return no(`run tag ${req.runTag} belongs to ${p.runTagOwner}`);
   for (const a of req.actions) {
     const why = neverDelegable(a, list);

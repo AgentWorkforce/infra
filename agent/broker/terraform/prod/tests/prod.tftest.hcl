@@ -106,6 +106,14 @@ run "matches_the_broker_allowlist" {
     error_message = "the allowlist's role for the prod account is the one this creates"
   }
   assert {
+    condition     = "arn:aws:iam::${var.prod_account_id}:role/${output.edge_dns_role_name}" == jsondecode(file("${path.module}/../../allowlist.json")).accounts[var.prod_account_id].roles.edgeDns
+    error_message = "the allowlist's edge-dns role for the prod account is the one this creates"
+  }
+  assert {
+    condition     = strcontains(file("${path.module}/../../src/policy.ts"), "key/${var.edge_dns_state_kms_key_id}") && strcontains(file("${path.module}/../../src/policy.ts"), "certificate/${var.edge_dns_certificate_id}")
+    error_message = "the broker's edge-dns profile names the same state key and certificate as this role"
+  }
+  assert {
     condition     = jsondecode(file("${path.module}/../../allowlist.json")).accounts[var.prod_account_id].regions == [var.region]
     error_message = "the allowlist's one region is the cluster's"
   }
@@ -133,6 +141,107 @@ run "matches_the_broker_allowlist" {
   }
 }
 
+run "edge_dns_role_has_the_same_trust_and_a_1h_cap" {
+  command = plan
+  assert {
+    condition     = aws_iam_role.edge_dns.assume_role_policy == aws_iam_role.read.assume_role_policy && aws_iam_role.edge_dns.assume_role_policy == jsonencode(output.trust_policy)
+    error_message = "the edge-dns role trusts exactly what the read role trusts: the broker, with its tags and a source identity"
+  }
+  assert {
+    condition     = aws_iam_role.edge_dns.name == "agent-broker-prod-edge-dns" && aws_iam_role.edge_dns.max_session_duration == 3600
+    error_message = "agent-broker-prod-edge-dns, 1 h cap"
+  }
+  assert {
+    condition     = !strcontains(file("${path.module}/main.tf"), "aws_eks_access_entry\" \"edge_dns")
+    error_message = "the edge-dns role is no Kubernetes principal"
+  }
+}
+
+run "edge_dns_policy_is_exactly_the_state_the_load_balancer_lookups_and_one_certificate" {
+  command = plan
+  variables {
+    prod_account_id = "786098391924"
+  }
+  assert {
+    condition = output.edge_dns_permissions_policy == {
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Sid      = "EdgeDnsStateReadWrite"
+          Effect   = "Allow"
+          Action   = ["s3:GetObject", "s3:PutObject"]
+          Resource = ["arn:aws:s3:::agentrelay-prod-tfstate-786098391924/786098391924/us-west-2/prod/edge-dns/terraform.tfstate", "arn:aws:s3:::agentrelay-prod-tfstate-786098391924/786098391924/us-west-2/prod/edge-dns/terraform.tfstate.tflock"]
+        },
+        {
+          Sid      = "EdgeDnsReleaseLock"
+          Effect   = "Allow"
+          Action   = ["s3:DeleteObject"]
+          Resource = ["arn:aws:s3:::agentrelay-prod-tfstate-786098391924/786098391924/us-west-2/prod/edge-dns/terraform.tfstate.tflock"]
+        },
+        {
+          Sid       = "EdgeDnsListWorkspaces"
+          Effect    = "Allow"
+          Action    = ["s3:ListBucket"]
+          Resource  = ["arn:aws:s3:::agentrelay-prod-tfstate-786098391924"]
+          Condition = { StringEquals = { "s3:prefix" = ["env:/"] } }
+        },
+        {
+          Sid       = "EdgeDnsStateKeyViaS3"
+          Effect    = "Allow"
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+          Resource  = ["arn:aws:kms:us-west-2:786098391924:key/717fa644-8436-4042-abfa-0ddaa9b696c9"]
+          Condition = { StringEquals = { "kms:ViaService" = "s3.us-west-2.amazonaws.com" } }
+        },
+        {
+          Sid      = "EdgeDnsFindLoadBalancers"
+          Effect   = "Allow"
+          Action   = ["elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeLoadBalancerAttributes"]
+          Resource = ["*"]
+        },
+        {
+          Sid      = "EdgeDnsReadCertificate"
+          Effect   = "Allow"
+          Action   = ["acm:DescribeCertificate", "acm:ListTagsForCertificate"]
+          Resource = ["arn:aws:acm:us-west-2:786098391924:certificate/4a0284eb-d27f-4aaa-8185-0cc2dd87cac0"]
+        },
+      ]
+    }
+    error_message = "the edge-dns role's policy is pinned: exactly these actions on exactly these resources"
+  }
+  assert {
+    condition     = aws_iam_role_policy.edge_dns.policy == jsonencode(output.edge_dns_permissions_policy)
+    error_message = "the inline policy is the pinned one"
+  }
+}
+
+run "edge_dns_policy_never_widens" {
+  command = plan
+  assert {
+    condition     = alltrue([for s in output.edge_dns_permissions_policy.Statement : s.Effect == "Allow" && !contains(keys(s), "NotAction") && !contains(keys(s), "NotResource")])
+    error_message = "plain allows only"
+  }
+  assert {
+    condition     = alltrue([for s in output.edge_dns_permissions_policy.Statement : alltrue([for a in s.Action : !strcontains(a, "*") && contains(["s3", "kms", "elasticloadbalancing", "acm"], split(":", a)[0])])])
+    error_message = "no wildcard action, and no service but S3, KMS, ELB and ACM (no EKS, IAM, Route 53)"
+  }
+  assert {
+    condition     = alltrue([for s in output.edge_dns_permissions_policy.Statement : s.Resource == ["*"] if anytrue([for r in s.Resource : strcontains(r, "*")])]) && one([for s in output.edge_dns_permissions_policy.Statement : s.Action if s.Resource == ["*"]]) == ["elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeLoadBalancerAttributes"]
+    error_message = "the only wildcard resource is \"*\", for the ELB Describe actions alone (no resource-level permissions)"
+  }
+  assert {
+    condition     = one([for s in output.edge_dns_permissions_policy.Statement : s.Resource if contains(s.Action, "s3:DeleteObject")]) == ["arn:aws:s3:::agentrelay-prod-tfstate-${var.prod_account_id}/${var.prod_account_id}/us-west-2/prod/edge-dns/terraform.tfstate.tflock"]
+    error_message = "s3:DeleteObject only on the lockfile, never the state"
+  }
+  assert {
+    condition     = length([for s in output.edge_dns_permissions_policy.Statement : s if contains(s.Action, "s3:ListBucket")]) == 1 && one([for s in output.edge_dns_permissions_policy.Statement : s.Condition if contains(s.Action, "s3:ListBucket")]) == { StringEquals = { "s3:prefix" = ["env:/"] } }
+    error_message = "s3:ListBucket only for the S3 backend's one listing: prefix env:/ (Workspaces), exact match"
+  }
+  assert {
+    condition     = one([for s in output.edge_dns_permissions_policy.Statement : s.Condition if contains(s.Action, "kms:Decrypt")]) == { StringEquals = { "kms:ViaService" = "s3.us-west-2.amazonaws.com" } }
+    error_message = "the state key only through S3 in the region"
+  }
+}
+
 run "refuses_a_cluster_that_cannot_take_access_entries" {
   command = plan
   override_data {
@@ -155,4 +264,13 @@ run "rejects_wildcards_and_a_malformed_broker_role" {
     broker_role_arn = "arn:aws:iam::222222222222:role/*"
   }
   expect_failures = [var.cluster_name, var.broker_role_arn]
+}
+
+run "rejects_a_wildcard_state_key_or_certificate" {
+  command = plan
+  variables {
+    edge_dns_state_kms_key_id = "*"
+    edge_dns_certificate_id   = "4a0284eb-*"
+  }
+  expect_failures = [var.edge_dns_state_kms_key_id, var.edge_dns_certificate_id]
 }

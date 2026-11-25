@@ -258,6 +258,17 @@ A run tag is claimed by the first agent that receives credentials for it
 - Approval-tier sessions use the account's `roles.elevated`. An account
   without one refuses approval-tier requests up front rather than parking
   them, and Khaliq isn't asked about something the broker can't issue.
+- Profiles (`ROLE_PROFILES` in `src/policy.ts`) are the one exception: a
+  request that names `"profile"` is checked against that profile (account,
+  exact regions, scope `account`, every action and resource inside it) and
+  goes to approval on the profile's own role instead of `roles.elevated`.
+  It is never inferred from the actions, and a request that names a profile
+  but doesn't fit it is refused, never routed to `roles.elevated`.
+  Workspace auto-issue never applies to a profile request. Today there is
+  one: `edge-dns`, on `roles.edgeDns` in the prod account
+  (`agent-broker-prod-edge-dns`, `terraform/prod`), for the
+  `agentrelay-edge-dns` Terraform root's state, load balancer lookups and
+  certificate.
 - The dev account (`agentrelay-dev`, tier `prod`) has an `elevated` role that
   is read-only on purpose: `agent-broker-dev-read`, which allows only
   `eks:DescribeCluster` on one cluster, and is an EKS access entry with
