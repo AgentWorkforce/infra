@@ -331,6 +331,8 @@ export function validate(req: CredentialRequest, list: Allowlist): string[] {
 
 /** One profile grant: these actions, on exactly these resources ("*" only for actions IAM authorizes on "*" alone). */
 export interface ProfileGrant {
+  /** Names the grant's session-policy statement (Sid "<profile>-<id>", PascalCased). */
+  id: string;
   actions: string[];
   resources: string[];
 }
@@ -369,16 +371,16 @@ export const EDGE_DNS_PROFILE: RoleProfile = {
   regions: ["us-west-2"],
   roleKey: "edgeDns",
   grants: [
-    { actions: ["s3:GetObject", "s3:PutObject"], resources: [EDGE_DNS_STATE, EDGE_DNS_LOCK] },
+    { id: "state", actions: ["s3:GetObject", "s3:PutObject"], resources: [EDGE_DNS_STATE, EDGE_DNS_LOCK] },
     // Terraform deletes the lockfile on unlock; never the state.
-    { actions: ["s3:DeleteObject"], resources: [EDGE_DNS_LOCK] },
+    { id: "release-lock", actions: ["s3:DeleteObject"], resources: [EDGE_DNS_LOCK] },
     // The role narrows this to the S3 backend's one listing (prefix env:/).
-    { actions: ["s3:ListBucket"], resources: [EDGE_DNS_BUCKET] },
+    { id: "list-bucket", actions: ["s3:ListBucket"], resources: [EDGE_DNS_BUCKET] },
     // The role adds kms:ViaService s3.us-west-2.amazonaws.com.
-    { actions: ["kms:Decrypt", "kms:GenerateDataKey"], resources: ["arn:aws:kms:us-west-2:786098391924:key/717fa644-8436-4042-abfa-0ddaa9b696c9"] },
+    { id: "state-key", actions: ["kms:Decrypt", "kms:GenerateDataKey"], resources: ["arn:aws:kms:us-west-2:786098391924:key/717fa644-8436-4042-abfa-0ddaa9b696c9"] },
     // ELBv2 Describe actions have no resource-level permissions: "*" only, in their own statement.
-    { actions: ["elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeLoadBalancerAttributes"], resources: ["*"] },
-    { actions: ["acm:DescribeCertificate", "acm:ListTagsForCertificate"], resources: ["arn:aws:acm:us-west-2:786098391924:certificate/4a0284eb-d27f-4aaa-8185-0cc2dd87cac0"] },
+    { id: "load-balancers", actions: ["elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeLoadBalancerAttributes"], resources: ["*"] },
+    { id: "certificate", actions: ["acm:DescribeCertificate", "acm:ListTagsForCertificate"], resources: ["arn:aws:acm:us-west-2:786098391924:certificate/4a0284eb-d27f-4aaa-8185-0cc2dd87cac0"] },
   ],
 };
 
@@ -422,6 +424,27 @@ export function profileProblems(req: CredentialRequest, profile: RoleProfile, li
   }
   for (const a of named) if (!resources.some((r) => allowedFor(a).includes(r))) no(`${a} needs one of its resources: ${allowedFor(a).join(", ")}`);
   return { problems, ...(m && m[1] === profile.account ? { roleArn: roleArn! } : {}) };
+}
+
+/**
+ * A profile request's allows: one statement per profile grant, with the
+ * grant's actions the request asked for, on the grant's resources the request
+ * named ("*" for a "*"-only grant). Grants the request doesn't touch are left
+ * out. So the session policy and the approval prompt show exactly what the
+ * role allows for this request (s3:DeleteObject on the lockfile, never on the
+ * state), not every requested action on every named resource of its service.
+ * Only used once profileProblems found nothing.
+ */
+export function profileStatements(req: CredentialRequest, profile: RoleProfile): PolicyStatement[] {
+  const asked = new Set(req.actions.map((a) => a.toLowerCase()));
+  const named = new Set(req.resources ?? []);
+  const out: PolicyStatement[] = [];
+  for (const g of profile.grants) {
+    const actions = g.actions.filter((a) => asked.has(a.toLowerCase()));
+    const resources = g.resources.length === 1 && g.resources[0] === "*" ? ["*"] : g.resources.filter((r) => named.has(r));
+    if (actions.length && resources.length) out.push(statement(`${profile.id}-${g.id}`, actions, resources, undefined));
+  }
+  return out;
 }
 
 function regionsFor(req: CredentialRequest, account: AccountPolicy): { regions?: string[]; problem?: string } {
@@ -656,12 +679,12 @@ function accountWideStatements(actions: string[], resources: string[]): PolicySt
 
 function approvalStatements(req: CredentialRequest, list: Allowlist, namespace: string): PolicyStatement[] {
   const resources = req.resources?.length ? req.resources : ["*"];
+  // A profile request (decide() has run profileProblems): exactly the profile's grants it asked for.
+  const profile = req.profile !== undefined ? ROLE_PROFILES[req.profile] : undefined;
+  if (profile) return profileStatements(req, profile);
   if (req.scope === "account") {
-    // A profile's "*"-only actions (ELB Describe for edge-dns) get their own "*" statement too.
-    const profile = req.profile !== undefined ? ROLE_PROFILES[req.profile] : undefined;
-    const isWildcard = (a: string) => isResourceWildcardOnly(a) || (profile !== undefined && profileWildcardOnly(profile, a));
-    const wildcardOnly = req.actions.filter(isWildcard);
-    const named = req.actions.filter((a) => !isWildcard(a));
+    const wildcardOnly = req.actions.filter(isResourceWildcardOnly);
+    const named = req.actions.filter((a) => !isResourceWildcardOnly(a));
     return [
       ...(named.length ? accountWideStatements(named, resources) : []),
       ...(wildcardOnly.length ? [statement("approved-without-resource-level-permissions", wildcardOnly, ["*"], undefined)] : []),

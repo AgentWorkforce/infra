@@ -160,10 +160,13 @@ terraform init -backend=false -input=false && terraform validate && terraform te
   is not automatic, and even if the approver says yes it is issued and then
   gets AccessDenied. Widen this root first, or add a profile and role like
   edge-dns.
-- The broker's session policy for an edge-dns request groups the S3 actions
-  on all the named S3 resources (as for every account-wide approval); the
-  role's own policy is what keeps `s3:DeleteObject` off the state and
-  `s3:ListBucket` to `env:/`.
+- The broker's session policy for an edge-dns request is one statement per
+  profile grant (the grant's actions the request asked for, on the grant's
+  resources it named), so the approval prompt shows `s3:DeleteObject` on the
+  `.tflock` only, like the role. The `s3:prefix` and `kms:ViaService`
+  conditions are the role's alone. The full request's session policy is
+  1722 characters, under the broker's 2048 limit, so it never needs
+  splitting.
 - The `requesters` limit is on automatic issue. The approver can still
   approve another agent's request for this role; it gets the same read-only
   access and nothing more.

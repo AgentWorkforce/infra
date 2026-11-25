@@ -264,7 +264,10 @@ A run tag is claimed by the first agent that receives credentials for it
   goes to approval on the profile's own role instead of `roles.elevated`.
   It is never inferred from the actions, and a request that names a profile
   but doesn't fit it is refused, never routed to `roles.elevated`.
-  Workspace auto-issue never applies to a profile request. Today there is
+  Workspace auto-issue never applies to a profile request. Its session
+  policy is built from the profile's grants, one statement each (requested
+  actions on the requested resources of that grant), not grouped by service,
+  so the approval prompt shows exactly what the role allows. Today there is
   one: `edge-dns`, on `roles.edgeDns` in the prod account
   (`agent-broker-prod-edge-dns`, `terraform/prod`), for the
   `agentrelay-edge-dns` Terraform root's state, load balancer lookups and

@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Broker } from "../broker/src/broker.ts";
 import { defaultDeliverer } from "../broker/src/deliver.ts";
-import { checkWorkspaceAuto, decide as decideWith, EDGE_DNS_PROFILE, type Allowlist, type CredentialRequest, type PolicyStatement, type Principal } from "../broker/src/policy.ts";
+import { checkWorkspaceAuto, decide as decideWith, EDGE_DNS_PROFILE, SESSION_POLICY_MAX_CHARS, type Allowlist, type CredentialRequest, type PolicyStatement, type Principal } from "../broker/src/policy.ts";
 import type { StsClient } from "../broker/src/sts.ts";
 
 const shipped = JSON.parse(readFileSync(new URL("../broker/allowlist.json", import.meta.url), "utf8")) as Allowlist;
@@ -48,6 +48,16 @@ const edgeReq = (over: Partial<CredentialRequest> = {}): CredentialRequest => ({
   ...over,
 });
 
+const NOW = new Date("2026-11-24T12:00:00Z");
+function setupBroker() {
+  const dir = mkdtempSync(join(tmpdir(), "broker-edge-dns-"));
+  const calls: { roleArn: string; policy: { Statement: PolicyStatement[] } }[] = [];
+  const sts: StsClient = { async assumeRole(i) { calls.push(i as never); return { accessKeyId: "ASIAFAKE", secretAccessKey: "s".repeat(40), sessionToken: "t".repeat(300), expiration: new Date(NOW.getTime() + i.durationSeconds * 1000).toISOString() }; } };
+  let n = 0;
+  const broker = new Broker({ allowlist: shipped, stateDir: join(dir, "state"), sts, deliverer: defaultDeliverer(join(dir, "creds")), now: () => NOW, newId: () => `cb-${(++n).toString(16).padStart(12, "0")}`, newNamespaceSuffix: () => "0a1b2c3d" });
+  return { broker, calls };
+}
+
 test("the shipped profile and allowlist: one role in the prod account, the exact resources terraform/prod grants", () => {
   assert.equal(shipped.accounts[PROD]!.roles.edgeDns, EDGE_DNS);
   assert.equal(EDGE_DNS_PROFILE.account, PROD);
@@ -66,21 +76,82 @@ test("(1) a valid edge-dns request: approval on the edge-dns role, never auto, E
   if (d.outcome !== "approval") return;
   assert.equal(d.roleArn, EDGE_DNS);
   assert.match(d.reasons.join("; "), /profile edge-dns: owner approval per request/);
-  const allows = d.sessionPolicy.Statement.filter((s) => s.Effect === "Allow");
-  const by = (sid: string) => allows.find((s) => s.Sid === sid);
-  assert.deepEqual(by("ApprovedAccountWideS3")!.Action, ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]);
-  assert.deepEqual(by("ApprovedAccountWideS3")!.Resource, [BUCKET, STATE, LOCK]);
-  assert.deepEqual(by("ApprovedAccountWideKms")!.Resource, KMS);
-  assert.deepEqual(by("ApprovedAccountWideAcm")!.Resource, CERT);
-  assert.deepEqual(by("ApprovedWithoutResourceLevelPermissions")!.Action, ELB);
-  assert.equal(by("ApprovedWithoutResourceLevelPermissions")!.Resource, "*");
-  assert.equal(allows.length, 4);
-  assert.ok(allows.every((s) => s.Resource === "*" ? s.Action!.every((a) => ELB.includes(a)) : true), "only the ELB actions on \"*\"");
+  // One statement per profile grant: exactly the grant's actions on the grant's resources, nothing grouped by service.
+  const allows = d.sessionPolicy.Statement.filter((s) => s.Effect === "Allow").map((s) => ({ sid: s.Sid, a: s.Action, r: s.Resource }));
+  assert.deepEqual(allows, [
+    { sid: "EdgeDnsState", a: ["s3:GetObject", "s3:PutObject"], r: [STATE, LOCK] },
+    { sid: "EdgeDnsReleaseLock", a: ["s3:DeleteObject"], r: LOCK },
+    { sid: "EdgeDnsListBucket", a: ["s3:ListBucket"], r: BUCKET },
+    { sid: "EdgeDnsStateKey", a: ["kms:Decrypt", "kms:GenerateDataKey"], r: KMS },
+    { sid: "EdgeDnsLoadBalancers", a: ELB, r: "*" },
+    { sid: "EdgeDnsCertificate", a: ["acm:DescribeCertificate", "acm:ListTagsForCertificate"], r: CERT },
+  ]);
   assert.ok(d.sessionPolicy.Statement.some((s) => s.Sid === "DenyOutsideRegions"));
   // A subset is fine too (e.g. a read-only plan without the lock release).
   const sub = decide(edgeReq({ actions: ["s3:GetObject", "kms:Decrypt", ...ELB], resources: [STATE, KMS] }));
   assert.equal(sub.outcome, "approval", sub.reasons.join("; "));
   assert.equal(sub.outcome === "approval" && sub.roleArn, EDGE_DNS);
+});
+
+const grantsOn = (policy: { Statement: PolicyStatement[] }, action: string, resource: string) =>
+  policy.Statement.filter((s) => s.Effect === "Allow" && (s.Action ?? []).some((a) => a.toLowerCase() === action.toLowerCase()) && [s.Resource ?? "*"].flat().some((r) => r === resource || r === "*"));
+
+test("the full request: s3:DeleteObject only on the .tflock, in the session policy and in the approval prompt", async () => {
+  const d = decide(edgeReq());
+  assert.equal(d.outcome, "approval");
+  if (d.outcome !== "approval") return;
+  const deletes = d.sessionPolicy.Statement.filter((s) => s.Effect === "Allow" && s.Action?.includes("s3:DeleteObject"));
+  assert.equal(deletes.length, 1);
+  assert.deepEqual([deletes[0]!.Resource].flat(), [LOCK]);
+  assert.deepEqual(grantsOn(d.sessionPolicy, "s3:DeleteObject", STATE), [], "no statement deletes the state");
+  assert.deepEqual(grantsOn(d.sessionPolicy, "s3:ListBucket", STATE), [], "ListBucket only on the bucket");
+  assert.deepEqual(grantsOn(d.sessionPolicy, "s3:GetObject", BUCKET), [], "object reads only on the two objects");
+  for (const a of EDGE_ACTIONS.filter((x) => !ELB.includes(x))) assert.deepEqual(grantsOn(d.sessionPolicy, a, "*"), [], `${a} never on "*"`);
+  // What the approver reads: the Grants lines are the session policy, one per grant.
+  const { broker } = setupBroker();
+  const r = await broker.request(edgeReq(), agent);
+  const grants = r.approvalPrompt!.split("\n").filter((l) => l.startsWith("  - "));
+  assert.deepEqual(grants, [
+    `  - s3:GetObject, s3:PutObject on ${STATE}, ${LOCK} (account-wide, no tag condition)`,
+    `  - s3:DeleteObject on ${LOCK} (account-wide, no tag condition)`,
+    `  - s3:ListBucket on ${BUCKET} (account-wide, no tag condition)`,
+    `  - kms:Decrypt, kms:GenerateDataKey on ${KMS} (account-wide, no tag condition)`,
+    `  - ${ELB.join(", ")} on * (account-wide, no tag condition)`,
+    `  - acm:DescribeCertificate, acm:ListTagsForCertificate on ${CERT} (account-wide, no tag condition)`,
+  ]);
+  // Every prompt line that mentions DeleteObject names the lockfile and nothing else (the lock ARN starts with the state's, so compare whole ARNs).
+  for (const l of grants.filter((x) => x.includes("s3:DeleteObject"))) {
+    const on = l.slice(l.indexOf(" on ") + 4, l.lastIndexOf(" (")).split(", ");
+    assert.deepEqual(on, [LOCK], "the prompt never shows a delete on the state");
+  }
+});
+
+test("a partial request emits only the grants it asked for", () => {
+  const d = decide(edgeReq({ actions: [...ELB, "acm:DescribeCertificate"], resources: [CERT] }));
+  assert.equal(d.outcome, "approval", d.reasons.join("; "));
+  if (d.outcome !== "approval") return;
+  assert.deepEqual(d.sessionPolicy.Statement.filter((s) => s.Effect === "Allow").map((s) => ({ sid: s.Sid, a: s.Action, r: s.Resource })), [
+    { sid: "EdgeDnsLoadBalancers", a: ELB, r: "*" },
+    { sid: "EdgeDnsCertificate", a: ["acm:DescribeCertificate"], r: CERT },
+  ]);
+  // Only the lock release and its object: the state object is not granted at all.
+  const lockOnly = decide(edgeReq({ actions: ["s3:GetObject", "s3:DeleteObject"], resources: [LOCK] }));
+  assert.equal(lockOnly.outcome, "approval", lockOnly.reasons.join("; "));
+  if (lockOnly.outcome !== "approval") return;
+  assert.deepEqual(lockOnly.sessionPolicy.Statement.filter((s) => s.Effect === "Allow").map((s) => ({ sid: s.Sid, a: s.Action, r: s.Resource })), [
+    { sid: "EdgeDnsState", a: ["s3:GetObject"], r: LOCK },
+    { sid: "EdgeDnsReleaseLock", a: ["s3:DeleteObject"], r: LOCK },
+  ]);
+});
+
+test("the full request's session policy fits STS's limit, so it never needs splitting", () => {
+  const d = decide(edgeReq());
+  assert.equal(d.outcome, "approval");
+  if (d.outcome !== "approval") return;
+  // 1722 characters today, with the guard and region statements decide() adds (2048 is AWS's inline session policy limit).
+  const size = JSON.stringify(d.sessionPolicy).length;
+  assert.equal(SESSION_POLICY_MAX_CHARS, 2048);
+  assert.ok(size < SESSION_POLICY_MAX_CHARS, `${size} characters`);
 });
 
 test("(2) the profile with anything outside it is refused, not sent to the elevated role", () => {
@@ -168,12 +239,7 @@ test("never issued without approval: workspace auto-issue refuses any profile re
 });
 
 test("end to end: pending on the edge-dns role, the prompt names the profile, Khaliq's approval assumes that role", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "broker-edge-dns-"));
-  const NOW = new Date("2026-11-24T12:00:00Z");
-  const calls: { roleArn: string; policy: { Statement: PolicyStatement[] } }[] = [];
-  const sts: StsClient = { async assumeRole(i) { calls.push(i as never); return { accessKeyId: "ASIAFAKE", secretAccessKey: "s".repeat(40), sessionToken: "t".repeat(300), expiration: new Date(NOW.getTime() + i.durationSeconds * 1000).toISOString() }; } };
-  let n = 0;
-  const broker = new Broker({ allowlist: shipped, stateDir: join(dir, "state"), sts, deliverer: defaultDeliverer(join(dir, "creds")), now: () => NOW, newId: () => `cb-${(++n).toString(16).padStart(12, "0")}`, newNamespaceSuffix: () => "0a1b2c3d" });
+  const { broker, calls } = setupBroker();
   const r = await broker.request(edgeReq(), agent);
   assert.equal(r.outcome, "pending-approval", r.reasons.join("; "));
   assert.equal(r.roleArn, EDGE_DNS);
@@ -183,4 +249,7 @@ test("end to end: pending on the edge-dns role, the prompt names the profile, Kh
   assert.equal(ok.outcome, "issued", ok.reasons.join("; "));
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.roleArn, EDGE_DNS);
+  // The policy STS is given is the per-grant one: the delete stays on the lockfile.
+  assert.deepEqual(calls[0]!.policy.Statement.filter((s) => s.Action?.includes("s3:DeleteObject")).map((s) => [s.Resource].flat()), [[LOCK]]);
+  assert.deepEqual(grantsOn(calls[0]!.policy, "s3:DeleteObject", STATE), []);
 });
