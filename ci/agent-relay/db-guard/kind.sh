@@ -265,12 +265,21 @@ helm_run install --set databaseGuard.statusTest.rbac.create=true >"$WORK/out" 2>
 k get job agent-relay-db-guard >/dev/null 2>&1 && fail "the succeeded hook Job was not deleted"
 ok "install with the dedicated logins passes the render guard and the TLS privilege hook"
 
-# 11b. helm test prints the status table: the 10 logins are healthy; the
+# 11b. helm test prints the status table. After a HoopDb migration but before
+# rds-setup.sh post, the search runtime has no USAGE on sessions (the rehearsal's
+# "permission denied for schema sessions" crash loop): only that row fails. The
 # example caSha256 is not this test CA's, so the CA row must say so.
+docker exec -i "$PG" psql -X -q -v ON_ERROR_STOP=1 -U rdsadmin -d hoopdb >/dev/null <<'SQL'
+SET ROLE hoopdb_owner;
+CREATE SCHEMA IF NOT EXISTS sessions;
+GRANT USAGE ON SCHEMA sessions TO sessions_pipeline_runtime, bulls96_read_api, bulls96_session_ingest;
+SQL
 helm --kube-context "$CTX" test agent-relay -n "$NS" --logs --timeout 3m >"$WORK/status.txt" 2>&1 || true
 grep -q '^  AREA  *CHECK  *STATUS  DETAIL' "$WORK/status.txt" || { cat "$WORK/status.txt" >&2; fail "helm test printed no status table"; }
 [[ "$(grep -c '^POD LOGS' "$WORK/status.txt")" == 1 ]] || fail "helm test should run exactly one test Pod"
-[[ "$(grep -cE '^  database  .* ok  ' "$WORK/status.txt")" == 10 ]] || { cat "$WORK/status.txt" >&2; fail "status table: not all 10 database rows ok"; }
+[[ "$(grep -cE '^  database  .* ok  ' "$WORK/status.txt")" == 9 ]] || { cat "$WORK/status.txt" >&2; fail "status table: expected 9 database rows ok"; }
+grep -E '^  database  +search-indexer-runtime: ' "$WORK/status.txt" | grep -q 'FAIL  .*no USAGE on schema sessions.*rds-setup.sh post' \
+  || { cat "$WORK/status.txt" >&2; fail "status table: search runtime without sessions USAGE not flagged"; }
 grep -qE '^  ca  .*configMap/rds-ca  .*FAIL  .*differs from the configured 9f2c4e1a' "$WORK/status.txt" || { cat "$WORK/status.txt" >&2; fail "status table: CA sha256 mismatch not reported"; }
 for area in migrations workloads s3 search; do
   grep -qE "^  $area  " "$WORK/status.txt" || { cat "$WORK/status.txt" >&2; fail "status table lacks a $area row"; }
@@ -280,7 +289,7 @@ grep -q '^UNHEALTHY: ' "$WORK/status.txt" || fail "status table has no verdict"
 ! grep -Eq 'postgres(ql)?://' "$WORK/status.txt" || fail "a URL reached the status output"
 [[ -z "$(helm template agent-relay "$CHART" -n "$NS" "${VALUES[@]}" | yq -N 'select(.kind == "Role" or .kind == "RoleBinding") | .metadata.name')" ]] \
   || fail "the default render creates RBAC objects"
-ok "helm test prints the status table (10 logins ok, CA mismatch, per-Job migrations; no RBAC by default)"
+ok "helm test prints the status table (9 logins ok, search runtime without sessions USAGE fails, CA mismatch, per-Job migrations; no RBAC by default)"
 
 # 11. Upgrade reruns the hook and fails closed on a regression (the hook log stays readable).
 set_key agent-relay-secrets database-runtime-url "$(url postgres relaycast)"

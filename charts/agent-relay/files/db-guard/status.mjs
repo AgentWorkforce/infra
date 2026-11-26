@@ -65,7 +65,9 @@ else try {
     const cond = Object.fromEntries((j.status?.conditions ?? []).map((c) => [c.type, c.status]));
     if (cond.Complete === "True") add("migrations", kind, "ok", "completed");
     else if (cond.Failed === "True")
-      add("migrations", kind, "FAIL", `failed: kubectl -n ${cfg.namespace} logs job/${j.metadata.name}`);
+      add("migrations", kind, "FAIL", /search-indexer-bootstrap/.test(kind)
+        ? `failed (often: it ran before rds-setup.sh post granted the search logins). Run rds-setup.sh post, then kubectl -n ${cfg.namespace} delete job ${j.metadata.name} and helm upgrade again; log: kubectl -n ${cfg.namespace} logs job/${j.metadata.name}`
+        : `failed: kubectl -n ${cfg.namespace} logs job/${j.metadata.name}`);
     else add("migrations", kind, "FAIL", "not complete yet (running or pending); rerun helm test when it finishes");
   }
 } catch (err) {
@@ -87,7 +89,7 @@ else try {
 }
 
 // --- Database logins and the CA ------------------------------------------------
-const results = await checkTargets();
+const results = await checkTargets({ sessionsUsage: true });
 for (const r of results) add("database", r.label, r.status, r.login ? `login=${r.login}: ${r.summary ?? r.detail}` : r.detail);
 if (targets.length === 0) add("database", "logins", "skip", "no operator-supplied database URLs in this release");
 

@@ -49,6 +49,7 @@ export const POINTER =
   "Run scripts/selfhost/configure-rds.sh, which creates the logins and writes these Secrets, " +
   "or see docs/self-hosted-rds-manual-setup.md §1.3 " +
   "(https://agentrelay.com/docs/self-hosting/troubleshooting#database-logins).";
+const SESSIONS_READERS = new Set(["HoopDb runtime", "read API", "ingest edge", "search indexer runtime"]);
 const RELAYCAST_ROLES = { owner: "relaycast_owner", runtime: "relaycast_runtime" };
 
 const env = process.env;
@@ -131,7 +132,7 @@ function connectProblem(err, c, t) {
   return `connection failed (${code ?? "error"}: ${err?.message ?? err})`;
 }
 
-async function checkTarget(t) {
+async function checkTarget(t, opts = {}) {
   const label = `${t.secret}: ${t.key}`;
   const r = readUrl(t);
   if (r.problem) return r.skip ? { label, status: "skip", detail: `${r.problem} (managed by externalSecrets; checked next run)` } : { label, status: "FAIL", detail: r.problem };
@@ -160,6 +161,23 @@ async function checkTarget(t) {
     const mode = t.relaycast || "runtime";
     const expectedRole = t.relaycast ? RELAYCAST_ROLES[t.relaycast] : c.user;
     const result = await verifyIdentity(client, { expectedRole, mode, schema: "public" });
+    if (opts.sessionsUsage && SESSIONS_READERS.has(t.role)) {
+      // After the HoopDb migration, these logins need USAGE on sessions, which
+      // rds-setup.sh post grants; without it the workload crash-loops with
+      // "permission denied for schema sessions". Status only: before post this
+      // is expected, so the install hook must not block on it.
+      const row = (await client.query(
+        `SELECT n.oid IS NOT NULL AS present,
+                CASE WHEN n.oid IS NULL THEN NULL ELSE pg_catalog.has_schema_privilege(current_user, n.oid, 'USAGE') END AS usage
+         FROM (SELECT 1) one LEFT JOIN pg_catalog.pg_namespace n ON n.nspname = 'sessions'`,
+      )).rows[0];
+      if (row.present && !row.usage)
+        return {
+          label, status: "FAIL", login: c.user,
+          summary: `logs in as "${c.user}", which has no USAGE on schema sessions (the "permission denied for schema sessions" crash loop)`,
+          detail: `logs in as "${c.user}", which has no USAGE on schema sessions (the "permission denied for schema sessions" crash loop): run rds-setup.sh post (configure-rds.sh does it), then delete the failed search-indexer-bootstrap Job and run helm upgrade again`,
+        };
+    }
     const failed = result.checks.filter((k) => !k.ok && (t.relaycast || SERVICE_CHECKS.has(k.name)));
     if (failed.length === 0) return { label, status: "ok", login: c.user, detail: t.relaycast ? `relaycast ${mode} identity` : "dedicated service login" };
     if (t.allowMaster && failed.every((k) => MASTER_CHECKS.has(k.name)))
@@ -186,9 +204,9 @@ async function checkTarget(t) {
 }
 
 /** Every target's result: {label, status: ok|FAIL|skip, login?, detail, summary?}. */
-export async function checkTargets() {
+export async function checkTargets(opts = {}) {
   const results = [];
-  for (const t of targets) results.push(await checkTarget(t));
+  for (const t of targets) results.push(await checkTarget(t, opts));
 
   // Different jobs must not share one login (relaycast's check cannot see this).
   const byLogin = new Map();
