@@ -5836,6 +5836,7 @@ Rendered by the charts but not a requirement or an option: fixed by the chart or
 | `ADMIN_PORT` | relaychief-control | reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it |
 | `ROLE` | slack-relay | selects the router or host entry point of the one slack-relay image; fixed per workload |
 | `DB_GUARD_TARGETS` | agent-relay | Fixed path of the databaseGuard hook's target list (rendered from the Secret references); never a credential. |
+| `POD_NAMESPACE` | sessions-pipeline | Downward API metadata.namespace for the search indexer's startup hint (kubectl -n <namespace> ...); never a credential. |
 | `STATUS_CONFIG` | agent-relay | Non-secret JSON for the helm test status Pod (release, namespace, CA sha256 pins, S3 bucket/region, OpenSearch URLs) derived from values. |
 | `DB_GUARD_MASTER_LOGINS` | agent-relay | Derived from databaseGuard.masterLogins: login names the hook refuses; never a credential. |
 | `LEDGER_PATH` | slack-relay | fixed /data/ledger.sqlite on the router's ledger PVC |

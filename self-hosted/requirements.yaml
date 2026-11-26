@@ -4513,6 +4513,7 @@ internal_env:
   - { name: ADMIN_PORT, chart: relaychief-control, why: reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it }
   - { name: ROLE, chart: slack-relay, why: selects the router or host entry point of the one slack-relay image; fixed per workload }
   - { name: DB_GUARD_TARGETS, chart: agent-relay, why: "Fixed path of the databaseGuard hook's target list (rendered from the Secret references); never a credential." }
+  - { name: POD_NAMESPACE, chart: sessions-pipeline, why: "Downward API metadata.namespace for the search indexer's startup hint (kubectl -n <namespace> ...); never a credential." }
   - { name: STATUS_CONFIG, chart: agent-relay, why: "Non-secret JSON for the helm test status Pod (release, namespace, CA sha256 pins, S3 bucket/region, OpenSearch URLs) derived from values." }
   - { name: DB_GUARD_MASTER_LOGINS, chart: agent-relay, why: "Derived from databaseGuard.masterLogins: login names the hook refuses; never a credential." }
   - { name: LEDGER_PATH, chart: slack-relay, why: fixed /data/ledger.sqlite on the router's ledger PVC }
