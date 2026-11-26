@@ -581,6 +581,289 @@ def database_checks(options, credentials, report):
         report.unknown('database.'+slot,'credential-not-available')
 
 
+
+# EKS Pod Identity. Which AWS access each chart ServiceAccount needs, keyed by the
+# name after "<release>-". A workload needs an association when its env reads S3
+# (LOCKER_BUCKET with no static LOCKER_ACCESS_KEY_ID) or signs OpenSearch requests
+# (SEARCH_INDEX_OPENSEARCH_AUTH=sigv4); this table only sets the access level.
+POD_IDENTITY_ACCESS = {
+    'worker': ('s3-rw',),
+    'alleyoop': ('s3-rw',),
+    'session-ingest-api': ('s3-rw',),
+    'search-indexer': ('s3-r', 'os-w'),
+    'session-read': ('s3-r', 'os-r'),
+}
+ACCESS_LABEL = {'s3-rw': 'S3 read/write', 's3-r': 'S3 read', 's3-sweep': 'S3 re-arm sweep (list and delete object versions)',
+                'os-w': 'OpenSearch write', 'os-r': 'OpenSearch read'}
+# (IAM actions, resource kind) simulated per access level.
+ACCESS_ACTIONS = {
+    's3-r': ((('s3:GetObject',), 'object'), (('s3:ListBucket',), 'bucket')),
+    's3-rw': ((('s3:GetObject', 's3:PutObject', 's3:DeleteObject'), 'object'), (('s3:ListBucket',), 'bucket')),
+    's3-sweep': ((('s3:GetObject', 's3:DeleteObjectVersion'), 'object'), (('s3:ListBucketVersions',), 'bucket')),
+    # The reader and indexer action sets of terraform/modules/aws/search.
+    'os-r': ((('es:ESHttpGet', 'es:ESHttpHead', 'es:ESHttpPost'), 'domain'),),
+    'os-w': ((('es:ESHttpGet', 'es:ESHttpHead', 'es:ESHttpPost', 'es:ESHttpPut', 'es:ESHttpDelete', 'es:ESHttpPatch'), 'domain'),),
+}
+# The default Terraform gives these one shared sessions role. With direct uploads
+# the ingest edge is the upload consumer and must keep its own role.
+SESSIONS_ROLE_FAMILY = ('worker', 'alleyoop', 'session-ingest-api')
+NAME_RE = r'[a-z0-9]([-a-z0-9]*[a-z0-9])?'
+ROLE_ARN_RE = r'arn:aws(?:-[a-z]+)*:iam::\d{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}'
+REGION_RE = r'[a-z]{2}(?:-gov|-iso[a-z]*)?-[a-z]+-\d'
+
+
+def aws_json(options, argv):
+    """Run an aws CLI read command; raise DiagnosticError with a fixed category."""
+    env = dict(os.environ)
+    if getattr(options, 'aws_profile', None):
+        # The profile the kube context authenticates with (or --aws-profile), so the
+        # AWS checks look at the same account as the workloads.
+        env['AWS_PROFILE'] = options.aws_profile
+        env.pop('AWS_ACCESS_KEY_ID', None), env.pop('AWS_SECRET_ACCESS_KEY', None), env.pop('AWS_SESSION_TOKEN', None)
+    try:
+        result = subprocess.run(['aws']+argv+['--output', 'json'], text=True, capture_output=True,
+                                timeout=options.timeout, env=env, shell=False)
+    except FileNotFoundError:
+        raise DiagnosticError('aws-cli-not-installed') from None
+    except subprocess.TimeoutExpired:
+        raise DiagnosticError('timeout') from None
+    except OSError:
+        raise DiagnosticError('command-unavailable') from None
+    if result.returncode:
+        err = result.stderr
+        if 'AccessDenied' in err or 'not authorized' in err or 'UnauthorizedOperation' in err:
+            raise DiagnosticError('aws-access-denied')
+        if 'ResourceNotFoundException' in err or 'NoSuchEntity' in err:
+            raise DiagnosticError('aws-resource-not-found')
+        if ('credentials' in err.lower() or 'ExpiredToken' in err or 'InvalidClientTokenId' in err
+                or 'token' in err.lower() or 'SSO' in err):
+            raise DiagnosticError('no-valid-aws-credentials')
+        raise DiagnosticError('aws-cli-error')
+    try:
+        return json.loads(result.stdout or '{}')
+    except ValueError:
+        raise DiagnosticError('invalid-response') from None
+
+
+def eks_target(options):
+    """(cluster name, region) from --eks-cluster/--aws-region, else the kube context.
+    aws eks update-kubeconfig names the cluster by its ARN and passes --cluster-name
+    and --region (and sometimes AWS_PROFILE) to its exec credential plugin."""
+    name, region = getattr(options, 'eks_cluster', None), getattr(options, 'aws_region', None)
+    eks = bool(name and region)
+    if options.context:
+        try:
+            out = subprocess.run(['kubectl', 'config', 'view', '--minify', '--context', options.context, '-o', 'json'],
+                                 text=True, capture_output=True, timeout=10)
+            config = json.loads(out.stdout) if out.returncode == 0 else {}
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            config = {}
+        clusters = [c.get('name', '') for c in config.get('clusters') or [] if isinstance(c, dict)]
+        for c in clusters:
+            m = re.fullmatch(r'arn:aws(?:-[a-z]+)*:eks:('+REGION_RE+r'):\d{12}:cluster/([A-Za-z0-9][A-Za-z0-9_-]{0,99})', c)
+            if m:
+                region, name, eks = region or m.group(1), name or m.group(2), True
+        for user in config.get('users') or []:
+            ex = ((user or {}).get('user') or {}).get('exec') or {}
+            args = [a for a in ex.get('args') or [] if isinstance(a, str)]
+            eks = eks or ('eks' in args and 'get-token' in args)
+            for flag in ('--cluster-name', '--region'):
+                if flag in args[:-1]:
+                    value = args[args.index(flag)+1]
+                    if flag == '--cluster-name' and not name and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,99}', value):
+                        name = value
+                    if flag == '--region' and not region and re.fullmatch(REGION_RE, value):
+                        region = value
+            for item in ex.get('env') or []:
+                if isinstance(item, dict) and item.get('name') == 'AWS_PROFILE' and not getattr(options, 'aws_profile', None):
+                    value = str(item.get('value') or '')
+                    if re.fullmatch(r'[A-Za-z0-9_.@+-]{1,64}', value):
+                        options.aws_profile = value
+    return (name, region) if eks else (None, None)
+
+
+def release_service_accounts(options):
+    """{serviceAccount: {'needs': set of access levels, 'bucket': str, 'opensearch': str, 'workloads': [names]}}
+    for the release's workloads that read S3 or sign OpenSearch requests."""
+    found = {}
+    for resource in ('deployments', 'statefulsets', 'jobs', 'cronjobs'):
+        for item in kube(options, resource, selector=True).get('items', []):
+            spec = item.get('spec') or {}
+            template = spec.get('template') or (((spec.get('jobTemplate') or {}).get('spec') or {}).get('template')) or {}
+            pod = template.get('spec') or {}
+            sa = pod.get('serviceAccountName') or pod.get('serviceAccount') or 'default'
+            env = {}
+            for c in (pod.get('containers') or []) + (pod.get('initContainers') or []):
+                for e in c.get('env') or []:
+                    if isinstance(e, dict) and isinstance(e.get('name'), str):
+                        env[e['name']] = e.get('value') if isinstance(e.get('value'), str) else env.get(e['name'], '')
+            needs = set()
+            if env.get('LOCKER_BUCKET') and 'LOCKER_ACCESS_KEY_ID' not in env and (env.get('LOCKER_PROVIDER') or 's3') == 's3':
+                needs.add('s3')
+            if (env.get('INGEST_REARM_CREDENTIALS') or '').lower() == 'podidentity' and env.get('INGEST_REARM_BUCKET'):
+                needs.add('s3-sweep')
+                env.setdefault('LOCKER_BUCKET', env['INGEST_REARM_BUCKET'])
+            if (env.get('HISTORY_UPLOAD_DIRECT') or 'off').lower() not in ('', 'off', 'false', '0', 'no'):
+                options.direct_uploads = True
+            if (env.get('SEARCH_INDEX_OPENSEARCH_AUTH') or '').lower() == 'sigv4':
+                needs.add('os')
+            if not needs or not re.fullmatch(NAME_RE, sa):
+                continue
+            entry = found.setdefault(sa, {'needs': set(), 'bucket': '', 'opensearch': '', 'workloads': []})
+            entry['needs'] |= needs
+            if re.fullmatch(r'[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]', env.get('LOCKER_BUCKET') or ''):
+                entry['bucket'] = env['LOCKER_BUCKET']
+            if re.fullmatch(r'https://[a-z0-9.-]+\.(?:es|aoss)\.amazonaws\.com/?', env.get('SEARCH_INDEX_OPENSEARCH_URL') or ''):
+                entry['opensearch'] = env['SEARCH_INDEX_OPENSEARCH_URL']
+            workload = (item.get('metadata') or {}).get('name', '')
+            if re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}', workload):
+                entry['workloads'].append((resource, workload))
+    for sa, entry in found.items():
+        known = POD_IDENTITY_ACCESS.get(sa[len(options.release)+1:] if sa.startswith(options.release+'-') else '') or ()
+        # The usual levels for this ServiceAccount, kept only where the workload uses that service.
+        levels = {l for l in known if ('os' if l.startswith('os-') else 's3') in entry['needs']}
+        if 'os' in entry['needs'] and not any(l.startswith('os-') for l in levels):
+            levels.add('os-w')
+        if 's3' in entry['needs'] and not any(l in ('s3-r', 's3-rw') for l in levels):
+            levels.add('s3-rw')
+        if 's3-sweep' in entry['needs']:
+            levels.add('s3-sweep')
+        entry['access'] = sorted(levels, key=list(ACCESS_LABEL).index)
+    return found
+
+
+def _access_text(levels):
+    return ', '.join(ACCESS_LABEL[l] for l in levels)
+
+
+def simulate_access(options, role_arn, entry, region, report, name):
+    """Stretch check: does the role's IAM policy allow the S3/OpenSearch actions it needs?
+    Identity policies only (not bucket/KMS resource policies or the OpenSearch role mapping)."""
+    partition = role_arn.split(':')[1]
+    account = role_arn.split(':')[4]
+    domain = ''
+    m = re.match(r'https://(?:vpc|search)-([a-z][a-z0-9-]{2,27})-[a-z0-9]{26}\.('+REGION_RE+r')\.es\.', entry.get('opensearch') or '')
+    if m:
+        domain, region = m.group(1), m.group(2)
+    results = []
+    for level in entry['access']:
+        for actions, kind in ACCESS_ACTIONS[level]:
+            if kind in ('object', 'bucket') and not entry.get('bucket'):
+                results.append((level, None))
+                continue
+            if kind == 'domain' and not (domain and region):
+                results.append((level, None))
+                continue
+            resource = {'object': 'arn:'+partition+':s3:::'+entry.get('bucket', '')+'/*',
+                        'bucket': 'arn:'+partition+':s3:::'+entry.get('bucket', ''),
+                        'domain': 'arn:'+partition+':es:'+str(region)+':'+account+':domain/'+domain+'/*'}[kind]
+            try:
+                data = aws_json(options, ['iam', 'simulate-principal-policy', '--policy-source-arn', role_arn,
+                                          '--action-names', *actions, '--resource-arns', resource])
+                decisions = [r.get('EvalDecision') for r in data.get('EvaluationResults') or []]
+                results.append((level, bool(decisions) and all(d == 'allowed' for d in decisions)))
+            except DiagnosticError as exc:
+                results.append((level, str(exc)))
+    for level in entry['access']:
+        outcomes = [r for l, r in results if l == level]
+        check = name+'.'+level
+        if any(isinstance(r, str) for r in outcomes) or any(r is None for r in outcomes):
+            reason = next((r for r in outcomes if isinstance(r, str)), None) or \
+                ('bucket-unknown' if level.startswith('s3') else 'opensearch-domain-unknown')
+            report.add(check, 'UNKNOWN', ACCESS_LABEL[level]+': not simulated ('+reason+').',
+                       'Run with an identity allowed iam:SimulatePrincipalPolicy, or check the role\'s policy by hand.')
+        else:
+            report.test(check, all(outcomes), ACCESS_LABEL[level]+': the role\'s IAM policy '+('allows' if all(outcomes) else 'does not allow')+' it.',
+                        'Grant the role '+ACCESS_LABEL[level]+(' on bucket '+entry['bucket'] if level.startswith('s3') else ' on OpenSearch domain '+domain)+'.')
+        report.checks[-1]['resource'] = name.split('.', 1)[1]
+
+
+def pod_identity_checks(options, report):
+    """Every ServiceAccount the release's workloads use for S3 or OpenSearch has an
+    EKS Pod Identity association; optionally, its role's IAM policy allows that access."""
+    try:
+        accounts = release_service_accounts(options)
+    except (DiagnosticError, KeyError, TypeError, AttributeError) as exc:
+        report.unknown('podidentity', str(exc) if isinstance(exc, DiagnosticError) else 'invalid-response')
+        return
+    cluster, region = eks_target(options)
+    if not (cluster and region):
+        return  # Not an EKS context (GKE, AKS, kind): nothing to check. --eks-cluster/--aws-region force it.
+    if not accounts:
+        return  # No workload reads S3 or signs OpenSearch requests (GCS, static keys).
+    import shlex
+    base = ['--cluster-name', cluster, '--region', region]
+    profile = (' --profile '+shlex.quote(options.aws_profile)) if getattr(options, 'aws_profile', None) else ''
+    def create_line(sa, role):
+        return ('aws eks create-pod-identity-association'+profile+' --cluster-name '+cluster+' --region '+region+' --namespace '
+                +options.namespace+' --service-account '+sa+' --role-arn '+role)
+    try:
+        listed = aws_json(options, ['eks', 'list-pod-identity-associations', *base, '--namespace', options.namespace])
+        associations = {}
+        for a in listed.get('associations') or []:
+            sa, aid = a.get('serviceAccount', ''), a.get('associationId', '')
+            if re.fullmatch(NAME_RE, sa) and re.fullmatch(r'a-[a-z0-9]{8,64}', aid):
+                associations[sa] = aid
+    except DiagnosticError as exc:
+        for sa, entry in sorted(accounts.items()):
+            report.add('podidentity.'+sa, 'UNKNOWN', 'Needs '+_access_text(entry['access'])+'; associations not listed ('+str(exc)+').',
+                       'With AWS credentials for the cluster account, run: aws eks list-pod-identity-associations'+profile
+                       +' --cluster-name '+cluster+' --region '+region+' --namespace '+options.namespace)
+            report.checks[-1]['resource'] = sa
+        return
+    roles, unreadable = {}, {}
+    for sa, aid in associations.items():
+        try:
+            described = aws_json(options, ['eks', 'describe-pod-identity-association', *base, '--association-id', aid])
+            role = (described.get('association') or {}).get('roleArn', '')
+            if re.fullmatch(ROLE_ARN_RE, role):
+                roles[sa] = role
+            else:
+                unreadable[sa] = 'invalid-response'
+        except DiagnosticError as exc:
+            unreadable[sa] = str(exc)
+    short = lambda sa: sa[len(options.release)+1:] if sa.startswith(options.release+'-') else ''
+    direct = getattr(options, 'direct_uploads', False)
+    def suggested_role(sa, entry):
+        """The role of a ServiceAccount that, in the reference Terraform, shares this one's role.
+        With direct uploads the ingest edge is the upload consumer: never share its role."""
+        family = SESSIONS_ROLE_FAMILY if short(sa) in SESSIONS_ROLE_FAMILY else ()
+        if direct:
+            family = () if short(sa) == 'session-ingest-api' else tuple(f for f in family if f != 'session-ingest-api')
+        for donor in family:
+            if options.release+'-'+donor in roles and donor != short(sa):
+                return roles[options.release+'-'+donor]
+        own = ' (its own upload-consumer role: direct uploads are on)' if direct and short(sa) == 'session-ingest-api' else ''
+        return '<ARN of a role with '+_access_text(entry['access'])+own+'>'
+    for sa, entry in sorted(accounts.items()):
+        name = 'podidentity.'+sa
+        if sa in associations:
+            role = roles.get(sa)
+            report.add(name, 'PASS', 'Pod Identity association exists'+(' (role '+role+')' if role else '')+'; needs '+_access_text(entry['access'])+'.')
+            report.checks[-1]['resource'] = sa
+            if getattr(options, 'no_iam_simulate', False):
+                continue
+            if role:
+                simulate_access(options, role, entry, region, report, name)
+            else:
+                for level in entry['access']:
+                    report.add(name+'.'+level, 'UNKNOWN', ACCESS_LABEL[level]+': not simulated (role not readable: '+unreadable.get(sa, 'unknown')+').',
+                               'Allow eks:DescribePodIdentityAssociation, or check the role\'s policy by hand.')
+                    report.checks[-1]['resource'] = sa
+        else:
+            workloads = ', '.join(n for _, n in entry['workloads'][:4])
+            deployments = ' '.join('deployment/'+n for r, n in entry['workloads'] if r == 'deployments')
+            report.add(name, 'FAIL', 'No Pod Identity association for ServiceAccount '+sa+' (used by '+workloads+'), which needs '
+                       +_access_text(entry['access'])+'. Its pods get no AWS credentials.',
+                       create_line(sa, suggested_role(sa, entry))
+                       +('  then restart its pods: kubectl --context '+shlex.quote(options.context)+' -n '+options.namespace
+                         +' rollout restart '+deployments if deployments else ''))
+            report.checks[-1]['resource'] = sa
+    unused = sorted(sa for sa in associations if sa not in accounts and sa.startswith(options.release+'-'))
+    if unused:
+        report.add('podidentity.unused', 'PASS', 'Associations no workload of this release uses (harmless; remove if unwanted): '+', '.join(unused)+'.')
+
+
 EXAMPLE_CA_SHA = '9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a'
 EXAMPLE_MARKERS = ('selfhost-example', 'ar.example.com', 'org_example', 'example-agent-relay-sessions',
                    'vpc-agent-relay-example', 'admin@example.com', 'Example Corp', 'abc123example')
@@ -743,6 +1026,11 @@ def parse_args(argv=None):
         parser.add_argument('--'+group+'-database',help='Expected database name, including custom names.')
     parser.add_argument('--values',type=Path,nargs='*',help='Filled-in Helm values file(s) to lint (default: values*.yaml here).')
     parser.add_argument('--no-s3-check',action='store_true',help='Skip the S3 HEAD of the latest ingested object.')
+    parser.add_argument('--no-aws',action='store_true',help='Skip the EKS Pod Identity checks (they use your AWS credentials, read only).')
+    parser.add_argument('--eks-cluster',help='EKS cluster name for the Pod Identity checks (default: from the kube context).')
+    parser.add_argument('--aws-region',help='AWS region of the EKS cluster (default: from the kube context).')
+    parser.add_argument('--aws-profile',help='AWS profile for the Pod Identity checks (default: the one the kube context uses).')
+    parser.add_argument('--no-iam-simulate',action='store_true',help='Skip iam simulate-principal-policy on the associated roles.')
     parser.add_argument('--timeout',type=int,default=20)
     parser.add_argument('--output',type=Path,help='New JSON report file, mode 0600; never overwrites (default: ./install-diagnostic-<time>.json).')
     options = parser.parse_args(argv)
@@ -766,6 +1054,8 @@ def main(argv=None):
     if options.scope in ('cluster','all'):
         if getattr(options,'cluster_reachable',True):
             cluster_checks(options,report)
+            if not getattr(options,'no_aws',False):
+                pod_identity_checks(options,report)
         else:
             report.unknown('cluster','not-reachable')
     missing = getattr(options,'missing',{})
