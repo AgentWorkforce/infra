@@ -59,17 +59,21 @@ gcloud dns record-sets create <that DNS name> --zone <instance>-cloud-sql --type
 **Done when:** from inside the cluster, `pg_isready` prints `accepting connections`:
 
 ```sh
-kubectl run pgcheck --restart=Never \
+P=pgcheck-$RANDOM
+kubectl run "$P" --restart=Never \
   --image=<MIRROR_ROOT>/ghcr.io/cloudnative-pg/postgresql@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3 \
   -- sleep 3600
-kubectl wait --for=condition=Ready pod/pgcheck --timeout=5m
-kubectl exec pgcheck -- pg_isready -h <that DNS name> -p 5432 -t 10
-kubectl delete pod pgcheck
+kubectl wait --for=condition=Ready "pod/$P" --timeout=5m
+for i in $(seq 30); do kubectl exec "$P" -- true 2>/dev/null && break; sleep 5; done
+kubectl exec "$P" -- pg_isready -h <that DNS name> -p 5432 -t 10; rc=$?
+kubectl delete pod "$P" --wait=false; (exit $rc)
 ```
 
 The pod starts detached instead of with `kubectl run --rm -i`: on a node that
-was just created, attaching can fail with `tls: internal error` before the
-node's kubelet certificate is issued, and `--rm` then deletes the pod.
+was just created, attaching (or `exec`) fails with `tls: internal error` until
+the node's kubelet certificate is issued, so the loop retries `exec` for up to
+two and a half minutes. The block exits with `pg_isready`'s status, and deletes
+only the pod it created.
 
 ## 2. GCS bucket for session data
 

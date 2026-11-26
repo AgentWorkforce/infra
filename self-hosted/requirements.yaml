@@ -4794,7 +4794,7 @@ entries:
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
     provided_by: operator
-    verify: 'kubectl run jwks-check --image=curlimages/curl --restart=Never -- sleep 3600; kubectl wait --for=condition=Ready pod/jwks-check --timeout=5m; kubectl exec jwks-check -- curl -fsS <jwksUrl> returns {"keys":[...]}; then kubectl delete pod jwks-check (start detached, not run -it --rm: on a new EKS Auto Mode node the attach can fail with "tls: internal error" before the kubelet certificate is issued)'
+    verify: 'P=jwks-check-$RANDOM; kubectl run "$P" --image=curlimages/curl --restart=Never -- sleep 3600; kubectl wait --for=condition=Ready "pod/$P" --timeout=5m; retry kubectl exec "$P" -- true until it connects (a new node''s kubelet certificate can lag, "tls: internal error"); kubectl exec "$P" -- curl -fsS <jwksUrl> returns {"keys":[...]}; kubectl delete pod "$P". Detached, not run -it --rm, which loses the pod when that attach fails'
     sources:
       - "charts/sessions-pipeline/values.yaml:81"
       - "charts/session-ingest-api/templates/deployment.yaml:46"
