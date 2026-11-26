@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 const CATALOG_RACE = /(?:tuple concurrently updated|concurrent catalog update)/u;
 
 /** PostgreSQL reports concurrent role/catalog DDL as XX000. Match both the
@@ -58,6 +59,22 @@ export const ACTIVATION_FIX = "rds-setup.sh post activates and grants the search
   + "(kubectl delete job <name>) and run helm upgrade again: the Job keeps its name, so helm alone does not rerun it.";
 const ACTIVATION_FAILURE = /permission denied for (schema|table|relation)|is not permitted to log in|password authentication failed for user "search_consumer_runtime"|role "search_consumer_runtime" does not exist/iu;
 
+/** One plain line naming why the bootstrap failed (no URLs with credentials). */
+export function failureCause(output, opensearchUrl = "") {
+  let host = "the OpenSearch endpoint";
+  try { if (opensearchUrl) host = new URL(opensearchUrl).host; } catch {}
+  if (/SearchIndexError[^\n]*unavailable \(network\)|search index: unavailable \(network\)/u.test(output))
+    return `search bootstrap failed: OpenSearch ${host} unreachable (network): check searchIndexer.search.opensearch.url, `
+      + "the VPC/security group and Pod Identity. Until this Job succeeds the search indexer reports "
+      + "\"permission denied for schema sessions\"; after fixing, delete this Job and run helm upgrade again.";
+  if (/SearchIndexError[^\n]*(403|forbidden|unauthori[sz]ed)/iu.test(output))
+    return `search bootstrap failed: OpenSearch ${host} refused the request (403): map the search indexer's IAM role in OpenSearch `
+      + "(install guide step 7) and check Pod Identity; then delete this Job and run helm upgrade again.";
+  if (ACTIVATION_FAILURE.test(output)) return `search bootstrap failed before the search logins were activated. ${ACTIVATION_FIX}`;
+  const last = output.trim().split("\n").map((l) => l.trim()).filter((l) => l && !/^at /u.test(l) && !/postgres(ql)?:\/\//iu.test(l)).pop();
+  return `search bootstrap failed${last ? `: ${last.slice(0, 300)}` : ""}`;
+}
+
 export async function waitForRuntimeRoleActivation(
   client,
   waitSeconds,
@@ -107,7 +124,9 @@ export async function executeBootstrapGuard(client, config) {
       const result = await config.runBootstrap();
       if (result.code === 0) return 0;
       if (!isRetryableCatalogRace(result.output) || attempt === config.maxAttempts) {
-        if (ACTIVATION_FAILURE.test(result.output ?? "")) config.log(`search-indexer bootstrap failed before the search logins were activated. ${ACTIVATION_FIX}`);
+        const cause = failureCause(result.output ?? "", config.opensearchUrl);
+        config.log(cause);
+        config.recordCause?.(cause);
         return result.code || 1;
       }
       config.log(`search-indexer bootstrap: retrying PostgreSQL catalog race (attempt ${attempt + 1}/${config.maxAttempts})`);
@@ -156,6 +175,9 @@ async function main() {
     sleep: Bun.sleep,
     now: Date.now,
     log: message => console.error(message),
+    opensearchUrl: process.env.SEARCH_INDEX_OPENSEARCH_URL ?? "",
+    // Kept in the Pod status (kubectl describe, helm test) after the log is gone.
+    recordCause: cause => { try { writeFileSync("/dev/termination-log", cause.slice(0, 1000)); } catch {} },
   });
 }
 

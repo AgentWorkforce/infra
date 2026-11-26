@@ -32,6 +32,20 @@ describe("bootstrap guard orchestration", () => {
     assert.ok(logs.some(m => /rds-setup\.sh post/u.test(m) && /delete this search-indexer-bootstrap Job/u.test(m)), logs.join("\n"));
   });
 
+  test("an unreachable OpenSearch is named, not blamed on the database", async () => {
+    const logs = [];
+    const causes = [];
+    const client = { connect: async () => {}, query: async () => ({ rows: [] }), end: async () => {} };
+    await executeBootstrapGuard(client, {
+      waitForRuntimeRole: false, roleWaitSeconds: 10, rolePollSeconds: 1, maxAttempts: 1, delaySeconds: 1,
+      runBootstrap: async () => ({ code: 1, output: "SearchIndexError: search index: unavailable (network)\n    at ensureSchema (opensearch.ts:516)" }),
+      sleep: async () => {}, now: () => 0, log: message => logs.push(message),
+      opensearchUrl: "https://vpc-search.us-east-1.es.amazonaws.com", recordCause: c => causes.push(c),
+    });
+    assert.match(causes[0], /OpenSearch vpc-search\.us-east-1\.es\.amazonaws\.com unreachable \(network\): check searchIndexer\.search\.opensearch\.url/u);
+    assert.ok(!/rds-setup\.sh post/u.test(causes[0]));
+  });
+
   test("an unrelated failure gets no activation hint", async () => {
     const logs = [];
     const client = { connect: async () => {}, query: async () => ({ rows: [] }), end: async () => {} };

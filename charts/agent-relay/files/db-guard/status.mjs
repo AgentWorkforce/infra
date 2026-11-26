@@ -49,6 +49,20 @@ const howTo = `set databaseGuard.statusTest.rbac.create=true for this row, or ru
 const ns = encodeURIComponent(cfg.namespace);
 const sel = encodeURIComponent(`app.kubernetes.io/instance=${cfg.release}`);
 
+let pods = [];
+if (rbac) {
+  try { pods = (await kube(`/api/v1/namespaces/${ns}/pods?labelSelector=${sel}`)).items; } catch {}
+}
+/** The first line a failed Job's Pod left in its termination message. */
+function jobCause(job) {
+  for (const p of pods.filter((p) => p.metadata.labels?.["job-name"] === job)) {
+    for (const c of p.status?.containerStatuses ?? []) {
+      const msg = c.state?.terminated?.message ?? c.lastState?.terminated?.message;
+      if (msg) return msg.trim().split("\n")[0].replace(/postgres(ql)?:\/\/\S+/giu, "<url>").slice(0, 300);
+    }
+  }
+  return "";
+}
 if (!rbac) add("migrations", "jobs", "skip", `${howTo}: kubectl -n ${cfg.namespace} get jobs -l app.kubernetes.io/instance=${cfg.release}`);
 else try {
   const jobs = (await kube(`/apis/batch/v1/namespaces/${ns}/jobs?labelSelector=${sel}`)).items
@@ -68,15 +82,16 @@ else try {
     if (cond.Complete === "True") add("migrations", kind, "ok", "completed");
     else if (cond.Failed === "True")
       add("migrations", kind, "FAIL", /search-indexer-bootstrap/.test(kind)
-        ? `failed (often: it ran before rds-setup.sh post granted the search logins). Run rds-setup.sh post, then kubectl -n ${cfg.namespace} delete job ${j.metadata.name} and helm upgrade again; log: kubectl -n ${cfg.namespace} logs job/${j.metadata.name}`
-        : `failed: kubectl -n ${cfg.namespace} logs job/${j.metadata.name}`);
+        ? (jobCause(j.metadata.name).startsWith("search bootstrap failed")
+            ? `${jobCause(j.metadata.name)} (Job ${j.metadata.name})`
+            : `search bootstrap failed${jobCause(j.metadata.name) ? `: ${jobCause(j.metadata.name)}` : ""} (often: it ran before rds-setup.sh post granted the search logins, or OpenSearch is unreachable). Fix the cause, then kubectl -n ${cfg.namespace} delete job ${j.metadata.name} and helm upgrade again; log: kubectl -n ${cfg.namespace} logs job/${j.metadata.name}`)
+        : `failed${jobCause(j.metadata.name) ? `: ${jobCause(j.metadata.name)}` : ""}: kubectl -n ${cfg.namespace} logs job/${j.metadata.name}`);
     else add("migrations", kind, "FAIL", "not complete yet (running or pending); rerun helm test when it finishes");
   }
 } catch (err) {
   add("migrations", "jobs", "skip", `Kubernetes API unavailable (${err.message})`);
 }
 
-let pods = [];
 if (!rbac) add("workloads", "deployments", "skip", `${howTo}: kubectl -n ${cfg.namespace} get deployments -l app.kubernetes.io/instance=${cfg.release}`);
 else try {
   const deps = (await kube(`/apis/apps/v1/namespaces/${ns}/deployments?labelSelector=${sel}`)).items;
@@ -91,7 +106,6 @@ else try {
     add("workloads", d.metadata.name, ok ? "ok" : "FAIL",
       ok ? `${ready}/${want} ready` : `${ready}/${want} ready, ${updated}/${want} on the current revision${current ? "" : " (rollout not observed yet)"}`);
   }
-  pods = (await kube(`/api/v1/namespaces/${ns}/pods?labelSelector=${sel}`)).items;
 } catch (err) {
   add("workloads", "deployments", "skip", `Kubernetes API unavailable (${err.message})`);
 }
