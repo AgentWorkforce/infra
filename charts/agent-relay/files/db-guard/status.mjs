@@ -58,7 +58,7 @@ function jobCause(job) {
   for (const p of pods.filter((p) => p.metadata.labels?.["job-name"] === job)) {
     for (const c of p.status?.containerStatuses ?? []) {
       const msg = c.state?.terminated?.message ?? c.lastState?.terminated?.message;
-      if (msg) return msg.trim().split("\n")[0].replace(/postgres(ql)?:\/\/\S+/giu, "<url>").slice(0, 300);
+      if (msg) return msg.trim().split("\n")[0].replace(/postgres(ql)?:\/\/\S+/giu, "<url>").slice(0, 600);
     }
   }
   return "";
@@ -82,9 +82,10 @@ else try {
     if (cond.Complete === "True") add("migrations", kind, "ok", "completed");
     else if (cond.Failed === "True")
       add("migrations", kind, "FAIL", /search-indexer-bootstrap/.test(kind)
-        ? (jobCause(j.metadata.name).startsWith("search bootstrap failed")
-            ? `${jobCause(j.metadata.name)} (Job ${j.metadata.name})`
-            : `search bootstrap failed${jobCause(j.metadata.name) ? `: ${jobCause(j.metadata.name)}` : ""} (often: it ran before rds-setup.sh post granted the search logins, or OpenSearch is unreachable). Fix the cause, then kubectl -n ${cfg.namespace} delete job ${j.metadata.name} and helm upgrade again; log: kubectl -n ${cfg.namespace} logs job/${j.metadata.name}`)
+        ? `${jobCause(j.metadata.name).startsWith("search bootstrap failed") ? jobCause(j.metadata.name)
+              : `search bootstrap failed${jobCause(j.metadata.name) ? `: ${jobCause(j.metadata.name)}` : ""} (often: it ran before rds-setup.sh post granted the search logins, or OpenSearch is unreachable)`}`
+          // The recovery steps always follow, whatever the cause says.
+          + ` | then: kubectl -n ${cfg.namespace} delete job ${j.metadata.name} && helm upgrade (same -f files); log: kubectl -n ${cfg.namespace} logs job/${j.metadata.name}`
         : `failed${jobCause(j.metadata.name) ? `: ${jobCause(j.metadata.name)}` : ""}: kubectl -n ${cfg.namespace} logs job/${j.metadata.name}`);
     else add("migrations", kind, "FAIL", "not complete yet (running or pending); rerun helm test when it finishes");
   }

@@ -200,7 +200,7 @@ leaves rdsLayout unset (the legacy preflight), which refuses a dedicated
 owner: the migrate Job fails with rds_profile_unproven. */ -}}
 {{- $sp := index .Values "sessions-pipeline" | default dict -}}
 {{- $owner := get $byLogin "__hoopOwner" -}}
-{{- if and $owner (not $owner.master) (eq (dig "worker" "migrations" "databaseMode" "" $sp | toString) "rds") (not (dig "worker" "migrations" "rdsLayout" "" $sp)) -}}
+{{- if and $owner (not $owner.master) (dig "worker" "migrations" "enabled" true $sp) (eq (dig "worker" "migrations" "databaseMode" "" $sp | toString) "rds") (not (dig "worker" "migrations" "rdsLayout" "" $sp)) -}}
 {{- $problems = append $problems (printf "sessions-pipeline.worker.migrations.rdsLayout is unset, but %s logs in as %q, a dedicated HoopDb owner: set rdsLayout: separate-database in your values file (scripts/selfhost/configure-rds.sh writes it there). Without it the HoopDb migrate Job fails with rds_profile_unproven." $owner.label $owner.user) -}}
 {{- end -}}
 {{- if $problems -}}
