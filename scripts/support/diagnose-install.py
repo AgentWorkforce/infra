@@ -925,7 +925,8 @@ for my $line (grep { length } split /\n/, $ENV{AR_PLAN}) {
   my @q;
   for my $p (split /&/, $m[6] // '') {
     my ($k, $v) = split /=/, $p, 2;
-    push @q, (defined($v) && $k =~ /^(?:sslmode|sslrootcert|connect_timeout|application_name)$/) ? "$k=$v" : 'unsupported=1';
+    my $name = dec($k =~ tr/+/ /r);   # as parse_qsl decodes names
+    push @q, (defined($v) && $name =~ /^(?:sslmode|sslrootcert|connect_timeout|application_name)$/) ? "$name=$v" : 'unsupported=1';
   }
   out('CRED', $slot, 'OK', b64json({scheme => $m[0], user => $m[1], host => $m[3], port => $m[4] // '',
                                      path => $m[5] // '', query => join('&', @q), fragment => defined($m[7]) ? 1 : 0,
