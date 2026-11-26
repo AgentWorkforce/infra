@@ -6,8 +6,9 @@
 # in shipped documents that point outside the archive; the generated
 # requirements doc links repository sources by design.
 #
-# Requires: git, python3, helm (with the cnpg/minio/open-telemetry
-# repositories added, as in the lint workflow), tar, unzip.
+# Requires: git, python3, helm, tar, unzip. No Helm repositories need to be
+# added: the dependency build runs against an empty repository config, the way
+# a customer's fresh machine does.
 set -euo pipefail
 
 repo=$(git -C "$(dirname "$0")/../.." rev-parse --show-toplevel)
@@ -30,9 +31,14 @@ diff -r "$work/tar" "$work/zip" >/dev/null \
   || { echo "error: tar.gz and zip payloads differ" >&2; exit 1; }
 root="$work/tar/agent-relay-customer-handoff"
 
-# The umbrella resolves every file:// dependency inside the archive.
-helm dependency build "$root/charts/sessions-pipeline" >/dev/null
-helm dependency build "$root/charts/agent-relay" >/dev/null
+# The umbrella resolves every file:// dependency inside the archive, and the
+# shipped helm-deps.sh (included with scripts/selfhost) builds them with no
+# `helm repo add` (empty repository config, as on a customer's fresh machine).
+test -f "$root/scripts/selfhost/helm-deps.sh" \
+  || { echo "error: handoff is missing scripts/selfhost/helm-deps.sh" >&2; exit 1; }
+: >"$work/repositories.yaml"
+HELM_REPOSITORY_CONFIG="$work/repositories.yaml" HELM_REPOSITORY_CACHE="$work/repository-cache" \
+  bash "$root/scripts/selfhost/helm-deps.sh" >/dev/null
 helm template agent-relay "$root/charts/agent-relay" \
   --namespace agent-relay -f "$root/charts/agent-relay/values-gcp.yaml" >"$work/rendered.yaml"
 test -s "$work/rendered.yaml"

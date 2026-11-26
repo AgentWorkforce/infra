@@ -18,6 +18,15 @@ explicit migration-compatibility review that matches the deployed Helm
 revision. It also refuses to pass while a selected migration or backup Job is
 active or failed.
 
+## Building chart dependencies
+
+`helm-deps.sh` runs `helm dependency build` for `charts/sessions-pipeline`,
+then `charts/agent-relay`, from the `Chart.lock` files, with no `helm repo add`.
+The CloudNativePG and OpenTelemetry charts come from OCI registries; the MinIO
+chart is published only at `https://charts.min.io/`, which the script registers
+in a throwaway repository config, so your own Helm repositories are neither read
+nor changed. Run it from a checkout before installing from `charts/agent-relay`.
+
 ## Mirroring images to ECR
 
 `mirror-images-to-ecr.sh` copies the images an environment's chart render pins

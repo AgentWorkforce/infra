@@ -24,15 +24,19 @@ setup by hand with [RDS database setup without rds-setup.sh](../../docs/self-hos
 represented by a committed example. To keep inputs in SOPS or SSM instead, see
 [Secrets](https://agentrelay.com/docs/self-hosting/secrets). Never commit real values.
 
-Check the example renders against the release:
+Check the example renders against your checkout. `scripts/selfhost/helm-deps.sh`
+builds the chart dependencies with no `helm repo add`:
 
 ```sh
-git checkout agent-relay-2026.11.18
-helm repo add cnpg https://cloudnative-pg.github.io/charts
-helm repo add minio https://charts.min.io/
-helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
-helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay
+scripts/selfhost/helm-deps.sh
 helm template agent-relay charts/agent-relay -n agent-relay \
   -f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-native.yaml \
   -f examples/aws/values.yaml >/dev/null && echo "render ok"
 ```
+
+A release tag older than `scripts/selfhost/helm-deps.sh` (such as
+`agent-relay-2026.11.18`) doesn't have the script: there, add the three chart
+repositories first (`helm repo add cnpg https://cloudnative-pg.github.io/charts`,
+`helm repo add minio https://charts.min.io/`,
+`helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts`)
+and run `helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay`.

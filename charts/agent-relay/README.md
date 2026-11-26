@@ -856,8 +856,7 @@ The portable shape additionally needs `HOOPDB_URL`, `HOOPDB_MIGRATION_URL`,
 `values-gcp-proof.yaml` in that Secret.
 
 ```sh
-helm dependency build charts/sessions-pipeline
-helm dependency build charts/agent-relay
+scripts/selfhost/helm-deps.sh   # dependency builds; no `helm repo add` needed
 helm install agent-relay charts/agent-relay -n agent-relay \
   --create-namespace --no-hooks -f charts/agent-relay/values-gcp-proof.yaml \
   -f charts/agent-relay/values-gcp-proof-live.yaml \

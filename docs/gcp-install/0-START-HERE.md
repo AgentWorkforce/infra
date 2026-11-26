@@ -69,10 +69,11 @@ dependencies in this order, then use `infra/charts/agent-relay` wherever the
 steps name the `.tgz` or `$CHART`:
 
 ```sh
-helm dependency build infra/charts/sessions-pipeline
-helm dependency build infra/charts/agent-relay
+infra/scripts/selfhost/helm-deps.sh
 ```
 
+It runs `helm dependency build` for `infra/charts/sessions-pipeline`, then
+`infra/charts/agent-relay`, and needs no `helm repo add`.
 `sessions-pipeline` has dependencies of its own, so it goes first. Without it
 the second command fails or packages a chart whose read API and workers are
 not rendered. Step 7's image values then need the chart's own release, not
