@@ -881,6 +881,43 @@ jobs:
       ESO_VERSION: v2.14.0
     permissions:
       contents: read
+  lint-db-guard-kind:
+    if: inputs.stage == 'charts'
+    needs:
+    - gate
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.gate.outputs.sha }}
+        fetch-depth: 0
+    - name: Changed?
+      id: changed
+      run: |
+        if [ "${{ github.event_name }}" != pull_request ] \
+          || git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
+            | grep -Eq '^(charts/agent-relay/(templates/(_db-guard\.tpl|db-guard\.yaml)|files/db-guard/|values\.yaml|values-eks)|charts/(relaycast|relay-control|sessions-pipeline)/values\.yaml|ci/agent-relay/db-guard/|examples/aws/)'; then
+          echo run=true >> "$GITHUB_OUTPUT"
+        fi
+    - uses: azure/setup-helm@v4
+      if: steps.changed.outputs.run == 'true'
+      with:
+        version: ${{ env.HELM_VERSION }}
+    - uses: helm/kind-action@v1.15.1
+      if: steps.changed.outputs.run == 'true'
+      with:
+        cluster_name: ar-dbguard
+    - name: Database credential guard
+      if: steps.changed.outputs.run == 'true'
+      run: |
+        scripts/selfhost/helm-deps.sh
+        KEEP_CLUSTER=1 ci/agent-relay/db-guard/kind.sh
+    env:
+      HELM_VERSION: v4.3.1
+      KUBECONFORM_VERSION: v0.8.0
+      ESO_VERSION: v2.14.0
+    permissions:
+      contents: read
   lint-relaycast-smoke:
     if: inputs.stage == 'charts'
     needs:
@@ -993,6 +1030,7 @@ jobs:
     - lint-customer-release-gate
     - lint-agent-skill
     - lint-kind
+    - lint-db-guard-kind
     - lint-relaycast-smoke
     - lint-search-worker-role-kind
     runs-on: blacksmith-4vcpu-ubuntu-2404

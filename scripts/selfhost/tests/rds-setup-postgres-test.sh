@@ -22,6 +22,12 @@
 # rds/separate-database mode as hoopdb_owner, as the chart's migrate Job does,
 # then runs `rds-setup.sh post` and checks the activated logins.
 #
+# With DB_GUARD=1 (needs helm and yq), each run also points the chart's
+# databaseGuard privilege check (charts/agent-relay/files/db-guard/check.mjs,
+# in the relaycast-self-host image) at the credential files pre wrote: every
+# dedicated login must pass, and the same Secrets rewritten to log in as the
+# master must fail on its live privileges (with the name check disabled).
+#
 # Optional: PG_SERVER_IMAGES (space-separated, pgvector images pinned by
 # digest; default pg16, pg17 and pg18), PSQL_IMAGES (space-separated client
 # images; default the rds-setup.sh pin, a PostgreSQL 17 client, plus a
@@ -45,6 +51,9 @@ BUN_IMAGE="${BUN_IMAGE:-oven/bun@sha256:3aa040e5445efa09d75bb428a64ba50db13e2b3a
 
 PG_SERVER_IMAGES="${PG_SERVER_IMAGES:-pgvector/pgvector@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f pgvector/pgvector@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd pgvector/pgvector@sha256:38681dc6eaf55308e2a4c6de392d131652dcfac70e1263e35cd9b5ea3fe39782}"
 PSQL_IMAGES="${PSQL_IMAGES:-$(sed -n 's/^PSQL_IMAGE="\${PSQL_IMAGE:-\(.*\)}"$/\1/p' "$RDS_SETUP") pgvector/pgvector@sha256:38681dc6eaf55308e2a4c6de392d131652dcfac70e1263e35cd9b5ea3fe39782}"
+
+DB_GUARD="${DB_GUARD:-0}"
+RELAYCAST_IMAGE="${RELAYCAST_IMAGE:-}"
 
 TMP_BASE="${AGENT_TMP_DIR:-${HOME}/.agent-tmp}"
 mkdir -p "$TMP_BASE"
@@ -126,6 +135,26 @@ chmod +x "$MOCK_BIN"/*
 # leaving the caller's checkout untouched.
 cp -R "$HOOPDB_BOOTSTRAP_DIR/." "$ROOT/sql/"
 chmod -R a+rX "$ROOT/sql"
+
+if [[ "$DB_GUARD" == 1 ]]; then
+  CHART_DIR="$(cd -- "${TEST_DIR}/../../../charts/agent-relay" && pwd)"
+  EXAMPLES_DIR="$(cd -- "${TEST_DIR}/../../../examples/aws" && pwd)"
+  [[ -n "$RELAYCAST_IMAGE" ]] || RELAYCAST_IMAGE="$(yq '.relaycast.runtime.postgres.image | .repository + "@" + .digest' "$EXAMPLES_DIR/values.yaml")"
+  helm template agent-relay "$CHART_DIR" -n agent-relay -f "$CHART_DIR/values-eks.yaml" \
+    -f "$CHART_DIR/values-eks-native.yaml" -f "$EXAMPLES_DIR/values.yaml" \
+    | yq 'select(.kind == "ConfigMap" and .metadata.name == "agent-relay-db-guard") | .data["targets.json"]' >"$ROOT/targets.json"
+  [[ "$(jq length "$ROOT/targets.json")" == 10 ]] || fail "examples/aws should give the guard 10 database URLs"
+  cp "$CHART_DIR/files/db-guard/check.mjs" "$ROOT/check.mjs"; chmod a+r "$ROOT/check.mjs" "$ROOT/targets.json"
+fi
+# db_guard <secret-files dir> <master logins JSON>: the hook's check, as the Job runs it.
+db_guard() {
+  chmod -R a+rX "$1"
+  docker run --rm --network "$NET" --user 1000:1000 \
+    -v "$ROOT/check.mjs:/opt/relaycast/db-guard/check.mjs:ro" -v "$ROOT/targets.json:/opt/relaycast/db-guard/targets.json:ro" \
+    -v "$1:/db-guard/secrets:ro" -e DB_GUARD_TARGETS=/opt/relaycast/db-guard/targets.json \
+    -e DB_GUARD_MASTER_LOGINS="$2" -e DB_GUARD_SSLMODE=disable \
+    --entrypoint node "$RELAYCAST_IMAGE" /opt/relaycast/db-guard/check.mjs
+}
 
 docker network create "$NET" >/dev/null
 export PATH="$MOCK_BIN:$PATH" MOCK_JOBS="$ROOT/jobs" MOCK_NET="$NET" MOCK_PGHOST="$PG" MOCK_SQL="$ROOT/sql"
@@ -224,6 +253,30 @@ for server in $PG_SERVER_IMAGES; do
     bash "$RDS_SETUP" pre >"$ROOT/pre2.log" 2>&1 || fail "$label: rerun of pre failed"
     grep -q 'dedicated-owner HoopDb already active' "$ROOT/pre2.log" || fail "$label: rerun did not converge"
     pass "$label: rerun of pre converges without changes"
+
+    if [[ "$DB_GUARD" == 1 ]]; then
+      db_guard "$STATE_DIR/secret-files" '["postgres"]' >"$ROOT/guard-ok.log" 2>&1 \
+        || { cat "$ROOT/guard-ok.log" >&2; fail "$label: db-guard refused the logins rds-setup.sh pre created"; }
+      [[ "$(grep -c '^  ok ' "$ROOT/guard-ok.log")" == 10 ]] || { cat "$ROOT/guard-ok.log" >&2; fail "$label: db-guard did not verify all 10 logins"; }
+      pass "$label: db-guard verifies all 10 dedicated logins from rds-setup.sh pre"
+      # The rehearsal's mistake: the same Secrets, every URL as the master.
+      rm -rf "$ROOT/master-secrets"; cp -R "$STATE_DIR/secret-files" "$ROOT/master-secrets"
+      find "$ROOT/master-secrets" -type f -exec sed -i.bak -E "s#://[a-z0-9_]+:[0-9a-f]+@#://postgres:$MASTER_PW@#" {} + 
+      find "$ROOT/master-secrets" -name '*.bak' -delete
+      if db_guard "$ROOT/master-secrets" '[]' >"$ROOT/guard-master.log" 2>&1; then
+        cat "$ROOT/guard-master.log" >&2; fail "$label: db-guard accepted the master login"
+      fi
+      grep -q 'AR_DB_LOGIN' "$ROOT/guard-master.log" || fail "$label: no AR_DB_LOGIN line"
+      grep -qF 'agent-relay-secrets: database-url logs in as "postgres", which has CREATEROLE, CREATEDB: a database master/administrator login.' "$ROOT/guard-master.log" \
+        || { cat "$ROOT/guard-master.log" >&2; fail "$label: master reason missing"; }
+      if ! grep -E '^  FAIL +agent-relay-secrets: database-owner-url +login=postgres ' "$ROOT/guard-master.log" | grep -q 'owns_schema'; then
+        cat "$ROOT/guard-master.log" >&2; fail "$label: relaycast owner check (verifyIdentity) not applied"
+      fi
+      [[ "$(grep -c '^  FAIL ' "$ROOT/guard-master.log")" == 10 ]] || { cat "$ROOT/guard-master.log" >&2; fail "$label: not every master URL failed"; }
+      ! grep -q "$MASTER_PW" "$ROOT/guard-master.log" || fail "$label: the password reached the output"
+      [[ -n "${DB_GUARD_OUT:-}" ]] && cp "$ROOT/guard-ok.log" "$ROOT/guard-master.log" "$DB_GUARD_OUT/" 2>/dev/null
+      pass "$label: db-guard refuses the master login on live privileges (relaycast's verifyIdentity rules)"
+    fi
 
     [[ -n "$SESSIONS_PIPELINE_DIR" ]] || continue
     # The chart's migrate Job env for examples/aws (rds, separate-database).

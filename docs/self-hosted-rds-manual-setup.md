@@ -313,6 +313,71 @@ The refusal occurs before migrations change the database. Do not grant
 `CREATEROLE` or a provider-admin membership to make either mismatched render
 pass.
 
+### 1.13 Credential guard: what Helm checks before it installs
+
+The chart refuses to install or upgrade when a Secret's database URL is wrong,
+before anything is applied (`databaseGuard` in the chart values). This catches
+the most common hand-filled mistake: every URL logging in as the RDS master
+`postgres` instead of the dedicated logins from steps 1.7 to 1.9.
+
+**At render time** Helm reads the Secrets (`lookup`) and refuses, listing every
+problem at once:
+
+- a URL that logs in as a master/administrator login (`postgres`, `rdsadmin`,
+  `admin`, ... in `databaseGuard.masterLogins`; add your master's name if it is
+  different). The HoopDb owner of a legacy administrator-owned install
+  (`rdsLayout: master-owner`, Phase 3) is exempt;
+- two jobs sharing one login, such as relay-control's runtime and migrations
+  URLs, or the relaycast owner and runtime;
+- a missing Secret or key, a JSON Secret holding a bare URL (for example
+  `search-indexer-runtime` must be `{"hoopdb_url":"postgresql://..."}`), or a
+  bare-URL key holding JSON.
+
+```text
+Error: INSTALLATION FAILED: execution error at (agent-relay/templates/db-guard.yaml:10:4):
+AR_DB_LOGIN: the database credentials in this release's Secrets are wrong; nothing was installed or changed:
+  - agent-relay-secrets: database-url logs in as "postgres" (the RDS master user). Each service needs its own login.
+  - ...
+Run scripts/selfhost/configure-rds.sh, which creates the logins and writes these Secrets, or see
+docs/self-hosted-rds-manual-setup.md §1.3 (https://agentrelay.com/docs/self-hosting/troubleshooting#database-logins). Then run helm again.
+```
+
+`lookup` returns nothing under `helm template`, `helm install --dry-run`
+(client) and `helm lint`, so there the render-time check does nothing. Use
+`helm install --dry-run=server` (or `helm upgrade --dry-run=server`) to run it
+against the cluster without installing.
+
+**Before install and upgrade** a hook Job, `<release>-db-guard`, connects once
+with each URL over the same verify-full TLS the services use (the `rds-ca`
+ConfigMap, `relaycast.postgresCa`) and checks the login's real privileges with
+relaycast's own identity rules: not SUPERUSER, CREATEROLE, CREATEDB,
+REPLICATION or BYPASSRLS, no path to a privileged role such as
+`rds_superuser`, and, for relaycast's two logins, every relaycast owner/runtime
+check. It also reports a login that does not exist or whose password differs
+from the Secret, an unreachable host and a CA mismatch. It is read-only, has no
+Kubernetes API access (the Secrets are mounted, only the database URL keys),
+and runs in the relaycast image the release already pins. Helm then reports
+only that the Job failed:
+
+```text
+Error: INSTALLATION FAILED: failed pre-install: resource Job/agent-relay/agent-relay-db-guard not ready. status: Failed, message: Job Failed. failed: 1/1
+```
+
+The reason is in the Job's log, which stays until the next install or upgrade:
+
+```bash
+kubectl -n agent-relay logs job/agent-relay-db-guard
+```
+
+The hook runs only when relaycast uses PostgreSQL. `helm template --no-hooks`
+(and any tool that applies rendered manifests) skips it; the migrate Jobs still
+refuse a wrong login, later and less readably.
+
+To turn the guard off for a setup it does not understand, set
+`databaseGuard.enabled=false` (both checks), or
+`databaseGuard.privilegeCheck.enabled=false` (the hook only). Credentials made
+by `scripts/selfhost/configure-rds.sh` or this page always pass.
+
 ## Phase 2: after the HoopDb migration Job succeeds
 
 Wait until the release's HoopDb migrate Job has succeeded:

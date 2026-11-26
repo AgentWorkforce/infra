@@ -1,0 +1,144 @@
+{{- /*
+Database credential guard. Render time: agent-relay.dbGuard.render (lookup;
+a no-op without a live cluster). Install/upgrade time: a pre-install and
+pre-upgrade hook Job that connects once with each URL and checks its real
+privileges with relaycast's verifyIdentity. The hook is an advisory
+preflight: the migrate Jobs enforce the same rules, so dropping it under
+`helm template --no-hooks` loses only the early, readable failure
+(scripts/ci/charts.sh allows hooks annotated agentworkforce.dev/preflight).
+*/ -}}
+{{- include "agent-relay.dbGuard.render" . }}
+{{- if include "agent-relay.dbGuard.hookEnabled" . }}
+{{- $g := .Values.databaseGuard | default dict -}}
+{{- $pc := $g.privilegeCheck | default dict -}}
+{{- $rc := index .Values "relaycast" -}}
+{{- $targets := include "agent-relay.dbGuard.targets" . | fromJsonArray -}}
+{{- $image := $pc.image | default dict -}}
+{{- if not $image.digest }}{{ $image = dig "runtime" "postgres" "image" dict $rc }}{{ end -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" (toString $image.digest)) }}{{ fail "databaseGuard.privilegeCheck.image (default relaycast.runtime.postgres.image) needs a sha256 digest" }}{{ end -}}
+{{- $name := printf "%s-db-guard" .Release.Name | trunc 52 | trimSuffix "-" -}}
+{{- $ca := $rc.postgresCa -}}
+{{- $secrets := dict -}}
+{{- range $targets }}{{ $_ := set $secrets .secret (append (get $secrets .secret | default list) .key | uniq) }}{{ end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: db-guard
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+    agentworkforce.dev/preflight: "true"
+data:
+  check.mjs: |
+    {{- .Files.Get "files/db-guard/check.mjs" | nindent 4 }}
+  targets.json: {{ toJson $targets | quote }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: db-guard
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    # A failed Job stays until the next install/upgrade so its log explains
+    # the failure: kubectl -n <namespace> logs job/<release>-db-guard
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    agentworkforce.dev/preflight: "true"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ $pc.activeDeadlineSeconds | default 120 | int64 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: db-guard
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      restartPolicy: Never
+      # No Kubernetes API access: the Secrets arrive as volumes.
+      automountServiceAccountToken: false
+      {{- with $rc.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      {{- with $rc.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $rc.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: check
+          image: {{ printf "%s@%s" $image.repository $image.digest | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [node, /opt/relaycast/db-guard/check.mjs]
+          terminationMessagePolicy: FallbackToLogsOnError
+          env:
+            - name: DB_GUARD_TARGETS
+              value: /opt/relaycast/db-guard/targets.json
+            - name: DB_GUARD_CA
+              value: /etc/postgres-ca/ca.crt
+            - name: DB_GUARD_MASTER_LOGINS
+              value: {{ toJson ($g.masterLogins | default list) | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            {{- toYaml ($pc.resources | default (dict "requests" (dict "cpu" "50m" "memory" "128Mi") "limits" (dict "memory" "256Mi"))) | nindent 12 }}
+          volumeMounts:
+            - { name: script, mountPath: /opt/relaycast/db-guard, readOnly: true }
+            - { name: ca, mountPath: /etc/postgres-ca, readOnly: true }
+            {{- range $i, $s := keys $secrets | sortAlpha }}
+            - { name: {{ printf "secret-%d" $i }}, mountPath: {{ printf "/db-guard/secrets/%s" $s | quote }}, readOnly: true }
+            {{- end }}
+      volumes:
+        - name: script
+          configMap: { name: {{ $name }} }
+        - name: ca
+          {{- if $ca.configMap }}
+          configMap:
+            name: {{ $ca.configMap | quote }}
+            optional: true
+            items: [{ key: {{ $ca.key | default "ca.crt" | quote }}, path: ca.crt }]
+          {{- else }}
+          secret:
+            secretName: {{ $ca.secret | quote }}
+            optional: true
+            defaultMode: 0444
+            items: [{ key: {{ $ca.key | default "ca.crt" | quote }}, path: ca.crt }]
+          {{- end }}
+        {{- range $i, $s := keys $secrets | sortAlpha }}
+        - name: {{ printf "secret-%d" $i }}
+          secret:
+            secretName: {{ $s | quote }}
+            # A missing Secret or key is reported by the check, not left Pending.
+            optional: true
+            defaultMode: 0440
+            # Only the database URLs: the hook never sees the other keys.
+            items:
+              {{- range $k := get $secrets $s | sortAlpha }}
+              - { key: {{ $k | quote }}, path: {{ $k | quote }} }
+              {{- end }}
+        {{- end }}
+{{- end }}
