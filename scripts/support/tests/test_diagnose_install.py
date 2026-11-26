@@ -341,6 +341,170 @@ class ExecutionTests(unittest.TestCase):
                         self.assertEqual(diag.main(['--scope','cluster','--context','test','--output',str(output)]),2)
 
 
+def workload(kind, name, sa, **env):
+    pod = {'serviceAccountName': sa, 'containers': [{'name': 'app', 'env': [{'name': k, 'value': v} for k, v in env.items()]}]}
+    spec = {'jobTemplate': {'spec': {'template': {'spec': pod}}}} if kind == 'cronjobs' else {'template': {'spec': pod}}
+    return {'metadata': {'name': name}, 'spec': spec}
+
+
+OS_URL = 'https://vpc-relay-search-abcdefghijklmnopqrstuvwxyz.us-west-2.es.amazonaws.com'
+# The workloads the eks + eks-native profiles render (chart 0.7.54/0.7.81).
+RELEASE = {
+    'deployments': [
+        workload('deployments', 'relay-control', 'relay-control'),
+        workload('deployments', 'agent-relay-worker-session-summary-worker', 'agent-relay-worker', LOCKER_BUCKET='acme-sessions', LOCKER_REGION='us-west-2'),
+        workload('deployments', 'agent-relay-ingest-edge', 'agent-relay-session-ingest-api', LOCKER_BUCKET='acme-sessions', LOCKER_PROVIDER='s3'),
+        workload('deployments', 'agent-relay-read-api', 'agent-relay-session-read', LOCKER_BUCKET='acme-sessions',
+                 SEARCH_INDEX_OPENSEARCH_AUTH='sigv4', SEARCH_INDEX_OPENSEARCH_URL=OS_URL),
+        workload('deployments', 'agent-relay-search-indexer', 'agent-relay-search-indexer', LOCKER_BUCKET='acme-sessions',
+                 LOCKER_PROVIDER='s3', SEARCH_INDEX_OPENSEARCH_AUTH='sigv4', SEARCH_INDEX_OPENSEARCH_URL=OS_URL),
+    ],
+    'jobs': [workload('jobs', 'agent-relay-worker-migrate-6ae46510', 'agent-relay-worker', LOCKER_BUCKET='acme-sessions')],
+    'statefulsets': [], 'cronjobs': [],
+}
+ROLE = 'arn:aws:iam::123456789012:role/'
+
+
+class FakeAws:
+    """subprocess.run stand-in for aws and kubectl config view; records every argv."""
+    def __init__(self, associations, simulate='allowed', list_error=None, context_cluster='arn:aws:eks:us-west-2:123456789012:cluster/demo'):
+        self.associations, self.simulate, self.list_error, self.context_cluster = associations, simulate, list_error, context_cluster
+        self.calls = []
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(argv)
+        ok = lambda data: SimpleNamespace(returncode=0, stdout=json.dumps(data), stderr='')
+        if argv[:3] == ['kubectl', 'config', 'view']:
+            return ok({'clusters': [{'name': self.context_cluster}], 'users': []})
+        if argv[:3] == ['aws', 'eks', 'list-pod-identity-associations']:
+            if self.list_error:
+                return SimpleNamespace(returncode=255, stdout='', stderr=self.list_error)
+            return ok({'associations': [{'serviceAccount': sa, 'associationId': 'a-'+str(i).zfill(10), 'namespace': 'agent-relay'}
+                                        for i, sa in enumerate(self.associations)]})
+        if argv[:3] == ['aws', 'eks', 'describe-pod-identity-association']:
+            aid = argv[argv.index('--association-id')+1]
+            sa = list(self.associations)[int(aid[2:])]
+            return ok({'association': {'roleArn': ROLE+self.associations[sa]}})
+        if argv[:3] == ['aws', 'iam', 'simulate-principal-policy']:
+            if self.simulate == 'denied-api':
+                return SimpleNamespace(returncode=254, stdout='', stderr='An error occurred (AccessDenied) when calling SimulatePrincipalPolicy')
+            role = argv[argv.index('--policy-source-arn')+1]
+            actions = argv[argv.index('--action-names')+1:argv.index('--resource-arns')]
+            decision = self.simulate(role, actions) if callable(self.simulate) else self.simulate
+            return ok({'EvaluationResults': [{'EvalActionName': a, 'EvalDecision': decision} for a in actions]})
+        raise AssertionError('unexpected command '+' '.join(argv))
+
+
+class PodIdentityTests(unittest.TestCase):
+    def run_checks(self, fake, release=RELEASE, **kwargs):
+        report = diag.Report()
+        with mock.patch.object(diag, 'kube', side_effect=lambda opt, res, name=None, selector=False, probe=False: {'items': release[res]}), \
+             mock.patch.object(diag.subprocess, 'run', side_effect=fake):
+            diag.pod_identity_checks(options(**kwargs), report)
+        return {c['check']: c for c in report.checks}
+
+    # The rehearsal: roles for alleyoop, session-ingest-api, search-indexer and
+    # session-read, none for the worker.
+    REHEARSAL = {'agent-relay-alleyoop': 'alleyoop', 'agent-relay-session-ingest-api': 'session-ingest-api',
+                 'agent-relay-search-indexer': 'session-indexer', 'agent-relay-session-read': 'session-read'}
+
+    def test_missing_worker_association_gets_an_exact_fix_line(self):
+        fake = FakeAws(self.REHEARSAL)
+        checks = self.run_checks(fake)
+        worker = checks['podidentity.agent-relay-worker']
+        self.assertEqual(worker['status'], 'FAIL')
+        self.assertIn('needs S3 read/write', worker['detail'])
+        self.assertIn('agent-relay-worker-session-summary-worker', worker['detail'])
+        # The worker needs what session-ingest-api has, so its role is the suggestion.
+        self.assertIn('aws eks create-pod-identity-association --cluster-name demo --region us-west-2 --namespace agent-relay '
+                      '--service-account agent-relay-worker --role-arn '+ROLE+'session-ingest-api', worker['action'])
+        self.assertIn('rollout restart deployment/agent-relay-worker-session-summary-worker', worker['action'])
+        self.assertNotIn('migrate', worker['action'].split('rollout restart')[1])
+        for sa in ('agent-relay-session-ingest-api', 'agent-relay-search-indexer', 'agent-relay-session-read'):
+            self.assertEqual(checks['podidentity.'+sa]['status'], 'PASS', sa)
+        self.assertNotIn('podidentity.relay-control', checks)
+        self.assertIn('agent-relay-alleyoop', checks['podidentity.unused']['detail'])
+        self.assertIn(['aws', 'eks', 'list-pod-identity-associations', '--cluster-name', 'demo', '--region', 'us-west-2',
+                       '--namespace', 'agent-relay', '--output', 'json'], fake.calls)
+
+    def test_access_levels_and_simulated_resources(self):
+        fake = FakeAws(dict(self.REHEARSAL, **{'agent-relay-worker': 'session-ingest-api'}))
+        checks = self.run_checks(fake)
+        self.assertEqual({k: c['status'] for k, c in checks.items() if k.startswith('podidentity.agent-relay-search-indexer')},
+                         {'podidentity.agent-relay-search-indexer': 'PASS', 'podidentity.agent-relay-search-indexer.s3-r': 'PASS',
+                          'podidentity.agent-relay-search-indexer.os-w': 'PASS'})
+        self.assertIn('podidentity.agent-relay-session-read.os-r', checks)
+        self.assertIn('podidentity.agent-relay-worker.s3-rw', checks)
+        sims = [c for c in fake.calls if c[:3] == ['aws', 'iam', 'simulate-principal-policy']]
+        resources = {c[c.index('--resource-arns')+1] for c in sims}
+        self.assertEqual(resources, {'arn:aws:s3:::acme-sessions', 'arn:aws:s3:::acme-sessions/*',
+                                     'arn:aws:es:us-west-2:123456789012:domain/relay-search/*'})
+        writes = [c for c in sims if 's3:PutObject' in c]
+        self.assertTrue(writes and all(ROLE+'session-ingest-api' in c for c in writes))
+
+    def test_role_without_the_access_fails_and_unsimulatable_is_unknown(self):
+        deny_os = lambda role, actions: 'implicitDeny' if role.endswith('session-read') and actions[0].startswith('es:') else 'allowed'
+        checks = self.run_checks(FakeAws(self.REHEARSAL, simulate=deny_os))
+        self.assertEqual(checks['podidentity.agent-relay-session-read.os-r']['status'], 'FAIL')
+        self.assertIn('OpenSearch read on OpenSearch domain relay-search', checks['podidentity.agent-relay-session-read.os-r']['action'])
+        self.assertEqual(checks['podidentity.agent-relay-session-read.s3-r']['status'], 'PASS')
+        checks = self.run_checks(FakeAws(self.REHEARSAL, simulate='denied-api'))
+        self.assertEqual(checks['podidentity.agent-relay-session-read']['status'], 'PASS')
+        self.assertEqual(checks['podidentity.agent-relay-session-read.os-r']['status'], 'UNKNOWN')
+        self.assertIn('aws-access-denied', checks['podidentity.agent-relay-session-read.os-r']['detail'])
+        checks = self.run_checks(FakeAws(self.REHEARSAL), no_iam_simulate=True)
+        self.assertFalse([k for k in checks if k.endswith(('.s3-r', '.s3-rw', '.os-r', '.os-w'))])
+
+    def test_no_credentials_is_unknown_with_the_command_to_run(self):
+        checks = self.run_checks(FakeAws({}, list_error='Unable to locate credentials. You can configure credentials by running "aws configure".'))
+        sas = sorted(k for k in checks)
+        self.assertEqual(sas, ['podidentity.agent-relay-search-indexer', 'podidentity.agent-relay-session-ingest-api',
+                               'podidentity.agent-relay-session-read', 'podidentity.agent-relay-worker'])
+        for check in checks.values():
+            self.assertEqual(check['status'], 'UNKNOWN')
+            self.assertIn('no-valid-aws-credentials', check['detail'])
+            self.assertIn('aws eks list-pod-identity-associations --cluster-name demo --region us-west-2 --namespace agent-relay', check['action'])
+        self.assertNotIn('Unable to locate', json.dumps(checks))
+
+    def test_no_associations_suggests_a_placeholder_role(self):
+        checks = self.run_checks(FakeAws({}))
+        self.assertIn('--role-arn <ARN of a role with S3 read, OpenSearch write>', checks['podidentity.agent-relay-search-indexer']['action'])
+        self.assertTrue(all(c['status'] == 'FAIL' for c in checks.values()))
+
+    def test_static_keys_and_other_providers_need_no_association(self):
+        release = dict(RELEASE, deployments=[
+            workload('deployments', 'w', 'agent-relay-worker', LOCKER_BUCKET='b1', LOCKER_ACCESS_KEY_ID='AKIA'),
+            workload('deployments', 'i', 'agent-relay-session-ingest-api', LOCKER_BUCKET='b1', LOCKER_PROVIDER='gcs')], jobs=[])
+        checks = self.run_checks(FakeAws({}), release=release)
+        self.assertEqual(checks['podidentity']['detail'], 'no-workloads-using-s3-or-opensearch')
+
+    def test_cluster_from_flags_or_exec_args(self):
+        fake = FakeAws(self.REHEARSAL, context_cluster='my-alias')
+        checks = self.run_checks(fake)
+        self.assertEqual(checks['podidentity']['detail'], 'eks-cluster-unknown')
+        checks = self.run_checks(FakeAws(self.REHEARSAL, context_cluster='my-alias'), eks_cluster='prod-1', aws_region='eu-west-1')
+        self.assertIn('--cluster-name prod-1 --region eu-west-1', checks['podidentity.agent-relay-worker']['action'])
+        config = {'clusters': [{'name': 'alias'}], 'users': [{'name': 'u', 'user': {'exec': {
+            'args': ['--region', 'ap-south-1', 'eks', 'get-token', '--cluster-name', 'from-exec'],
+            'env': [{'name': 'AWS_PROFILE', 'value': 'customer-admin'}]}}}]}
+        opts = options()
+        with mock.patch.object(diag.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(config), stderr='')):
+            self.assertEqual(diag.eks_target(opts), ('from-exec', 'ap-south-1'))
+        self.assertEqual(opts.aws_profile, 'customer-admin')
+
+    def test_main_skips_pod_identity_with_no_aws_or_unreachable_cluster(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(diag, 'pod_identity_checks') as checks, \
+             mock.patch.object(diag, 'cluster_checks'), mock.patch.object(diag, 'load_credentials', return_value={}), \
+             contextlib.redirect_stdout(io.StringIO()):
+            def discover(opts, notes):
+                opts.cluster_reachable, opts.missing, opts.no_credentials = True, {}, True
+            with mock.patch.object(diag, 'discover', side_effect=discover):
+                diag.main(['--scope', 'cluster', '--context', 't', '--values', '--output', directory+'/a.json'])
+                self.assertEqual(checks.call_count, 1)
+                diag.main(['--scope', 'cluster', '--context', 't', '--values', '--no-aws', '--output', directory+'/b.json'])
+                self.assertEqual(checks.call_count, 1)
+
+
 class PostgreSQLCatalogTests(unittest.TestCase):
     """Isolated local Postgres only; never uses the developer's current database."""
     @classmethod

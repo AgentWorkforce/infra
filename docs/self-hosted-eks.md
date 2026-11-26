@@ -41,6 +41,50 @@ Files:
 | [`scripts/selfhost/e2e-eks-proof.sh`](../scripts/selfhost/e2e-eks-proof.sh) | The e2e: the GKE proof's 15 cases through the HTTPS edge (`e2e-gcp-proof.sh --edge alb --require-public`) plus EKS checks. |
 | [`scripts/selfhost/e2e-eks-proof-s3.ts`](../scripts/selfhost/e2e-eks-proof-s3.ts) | The Pod Identity to S3 round trip the e2e runs in the alleyoop pod. |
 
+## Pod Identity: ServiceAccounts and what each needs
+
+The current chart's EKS profiles (`values-eks.yaml`, with `values-eks-native.yaml`
+or `values-eks-rds-native.yaml`) run these ServiceAccounts in the release
+namespace with AWS access, through EKS Pod Identity. Each needs an association:
+
+| ServiceAccount | Workloads | Needs |
+| --- | --- | --- |
+| `<release>-worker` | session summary, status and metadata workers; HoopDb migrate Job | S3 read/write |
+| `<release>-session-ingest-api` | ingest edge | S3 read/write |
+| `<release>-search-indexer` | search indexer; its bootstrap Job | S3 read, OpenSearch write |
+| `<release>-session-read` | read API | S3 read, OpenSearch read |
+| `<release>-alleyoop` | only profiles that render the legacy ingest API | S3 read/write |
+
+S3 is the sessions bucket (read/write: `s3:ListBucket` on the bucket and
+`s3:GetObject`/`PutObject`/`DeleteObject` on its objects; read: `s3:ListBucket`,
+`s3:GetObject`). OpenSearch is `es:ESHttp*` on the domain, plus the
+fine-grained-access role mapping for the indexer and reader roles. With a KMS
+key on the bucket, add `kms:Decrypt` (and `kms:GenerateDataKey` for read/write).
+
+[`terraform/examples/aws-existing-cluster`](../terraform/examples/aws-existing-cluster/main.tf)
+and [`terraform/examples/aws`](../terraform/examples/aws/main.tf) create all
+five: one sessions role associated with `worker`, `alleyoop` and
+`session-ingest-api` (`modules/aws/object-storage`), and the indexer and reader
+roles (`modules/aws/search`). If you create the roles yourself, check that every
+ServiceAccount has an association before the install; the worker is the one most
+easily missed, and without it the session-summary worker logs `no Locker
+credentials: set LOCKER_ACCESS_KEY_ID/LOCKER_SECRET_ACCESS_KEY, or run with EKS
+Pod Identity`:
+
+```bash
+for sa in worker session-ingest-api search-indexer session-read; do
+  aws eks list-pod-identity-associations --cluster-name "$CLUSTER" --region "$REGION" \
+    --namespace agent-relay --service-account "agent-relay-$sa" --query 'associations[0].associationId' --output text |
+    grep -q '^a-' && echo "ok agent-relay-$sa" || echo "MISSING agent-relay-$sa"
+done
+```
+
+After the install, `scripts/support/diagnose-install.py` runs the same check
+against the ServiceAccounts the release actually renders, prints the exact
+`aws eks create-pod-identity-association` line for each missing one, and asks
+IAM whether each role allows its access
+([EKS Pod Identity](support/diagnose-install.md#eks-pod-identity)).
+
 ## Mapping from the GKE profile
 
 | GKE (`values-gcp.yaml`) | EKS (`values-eks.yaml`) |
