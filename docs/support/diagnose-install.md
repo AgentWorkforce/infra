@@ -80,7 +80,9 @@ unverified alias.
 The script reads exactly five named Kubernetes Secrets using `get`, keeps their
 values in memory, validates all ten database credential slots, and connects as
 the configured logins. It does not need `list` on Secrets. Your identity also
-needs `list` on Jobs, Pods, Deployments and PersistentVolumeClaims in the namespace.
+needs `list` on Jobs, Pods, Deployments, PersistentVolumeClaims and ConfigMaps
+in the namespace (ConfigMaps for the mounted-ConfigMap and `rds-ca` checks;
+without it those checks are UNKNOWN).
 Workload reads use `app.kubernetes.io/instance=RELEASE`; custom labels can leave
 sections unknown. Names and creation times identify failed resources in the
 report, including old Jobs that may predate corrected credentials. A previous
