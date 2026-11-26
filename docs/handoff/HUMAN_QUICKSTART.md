@@ -34,13 +34,10 @@ tar -xzf agent-relay-customer-handoff-<rev12>.tar.gz
 cd agent-relay-customer-handoff
 sha256sum -c SHA256SUMS
 
-# The charts ship as source. Build the nested Sessions Pipeline chart first: Helm does
-# not vendor the dependencies of a file:// dependency recursively.
-helm repo add cnpg https://cloudnative-pg.github.io/charts
-helm repo add minio https://charts.min.io/
-helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
-helm dependency build charts/sessions-pipeline
-helm dependency build charts/agent-relay
+# The charts ship as source. This builds charts/sessions-pipeline, then
+# charts/agent-relay (Helm does not vendor the dependencies of a file://
+# dependency recursively). No `helm repo add` is needed.
+bash scripts/selfhost/helm-deps.sh
 
 cp charts/agent-relay/values-gcp.yaml customer-values.yaml
 ```

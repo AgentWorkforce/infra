@@ -12,7 +12,13 @@ these files. Bump a pin here, re-run the smoke tests, then update the consumers.
 | Locker (S3) | `minio/minio` 5.4.0 | `cgr.dev/chainguard/minio:latest@sha256:e70b2b1e…` | `minio-values.yaml` | bucket hook off; `sessions-pipeline-worker` locker-init makes the bucket. MinIO no longer publishes public images; Chainguard's free tier is `:latest` only, so the digest is bumped by hand |
 | OpenTelemetry collector | `open-telemetry/opentelemetry-collector` 0.178.0 | `otel/opentelemetry-collector-contrib:0.163.2` | `otel-values.yaml` | the image must track the chart's appVersion: 0.137.0 rejects this chart's config |
 
-Repositories:
+Repositories. `charts/sessions-pipeline` pulls the `cluster` and
+`opentelemetry-collector` charts from the projects' OCI registries
+(`oci://ghcr.io/cloudnative-pg/charts`, `oci://ghcr.io/open-telemetry/opentelemetry-helm-charts`),
+which need no `helm repo add`; MinIO publishes no OCI chart, so it stays on
+`https://charts.min.io/`. `scripts/selfhost/helm-deps.sh` builds the chart
+dependencies without touching your Helm repositories. `pins.txt` and the smoke
+tests still name the charts by these repository aliases:
 
 ```bash
 helm repo add cnpg https://cloudnative-pg.github.io/charts
