@@ -109,7 +109,8 @@ INGEST_SQL = """SELECT json_build_object(
 );"""
 
 
-def ingest_checks(options, credential, report):
+def ingest_checks(options, credential, report, query=None):
+    psql = query or globals()['psql']
     table = psql(credential, INGEST_TABLE_SQL, options.timeout, options.ca_file)
     if not table.get('present'):
         report.unknown('ingest.pointers', 'session-index-missing')
@@ -157,23 +158,24 @@ class DiagnosticError(Exception):
     """Only fixed category strings may be emitted from this exception."""
 
 
+# (category, regex) in order, applied to lowercased stderr. The in-cluster probe
+# (perl) applies the same table, so keep the regexes portable.
+ERROR_RULES = (
+    ('role-missing', r'role .+ does not exist'),
+    ('authentication', r'password authentication failed|no password supplied|role does not exist'),
+    ('database-missing', r'database[\s\S]*does not exist|does not exist[\s\S]*database'),
+    ('tls', r'certificate|ssl|tls'),
+    ('dns', r'could not translate host|name or service not known'),
+    ('network', r'connection refused|timeout expired|could not connect|no route to host|network is unreachable'),
+    ('permissions', r'permission denied|forbidden'),
+)
+
+
 def error_category(stderr):
     # Never return server/command error text; it can include full credentials.
     value = stderr.lower()
-    if re.search(r'role .+ does not exist',value):
-        return 'role-missing'
-    for category, patterns in (
-        ('authentication', ('password authentication failed', 'no password supplied', 'role does not exist')),
-        ('database-missing', ('database',)),
-        ('tls', ('certificate', 'ssl', 'tls')),
-        ('dns', ('could not translate host', 'name or service not known')),
-        ('network', ('connection refused', 'timeout expired', 'could not connect', 'no route to host')),
-        ('permissions', ('permission denied', 'forbidden')),
-    ):
-        if category == 'database-missing':
-            if 'database' in value and 'does not exist' in value:
-                return category
-        elif any(p in value for p in patterns):
+    for category, rule in ERROR_RULES:
+        if re.search(rule, value):
             return category
     return 'command-failed'
 
@@ -462,7 +464,15 @@ def load_credentials(options, report):
             manifests = DiagnosticError('manifest-unreadable')
     for slot,(secret,key,wrapper,role,group) in SLOTS.items():
         try:
-            if manifests is not None:
+            in_cluster = getattr(options, 'in_cluster_values', None)
+            if in_cluster is not None:
+                found = in_cluster.get((secret, key))
+                if found is None:
+                    raise DiagnosticError('in-cluster-no-result')
+                if isinstance(found, DiagnosticError):
+                    raise found
+                value = found.strip()
+            elif manifests is not None:
                 if isinstance(manifests, DiagnosticError):
                     raise manifests
                 if secret not in manifests:
@@ -495,7 +505,7 @@ def load_credentials(options, report):
                 raise DiagnosticError('wrong-database')
             report.add('credential.'+slot,'PASS','URL structure, login and TLS mode match the install contract.')
         except DiagnosticError as exc:
-            report.add('credential.'+slot,'UNKNOWN' if str(exc) in ('permissions','network','timeout','tool-missing','command-failed') else 'FAIL',str(exc),
+            report.add('credential.'+slot,'UNKNOWN' if str(exc) in ('permissions','network','timeout','tool-missing','command-failed','in-cluster-no-result') else 'FAIL',str(exc),
                        'Check the named Secret/key or local file in the credential map; use the intended service login, explicit host and custom database name.')
         except (OSError,ValueError,UnicodeError,TypeError,AttributeError):
             report.add('credential.'+slot,'FAIL','credential-unreadable','Check file permissions, encoding and JSON wrapper.')
@@ -515,7 +525,8 @@ def load_credentials(options, report):
     return credentials
 
 
-def database_checks(options, credentials, report):
+def database_checks(options, credentials, report, query=None):
+    psql = query or globals()['psql']
     identities = {}
     for slot,credential in credentials.items():
         try:
@@ -563,7 +574,7 @@ def database_checks(options, credentials, report):
             if slot=='hoop-owner':
                 for check,value in psql(credential,HOOP_SQL,options.timeout,options.ca_file).items():
                     report.test('hoop.'+check,value is True,'HoopDb prerequisite: '+check+'.','Check phase 1 extensions and migration completion before phase 2 login activation.')
-                ingest_checks(options,credential,report)
+                ingest_checks(options,credential,report,query)
         except (DiagnosticError,KeyError,TypeError,AttributeError) as exc:
             category = str(exc) if isinstance(exc,DiagnosticError) else 'invalid-response'
             if category in ('authentication','role-missing','database-missing'):
@@ -864,6 +875,315 @@ def pod_identity_checks(options, report):
         report.add('podidentity.unused', 'PASS', 'Associations no workload of this release uses (harmless; remove if unwanted): '+', '.join(unused)+'.')
 
 
+# In-cluster database checks. When the operator machine can't reach the database
+# (split VPN), the same read-only catalog SQL runs from a short-lived Job in the
+# release namespace. The Job mounts only the credential keys of the release's own
+# Secrets and the rds-ca ConfigMap, runs psql from the pinned PostgreSQL client
+# image that rds-setup.sh and configure-rds.sh use, and prints one line per
+# result: the credential value with its password replaced, then each query's JSON
+# or a fixed error category. Raw errors, passwords and object keys never reach the
+# log. The operator needs only create/get/delete on Jobs and get on Pods and logs.
+PSQL_IMAGE = 'ghcr.io/cloudnative-pg/postgresql:17-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3'
+# The ingest query without the latest object's bucket/key (they would reach the log).
+INGEST_SQL_IN_CLUSTER = INGEST_SQL.replace(""",
+ 'latest', (SELECT json_build_object('bucket',bucket,'key',manifest_key) FROM sessions.session_index
+            WHERE bucket IS NOT NULL AND manifest_key IS NOT NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1)""", '')
+IN_CLUSTER_QUERIES = {'identity': IDENTITY_SQL, 'cast': CAST_SQL, 'hoop': HOOP_SQL,
+                      'ingest-table': INGEST_TABLE_SQL, 'ingest': INGEST_SQL_IN_CLUSTER}
+QUERY_NAMES = {IDENTITY_SQL: 'identity', CAST_SQL: 'cast', HOOP_SQL: 'hoop',
+               INGEST_TABLE_SQL: 'ingest-table', INGEST_SQL: 'ingest'}
+SLOT_QUERIES = {'cast-owner': ('identity', 'cast'), 'hoop-owner': ('identity', 'hoop', 'ingest-table', 'ingest')}
+
+PROBE = r"""
+use strict; use warnings; use MIME::Base64 qw(encode_base64); use JSON::PP qw(decode_json);
+my @rules = map { [split /\t/, $_, 2] } grep { length } split /\n/, $ENV{AR_RULES};
+sub category { my $e = lc(shift // ''); for my $r (@rules) { return $r->[0] if $e =~ /$r->[1]/ } 'command-failed' }
+sub out { print join("\t", 'AR', @_), "\n" }
+sub dec { my $v = shift; $v =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge; $v }
+sub slurp { my $f = shift; open(my $h, '<', $f) or return undef; local $/; my $v = <$h>; close $h; $v }
+sub b64json { my $j = JSON::PP->new->canonical->utf8->encode(shift); encode_base64($j, '') }
+delete $ENV{$_} for grep { /^PG/ } keys %ENV;
+my ($ca) = grep { -s "/ca/$_/ca.crt" } split /,/, $ENV{AR_CA_DIRS};
+out('CA', defined $ca ? $ca : 'none');
+for my $line (grep { length } split /\n/, $ENV{AR_PLAN}) {
+  my ($slot, $secret, $key, $wrapper, $queries) = split /\t/, $line;
+  my @queries = split /,/, $queries;
+  my $value = slurp("/secrets/$secret/$key");
+  if (!defined $value) { out('CRED', $slot, 'ERR', 'secret-key-missing'); next }
+  $value =~ s/^\s+|\s+$//g;
+  my $url = $value;
+  if ($wrapper ne '-') {
+    my $doc = eval { decode_json($value) };
+    $url = (ref($doc) eq 'HASH' && defined($doc->{$wrapper}) && !ref($doc->{$wrapper})) ? $doc->{$wrapper} : undef;
+  }
+  # Split like urlsplit: the netloc ends at the first / ? #, userinfo at its last @.
+  my @m = defined($url) ? ($url =~ m{^([A-Za-z][A-Za-z0-9+.-]*)://([^:/?#\@]*):([^/?#]*)\@(\[[0-9A-Fa-f:.]+\]|[^\@/?#:\[\]]*)(?::([^/?#]*))?(/[^?#]*)?(?:\?([^#]*))?(#.*)?$}s) : ();
+  if (!@m) { out('CRED', $slot, 'ERR', 'malformed-url-or-json'); out('Q', $slot, $_, 'ERR', 'malformed-url-or-json') for @queries; next }
+  # Only the parts the URL checks need. The password and every other field of
+  # the Secret value stay in this process.
+  out('CRED', $slot, 'OK', b64json({scheme => $m[0], user => $m[1], host => $m[3], port => $m[4] // '',
+                                     path => $m[5] // '', query => $m[6] // '', fragment => defined($m[7]) ? 1 : 0}));
+  (my $host = $m[3]) =~ s/^\[|\]$//g;
+  my $port = (defined($m[4]) && length($m[4])) ? $m[4] : '5432';
+  if ($port !~ /^\d{1,5}$/ || !defined($m[5]) || length($m[5]) < 2) { out('Q', $slot, $_, 'ERR', 'malformed-url-or-json') for @queries; next }
+  local $ENV{PGHOST} = $host; local $ENV{PGPORT} = $port;
+  local $ENV{PGUSER} = dec($m[1]); local $ENV{PGPASSWORD} = dec($m[2]); local $ENV{PGDATABASE} = dec(substr($m[5], 1));
+  local $ENV{PGSSLMODE} = 'verify-full'; local $ENV{PGSSLROOTCERT} = defined $ca ? "/ca/$ca/ca.crt" : '/ca/none';
+  local $ENV{PGCONNECT_TIMEOUT} = $ENV{AR_TIMEOUT}; local $ENV{PGOPTIONS} = '-c statement_timeout='.($ENV{AR_TIMEOUT} * 1000);
+  local $ENV{PGAPPNAME} = 'agent-relay-diagnose';
+  for my $q (@queries) {
+    my $sql = $ENV{'AR_SQL_'.uc($q =~ s/-/_/gr)};
+    open(my $f, '>', '/tmp/q.sql') or die; print $f "BEGIN READ ONLY;\n$sql\nROLLBACK;\n"; close $f;
+    my $pid = fork() // die;
+    if (!$pid) {
+      open(STDIN, '<', '/tmp/q.sql'); open(STDOUT, '>', '/tmp/out'); open(STDERR, '>', '/tmp/err');
+      exec('psql', '-X', '-w', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1') or exit 127;
+    }
+    waitpid($pid, 0);
+    my ($rc, $o) = ($? >> 8, slurp('/tmp/out') // '');
+    $o =~ s/^\s+|\s+$//g;
+    if ($rc == 0) { out('Q', $slot, $q, 'OK', encode_base64($o, '')) }
+    else { out('Q', $slot, $q, 'ERR', $rc == 127 ? 'tool-missing' : category(slurp('/tmp/err'))) }
+    unlink('/tmp/out', '/tmp/err', '/tmp/q.sql');
+  }
+}
+out('DONE');
+"""
+
+
+def kubectl_text(options, args, stdin=None, timeout=None):
+    argv = ['kubectl', '--context', options.context, '--namespace', options.namespace,
+            '--request-timeout='+str(options.timeout)+'s'] + args
+    try:
+        result = subprocess.run(argv, input=stdin, text=True, capture_output=True,
+                                timeout=timeout or options.timeout+5, shell=False)
+    except FileNotFoundError:
+        raise DiagnosticError('tool-missing') from None
+    except subprocess.TimeoutExpired:
+        raise DiagnosticError('timeout') from None
+    except OSError:
+        raise DiagnosticError('command-unavailable') from None
+    if result.returncode:
+        raise DiagnosticError(error_category(result.stderr))
+    return result.stdout
+
+
+def ca_configmaps(options):
+    """--ca-configmap, else the CA rds-setup.sh/the chart (rds-ca) or cloud-sql-setup.sh (cloud-sql-ca) creates."""
+    return [options.ca_configmap] if getattr(options, 'ca_configmap', None) else ['rds-ca', 'cloud-sql-ca']
+
+
+def credential_url(parts, wrapper):
+    """The Secret value rebuilt from the probe's URL parts, password replaced, for parse_credential."""
+    if not isinstance(parts, dict) or not all(isinstance(parts.get(k), str) for k in ('scheme', 'user', 'host', 'port', 'path', 'query')):
+        raise ValueError()
+    value = (parts['scheme']+'://'+parts['user']+':redacted@'+parts['host']+(':'+parts['port'] if parts['port'] else '')
+             +parts['path']+('?'+parts['query'] if parts['query'] else '')+('#fragment' if parts.get('fragment') else ''))
+    return json.dumps({wrapper: value}) if wrapper else value
+
+
+def in_cluster_job(options, name):
+    """The Job manifest: read-only, no ServiceAccount token, only the credential keys."""
+    plan, volumes, mounts, by_secret = [], [], [], {}
+    for slot, (secret, key, wrapper, _role, _group) in SLOTS.items():
+        plan.append('\t'.join((slot, secret, key, wrapper or '-', ','.join(SLOT_QUERIES.get(slot, ('identity',))))))
+        by_secret.setdefault(secret, [])
+        if key not in by_secret[secret]:
+            by_secret[secret].append(key)
+    for i, (secret, keys) in enumerate(sorted(by_secret.items())):
+        volumes.append({'name': 's'+str(i), 'secret': {'secretName': secret, 'optional': True, 'defaultMode': 0o440,
+                                                      'items': [{'key': k, 'path': k} for k in keys]}})
+        mounts.append({'name': 's'+str(i), 'mountPath': '/secrets/'+secret, 'readOnly': True})
+    for i, configmap in enumerate(ca_configmaps(options)):
+        volumes.append({'name': 'ca'+str(i), 'configMap': {'name': configmap, 'optional': True,
+                                                          'items': [{'key': 'ca.crt', 'path': 'ca.crt'}]}})
+        mounts.append({'name': 'ca'+str(i), 'mountPath': '/ca/'+str(i), 'readOnly': True})
+    volumes.append({'name': 'tmp', 'emptyDir': {'medium': 'Memory', 'sizeLimit': '16Mi'}})
+    mounts.append({'name': 'tmp', 'mountPath': '/tmp'})
+    env = [{'name': 'AR_PLAN', 'value': '\n'.join(plan)},
+           {'name': 'AR_RULES', 'value': '\n'.join(c+'\t'+r for c, r in ERROR_RULES)},
+           {'name': 'AR_TIMEOUT', 'value': str(options.timeout)}, {'name': 'HOME', 'value': '/tmp'},
+           {'name': 'AR_CA_DIRS', 'value': ','.join(str(i) for i in range(len(ca_configmaps(options))))}]
+    env += [{'name': 'AR_SQL_'+q.upper().replace('-', '_'), 'value': sql} for q, sql in IN_CLUSTER_QUERIES.items()]
+    labels = {'app.kubernetes.io/name': 'agent-relay-diagnose', 'app.kubernetes.io/part-of': 'agent-relay-support'}
+    return {
+        'apiVersion': 'batch/v1', 'kind': 'Job',
+        'metadata': {'name': name, 'namespace': options.namespace, 'labels': labels},
+        'spec': {'backoffLimit': 0, 'activeDeadlineSeconds': options.in_cluster_deadline,
+                 'ttlSecondsAfterFinished': 600,
+                 'template': {'metadata': {'labels': labels}, 'spec': {
+                     'restartPolicy': 'Never', 'automountServiceAccountToken': False, 'enableServiceLinks': False,
+                     'securityContext': {'runAsNonRoot': True, 'runAsUser': 26, 'runAsGroup': 26, 'fsGroup': 26,
+                                         'seccompProfile': {'type': 'RuntimeDefault'}},
+                     'volumes': volumes,
+                     'containers': [{
+                         'name': 'psql', 'image': options.psql_image, 'command': ['perl', '-e', PROBE], 'env': env,
+                         'volumeMounts': mounts,
+                         'resources': {'requests': {'cpu': '50m', 'memory': '64Mi'}, 'limits': {'memory': '128Mi'}},
+                         'securityContext': {'allowPrivilegeEscalation': False, 'readOnlyRootFilesystem': True,
+                                             'capabilities': {'drop': ['ALL']}},
+                     }]}}}}
+
+
+def parse_probe_output(text):
+    """{(secret, key): sanitized value or DiagnosticError}, {(slot, query): ('ok', obj) | ('err', category)}"""
+    values, results, done = {}, {'ca': None}, False
+    for line in text.splitlines():
+        parts = line.split('\t')
+        if parts[:1] != ['AR']:
+            continue
+        if parts[1:] == ['DONE']:
+            done = True
+        elif len(parts) == 3 and parts[1] == 'CA' and re.fullmatch(r'none|\d{1,2}', parts[2]):
+            results['ca'] = parts[2]
+        elif len(parts) == 5 and parts[1] == 'CRED' and parts[2] in SLOTS:
+            secret, key, wrapper = SLOTS[parts[2]][:3]
+            if parts[3] == 'OK':
+                try:
+                    values[(secret, key)] = credential_url(json.loads(base64.b64decode(parts[4], validate=True).decode()), wrapper)
+                except (ValueError, UnicodeError):
+                    values[(secret, key)] = DiagnosticError('invalid-response')
+            elif re.fullmatch(r'[a-z-]{1,40}', parts[4]):
+                values[(secret, key)] = DiagnosticError(parts[4])
+        elif len(parts) == 6 and parts[1] == 'Q' and parts[2] in SLOTS and parts[3] in IN_CLUSTER_QUERIES:
+            if parts[4] == 'OK':
+                try:
+                    results[(parts[2], parts[3])] = ('ok', json.loads(base64.b64decode(parts[5], validate=True).decode()))
+                except (ValueError, UnicodeError):
+                    results[(parts[2], parts[3])] = ('err', 'invalid-response')
+            elif re.fullmatch(r'[a-z-]{1,40}', parts[5]):
+                results[(parts[2], parts[3])] = ('err', parts[5])
+    if not done:
+        raise DiagnosticError('in-cluster-output-incomplete')
+    return values, results
+
+
+def run_in_cluster(options):
+    """Run the probe Job, return its parsed output, and always delete the Job."""
+    import secrets as _secrets
+    import time
+    name = (options.release+'-diagnose-db-')[:56]+_secrets.token_hex(3)
+    manifest = json.dumps(in_cluster_job(options, name))
+    options.in_cluster_job = {'name': name, 'deleted': None}
+    created = False
+    try:
+        try:
+            kubectl_text(options, ['create', '-f', '-', '-o', 'name'], stdin=manifest)
+            created = True
+        except DiagnosticError as exc:
+            # A timeout or dropped connection may still have created it: clean up below.
+            created = None if str(exc) in ('timeout', 'network', 'command-failed', 'command-unavailable') else False
+            raise
+        deadline = time.monotonic() + options.in_cluster_deadline + 30
+        state = None
+        while time.monotonic() < deadline:
+            status = json.loads(kubectl_text(options, ['get', 'job', name, '-o', 'json'])).get('status', {})
+            conditions = {c.get('type'): c.get('status') for c in status.get('conditions', [])}
+            if status.get('succeeded') or conditions.get('Complete') == 'True':
+                state = 'complete'
+                break
+            if status.get('failed') or conditions.get('Failed') == 'True':
+                state = 'failed'
+                break
+            time.sleep(2)
+        if state != 'complete':
+            reason = 'in-cluster-job-timeout' if state is None else 'in-cluster-job-failed'
+            try:  # A fixed category for a pod that never started.
+                pods = json.loads(kubectl_text(options, ['get', 'pods', '-l', 'job-name='+name, '-o', 'json'])).get('items', [])
+                for pod in pods:
+                    for st in (pod.get('status') or {}).get('containerStatuses') or []:
+                        waiting = (st.get('state') or {}).get('waiting', {}).get('reason')
+                        if waiting in ('ImagePullBackOff', 'ErrImagePull', 'InvalidImageName'):
+                            reason = 'in-cluster-image-pull-failed'
+                    if (pod.get('status') or {}).get('phase') == 'Pending' and reason == 'in-cluster-job-timeout':
+                        reason = 'in-cluster-pod-not-scheduled-or-started'
+            except (DiagnosticError, ValueError):
+                pass
+            raise DiagnosticError(reason)
+        # Logs go through the node's kubelet; on a node that was just created its
+        # serving certificate can lag ("tls: internal error"), so retry.
+        for attempt in range(6):
+            try:
+                return parse_probe_output(kubectl_text(options, ['logs', 'job/'+name, '--tail=-1']))
+            except DiagnosticError as exc:
+                if attempt == 5 or str(exc) == 'in-cluster-output-incomplete':
+                    raise
+                time.sleep(5)
+    except ValueError:
+        raise DiagnosticError('invalid-response') from None
+    finally:
+        if created is not False:
+            try:
+                kubectl_text(options, ['delete', 'job', name, '--ignore-not-found', '--cascade=background', '--wait=false'])
+                options.in_cluster_job['deleted'] = True
+            except DiagnosticError:
+                options.in_cluster_job['deleted'] = False
+                print('warning: could not delete Job '+name+' in '+options.namespace+'; it deletes itself 10 minutes after finishing.',
+                      file=sys.stderr)
+
+
+def replay_query(results, credentials):  # results: {(slot, query): ...}
+    """A psql() stand-in that answers from the in-cluster results."""
+    slot_of = {id(c): s for s, c in credentials.items()}
+    def query(credential, sql, timeout, ca_file=None):
+        found = results.get((slot_of.get(id(credential)), QUERY_NAMES.get(sql)))
+        if found is None:
+            raise DiagnosticError('in-cluster-no-result')
+        if found[0] == 'err':
+            raise DiagnosticError(found[1])
+        return found[1]
+    return query
+
+
+LOCAL_UNREACHABLE = ('network', 'dns', 'timeout', 'tool-missing', 'tls', 'credential-not-available', 'no-credentials')
+
+
+def database_unreachable_locally(checks):
+    """True when no database login was even attempted successfully from this machine, and
+    nothing was confirmed wrong (a FAIL is kept, never replaced by the Job's result)."""
+    if any(c['status'] == 'FAIL' for c in checks):
+        return False
+    db = [c for c in checks if c['check'] == 'database' or c['check'].startswith('database.')]
+    connected = any(c['check'].endswith('.identity') for c in db)
+    failed = any(c['status'] == 'FAIL' for c in db)
+    return bool(db) and not connected and not failed and all(c['detail'] in LOCAL_UNREACHABLE for c in db)
+
+
+def in_cluster_database_section(options, report):
+    """Credentials and database checks from the in-cluster Job. Returns the credentials."""
+    try:
+        values, results = run_in_cluster(options)
+    except DiagnosticError as exc:
+        report.add('database.in-cluster', 'UNKNOWN', str(exc),
+                   'The in-cluster check Job did not finish. Check that this identity can create Jobs in '+options.namespace
+                   +', that the nodes can pull '+options.psql_image.split('@')[0]+' (or pass --psql-image <mirror>), and rerun.')
+        in_cluster_cleanup_check(options, report)
+        return {}
+    options.in_cluster_values = values
+    try:
+        credentials = load_credentials(options, report)
+    finally:
+        options.in_cluster_values = None
+    database_checks(options, credentials, report, query=replay_query(results, credentials))
+    cas = ca_configmaps(options)
+    ca = results.get('ca')
+    if ca is None or ca == 'none' or int(ca) >= len(cas):
+        report.add('database.in-cluster', 'UNKNOWN', 'Database checks ran inside the cluster, but no CA ConfigMap was found ('+', '.join(cas)+').',
+                   'Create the CA ConfigMap the install uses (key ca.crt), or pass --ca-configmap <name>; TLS logins cannot verify without it.')
+    else:
+        report.add('database.in-cluster', 'PASS', 'Database checks ran inside the cluster, with the CA from ConfigMap '+cas[int(ca)]+'.')
+    in_cluster_cleanup_check(options, report)
+    return credentials
+
+
+def in_cluster_cleanup_check(options, report):
+    job = getattr(options, 'in_cluster_job', None) or {}
+    if job.get('deleted') is False:
+        report.add('database.in-cluster.cleanup', 'UNKNOWN', 'The check Job could not be deleted.',
+                   'kubectl --context '+options.context+' -n '+options.namespace+' delete job '+job['name']
+                   +' (it also deletes itself 10 minutes after finishing).')
+
+
 EXAMPLE_CA_SHA = '9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a'
 EXAMPLE_MARKERS = ('selfhost-example', 'ar.example.com', 'org_example', 'example-agent-relay-sessions',
                    'vpc-agent-relay-example', 'admin@example.com', 'Example Corp', 'abc123example')
@@ -898,13 +1218,17 @@ def _secret_manifest_files(folders):
     return found
 
 
-def discover(options, notes):
-    """Fill in anything not passed explicitly; record what was used."""
-    cwd = Path.cwd()
-    home = Path.home()/'.agent-relay-install'
-    options.missing = {}
-    options.no_credentials = False
-    if not options.context and options.scope != 'database':
+def can_create_jobs(options):
+    """--in-cluster needs no Secret reads: ask whether this identity may create Jobs here."""
+    try:
+        return kubectl_text(options, ['auth', 'can-i', 'create', 'jobs.batch']).strip() == 'yes'
+    except DiagnosticError:
+        return False
+
+
+def find_cluster(options, notes):
+    """Use --context or the current context; True when the release namespace answers."""
+    if not options.context:
         try:
             out = subprocess.run(['kubectl', 'config', 'current-context'], text=True,
                                  capture_output=True, timeout=10)
@@ -918,15 +1242,27 @@ def discover(options, notes):
             options.missing['context'] = ('No kube context. On the cluster VPN, run: aws eks update-kubeconfig '
                                           '--name <cluster> --region <region>, or pass --context <name>. '
                                           'On the database VPN this is expected; use --scope database.')
-    cluster_ok = False
-    if options.context and options.scope != 'database':
-        try:
-            kube(options, 'secret', 'agent-relay-secrets', probe=True)
-            cluster_ok = True
-        except DiagnosticError as exc:
-            notes.append('cluster: not reachable ('+str(exc)+'); on a split VPN, rerun on the cluster VPN for workload checks')
-    options.cluster_reachable = cluster_ok
-    if not options.secret_dir and not options.secret_manifests:
+            return False
+    try:
+        kube(options, 'secret', 'agent-relay-secrets', probe=True)
+        return True
+    except DiagnosticError as exc:
+        notes.append('cluster: not reachable ('+str(exc)+'); on a split VPN, rerun on the cluster VPN for workload checks')
+        return False
+
+
+def discover(options, notes):
+    """Fill in anything not passed explicitly; record what was used."""
+    cwd = Path.cwd()
+    home = Path.home()/'.agent-relay-install'
+    options.missing = {}
+    options.no_credentials = False
+    wants_cluster = options.scope != 'database' or getattr(options, 'in_cluster', False)
+    options.cluster_reachable = find_cluster(options, notes) if wants_cluster else False
+    cluster_ok = options.cluster_reachable
+    if getattr(options, 'in_cluster', False) and options.scope != 'cluster':
+        notes.append('credentials: the release\'s Secrets, read inside the cluster by a short-lived Job (--in-cluster)')
+    elif not options.secret_dir and not options.secret_manifests:
         manifests = _secret_manifest_files([cwd, cwd/'secrets'])
         if cluster_ok:
             notes.append('credentials: deployed Kubernetes Secrets')
@@ -944,7 +1280,9 @@ def discover(options, notes):
                 '~/.agent-relay-install/secret-files, and Secret YAMLs in '+str(cwd)+' or '+str(cwd/'secrets')+'. '
                 'Fix: copy the filled-in Secret YAMLs you applied (01-agent-relay-secrets.yaml ... '
                 '05-search-indexer-owner.yaml) into ./secrets, or pass --secret-manifests <folder>.')
-    if not options.ca_file:
+    if getattr(options, 'in_cluster', False) and options.scope != 'cluster':
+        notes.append('database CA: the '+' or '.join(ca_configmaps(options))+' ConfigMap in '+options.namespace+' (--in-cluster)')
+    elif not options.ca_file:
         for candidate in [cwd/n for n in CA_NAMES] + sorted(cwd.glob('*-bundle.pem')) + [home/'rds-ca.pem']:
             if _is_ca(candidate):
                 options.ca_file = candidate
@@ -1031,11 +1369,29 @@ def parse_args(argv=None):
     parser.add_argument('--aws-region',help='AWS region of the EKS cluster (default: from the kube context).')
     parser.add_argument('--aws-profile',help='AWS profile for the Pod Identity checks (default: the one the kube context uses).')
     parser.add_argument('--no-iam-simulate',action='store_true',help='Skip iam simulate-principal-policy on the associated roles.')
+    parser.add_argument('--in-cluster',action='store_true',
+                        help='Run the database checks from a short-lived Job in the release namespace, with the release\'s '
+                             'own Secrets and the rds-ca ConfigMap. Automatic when the database is unreachable from here.')
+    parser.add_argument('--no-in-cluster',action='store_true',help='Never run the database checks inside the cluster.')
+    parser.add_argument('--psql-image',default=os.environ.get('PSQL_IMAGE') or PSQL_IMAGE,
+                        help='PostgreSQL client image for --in-cluster (default: $PSQL_IMAGE, else the rds-setup.sh pin).')
+    parser.add_argument('--ca-configmap',help='ConfigMap (key ca.crt) with the database CA for --in-cluster '
+                                               '(default: rds-ca, else cloud-sql-ca).')
+    parser.add_argument('--in-cluster-deadline',type=int,default=300,help=argparse.SUPPRESS)
     parser.add_argument('--timeout',type=int,default=20)
     parser.add_argument('--output',type=Path,help='New JSON report file, mode 0600; never overwrites (default: ./install-diagnostic-<time>.json).')
     options = parser.parse_args(argv)
     if options.secret_dir and options.secret_manifests:
         parser.error('use either --secret-dir or --secret-manifests, not both')
+    if options.in_cluster and options.no_in_cluster:
+        parser.error('use either --in-cluster or --no-in-cluster, not both')
+    if options.in_cluster and (options.secret_dir or options.secret_manifests or options.ca_file):
+        parser.error('--in-cluster reads the deployed Secrets and rds-ca inside the cluster; drop --secret-dir/--secret-manifests/--ca-file')
+    if options.ca_configmap is not None and not re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}', options.ca_configmap):
+        parser.error('--ca-configmap must be a ConfigMap name')
+    # The Job mounts database credentials into this image: only a digest can't be swapped.
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/:-]{0,400}@sha256:[0-9a-f]{64}', options.psql_image):
+        parser.error('--psql-image (or PSQL_IMAGE) must be pinned by digest: <image>@sha256:<64 hex>')
     if not 1<=options.timeout<=120:
         parser.error('--timeout must be 1..120 seconds')
     return options
@@ -1043,6 +1399,7 @@ def parse_args(argv=None):
 
 def main(argv=None):
     options = parse_args(argv)
+    explicit_credentials = bool(options.secret_dir or options.secret_manifests)
     report = Report()
     notes = []
     discover(options, notes)
@@ -1059,7 +1416,10 @@ def main(argv=None):
         else:
             report.unknown('cluster','not-reachable')
     missing = getattr(options,'missing',{})
-    if getattr(options,'no_credentials',False):
+    in_cluster = getattr(options,'in_cluster',False) and options.scope in ('database','all')
+    if in_cluster:
+        credentials = {}
+    elif getattr(options,'no_credentials',False):
         credentials = {}
         report.unknown('credentials','none-found')
     else:
@@ -1078,16 +1438,54 @@ def main(argv=None):
                          'then ~/.agent-relay-install/rds-ca.pem); TLS logins will fail. Fix: '
                          'curl -fsS -o rds-ca.pem https://truststore.pki.rds.amazonaws.com/'+region+'/'+region+'-bundle.pem '
                          '(or pass --ca-file <path>).')
-    if getattr(options,'no_credentials',False):
+    first_credential_check = next((i for i,c in enumerate(report.checks) if c['check'].startswith('credential')), len(report.checks))
+    if in_cluster:
+        # Creating the Job needs no Secret reads, so don't require the Secret probe.
+        if options.context and (getattr(options,'cluster_reachable',False) or can_create_jobs(options)):
+            in_cluster_database_section(options,report)
+        else:
+            report.add('database.in-cluster','UNKNOWN','cluster-not-reachable-or-jobs-forbidden',
+                       'Check the kube context and that this identity can create Jobs in '+options.namespace
+                       +': kubectl auth can-i create jobs -n '+options.namespace)
+        for key in ('ca','credentials','secrets'):
+            missing.pop(key,None)
+    elif getattr(options,'no_credentials',False):
         report.unknown('database','no-credentials')
     elif options.scope in ('database','all'):
         database_checks(options,credentials,report)
     else:
         report.unknown('database','not-requested-cluster-only')
+    # Database unreachable from here (split VPN, no psql, no CA) but the cluster is
+    # reachable: run the same checks from inside the cluster instead.
+    unreachable = (not in_cluster and options.scope in ('database','all') and not getattr(options,'no_in_cluster',False)
+                   and database_unreachable_locally(report.checks[first_credential_check:]))
+    if unreachable and explicit_credentials:
+        # The Job would test the deployed Secrets, not the copy you selected.
+        print('The database is not reachable from this machine. To check the deployed Secrets from inside the cluster '
+              'instead of the files you passed, rerun with --in-cluster.')
+        unreachable = False
+    if unreachable and not getattr(options,'cluster_reachable',False):
+        # --scope database skipped the cluster; try it now that the database is out of reach.
+        cluster_notes = []
+        if options.scope == 'database' or not options.context:
+            find_cluster(options, cluster_notes)
+        options.cluster_reachable = bool(options.context) and can_create_jobs(options)
+        for note in cluster_notes:
+            print('  '+note)
+    if unreachable and getattr(options,'cluster_reachable',False):
+        print('The database is not reachable from this machine; running the database checks inside the cluster '
+              '(a short-lived Job in '+options.namespace+'; --no-in-cluster to skip).')
+        del report.checks[first_credential_check:]
+        in_cluster_database_section(options,report)
+        for key in ('ca','credentials','secrets'):
+            missing.pop(key,None)
     result = report.result()
     result['scope'] = options.scope
     result['missingInputs'] = sorted(missing)
-    result['credentialSource'] = 'local-manifests' if options.secret_manifests else 'local-files' if options.secret_dir else 'named-kubernetes-secrets'
+    from_cluster = any(c['check']=='database.in-cluster' for c in result['checks'])
+    result['credentialSource'] = ('in-cluster-job' if from_cluster else 'local-manifests' if options.secret_manifests
+                                  else 'local-files' if options.secret_dir else 'named-kubernetes-secrets')
+    result['databaseChecksFrom'] = 'cluster' if from_cluster else 'this-machine'
     if options.output:
         try:
             with open(options.output,'x',opener=lambda path,flags:os.open(path,flags,0o600)) as output:

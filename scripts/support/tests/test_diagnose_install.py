@@ -568,6 +568,253 @@ class PodIdentityTests(unittest.TestCase):
                 self.assertEqual(checks.call_count, 1)
 
 
+def b64(text):
+    return base64.b64encode(text.encode()).decode()
+
+
+def probe_log(identity_user='control_owner', extra=(), ca='0'):
+    """Probe output: the CA it found, every slot's URL parts (no password) and an identity result."""
+    lines = ['psql noise the parser ignores', 'AR\tCA\t'+ca]
+    for slot, (secret, key, wrapper, role, group) in diag.SLOTS.items():
+        parts = dict(scheme='postgresql', user=role or 'migration_owner', host='db.example.test', port='5432',
+                     path='/'+group, query='sslmode=verify-full', fragment=0)
+        lines.append('AR\tCRED\t'+slot+'\tOK\t'+b64(json.dumps(parts)))
+        ident = dict(user=role or 'migration_owner', database=group, login=True, tls=True, restricted=True,
+                     admin_membership=False, database_owner_membership=False, sessions_usage=True,
+                     server_version=170004, database_owner=role or 'migration_owner', target=['10.0.0.5', 5432, 1],
+                     schema_owners={'sessions': role or 'migration_owner'}, roles={})
+        lines.append('AR\tQ\t'+slot+'\tidentity\tOK\t'+b64(json.dumps(ident)))
+    lines += list(extra)
+    lines.append('AR\tDONE')
+    return '\n'.join(lines)+'\n'
+
+
+class InClusterTests(unittest.TestCase):
+    def test_error_rules_keep_the_old_categories(self):
+        cases = {'FATAL: role "x" does not exist': 'role-missing',
+                 'FATAL: password authentication failed for user "x"': 'authentication',
+                 'FATAL: database "hoop" does not exist': 'database-missing',
+                 'SSL error: certificate verify failed': 'tls',
+                 'could not translate host name "db" to address': 'dns',
+                 'connection to server failed: Connection refused': 'network',
+                 'ERROR: permission denied for schema sessions': 'permissions',
+                 'something else': 'command-failed'}
+        for stderr, category in cases.items():
+            self.assertEqual(diag.error_category(stderr), category, stderr)
+
+    def test_job_carries_no_credentials_and_is_locked_down(self):
+        opts = options(psql_image=diag.PSQL_IMAGE, ca_configmap=None, in_cluster_deadline=300)
+        job = diag.in_cluster_job(opts, 'agent-relay-diagnose-db-abc123')
+        text = json.dumps(job)
+        self.assertNotIn('postgres://', text)
+        self.assertNotIn('postgresql://', text)
+        pod = job['spec']['template']['spec']
+        self.assertFalse(pod['automountServiceAccountToken'])
+        self.assertEqual(job['spec']['backoffLimit'], 0)
+        self.assertTrue(pod['containers'][0]['securityContext']['readOnlyRootFilesystem'])
+        self.assertEqual(pod['containers'][0]['image'], diag.PSQL_IMAGE)
+        secrets = {v['secret']['secretName']: [i['key'] for i in v['secret']['items']] for v in pod['volumes'] if 'secret' in v}
+        self.assertEqual(secrets['agent-relay-secrets'], ['database-migrations-url', 'database-url', 'database-owner-url',
+                                                          'database-runtime-url', 'HOOPDB_MIGRATION_URL', 'HOOPDB_URL'])
+        self.assertEqual(set(secrets), {s[0] for s in diag.SLOTS.values()})
+        self.assertTrue(all(v['secret']['optional'] for v in pod['volumes'] if 'secret' in v))
+        cas = [v['configMap']['name'] for v in pod['volumes'] if 'configMap' in v]
+        self.assertEqual(cas, ['rds-ca', 'cloud-sql-ca'])
+        self.assertEqual(diag.ca_configmaps(options(ca_configmap='my-ca')), ['my-ca'])
+        env = {e['name']: e['value'] for e in pod['containers'][0]['env']}
+        self.assertEqual(env['AR_CA_DIRS'], '0,1')
+        self.assertEqual(len(env['AR_PLAN'].splitlines()), len(diag.SLOTS))
+        self.assertEqual(env['AR_RULES'].splitlines()[0], 'role-missing\trole .+ does not exist')
+        self.assertNotIn("'latest'", env['AR_SQL_INGEST'])
+        self.assertNotIn('app.kubernetes.io/instance', job['metadata']['labels'])
+
+    def test_probe_output_parsing(self):
+        values, results = diag.parse_probe_output(probe_log(extra=[
+            'AR\tQ\tcast-owner\tcast\tERR\tauthentication', 'AR\tQ\tcast-owner\tcast\tERR\tNot A Category!',
+            'AR\tCRED\tnot-a-slot\tOK\t'+b64('x'), 'AR\tQ\thoop-owner\tdrop-table\tOK\t'+b64('{}')]))
+        self.assertEqual(diag.parse_credential(values[('agent-relay-read-api', 'RELAYHISTORY_READ_API_SECRET')],
+                                               'supabase_url', 'bulls96_read_api')['password'], 'redacted')
+        self.assertEqual(results[('cast-owner', 'cast')], ('err', 'authentication'))
+        self.assertNotIn(('hoop-owner', 'drop-table'), results)
+        with self.assertRaisesRegex(diag.DiagnosticError, 'in-cluster-output-incomplete'):
+            diag.parse_probe_output(probe_log().replace('AR\tDONE\n', ''))
+        values, _ = diag.parse_probe_output('AR\tCRED\tcontrol-owner\tERR\tsecret-key-missing\nAR\tDONE\n')
+        self.assertEqual(str(values[('agent-relay-secrets', 'database-migrations-url')]), 'secret-key-missing')
+
+    def kubectl(self, states, log, fail_on=None):
+        calls = []
+        def fake(opts, args, stdin=None, timeout=None):
+            calls.append((args, stdin))
+            if args[0] == fail_on:
+                raise diag.DiagnosticError('permissions')
+            if args[0] == 'create':
+                return 'job.batch/x'
+            if args[:2] == ['get', 'job']:
+                return json.dumps({'status': states.pop(0) if len(states) > 1 else states[0]})
+            if args[:2] == ['get', 'pods']:
+                return json.dumps({'items': [{'status': {'phase': 'Pending', 'containerStatuses': [
+                    {'state': {'waiting': {'reason': 'ImagePullBackOff'}}}]}}]})
+            if args[0] == 'logs':
+                return log
+            return ''
+        return fake, calls
+
+    def opts(self):
+        return options(psql_image=diag.PSQL_IMAGE, ca_configmap=None, in_cluster_deadline=0)
+
+    def test_run_in_cluster_waits_reads_and_always_deletes(self):
+        fake, calls = self.kubectl([{'active': 1}, {'succeeded': 1}], probe_log())
+        with mock.patch.object(diag, 'kubectl_text', side_effect=fake), mock.patch('time.sleep'):
+            opts = self.opts(); opts.in_cluster_deadline = 60
+            values, results = diag.run_in_cluster(opts)
+        self.assertEqual(results[('control-owner', 'identity')][0], 'ok')
+        self.assertEqual([c[0][0] for c in calls], ['create', 'get', 'get', 'logs', 'delete'])
+        self.assertEqual(json.loads(calls[0][1])['kind'], 'Job')
+        self.assertIn('--ignore-not-found', calls[-1][0])
+        # A pod that never pulls its image: a fixed category, and the Job is still deleted.
+        fake, calls = self.kubectl([{'failed': 1}], '')
+        with mock.patch.object(diag, 'kubectl_text', side_effect=fake), mock.patch('time.sleep'):
+            with self.assertRaisesRegex(diag.DiagnosticError, 'in-cluster-image-pull-failed'):
+                diag.run_in_cluster(self.opts())
+        self.assertEqual(calls[-1][0][0], 'delete')
+        # No permission to create Jobs: nothing to delete, category "permissions".
+        fake, calls = self.kubectl([{}], '', fail_on='create')
+        with mock.patch.object(diag, 'kubectl_text', side_effect=fake):
+            with self.assertRaisesRegex(diag.DiagnosticError, 'permissions'):
+                diag.run_in_cluster(self.opts())
+
+    def test_in_cluster_results_drive_the_same_checks(self):
+        values, results = diag.parse_probe_output(probe_log(extra=['AR\tQ\thoop-owner\thoop\tERR\tpermissions']))
+        report = diag.Report()
+        with mock.patch.object(diag, 'run_in_cluster', return_value=(values, results)), \
+             mock.patch.object(diag, 'psql', side_effect=AssertionError('no local psql')):
+            credentials = diag.in_cluster_database_section(self.opts(), report)
+        checks = {c['check']: c for c in report.checks}
+        self.assertEqual(len(credentials), len(diag.SLOTS))
+        self.assertTrue(all(checks['credential.'+slot]['status'] == 'PASS' for slot in diag.SLOTS))
+        self.assertEqual(checks['database.control-owner.identity']['status'], 'PASS')
+        self.assertEqual(checks['database.hoop-owner']['detail'], 'permissions')
+        self.assertEqual(checks['database.in-cluster']['status'], 'PASS')
+        self.assertIn('ConfigMap rds-ca', checks['database.in-cluster']['detail'])
+        self.assertNotIn('redacted', json.dumps(report.checks))
+        # No CA ConfigMap found in the pod: the run says so.
+        values, results = diag.parse_probe_output(probe_log(ca='none'))
+        report = diag.Report()
+        with mock.patch.object(diag, 'run_in_cluster', return_value=(values, results)):
+            diag.in_cluster_database_section(self.opts(), report)
+        self.assertEqual([c['status'] for c in report.checks if c['check'] == 'database.in-cluster'], ['UNKNOWN'])
+
+    def test_job_failure_is_one_unknown_with_a_next_step(self):
+        report = diag.Report()
+        with mock.patch.object(diag, 'run_in_cluster', side_effect=diag.DiagnosticError('permissions')):
+            self.assertEqual(diag.in_cluster_database_section(self.opts(), report), {})
+        self.assertEqual([(c['check'], c['status'], c['detail']) for c in report.checks],
+                         [('database.in-cluster', 'UNKNOWN', 'permissions')])
+        self.assertIn('--psql-image', report.checks[0]['action'])
+
+    def run_main(self, local_detail, argv=(), reachable=True):
+        def discover(opts, notes):
+            # As the real discover: --scope database does not probe the cluster.
+            opts.cluster_reachable = reachable and (opts.scope != 'database' or opts.in_cluster)
+            opts.missing, opts.no_credentials = {}, False
+        def local_checks(opts, credentials, report, query=None):
+            report.add('database.control-owner', 'UNKNOWN' if local_detail != 'authentication' else 'FAIL', local_detail)
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(diag, 'discover', side_effect=discover), mock.patch.object(diag, 'cluster_checks'), \
+             mock.patch.object(diag, 'pod_identity_checks', create=True), \
+             mock.patch.object(diag, 'load_credentials', return_value={}), \
+             mock.patch.object(diag, 'database_checks', side_effect=local_checks), \
+             mock.patch.object(diag, 'find_cluster', return_value=reachable) as find, \
+             mock.patch.object(diag, 'can_create_jobs', return_value=reachable), \
+             mock.patch.object(diag, 'in_cluster_database_section') as section, contextlib.redirect_stdout(io.StringIO()) as out:
+            diag.main(['--context', 't', '--values', '--output', directory+'/r.json', *argv])
+            report = json.loads(Path(directory, 'r.json').read_text())
+        return section.call_count, find.call_count, out.getvalue(), report
+
+    def test_automatic_fallback_only_when_the_database_is_out_of_reach(self):
+        calls, _, out, report = self.run_main('network')
+        self.assertEqual(calls, 1)
+        self.assertIn('running the database checks inside the cluster', out)
+        self.assertFalse([c for c in report['checks'] if c['detail'] == 'network'])
+        self.assertEqual(self.run_main('authentication')[0], 0)   # it connected: a real finding
+        self.assertEqual(self.run_main('network', ['--no-in-cluster'])[0], 0)
+        self.assertEqual(self.run_main('network', reachable=False)[0], 0)
+        # --scope database skips the cluster until the database turns out unreachable.
+        calls, finds, _, _ = self.run_main('dns', ['--scope', 'database'])
+        self.assertEqual((calls, finds), (1, 1))
+        calls, finds, _, _ = self.run_main('network', ['--scope', 'cluster'])
+        self.assertEqual((calls, finds), (0, 0))
+
+    def test_fallback_keeps_confirmed_failures_and_selected_files(self):
+        # A credential FAIL is a finding: the Job must not replace it.
+        def discover(opts, notes):
+            opts.cluster_reachable, opts.missing, opts.no_credentials = True, {}, False
+        def creds(opts, report):
+            report.add('credential.cast-owner', 'FAIL', 'wrong-login')
+            return {}
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(diag, 'discover', side_effect=discover), mock.patch.object(diag, 'cluster_checks'), \
+             mock.patch.object(diag, 'pod_identity_checks', create=True), mock.patch.object(diag, 'load_credentials', side_effect=creds), \
+             mock.patch.object(diag, 'database_checks', side_effect=lambda o, c, r, query=None: r.unknown('database.cast-owner', 'network')), \
+             mock.patch.object(diag, 'in_cluster_database_section') as section, contextlib.redirect_stdout(io.StringIO()):
+            diag.main(['--context', 't', '--values', '--output', directory+'/r.json'])
+            self.assertEqual(section.call_count, 0)
+            self.assertIn('wrong-login', Path(directory, 'r.json').read_text())
+            # Files you selected are what you asked to test: suggest --in-cluster, don't swap them.
+            secret_dir = Path(directory)/'s'; secret_dir.mkdir()
+            with mock.patch.object(diag, 'load_credentials', return_value={}), contextlib.redirect_stdout(io.StringIO()) as out:
+                diag.main(['--context', 't', '--values', '--secret-dir', str(secret_dir), '--output', directory+'/r2.json'])
+            self.assertEqual(section.call_count, 0)
+            self.assertIn('rerun with --in-cluster', out.getvalue())
+
+    def test_create_timeout_still_cleans_up_and_failed_cleanup_is_reported(self):
+        calls = []
+        def fake(opts, args, stdin=None, timeout=None):
+            calls.append(args[0])
+            if args[0] == 'create':
+                raise diag.DiagnosticError('timeout')
+            return ''
+        opts = self.opts()
+        with mock.patch.object(diag, 'kubectl_text', side_effect=fake), self.assertRaises(diag.DiagnosticError):
+            diag.run_in_cluster(opts)
+        self.assertEqual(calls, ['create', 'delete'])
+        def fake2(opts, args, stdin=None, timeout=None):
+            if args[0] == 'delete':
+                raise diag.DiagnosticError('permissions')
+            return {'create': 'job.batch/x', 'get': json.dumps({'status': {'succeeded': 1}}), 'logs': probe_log()}[args[0]]
+        report = diag.Report()
+        with mock.patch.object(diag, 'kubectl_text', side_effect=fake2), contextlib.redirect_stderr(io.StringIO()):
+            diag.in_cluster_database_section(self.opts(), report)
+        cleanup = [c for c in report.checks if c['check'] == 'database.in-cluster.cleanup']
+        self.assertEqual(len(cleanup), 1)
+        self.assertIn('delete job agent-relay-diagnose-db-', cleanup[0]['action'])
+
+    def test_credential_parts_rebuild_like_the_secret(self):
+        ipv6 = diag.credential_url(dict(scheme='postgresql', user='relaycast_owner', host='[2001:db8::5]', port='', path='/cast',
+                                        query='sslmode=verify-full', fragment=0), None)
+        self.assertEqual(diag.parse_credential(ipv6, None, 'relaycast_owner')['host'], '2001:db8::5')
+        wrapped = diag.credential_url(dict(scheme='postgresql', user='bulls96_read_api', host='db', port='5432', path='/hoop',
+                                           query='sslmode=require', fragment=0), 'supabase_url')
+        with self.assertRaisesRegex(diag.DiagnosticError, 'tls-verify-full-required'):
+            diag.parse_credential(wrapped, 'supabase_url', 'bulls96_read_api')
+        self.assertEqual(diag.error_category('connect: Network is unreachable'), 'network')
+        with self.assertRaisesRegex(diag.DiagnosticError, 'malformed'):  # a fragment stays an error
+            diag.parse_credential(diag.credential_url(dict(scheme='postgresql', user='relaycast_owner', host='db', port='',
+                                  path='/cast', query='sslmode=verify-full', fragment=1), None), None, 'relaycast_owner')
+
+    def test_explicit_in_cluster_skips_local_credentials(self):
+        calls, _, _, report = self.run_main('network', ['--scope', 'database', '--in-cluster'])
+        self.assertEqual(calls, 1)
+        self.assertNotIn('ca', report['missingInputs'])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            diag.parse_args(['--in-cluster', '--secret-dir', '/tmp'])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            diag.parse_args(['--in-cluster', '--no-in-cluster'])
+        self.assertEqual(diag.parse_args([]).psql_image, os.environ.get('PSQL_IMAGE') or diag.PSQL_IMAGE)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            diag.parse_args(['--psql-image', 'ghcr.io/cloudnative-pg/postgresql:17'])   # a tag can be swapped
+
+
 class PostgreSQLCatalogTests(unittest.TestCase):
     """Isolated local Postgres only; never uses the developer's current database."""
     @classmethod
