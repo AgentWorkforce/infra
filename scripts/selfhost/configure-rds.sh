@@ -298,6 +298,10 @@ else
   info "HELM_CHART is not set. In another terminal, from your infra clone, refresh the chart dependencies"
   info "and run the same helm upgrade you used for the install with the overlay added at the end, e.g.:"
   info "  scripts/selfhost/helm-deps.sh   # builds charts/sessions-pipeline then charts/agent-relay; no helm repo add"
+  info "  (a release without scripts/selfhost/helm-deps.sh, such as agent-relay-2026.11.18 and earlier, needs instead:"
+  info "   helm repo add cnpg https://cloudnative-pg.github.io/charts; helm repo add minio https://charts.min.io/"
+  info "   helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts"
+  info "   helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay)"
   info "  helm upgrade $RELEASE <chart> -n $NAMESPACE <your -f files> -f $VALUES -f $LAYOUT_VALUES \\"
   info "    --set-string relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
   read -r -p "    Press Enter once helm upgrade has finished... " _
