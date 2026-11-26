@@ -262,6 +262,57 @@ account from it): `export PIPPEN_SANDBOX_ACCOUNT_ID=$(aws sts get-caller-identit
 `pippen-agent-session-boundary` permissions boundary, which must exist);
 adapt `ROLE_PATH`, `BOUNDARY` and `TAG_KEY` for your account.
 
+## Check the install (helm test)
+
+Once the migration Jobs have finished, one command prints the state of the
+install as a single table:
+
+```bash
+helm test agent-relay -n agent-relay --logs
+```
+
+```text
+Agent Relay install status (release agent-relay, namespace agent-relay)
+  AREA          CHECK                                     STATUS  DETAIL
+  migrations    relaycast-migrate                         ok      completed
+  workloads     relay-control                             ok      1/1 ready
+  database      agent-relay-secrets: database-url         ok      login=control_api_runtime: dedicated service login
+  database      agent-relay-secrets: database-owner-url   ok      login=relaycast_owner: relaycast owner identity
+  ca            configMap/rds-ca                          ok      <n> certificate(s), sha256 9f2c... matches values
+  pod identity  serviceaccount/agent-relay-worker         ok      AWS credentials injected
+  s3            example-agent-relay-sessions              ok      endpoint reachable, bucket exists (HTTP 403 unauthenticated)
+  search        vpc-agent-relay-...es.amazonaws.com       ok      reachable (HTTP 403)
+  ...
+HEALTHY: <n> check(s) ok
+```
+
+Every row is `ok`, `FAIL` (with the fix in DETAIL) or `skip` (not applicable
+yet). The test exits non-zero when any row fails, so `helm test` reports the
+failure; `kubectl -n agent-relay logs agent-relay-status` shows the table
+again later.
+
+| Area | What it checks |
+| --- | --- |
+| migrations | the newest Job of each kind completed (needs the Role below) |
+| workloads | each Deployment has its ready replicas (needs the Role below) |
+| database | each Secret's URL connects over verify-full TLS and passes relaycast's identity rules: the same check as the install-time `databaseGuard` (docs/self-hosted-rds-manual-setup.md §1.13) |
+| ca | each CA bundle parses and matches the `caSha256`/`sha256` values pin |
+| pod identity | every running pod that uses the S3 bucket got AWS credentials (EKS Pod Identity or IRSA) injected (needs the Role below) |
+| s3 | `s3.<region>.amazonaws.com/<bucket>` answers and the bucket exists in that region (network only, unauthenticated) |
+| search | the OpenSearch endpoint answers over HTTPS (network only) |
+
+The rows that read the Kubernetes API need a read-only Role (list Jobs,
+Deployments and Pods; no Secrets). Creating it needs RBAC rights that the
+namespace-scoped operator Role in docs/selfhost-secret-access.md does not
+grant, so it is off by default and those rows say `skip` with the `kubectl`
+command to run instead. Turn it on when the installer may create Roles:
+`--set databaseGuard.statusTest.rbac.create=true`. The test runs in the
+relaycast image the release pins, only when relaycast uses PostgreSQL
+(`databaseGuard.statusTest.enabled=false` removes it).
+
+For a deeper report from your own machine (Secret manifests, values lint,
+ingest pointers, S3 objects), use `scripts/support/diagnose-install.py`.
+
 ## Gaps and follow-ups
 
 1. **The EKS edge is opt-in in the chart.** `scripts/selfhost/eks-alb-ingress.sh`

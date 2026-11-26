@@ -65,6 +65,20 @@ databaseGuard:
     image: {}
     activeDeadlineSeconds: 120
     resources: {}
+  # `helm test <release> -n <namespace> --logs`: one healthy/unhealthy table
+  # of database logins (the check above), each CA and its pinned sha256, S3
+  # and OpenSearch reachability and, with rbac.create, migration Jobs,
+  # Deployments and Pod Identity on the S3 workloads. Runs only on helm test,
+  # in the same image.
+  statusTest:
+    enabled: true
+    rbac:
+      # A read-only Role (list Jobs, Deployments and Pods; no Secrets) for the
+      # rows that need the Kubernetes API. Off by default: creating a Role
+      # needs RBAC rights the namespace-scoped operator Role in
+      # docs/selfhost-secret-access.md does not grant. Turn it on when the
+      # installer may create Roles (cluster admins, configure-rds.sh).
+      create: false
 
 # Single-host mode (off when empty): the dashboard and the control API share
 # this one host. The dashboard is served at /, the API under /cloud/api,

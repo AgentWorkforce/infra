@@ -312,3 +312,9 @@ tolerations:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
+
+{{- /* The status test runs in the relaycast image: relaycast on PostgreSQL. */ -}}
+{{- define "agent-relay.statusTest.enabled" -}}
+{{- $rc := index .Values "relaycast" | default dict -}}
+{{- if and (dig "statusTest" "enabled" true (.Values.databaseGuard | default dict)) (dig "relaycast" true (.Values.components | default dict)) (eq (dig "runtime" "backend" "" $rc | toString) "postgres") }}true{{ end -}}
+{{- end }}

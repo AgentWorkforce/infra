@@ -261,13 +261,30 @@ helm --kube-context "$CTX" uninstall agent-relay -n "$NS" >/dev/null 2>&1 || tru
 # 10. Correct Secrets: the hook verifies every login over verify-full TLS and the install proceeds.
 write_secrets
 k delete job agent-relay-db-guard --ignore-not-found >/dev/null
-helm_run install >"$WORK/out" 2>&1 || { cat "$WORK/out" >&2; k logs job/agent-relay-db-guard >&2 || true; fail "install with correct Secrets failed"; }
+helm_run install --set databaseGuard.statusTest.rbac.create=true >"$WORK/out" 2>&1 || { cat "$WORK/out" >&2; k logs job/agent-relay-db-guard >&2 || true; fail "install with correct Secrets failed"; }
 k get job agent-relay-db-guard >/dev/null 2>&1 && fail "the succeeded hook Job was not deleted"
 ok "install with the dedicated logins passes the render guard and the TLS privilege hook"
 
+# 11b. helm test prints the status table: the 10 logins are healthy; the
+# example caSha256 is not this test CA's, so the CA row must say so.
+helm --kube-context "$CTX" test agent-relay -n "$NS" --logs --timeout 3m >"$WORK/status.txt" 2>&1 || true
+grep -q '^  AREA  *CHECK  *STATUS  DETAIL' "$WORK/status.txt" || { cat "$WORK/status.txt" >&2; fail "helm test printed no status table"; }
+[[ "$(grep -c '^POD LOGS' "$WORK/status.txt")" == 1 ]] || fail "helm test should run exactly one test Pod"
+[[ "$(grep -cE '^  database  .* ok  ' "$WORK/status.txt")" == 10 ]] || { cat "$WORK/status.txt" >&2; fail "status table: not all 10 database rows ok"; }
+grep -qE '^  ca  .*configMap/rds-ca  .*FAIL  .*differs from the configured 9f2c4e1a' "$WORK/status.txt" || { cat "$WORK/status.txt" >&2; fail "status table: CA sha256 mismatch not reported"; }
+for area in migrations workloads s3 search; do
+  grep -qE "^  $area  " "$WORK/status.txt" || { cat "$WORK/status.txt" >&2; fail "status table lacks a $area row"; }
+done
+grep -qE '^  migrations  +relaycast-migrate ' "$WORK/status.txt" || { cat "$WORK/status.txt" >&2; fail "status table: no per-Job migrations row with rbac.create"; }
+grep -q '^UNHEALTHY: ' "$WORK/status.txt" || fail "status table has no verdict"
+! grep -Eq 'postgres(ql)?://' "$WORK/status.txt" || fail "a URL reached the status output"
+[[ -z "$(helm template agent-relay "$CHART" -n "$NS" "${VALUES[@]}" | yq -N 'select(.kind == "Role" or .kind == "RoleBinding") | .metadata.name')" ]] \
+  || fail "the default render creates RBAC objects"
+ok "helm test prints the status table (10 logins ok, CA mismatch, per-Job migrations; no RBAC by default)"
+
 # 11. Upgrade reruns the hook and fails closed on a regression (the hook log stays readable).
 set_key agent-relay-secrets database-runtime-url "$(url postgres relaycast)"
-if helm_run upgrade >"$WORK/out" 2>&1; then fail "upgrade accepted the master login"; fi
+if helm_run upgrade --set databaseGuard.statusTest.rbac.create=true >"$WORK/out" 2>&1; then fail "upgrade accepted the master login"; fi
 grep -qF 'agent-relay-secrets: database-runtime-url logs in as "postgres"' "$WORK/out" || { cat "$WORK/out" >&2; fail "upgrade did not refuse at render time"; }
 ok "upgrade refuses a regression to the master login"
 
