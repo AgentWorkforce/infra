@@ -61,7 +61,7 @@ fail() { printf 'not ok - %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok - %s\n' "$*"; }
 
 MASTER_PW="$(openssl rand -hex 16)"
-MOCK_BIN="$ROOT/bin"; mkdir -p "$MOCK_BIN" "$ROOT/jobs"
+MOCK_BIN="$ROOT/bin"; mkdir -p "$MOCK_BIN" "$ROOT/jobs" "$ROOT/sql"
 cat >"$MOCK_BIN/aws" <<MOCK
 #!/usr/bin/env bash
 printf '{"username":"postgres","password":"%s"}\n' "$MASTER_PW"
@@ -122,10 +122,13 @@ esac
 exit 0
 MOCK
 chmod +x "$MOCK_BIN"/*
-chmod -R a+rX "$HOOPDB_BOOTSTRAP_DIR" 2>/dev/null || true
+# The Job container runs as UID 26: give it a world-readable copy of the SQL,
+# leaving the caller's checkout untouched.
+cp -R "$HOOPDB_BOOTSTRAP_DIR/." "$ROOT/sql/"
+chmod -R a+rX "$ROOT/sql"
 
 docker network create "$NET" >/dev/null
-export PATH="$MOCK_BIN:$PATH" MOCK_JOBS="$ROOT/jobs" MOCK_NET="$NET" MOCK_PGHOST="$PG" MOCK_SQL="$HOOPDB_BOOTSTRAP_DIR"
+export PATH="$MOCK_BIN:$PATH" MOCK_JOBS="$ROOT/jobs" MOCK_NET="$NET" MOCK_PGHOST="$PG" MOCK_SQL="$ROOT/sql"
 export AWS_REGION=us-west-2 RDS_HOST="$PG" RDS_ADMIN_SECRET_ARN=arn:aws:secretsmanager:us-west-2:111122223333:secret:fixture
 export SERVICES_IMAGE="fixture/sessions-pipeline@sha256:1111111111111111111111111111111111111111111111111111111111111111"
 export NAMESPACE=agent-relay KUBE_CONTEXT=fixture JOB_TIMEOUT_SECONDS=120 RELEASE=agent-relay MIGRATION_JOB=fixture-hoopdb-migrate

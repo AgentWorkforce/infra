@@ -4919,7 +4919,7 @@ entries:
     status: shipped
     provided_by: { default: chart, external-selfhosted: operator, external-rds: operator, aws-rds-native: operator, external-supabase: operator, aws-supabase: operator, gcp-cloudsql: stack }
     verify:
-      default: psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 170000
+      default: psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 160000
       external-rds: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 160000
       aws-rds-native: with uselibpqcompat=true removed from the URL (psql rejects it), psql "$HOOPDB_URL" -Atc "select name from pg_available_extensions where name in ('pg_trgm','btree_gin','vector')" lists all three; server_version_num >= 160000
     sources:
