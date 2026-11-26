@@ -46,6 +46,13 @@ describe("bootstrap guard orchestration", () => {
     assert.ok(!/rds-setup\.sh post/u.test(causes[0]));
   });
 
+  test("missing AWS credentials and the Bun banner", async () => {
+    const { failureCause } = await import("../../charts/sessions-pipeline/files/search-indexer-bootstrap-guard.mjs");
+    const out = 'SearchIndexError: search index: unavailable (credentials)\n retryable: true,\n      at request (opensearch.ts:498:15)\n\nBun v1.4.2 (Linux arm64)';
+    assert.match(failureCause(out, "https://vpc-x.es.amazonaws.com"), /no AWS credentials to sign OpenSearch vpc-x\.es\.amazonaws\.com requests.*Pod Identity association/u);
+    assert.equal(failureCause("boom: something broke\n    at x\nBun v1.4.2 (Linux arm64)"), "search bootstrap failed: boom: something broke");
+  });
+
   test("an unrelated failure gets no activation hint", async () => {
     const logs = [];
     const client = { connect: async () => {}, query: async () => ({ rows: [] }), end: async () => {} };

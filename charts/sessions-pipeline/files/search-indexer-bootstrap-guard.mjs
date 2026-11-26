@@ -63,15 +63,25 @@ const ACTIVATION_FAILURE = /permission denied for (schema|table|relation)|is not
 export function failureCause(output, opensearchUrl = "") {
   let host = "the OpenSearch endpoint";
   try { if (opensearchUrl) host = new URL(opensearchUrl).host; } catch {}
-  if (/SearchIndexError[^\n]*unavailable \(network\)|search index: unavailable \(network\)/u.test(output))
-    return `search bootstrap failed: OpenSearch ${host} unreachable (network): check searchIndexer.search.opensearch.url, `
-      + "the VPC/security group and Pod Identity. Until this Job succeeds the search indexer reports "
-      + "\"permission denied for schema sessions\"; after fixing, delete this Job and run helm upgrade again.";
-  if (/SearchIndexError[^\n]*(403|forbidden|unauthori[sz]ed)/iu.test(output))
-    return `search bootstrap failed: OpenSearch ${host} refused the request (403): map the search indexer's IAM role in OpenSearch `
-      + "(install guide step 7) and check Pod Identity; then delete this Job and run helm upgrade again.";
+  const after = "Until this Job succeeds the search indexer reports \"permission denied for schema sessions\"; "
+    + "after fixing, delete this Job and run helm upgrade again.";
+  const se = /SearchIndexError: search index: (\w+)(?: \(([^)]+)\))?/u.exec(output);
+  if (se) {
+    const [, code, detail = ""] = se;
+    if (detail === "network" || /timeout|ECONN|ENOTFOUND|EAI_AGAIN/u.test(detail))
+      return `search bootstrap failed: OpenSearch ${host} unreachable (${detail}): check searchIndexer.search.opensearch.url, `
+        + `the VPC/security group and Pod Identity. ${after}`;
+    if (detail === "credentials")
+      return `search bootstrap failed: no AWS credentials to sign OpenSearch ${host} requests (credentials): `
+        + `create the EKS Pod Identity association (or IRSA role) for the search indexer's ServiceAccount. ${after}`;
+    if (/403|forbidden|unauthori[sz]ed/iu.test(`${code} ${detail}`))
+      return `search bootstrap failed: OpenSearch ${host} refused the request (${detail || code}): map the search indexer's IAM role `
+        + `in OpenSearch (install guide step 7) and check Pod Identity. ${after}`;
+    return `search bootstrap failed: OpenSearch ${host}: ${code}${detail ? ` (${detail})` : ""}. ${after}`;
+  }
   if (ACTIVATION_FAILURE.test(output)) return `search bootstrap failed before the search logins were activated. ${ACTIVATION_FIX}`;
-  const last = output.trim().split("\n").map((l) => l.trim()).filter((l) => l && !/^at /u.test(l) && !/postgres(ql)?:\/\//iu.test(l)).pop();
+  const last = output.trim().split("\n").map((l) => l.trim())
+    .filter((l) => l && !/^at /u.test(l) && !/^\d+ \|/u.test(l) && !/^\^/u.test(l) && !/^Bun v\d/u.test(l) && !/postgres(ql)?:\/\//iu.test(l)).pop();
   return `search bootstrap failed${last ? `: ${last.slice(0, 300)}` : ""}`;
 }
 
