@@ -144,13 +144,14 @@ if [[ "$DB_GUARD" == 1 ]]; then
     -f "$CHART_DIR/values-eks-native.yaml" -f "$EXAMPLES_DIR/values.yaml" \
     | yq 'select(.kind == "ConfigMap" and .metadata.name == "agent-relay-db-guard") | .data["targets.json"]' >"$ROOT/targets.json"
   [[ "$(jq length "$ROOT/targets.json")" == 10 ]] || fail "examples/aws should give the guard 10 database URLs"
-  cp "$CHART_DIR/files/db-guard/check.mjs" "$ROOT/check.mjs"; chmod a+r "$ROOT/check.mjs" "$ROOT/targets.json"
+  mkdir -p "$ROOT/db-guard"; cp "$CHART_DIR"/files/db-guard/*.mjs "$ROOT/db-guard/"; mv "$ROOT/targets.json" "$ROOT/db-guard/"
+  chmod -R a+rX "$ROOT/db-guard"
 fi
 # db_guard <secret-files dir> <master logins JSON>: the hook's check, as the Job runs it.
 db_guard() {
   chmod -R a+rX "$1"
   docker run --rm --network "$NET" --user 1000:1000 \
-    -v "$ROOT/check.mjs:/opt/relaycast/db-guard/check.mjs:ro" -v "$ROOT/targets.json:/opt/relaycast/db-guard/targets.json:ro" \
+    -v "$ROOT/db-guard:/opt/relaycast/db-guard:ro" \
     -v "$1:/db-guard/secrets:ro" -e DB_GUARD_TARGETS=/opt/relaycast/db-guard/targets.json \
     -e DB_GUARD_MASTER_LOGINS="$2" -e DB_GUARD_SSLMODE=disable \
     --entrypoint node "$RELAYCAST_IMAGE" /opt/relaycast/db-guard/check.mjs

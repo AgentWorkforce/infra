@@ -342,14 +342,20 @@ Run scripts/selfhost/configure-rds.sh, which creates the logins and writes these
 docs/self-hosted-rds-manual-setup.md §1.3 (https://agentrelay.com/docs/self-hosting/troubleshooting#database-logins). Then run helm again.
 ```
 
+The check needs only `get` on Secrets and ServiceAccounts in the release
+namespace (the operator Role in docs/selfhost-secret-access.md is enough).
 `lookup` returns nothing under `helm template`, `helm install --dry-run`
-(client) and `helm lint`, so there the render-time check does nothing. Use
+(client) and `helm lint`, so there the render-time check does nothing; it
+also does nothing in a namespace that does not exist yet (`--create-namespace`),
+where none of the Secrets can exist either. Use
 `helm install --dry-run=server` (or `helm upgrade --dry-run=server`) to run it
 against the cluster without installing.
 
 **Before install and upgrade** a hook Job, `<release>-db-guard`, connects once
-with each URL over the same verify-full TLS the services use (the `rds-ca`
-ConfigMap, `relaycast.postgresCa`) and checks the login's real privileges with
+with each URL over the same verify-full TLS the services use (each
+component's own CA setting, such as `relay-control.postgresCa` or
+`sessions-pipeline.ingestEdge.postgres.caConfigMap`; `relaycast.postgresCa`
+when a component sets none) and checks the login's real privileges with
 relaycast's own identity rules: not SUPERUSER, CREATEROLE, CREATEDB,
 REPLICATION or BYPASSRLS, no path to a privileged role such as
 `rds_superuser`, and, for relaycast's two logins, every relaycast owner/runtime

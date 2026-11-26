@@ -35,6 +35,9 @@ cleanup() {
 trap cleanup EXIT
 
 kind get clusters 2>/dev/null | grep -qx "$CLUSTER" || kind create cluster --name "$CLUSTER" --wait 120s >/dev/null
+# A kept cluster (KEEP_CLUSTER=1) may hold an earlier run's release.
+helm --kube-context "$CTX" uninstall agent-relay -n "$NS" --wait >/dev/null 2>&1 || true
+kubectl --context "$CTX" delete namespace "$NS" --ignore-not-found --wait=true >/dev/null
 kubectl --context "$CTX" create namespace "$NS" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
 
 # --- RDS-shaped PostgreSQL on the kind Docker network, TLS with a test CA ---
@@ -157,6 +160,23 @@ sed -n '/AR_DB_LOGIN/,$p' "$WORK/out" >"$WORK/master-message.txt"
 helm --kube-context "$CTX" status agent-relay -n "$NS" >/dev/null 2>&1 && fail "a release exists after a refused install"
 ok "the refused install left no release"
 
+# 1b. The same refusal for an operator bound only to the documented
+# namespace-scoped Role (docs/selfhost-secret-access.md): the live-render probe
+# and every lookup are namespaced.
+awk '/^```yaml$/{f=1;next} f&&/^---$/{exit} f' docs/selfhost-secret-access.md >"$WORK/operator-role.yaml"
+k apply -f "$WORK/operator-role.yaml" >/dev/null
+k create serviceaccount ar-operator --dry-run=client -o yaml | k apply -f - >/dev/null
+k create rolebinding ar-operator --role=agent-relay-operator --serviceaccount="$NS:ar-operator" --dry-run=client -o yaml | k apply -f - >/dev/null
+kubectl config view --raw --minify --context "$CTX" -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d >"$WORK/kube-ca.crt"
+OPERATOR=(--kube-apiserver "$(kubectl config view --raw --minify --context "$CTX" -o jsonpath='{.clusters[0].cluster.server}')"
+  --kube-ca-file "$WORK/kube-ca.crt" --kube-token "$(k create token ar-operator --duration 1h)")
+if helm "${OPERATOR[@]}" install agent-relay "$CHART" -n "$NS" "${VALUES[@]}" --dry-run=server >"$WORK/out" 2>&1; then
+  fail "operator Role: helm accepted the master login"
+fi
+grep -qF 'agent-relay-secrets: database-url logs in as "postgres"' "$WORK/out" || { cat "$WORK/out" >&2; fail "operator Role: the guard did not run (forbidden lookup?)"; }
+! grep -qi forbidden "$WORK/out" || { cat "$WORK/out" >&2; fail "operator Role: a lookup was forbidden"; }
+ok "render guard works for the documented namespace-scoped operator Role"
+
 # 2. No-op without a cluster: helm template and client dry-run accept the same Secrets.
 helm template agent-relay "$CHART" -n "$NS" "${VALUES[@]}" >/dev/null || fail "helm template failed"
 helm_run install --dry-run >/dev/null 2>&1 || helm_run install --dry-run=client >/dev/null || fail "client dry-run failed"
@@ -184,6 +204,27 @@ write_secrets
 k delete secret search-indexer-owner >/dev/null
 expect_refused "render guard refuses a missing Secret" \
   'search-indexer-owner: Secret "search-indexer-owner" does not exist in namespace "agent-relay"'
+
+# 6b. A URL with a login but no host.
+write_secrets
+set_key agent-relay-ingest-edge-runtime database-url "postgresql://bulls96_session_ingest:$(pw bulls96_session_ingest)@/hoopdb"
+expect_refused "render guard refuses a URL without a host" \
+  'agent-relay-ingest-edge-runtime: database-url names no database host in its URL.'
+
+# 6c. One Secret key read as both the search runtime and the HoopDb owner.
+write_secrets
+helm_run install --dry-run=server --set sessions-pipeline.searchIndexer.bootstrap.existingSecret=search-indexer-runtime >"$WORK/out" 2>&1 \
+  && fail "shared search runtime/owner key accepted"
+grep -qF 'both log in as "search_consumer_runtime"; the search indexer runtime and the HoopDb owner need different logins.' "$WORK/out" \
+  || { cat "$WORK/out" >&2; fail "shared key across roles not reported"; }
+ok "render guard refuses one Secret key used for two roles"
+
+# 6d. relay-control migrations off: its owner URL is not this release's to hold.
+write_secrets
+k patch secret agent-relay-secrets --type json -p '[{"op":"remove","path":"/data/database-migrations-url"}]' >/dev/null
+helm_run install --dry-run=server --set relay-control.migrations.enabled=false >/dev/null \
+  || fail "relay-control.migrations.enabled=false still required the migrations URL"
+ok "relay-control migrations off: the migrations URL is not required"
 
 # 7. Legacy administrator-owned HoopDb: the owner may be the master.
 write_secrets
