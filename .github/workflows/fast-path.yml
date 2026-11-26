@@ -655,6 +655,8 @@ jobs:
       run: scripts/ci/charts.sh static
     - name: Agent Relay GCP proof render contract
       run: ci/agent-relay/render.sh
+    - name: Chart-managed RDS CA (bundles, helper copies, render cases, release size)
+      run: ci/rds-ca/test.sh
     - name: Dependency pins are hook-free
       run: scripts/ci/deps.sh
     - name: sessions-pipeline search Worker role render assertions

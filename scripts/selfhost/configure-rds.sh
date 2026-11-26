@@ -278,15 +278,15 @@ fi
 # 3. pre ----------------------------------------------------------------------
 log "3/8 Creating databases, service logins and credential files (rds-setup.sh pre)"
 NAMESPACE="$NAMESPACE" "$RDS_SETUP" pre
-# With global.rdsCa.bundle the chart renders rds-ca and pins its hash. pre
-# (re)creates rds-ca for its own Jobs, so delete that copy now: helm upgrade in
-# step 5 creates the chart's. Running pods keep their mounted copy.
-RDS_CA_MANAGED=0
-if grep -qE '^[[:space:]]+bundle:[[:space:]]*"?[a-z0-9-]+' <(sed -n '/^[[:space:]]*rdsCa:/,/^[^[:space:]]/p' "$VALUES"); then
-  RDS_CA_MANAGED=1
-  k delete configmap rds-ca --ignore-not-found >/dev/null
-  info "rds-ca: managed by the chart (global.rdsCa.bundle in $VALUES); the helm upgrade below creates it"
-fi
+# With global.rdsCa.bundle the chart renders rds-ca and pins its hash, and
+# refuses an rds-ca it does not own. pre (re)creates rds-ca for its own Jobs, so
+# step 5 deletes that copy just before helm upgrade creates the chart's
+# (running pods keep their mounted copy). Whether the values turn it on is
+# decided there, from the rendered chart with every values file.
+release_rds_ca() { # $@: helm template args; prints the bundle the chart would render, or nothing
+  helm template "$RELEASE" "$@" --show-only templates/rds-ca.yaml 2>/dev/null \
+    | sed -n 's/^[[:space:]]*agentworkforce.dev\/rds-ca-bundle:[[:space:]]*"\{0,1\}\([a-z0-9-]*\)"\{0,1\}.*/\1/p' | head -n1
+}
 FILES="$STATE_DIR/secret-files"
 [[ -d "$FILES" ]] || die "rds-setup.sh pre wrote no credential files under $FILES"
 
@@ -308,12 +308,8 @@ for dir in "$FILES"/*/; do
     info "created $secret"
   fi
 done
-if [[ "$RDS_CA_MANAGED" == 1 ]]; then
-  info "rds-ca: managed by the chart; no hash to copy"
-else
-  info "rds-ca hash for values.yaml (every caSha256/sha256 under rds-ca): $(cat "$STATE_DIR/rds-ca.sha256" 2>/dev/null || echo unknown)"
-  info "  or set global.rdsCa.bundle: $AWS_REGION and drop those hashes: the chart then manages rds-ca"
-fi
+info "rds-ca hash, only for values without global.rdsCa.bundle (every caSha256/sha256 under rds-ca): $(cat "$STATE_DIR/rds-ca.sha256" 2>/dev/null || echo unknown)"
+info "  simpler: set global.rdsCa.bundle: $AWS_REGION and drop those hashes; the chart then manages rds-ca"
 
 # 5. helm upgrade -------------------------------------------------------------
 # rds-setup.sh pre writes the HoopDb layout overlay (which Secret holds the
@@ -343,6 +339,12 @@ if [[ -n "${HELM_CHART:-}" ]]; then
     done < <(sed -nE 's/^[[:space:]]*repository:[[:space:]]*"?(file:\/\/[^"[:space:]]+)"?.*/\1/p' "$HELM_CHART/Chart.yaml")
     helm dependency build "$HELM_CHART" >/dev/null
   fi
+  bundle="$(release_rds_ca "$HELM_CHART" -n "$NAMESPACE" ${extra[@]+"${extra[@]}"} -f "$VALUES" -f "$LAYOUT_VALUES" \
+    --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL")"
+  if [[ -n "$bundle" ]]; then
+    k delete configmap rds-ca --ignore-not-found >/dev/null
+    info "rds-ca: the chart manages it (global.rdsCa.bundle=$bundle); removed the setup copy so helm can create it"
+  fi
   helm --kube-context "$KUBE_CONTEXT" upgrade --install "$RELEASE" "$HELM_CHART" -n "$NAMESPACE" \
     ${extra[@]+"${extra[@]}"} -f "$VALUES" -f "$LAYOUT_VALUES" --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
 else
@@ -356,6 +358,8 @@ else
   info "   helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay)"
   info "  helm upgrade $RELEASE <chart> -n $NAMESPACE <your -f files> -f $VALUES -f $LAYOUT_VALUES \\"
   info "    --set-string relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
+  info "If your values set global.rdsCa.bundle, first run: kubectl -n $NAMESPACE delete configmap rds-ca"
+  info "(the chart creates its own; helm refuses the copy rds-setup.sh pre made)."
   read -r -p "    Press Enter once helm upgrade has finished... " _
 fi
 

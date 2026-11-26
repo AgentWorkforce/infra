@@ -69,6 +69,10 @@ nodes=$(yq -N 'select(.kind == "Deployment" or .kind == "Job" or .kind == "CronJ
 for w in relaycast relay-control; do grep -qx "$w" <<<"$nodes" && ok || err "region: $w has no NODE_EXTRA_CA_CERTS"; done
 grep -q "worker" <<<"$nodes" && ok || err "region: no worker workload has NODE_EXTRA_CA_CERTS"
 
+# NODE_EXTRA_CA_CERTS is read at start: those Deployments roll on a new bundle.
+ann=$(yq -N 'select(.kind == "Deployment") | select(.spec.template.metadata.annotations["agentworkforce.dev/rds-ca-sha256"] == "'"$(table us-east-1)"'") | .metadata.name' <<<"$out")
+for w in relaycast relay-control agent-relay-worker-session-summary-worker; do grep -qx "$w" <<<"$ann" && ok || err "region: $w has no rds-ca-sha256 pod annotation"; done
+
 # Native brief pins the same hash.
 out=$(render "${example[@]}" --set sessions-pipeline.worker.nativeBrief.enabled=true --set-json 'sessions-pipeline.worker.nativeBrief.workspaceIds=["ws_1"]' --set sessions-pipeline.worker.components.session-brief.enabled=true)
 grep -q "NATIVE_BRIEF_CA_SHA256, value: \"$want\"" <<<"$out" && ok || err "region: nativeBrief does not pin $want"
@@ -81,12 +85,6 @@ ca_bytes 'select(.kind == "ConfigMap" and .metadata.name == "rds-ca") | .data["c
 cmp -s "$tmp/global.crt" $p/files/rds-ca/global-bundle.pem && ok || err "global: ca.crt bytes differ from the shipped global bundle"
 bad=$(ca_refs "$out" | awk -v w="$want" '$3 != "-" && $3 != w')
 [ -z "$bad" ] && ok || err "global: a workload pins another hash: $bad"
-
-# Another ConfigMap name.
-out=$(render "${example[@]}" --set global.rdsCa.configMapName=agent-relay-rds-ca)
-[ "$(yq 'select(.kind == "ConfigMap" and .metadata.labels["app.kubernetes.io/component"] == "rds-ca") | .metadata.name' <<<"$out")" = agent-relay-rds-ca ] && ok || err "configMapName: ConfigMap name"
-bad=$(ca_refs "$out" | awk '$2 != "agent-relay-rds-ca"')
-[ -z "$bad" ] && ok || err "configMapName: a workload mounts another CA: $bad"
 
 # 4. Override: the read API keeps a private CA; everything else stays managed.
 own=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -136,6 +134,7 @@ out=$(render "${example[@]}" -f ci/rds-ca/legacy-values.yaml)
 refs=$(ca_refs "$out")
 bad=$(awk '$2 != "rds-ca" || ($3 != "-" && $3 != "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a")' <<<"$refs")
 [ -z "$bad" ] && [ -n "$refs" ] && ok || err "legacy: CA references changed: $bad"
+[ -z "$(yq 'select(.spec.template.metadata.annotations["agentworkforce.dev/rds-ca-sha256"]) | .metadata.name' <<<"$out")" ] && ok || err "legacy: a pod has the rds-ca-sha256 annotation"
 out=$(render -f $p/values-eks.yaml -f $p/values-eks-rds-native.yaml -f ci/agent-relay/eks-rds-native-site-values.yaml)
 bad=$(ca_refs "$out" | awk '$2 != "rds-ca" || ($3 != "-" && $3 != "1111111111111111111111111111111111111111111111111111111111111111")')
 [ -z "$bad" ] && ok || err "legacy profile: CA references changed: $bad"

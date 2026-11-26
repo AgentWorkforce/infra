@@ -404,8 +404,9 @@ named Secrets separately. With `global.rdsCa.bundle` the chart renders the
 ### Chart-managed RDS CA
 
 `global.rdsCa.bundle` set to an AWS region (`us-east-1`) or `global` makes the
-chart render the `rds-ca` ConfigMap (key `ca.crt`; `global.rdsCa.configMapName`
-renames it) from the public AWS RDS CA bundle it ships in `files/rds-ca`, and
+chart render the `rds-ca` ConfigMap (key `ca.crt`; the name is fixed because
+`rds-setup.sh` and `values-eks-rds-native.yaml` use it) from the public AWS RDS
+CA bundle it ships in `files/rds-ca`, and
 pin that bundle's SHA-256 in every Postgres client: relaycast and relay-control
 `postgresCa`, and in sessions-pipeline the worker, alleyoop, read API, ingest
 edge, search indexer, native consumer and session analysis. `files/rds-ca/manifest.yaml`
@@ -432,6 +433,10 @@ workflow fails when AWS has changed one.
   chart-managed `rds-ca` as it is.
 - The managed ConfigMap carries `helm.sh/resource-policy: keep`, so turning
   `global.rdsCa` off leaves it for components that go back to naming `rds-ca`.
+- Workloads that trust the CA through `NODE_EXTRA_CA_CERTS` (relaycast,
+  relay-control, worker, alleyoop) carry the bundle's hash as the pod
+  annotation `agentworkforce.dev/rds-ca-sha256`, so a new bundle rolls them;
+  the read API, ingest edge and search indexer pin it in their environment.
 
 The 34 regional bundles and the global bundle (330 KB of PEM) add about
 290 KiB to the Helm release Secret: about 0.43 MiB in all for the EKS example

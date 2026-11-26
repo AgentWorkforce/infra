@@ -13,8 +13,7 @@ against the bundle file when it renders the ConfigMap). */ -}}
 {{- if $bundle -}}
 {{- $sha := dig "bundleSha256" $bundle "" $g | default "" | toString -}}
 {{- if not (regexMatch "^[a-f0-9]{64}$" $sha) }}{{ fail (printf "sessions-pipeline: global.rdsCa.bundle=%q is not an RDS CA bundle the agent-relay chart ships. Use the AWS region of the database (us-east-1) or global; global.rdsCa.bundleSha256 lists them. Without the agent-relay chart, leave global.rdsCa empty and name your own CA." $bundle) }}{{ end -}}
-{{- $name := dig "configMapName" "rds-ca" $g | default "rds-ca" | toString -}}
-{{- dict "bundle" $bundle "configMap" $name "sha256" $sha | toJson -}}
+{{- dict "bundle" $bundle "configMap" "rds-ca" "sha256" $sha | toJson -}}
 {{- end -}}
 {{- end -}}
 
@@ -52,6 +51,19 @@ hash counts as unset. */ -}}
 {{- $_ = set $out $f.sha256 $rds.sha256 -}}
 {{- if $f.enabled }}{{ $_ = set $out $f.enabled true }}{{ end -}}
 {{- end -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{- /* sessions-pipeline.rdsCa.podAnnotations: dict root, ca (the effective postgresCa). JSON
+{"agentworkforce.dev/rds-ca-sha256": <sha>} when the block uses the chart-managed
+CA, else {}: Node reads NODE_EXTRA_CA_CERTS at start, so a new bundle must roll
+the pods. */ -}}
+{{- define "sessions-pipeline.rdsCa.podAnnotations" -}}
+{{- $out := dict -}}
+{{- with include "sessions-pipeline.rdsCa" .root -}}
+{{- $rds := fromJson . -}}
+{{- if and $.ca.enabled (eq (toString ($.ca.configMap | default "")) $rds.configMap) }}{{ $_ := set $out "agentworkforce.dev/rds-ca-sha256" $rds.sha256 }}{{ end -}}
 {{- end -}}
 {{- toJson $out -}}
 {{- end -}}

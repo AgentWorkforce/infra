@@ -37,7 +37,7 @@ spec:
         {{- with $.Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with $.Values.podAnnotations }}
+      {{- with merge (dict) (include "sessions-pipeline-worker.rdsCa.podAnnotations" (dict "root" $ "ca" (include "sessions-pipeline-worker.postgresCa" $ | fromJson)) | fromJson) ($.Values.podAnnotations | default dict) }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}

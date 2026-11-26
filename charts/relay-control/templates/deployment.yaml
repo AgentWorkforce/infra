@@ -18,7 +18,7 @@ spec:
         agentworkforce.dev/analytics-producer: "true"
         {{- end }}
         {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
-      {{- with .Values.podAnnotations }}
+      {{- with merge (dict) (include "relay-control.rdsCa.podAnnotations" (dict "root" . "ca" (include "relay-control.postgresCa" . | fromJson)) | fromJson) (.Values.podAnnotations | default dict) }}
       annotations: {{ toYaml . | nindent 8 }}
       {{- end }}
     spec:
