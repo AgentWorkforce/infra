@@ -798,6 +798,11 @@ class InClusterTests(unittest.TestCase):
         with self.assertRaisesRegex(diag.DiagnosticError, 'tls-verify-full-required'):
             diag.parse_credential(wrapped, 'supabase_url', 'bulls96_read_api')
         self.assertEqual(diag.error_category('connect: Network is unreachable'), 'network')
+        base = dict(scheme='postgresql', user='relaycast_owner', host='db', port='', path='/cast', fragment=0)
+        for parts in (dict(base, query='sslmode=verify-full', password=0),                  # empty password
+                      dict(base, query='sslmode=verify-full&unsupported=1', password=1)):   # a parameter the probe withheld
+            with self.assertRaisesRegex(diag.DiagnosticError, 'malformed'):
+                diag.parse_credential(diag.credential_url(parts, None), None, 'relaycast_owner')
         with self.assertRaisesRegex(diag.DiagnosticError, 'malformed'):  # a fragment stays an error
             diag.parse_credential(diag.credential_url(dict(scheme='postgresql', user='relaycast_owner', host='db', port='',
                                   path='/cast', query='sslmode=verify-full', fragment=1), None), None, 'relaycast_owner')

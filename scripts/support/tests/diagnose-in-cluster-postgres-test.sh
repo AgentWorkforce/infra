@@ -207,6 +207,9 @@ pass "rds-setup.sh pre created the databases, logins and Secret files"
 f="$MOCK_SECRET_FILES/agent-relay-read-api/RELAYHISTORY_READ_API_SECRET"
 SIBLING_PW="sibling-$(openssl rand -hex 8)"
 jq -c --arg pw "$SIBLING_PW" '. + {clickhouse: {password: $pw}}' "$f" | sed 's#/#\\/#g' >"$f.new" && mv "$f.new" "$f"
+# A query parameter the contract doesn't allow, carrying a secret: refused, never logged.
+QUERY_PW="query-$(openssl rand -hex 8)"
+g="$MOCK_SECRET_FILES/agent-relay-secrets/database-url"; printf '%s&sslpassword=%s' "$(cat "$g")" "$QUERY_PW" >"$g.new" && mv "$g.new" "$g"
 grep -q 'postgresql:\\/\\/' "$f" || fail "fixture: escaped slashes not written"
 
 # The operator machine can't resolve the database (the split-VPN case), so
@@ -222,12 +225,13 @@ status() { jq -r --arg c "$2" '.checks[] | select(.check == $c) | .status' "$ROO
 run_diag explicit --scope database --in-cluster
 [[ -s "$ROOT/explicit.json" ]] || { cat "$ROOT/explicit.out" >&2; fail "--in-cluster wrote no report"; }
 [[ "$(status explicit database.in-cluster)" == PASS ]] || { cat "$ROOT/explicit.out" >&2; fail "--in-cluster Job did not complete"; }
-for slot in control-owner control-runtime cast-owner cast-runtime hoop-owner hoop-runtime read-runtime; do
+[[ "$(status explicit credential.control-runtime)" == FAIL ]] || fail "a URL with sslpassword= was not refused"
+for slot in control-owner cast-owner cast-runtime hoop-owner hoop-runtime read-runtime; do
   [[ "$(status explicit "credential.$slot")" == PASS ]] || { cat "$ROOT/explicit.out" >&2; fail "credential.$slot is not PASS"; }
   [[ "$(status explicit "database.$slot.identity")" == PASS ]] || { cat "$ROOT/explicit.out" >&2; fail "database.$slot.identity is not PASS"; }
   [[ "$(status explicit "database.$slot.tls")" == PASS ]] || fail "database.$slot.tls is not PASS (verify-full via rds-ca)"
 done
-pass "--in-cluster: seven logins (one JSON-wrapped with escaped slashes) connect from the Job with verify-full through rds-ca"
+pass "--in-cluster: six logins (one JSON-wrapped with escaped slashes) connect from the Job with verify-full through rds-ca; a URL with sslpassword= is refused"
 [[ "$(status explicit cast.runtime_no_create)" == PASS && "$(status explicit cast.owner_temp)" == PASS ]] \
   || fail "Relaycast catalog checks did not come back from the Job"
 [[ "$(status explicit hoop.vector)" == PASS ]] || fail "HoopDb catalog checks did not come back from the Job"
@@ -249,7 +253,7 @@ jq -e '.spec.template.spec.automountServiceAccountToken == false and .spec.backo
 pass "the Job is deleted afterwards, has no ServiceAccount token, a read-only root and only the credential keys"
 
 for f in "$ROOT/explicit.json" "$ROOT/explicit.out" "$J/diag-job-$job.json" "$J/diag-log-$job" "$J/argv.log"; do
-  for pw in "$MASTER_PW" "$SIBLING_PW" $(cat "$STATE_DIR"/passwords/* 2>/dev/null); do
+  for pw in "$MASTER_PW" "$SIBLING_PW" "$QUERY_PW" $(cat "$STATE_DIR"/passwords/* 2>/dev/null); do
     ! grep -qF -- "$pw" "$f" || fail "a password reached $(basename "$f")"
   done
 done
@@ -269,7 +273,14 @@ pass "without --in-cluster, an unreachable database falls back to the in-cluster
 
 e="$(jq -r '.summary | "PASS \(.PASS) FAIL \(.FAIL) UNKNOWN \(.UNKNOWN)"' "$ROOT/explicit.json")"
 echo "# --in-cluster summary: $e (FAIL/UNKNOWN are the logins rds-setup.sh post activates and the unmigrated schema)"
+count_jobs() { local n=0 f; for f in "$J"/diag-job-*.json; do [[ -e "$f" ]] && n=$((n+1)); done; echo "$n"; }
+jobs_before="$(count_jobs)"
 run_diag nofallback --scope database --no-in-cluster
+[[ -s "$ROOT/nofallback.json" ]] || { cat "$ROOT/nofallback.out" >&2; fail "--no-in-cluster wrote no report"; }
+[[ "$(jq -r .databaseChecksFrom "$ROOT/nofallback.json")" == this-machine ]] || fail "--no-in-cluster report not local"
+# --scope database reads no cluster Secrets here, so the local result is "no credentials".
+jq -e '[.checks[] | select(.check == "database" or (.check | startswith("database.")))] | length > 0' "$ROOT/nofallback.json" >/dev/null || fail "no local database results"
+[[ "$(count_jobs)" == "$jobs_before" ]] || fail "--no-in-cluster created a Job"
 ! grep -q 'inside the cluster' "$ROOT/nofallback.out" || fail "--no-in-cluster still ran the Job"
 pass "--no-in-cluster keeps the local result"
 [[ -n "${OUT_DIR:-}" ]] && cp "$ROOT"/*.out "$ROOT"/*.json "$OUT_DIR"/ 2>/dev/null || true

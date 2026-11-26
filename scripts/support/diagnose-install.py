@@ -919,10 +919,17 @@ for my $line (grep { length } split /\n/, $ENV{AR_PLAN}) {
   # Split like urlsplit: the netloc ends at the first / ? #, userinfo at its last @.
   my @m = defined($url) ? ($url =~ m{^([A-Za-z][A-Za-z0-9+.-]*)://([^:/?#\@]*):([^/?#]*)\@(\[[0-9A-Fa-f:.]+\]|[^\@/?#:\[\]]*)(?::([^/?#]*))?(/[^?#]*)?(?:\?([^#]*))?(#.*)?$}s) : ();
   if (!@m) { out('CRED', $slot, 'ERR', 'malformed-url-or-json'); out('Q', $slot, $_, 'ERR', 'malformed-url-or-json') for @queries; next }
-  # Only the parts the URL checks need. The password and every other field of
-  # the Secret value stay in this process.
+  # Only the parts the URL checks need. The password, every other field of the
+  # Secret value and any query parameter the install contract doesn't allow (its
+  # value could be a password) stay in this process; a fixed marker stands in.
+  my @q;
+  for my $p (split /&/, $m[6] // '') {
+    my ($k, $v) = split /=/, $p, 2;
+    push @q, (defined($v) && $k =~ /^(?:sslmode|sslrootcert|connect_timeout|application_name)$/) ? "$k=$v" : 'unsupported=1';
+  }
   out('CRED', $slot, 'OK', b64json({scheme => $m[0], user => $m[1], host => $m[3], port => $m[4] // '',
-                                     path => $m[5] // '', query => $m[6] // '', fragment => defined($m[7]) ? 1 : 0}));
+                                     path => $m[5] // '', query => join('&', @q), fragment => defined($m[7]) ? 1 : 0,
+                                     password => length($m[2]) ? 1 : 0}));
   (my $host = $m[3]) =~ s/^\[|\]$//g;
   my $port = (defined($m[4]) && length($m[4])) ? $m[4] : '5432';
   if ($port !~ /^\d{1,5}$/ || !defined($m[5]) || length($m[5]) < 2) { out('Q', $slot, $_, 'ERR', 'malformed-url-or-json') for @queries; next }
@@ -977,7 +984,8 @@ def credential_url(parts, wrapper):
     """The Secret value rebuilt from the probe's URL parts, password replaced, for parse_credential."""
     if not isinstance(parts, dict) or not all(isinstance(parts.get(k), str) for k in ('scheme', 'user', 'host', 'port', 'path', 'query')):
         raise ValueError()
-    value = (parts['scheme']+'://'+parts['user']+':redacted@'+parts['host']+(':'+parts['port'] if parts['port'] else '')
+    password = 'redacted' if parts.get('password', 1) else ''   # an empty password stays empty: still malformed
+    value = (parts['scheme']+'://'+parts['user']+':'+password+'@'+parts['host']+(':'+parts['port'] if parts['port'] else '')
              +parts['path']+('?'+parts['query'] if parts['query'] else '')+('#fragment' if parts.get('fragment') else ''))
     return json.dumps({wrapper: value}) if wrapper else value
 
