@@ -8,7 +8,7 @@ cd "$(dirname "$0")/../.."
 check=false; [ "${1:-}" = --check ] && check=true
 fail=0
 # chart:template-prefix
-for pair in relaycast:relaycast relay-control:relay-control session-read-api:session-read-api \
+for pair in agent-relay:agent-relay relaycast:relaycast relay-control:relay-control session-read-api:session-read-api \
   sessions-pipeline-worker:sessions-pipeline-worker session-ingest-api:alleyoop sessions-pipeline:sessions-pipeline; do
   chart=${pair%%:*} prefix=${pair#*:}
   dest=charts/$chart/templates/_rds-ca.tpl

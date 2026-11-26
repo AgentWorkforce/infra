@@ -73,6 +73,15 @@ grep -q "worker" <<<"$nodes" && ok || err "region: no worker workload has NODE_E
 ann=$(yq -N 'select(.kind == "Deployment") | select(.spec.template.metadata.annotations["agentworkforce.dev/rds-ca-sha256"] == "'"$(table us-east-1)"'") | .metadata.name' <<<"$out")
 for w in relaycast relay-control agent-relay-worker-session-summary-worker; do grep -qx "$w" <<<"$ann" && ok || err "region: $w has no rds-ca-sha256 pod annotation"; done
 
+# databaseGuard's pre-install hook runs before rds-ca exists: it carries the
+# same bundle in its own ConfigMap and checks every login with it.
+hooks=$(helm template agent-relay $p -n agent-relay "${example[@]}")
+yq -o=json 'select(.kind == "ConfigMap" and .metadata.name == "agent-relay-db-guard") | .data["rds-ca.crt"]' <<<"$hooks" | python3 -Ic 'import json, sys; sys.stdout.write(json.load(sys.stdin))' > "$tmp/guard.crt"
+cmp -s "$tmp/guard.crt" $p/files/rds-ca/us-east-1-bundle.pem && ok || err "databaseGuard: the hook does not carry the us-east-1 bundle"
+[ "$(yq 'select(.kind == "Job" and .metadata.name == "agent-relay-db-guard") | .spec.template.spec.volumes[] | select(.name | test("^ca-")) | .configMap.name' <<<"$hooks" | sort -u)" = agent-relay-db-guard ] && ok || err "databaseGuard: a CA volume does not come from the hook ConfigMap"
+bad=$(yq 'select(.kind == "ConfigMap" and .metadata.name == "agent-relay-db-guard") | .data["targets.json"]' <<<"$hooks" | jq -r '.[] | select((.ca.name // "") != "rds-ca") | .role')
+[ -z "$bad" ] && ok || err "databaseGuard: targets without the managed CA: $bad"
+
 # Native brief pins the same hash.
 out=$(render "${example[@]}" --set sessions-pipeline.worker.nativeBrief.enabled=true --set-json 'sessions-pipeline.worker.nativeBrief.workspaceIds=["ws_1"]' --set sessions-pipeline.worker.components.session-brief.enabled=true)
 grep -q "NATIVE_BRIEF_CA_SHA256, value: \"$want\"" <<<"$out" && ok || err "region: nativeBrief does not pin $want"
@@ -153,9 +162,10 @@ expect_fail "legacy values with an example hash under global.rdsCa" "does not ma
 ci/rds-ca/sync.sh --check && ok || err "a chart's _rds-ca.tpl differs from ci/rds-ca/_rds-ca.tpl"
 scripts/selfhost/refresh-rds-ca-bundles.sh --verify >/dev/null && ok || err "bundles, manifest and values table disagree"
 helm package $p -d "$tmp" >/dev/null
-render "${example[@]}" --set global.rdsCa.bundle=global > "$tmp/manifest.yaml"
+# Hooks included: the databaseGuard hook carries the bundle too.
+helm template agent-relay $p -n agent-relay "${example[@]}" --set global.rdsCa.bundle=global > "$tmp/manifest.yaml"
 size=$(python3 -I ci/rds-ca/release-size.py "$tmp"/agent-relay-*.tgz "$tmp/manifest.yaml")
-echo "release Secret estimate (chart + global-bundle manifest): $size bytes"
+echo "release Secret estimate (chart + global-bundle manifest and hooks): $size bytes"
 [ "$size" -lt 943718 ] && ok || err "the Helm release Secret estimate $size is over 0.9 MiB (the limit is 1 MiB)"
 
 echo "rds-ca: $n checks passed"

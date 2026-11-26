@@ -138,7 +138,9 @@ set_key() { # secret key value
 }
 
 CHART=charts/agent-relay
-VALUES=(-f "$CHART/values-eks.yaml" -f "$CHART/values-eks-native.yaml" -f examples/aws/values.yaml)
+# The test CA above is a bring-your-own rds-ca, so the example's chart-managed
+# RDS CA (global.rdsCa) is replaced by the explicit per-component CA values.
+VALUES=(-f "$CHART/values-eks.yaml" -f "$CHART/values-eks-native.yaml" -f examples/aws/values.yaml -f ci/rds-ca/legacy-values.yaml)
 helm_run() { helm --kube-context "$CTX" "$@" agent-relay "$CHART" -n "$NS" "${VALUES[@]}" --timeout 4m; }
 expect_refused() { # name grep-pattern... ; runs helm install --dry-run=server
   local name="$1"; shift

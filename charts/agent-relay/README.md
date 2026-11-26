@@ -431,6 +431,9 @@ workflow fails when AWS has changed one.
   different bundle conflicts.) `configure-rds.sh` deletes it for you when the
   values set `global.rdsCa.bundle`, and `rds-setup.sh pre` leaves a
   chart-managed `rds-ca` as it is.
+- databaseGuard checks every login against the CA its component uses; its
+  pre-install hook runs before `rds-ca` exists, so the hook carries the same
+  bundle in its own ConfigMap.
 - The managed ConfigMap carries `helm.sh/resource-policy: keep`, so turning
   `global.rdsCa` off leaves it for components that go back to naming `rds-ca`.
 - Workloads that trust the CA through `NODE_EXTRA_CA_CERTS` (relaycast,
@@ -439,8 +442,9 @@ workflow fails when AWS has changed one.
   the read API, ingest edge and search indexer pin it in their environment.
 
 The 34 regional bundles and the global bundle (330 KB of PEM) add about
-290 KiB to the Helm release Secret: about 0.43 MiB in all for the EKS example
-with a regional bundle, 0.54 MiB with `global` (0.15 MiB before; the limit is
+300 KiB to the Helm release Secret: about 0.47 MiB in all for the EKS example
+with a regional bundle, 0.67 MiB with `global`, whose 175 KB bundle is rendered
+twice (rds-ca and the databaseGuard hook) (0.18 MiB before; the limit is
 1 MiB). `ci/rds-ca/test.sh` fails the build above 0.9 MiB.
 
 The chart leaves EKS ingress objects external. Publish dashboard, Control,
