@@ -50,6 +50,14 @@ async function runBootstrap() {
   return { code, output: `${stdout}\n${stderr}` };
 }
 
+// rds-setup.sh post activates and grants the search logins after the HoopDb
+// migration; a bootstrap that ran first fails, and Helm reruns it only once the
+// failed Job (same name) is gone.
+export const ACTIVATION_FIX = "rds-setup.sh post activates and grants the search logins after the HoopDb migration. "
+  + "Fix: run rds-setup.sh post (scripts/selfhost/configure-rds.sh does), then delete this search-indexer-bootstrap Job "
+  + "(kubectl delete job <name>) and run helm upgrade again: the Job keeps its name, so helm alone does not rerun it.";
+const ACTIVATION_FAILURE = /permission denied for (schema|table|relation)|is not permitted to log in|password authentication failed for user "search_consumer_runtime"|role "search_consumer_runtime" does not exist/iu;
+
 export async function waitForRuntimeRoleActivation(
   client,
   waitSeconds,
@@ -64,7 +72,10 @@ export async function waitForRuntimeRoleActivation(
     );
     if (result.rows[0]?.ready) return;
     if (now() + pollSeconds * 1000 > deadline) {
-      throw new Error("search-indexer bootstrap: search_consumer_runtime did not become LOGIN before the deadline");
+      throw new Error(
+        `search-indexer bootstrap: timed out after ${waitSeconds}s waiting for search_consumer_runtime to become a LOGIN role `
+        + `(it did not become LOGIN before the deadline). ${ACTIVATION_FIX}`,
+      );
     }
     await sleep(pollSeconds * 1000);
   }
@@ -95,7 +106,10 @@ export async function executeBootstrapGuard(client, config) {
     for (let attempt = 1; attempt <= config.maxAttempts; attempt += 1) {
       const result = await config.runBootstrap();
       if (result.code === 0) return 0;
-      if (!isRetryableCatalogRace(result.output) || attempt === config.maxAttempts) return result.code || 1;
+      if (!isRetryableCatalogRace(result.output) || attempt === config.maxAttempts) {
+        if (ACTIVATION_FAILURE.test(result.output ?? "")) config.log(`search-indexer bootstrap failed before the search logins were activated. ${ACTIVATION_FIX}`);
+        return result.code || 1;
+      }
       config.log(`search-indexer bootstrap: retrying PostgreSQL catalog race (attempt ${attempt + 1}/${config.maxAttempts})`);
       await config.sleep(config.delaySeconds * 1000);
     }

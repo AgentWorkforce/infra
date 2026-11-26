@@ -20,6 +20,29 @@ describe("search indexer bootstrap catalog retry", () => {
 });
 
 describe("bootstrap guard orchestration", () => {
+  test("a bootstrap that ran before rds-setup post says what to do", async () => {
+    const logs = [];
+    const client = { connect: async () => {}, query: async () => ({ rows: [] }), end: async () => {} };
+    const code = await executeBootstrapGuard(client, {
+      waitForRuntimeRole: false, roleWaitSeconds: 10, rolePollSeconds: 1, maxAttempts: 3, delaySeconds: 1,
+      runBootstrap: async () => ({ code: 1, output: "error: permission denied for schema sessions" }),
+      sleep: async () => {}, now: () => 0, log: message => logs.push(message),
+    });
+    assert.equal(code, 1);
+    assert.ok(logs.some(m => /rds-setup\.sh post/u.test(m) && /delete this search-indexer-bootstrap Job/u.test(m)), logs.join("\n"));
+  });
+
+  test("an unrelated failure gets no activation hint", async () => {
+    const logs = [];
+    const client = { connect: async () => {}, query: async () => ({ rows: [] }), end: async () => {} };
+    await executeBootstrapGuard(client, {
+      waitForRuntimeRole: false, roleWaitSeconds: 10, rolePollSeconds: 1, maxAttempts: 1, delaySeconds: 1,
+      runBootstrap: async () => ({ code: 2, output: "opensearch: 403 Forbidden" }),
+      sleep: async () => {}, now: () => 0, log: message => logs.push(message),
+    });
+    assert.ok(!logs.some(m => /rds-setup\.sh post/u.test(m)));
+  });
+
   test("holds the migrator lock across an exact retry and always releases it", async () => {
     const calls = [];
     let locked = false;
@@ -115,6 +138,6 @@ describe("managed-RDS post ordering", () => {
       2,
       async milliseconds => { clock += milliseconds; },
       () => clock,
-    ), /did not become LOGIN before the deadline/u);
+    ), /timed out after \d+s waiting for search_consumer_runtime to become a LOGIN role.*did not become LOGIN before the deadline.*run rds-setup\.sh post.*helm upgrade again/u);
   });
 });
