@@ -174,7 +174,6 @@ async function checkTarget(t, opts = {}) {
       if (row.present && !row.usage)
         return {
           label, status: "FAIL", login: c.user,
-          summary: `logs in as "${c.user}", which has no USAGE on schema sessions (the "permission denied for schema sessions" crash loop)`,
           detail: `logs in as "${c.user}", which has no USAGE on schema sessions (the "permission denied for schema sessions" crash loop): run rds-setup.sh post (configure-rds.sh does it), then delete the failed search-indexer-bootstrap Job and run helm upgrade again`,
         };
     }
