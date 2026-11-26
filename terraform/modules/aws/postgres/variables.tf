@@ -27,7 +27,7 @@ variable "engine_mode" {
 }
 
 variable "engine_version" {
-  description = "PostgreSQL engine version. RDS accepts a major version (\"17\") and picks the default minor; Aurora needs a full version (for example \"17.5\"). The agent-relay services are tested on PostgreSQL 17."
+  description = "PostgreSQL engine version. RDS accepts a major version (\"17\") and picks the default minor; Aurora needs a full version (for example \"17.5\"). Agent Relay supports PostgreSQL 16 or later; 17 (the default) or 18 is recommended."
   type        = string
   default     = "17"
 }

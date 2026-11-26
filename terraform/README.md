@@ -61,7 +61,7 @@ shared-database contract for compatibility; AWS roots explicitly use separate DB
 
 | Capability | AWS module | GCP module | Required by the charts? |
 |---|---|---|---|
-| Postgres 17 | `aws/postgres`: RDS for PostgreSQL, or Aurora PostgreSQL (`engine_mode = "aurora"`) | `gcp/postgres`: Cloud SQL for PostgreSQL | **Yes, required** (relaycontrol, relayhistory, HoopDb, durable-actors) |
+| Postgres 16+ (17 or 18 recommended) | `aws/postgres`: RDS for PostgreSQL, or Aurora PostgreSQL (`engine_mode = "aurora"`) | `gcp/postgres`: Cloud SQL for PostgreSQL | **Yes, required** (relaycontrol, relayhistory, HoopDb, durable-actors) |
 | Object storage | `aws/object-storage`: S3, with an optional EKS Pod Identity / IRSA role | `gcp/object-storage`: GCS, with optional Workload Identity | **Yes, required** (sessions Locker; durable-actors) |
 | Search | `aws/search`: Amazon OpenSearch Service, VPC domain | `gcp/search`: OpenSearch on GKE through the OpenSearch Kubernetes operator | **No.** Optional add-on, see below |
 | Functions | `aws/functions`: S3 notification -> SQS (+DLQ) -> Lambda, EventBridge schedules | `gcp/functions`: GCS notification -> Pub/Sub (+dead-letter topic) -> Cloud Run functions (2nd gen), Cloud Scheduler | **No.** Optional add-on, see below |
@@ -105,7 +105,7 @@ profiles. For a fresh installation, use the separate-service database bindings
 in the [current target contract](../docs/shared-postgres-storage-contract.md).
 Legacy components in this inventory do not become new target dependencies.
 
-- **Postgres.** Every database is PostgreSQL 17:
+- **Postgres.** Every database is PostgreSQL 16 or later, 17 or 18 recommended (the modules create 17 by default):
   - relay-control (relaycontrol): Secret keys `database-url` (runtime role `control_api_runtime`) and `database-migrations-url` (owner).
   - relayhistory: `DATABASE_URL` (runtime role `relayhistory_runtime`) and `DATABASE_MIGRATIONS_URL`. It needs the `vector` and `pg_trgm` extensions.
   - sessions-pipeline HoopDb: `HOOPDB_URL` (worker and alleyoop) and the dedicated non-administrator `hoopdb_owner` URL as `HOOPDB_MIGRATION_URL` (migrate). It also needs `vector` and `pg_trgm`.

@@ -19,7 +19,7 @@ There are three phases:
 
 ## What you need
 
-- One RDS for PostgreSQL instance (16 or later). One instance holds all three
+- One RDS for PostgreSQL instance, 16 or later (17 or 18 recommended). One instance holds all three
   databases. It can hold only one HoopDb: the role
   `session_directory_search_worker` is server-wide.
 - An admin login on that instance with `rds_superuser` and `CREATEROLE` (the
@@ -28,6 +28,8 @@ There are three phases:
   `hoopdb_owner` login owns the database and migrations afterwards.
 - A machine that can reach the instance on port 5432 (VPN, bastion, or a pod
   in the cluster) with `psql` 16 or later, `openssl` and `curl`.
+- `password_encryption` left at its default, `scram-sha-256`. PostgreSQL 18
+  deprecates MD5 passwords and logs a warning for each one it sets.
 - The services image your release pins, by digest: the `services-image` line
   under `x-pins` in your `values.yaml`, for example
   `ghcr.io/agentworkforce/sessions-pipeline@sha256:...`. The HoopDb SQL files

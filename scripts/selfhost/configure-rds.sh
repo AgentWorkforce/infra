@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-command database setup for an Agent Relay install on an existing (shared)
-# RDS PostgreSQL 16+ instance, using the RDS master login.
+# RDS PostgreSQL 16+ instance (17 or 18 recommended), using the RDS master login.
 #
 # The master login (e.g. postgres) is the only credential you provide. It is
 # used only for setup: it creates a dedicated owner and runtime login per
@@ -222,7 +222,7 @@ if [[ "$RESET" == 1 ]]; then
     out="$(k logs job/agent-relay-db-reset --tail=20 2>/dev/null | grep -v -i password || true)"
     k delete secret agent-relay-db-reset --ignore-not-found >/dev/null
     if grep -q PG_TOO_OLD <<<"$out"; then
-      die "the RDS instance runs PostgreSQL $(sed -n 's/.*PG_TOO_OLD //p' <<<"$out" | head -n1); Agent Relay needs PostgreSQL 16 or later. Nothing was dropped. Use a PostgreSQL 16+ RDS instance (a small dedicated one is fine) and rerun with its RDS_HOST."
+      die "the RDS instance runs PostgreSQL $(sed -n 's/.*PG_TOO_OLD //p' <<<"$out" | head -n1); Agent Relay needs PostgreSQL 16 or later. Nothing was dropped. Use a PostgreSQL 16+ RDS instance, 17 or 18 recommended (a small dedicated one is fine) and rerun with its RDS_HOST."
     fi
     printf '%s\n' "$out"; die "database reset failed"
   fi

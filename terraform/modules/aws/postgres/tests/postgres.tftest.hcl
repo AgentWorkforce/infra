@@ -86,6 +86,19 @@ run "allowed_extensions_always_include_pg_trgm_and_vector" {
   }
 }
 
+run "postgres_18_family" {
+  command = plan
+
+  variables {
+    engine_version = "18"
+  }
+
+  assert {
+    condition     = aws_db_parameter_group.this[0].family == "postgres18" && aws_db_instance.this[0].engine_version == "18"
+    error_message = "PostgreSQL 18 selects the postgres18 parameter group family."
+  }
+}
+
 run "aurora_mode" {
   command = apply
 
