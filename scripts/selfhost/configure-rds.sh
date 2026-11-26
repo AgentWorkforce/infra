@@ -21,18 +21,28 @@
 # Run it on the network that reaches the EKS cluster; RDS is reached from
 # Jobs inside the cluster, so no database VPN is needed.
 #
-# Usage:
-#   RDS_HOST=<endpoint> HELM_CHART=<chart ref> scripts/selfhost/configure-rds.sh [--reset-databases]
+# Usage (the published chart; no infra checkout or dependency build):
+#   RDS_HOST=<endpoint> HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay \
+#   HELM_EXTRA_VALUES="values-eks.yaml values-eks-native.yaml" \
+#     bash configure-rds.sh [--reset-databases]
 #
 # Environment:
 #   RDS_HOST           required. RDS endpoint hostname (*.rds.amazonaws.com)
-#   HELM_CHART         chart reference used for the install (e.g. ./charts/agent-relay).
+#   HELM_CHART         chart used for the install. Either the published chart,
+#                      oci://ghcr.io/agentworkforce/charts/agent-relay, which is pulled at
+#                      RELEASE_VERSION's chart version (from the release's release-manifest.json)
+#                      and needs no checkout, or a chart directory in an infra checkout of tag
+#                      agent-relay-<RELEASE_VERSION> (e.g. ./charts/agent-relay).
 #                      Unset: the script pauses and asks you to run your own helm upgrade.
-#   HELM_EXTRA_VALUES  space-separated values files passed before VALUES
-#                      (e.g. "charts/agent-relay/values-eks.yaml charts/agent-relay/values-eks-rds-native.yaml")
+#   HELM_CHART_VERSION optional, OCI chart only: must equal RELEASE_VERSION's chart version
+#   HELM_EXTRA_VALUES  space-separated values files passed before VALUES. A path that doesn't
+#                      exist is looked up in the chart, so with the OCI chart name the bundled
+#                      files: "values-eks.yaml values-eks-native.yaml" (or values-eks-rds-native.yaml).
+#                      charts/agent-relay/values-eks.yaml means the same file.
 #   VALUES             your filled-in values file (default: values.yaml in the current folder);
 #                      its image digests are updated to RELEASE_VERSION's pins (a .bak copy is kept)
-#   RELEASE_VERSION    default 2026.11.18; check out the matching tag: git checkout agent-relay-2026.11.18
+#   RELEASE_VERSION    default 2026.11.18 (agent-relay-2026.11.18). With a chart directory, check
+#                      out the matching tag: git checkout agent-relay-2026.11.18
 #   AWS_REGION         default: taken from RDS_HOST
 #   RDS_ADMIN_USER     default: postgres
 #   RDS_ADMIN_PASSWORD read silently from the terminal when unset
@@ -49,7 +59,7 @@ RESET=0
 for arg in "$@"; do
   case "$arg" in
     --reset-databases) RESET=1 ;;
-    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    -h|--help) awk 'NR > 1 && /^set -euo/ { exit } NR > 1' "$0"; exit 0 ;;
     *) echo "unknown argument: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -116,11 +126,42 @@ for pin in pins.values():
 open(path, "w").write("\n".join(lines))
 print(f"    release pins applied: {changed} digest(s) updated")
 PYPIN
-if [[ -n "${HELM_CHART:-}" && -f "${HELM_CHART}/Chart.yaml" ]]; then
+# The chart. The published OCI chart is pulled once, at the release's chart version,
+# into a private folder, and installed from there: it already contains every
+# subchart, so nothing is built and no checkout is needed. A chart directory must
+# be the release's own (its tag checked out).
+CHART_DIR="" CHART_PULLED=0
+if [[ "${HELM_CHART:-}" == oci://* ]]; then
+  command -v helm >/dev/null || die "helm is not installed"
+  [[ "${HELM_CHART#oci://}" != *[:@]* ]] || die "set HELM_CHART without a tag or digest ($HELM_CHART); RELEASE_VERSION picks the chart version"
+  MANIFEST_URL="https://github.com/AgentWorkforce/infra/releases/download/agent-relay-$RELEASE_VERSION/release-manifest.json"
+  want="$(curl -fsSL "$MANIFEST_URL" | jq -r '.chart.version // empty')" || want=""
+  [[ "$want" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "could not read the chart version of release $RELEASE_VERSION from $MANIFEST_URL"
+  if [[ -n "${HELM_CHART_VERSION:-}" && "$HELM_CHART_VERSION" != "$want" ]]; then
+    die "HELM_CHART_VERSION is $HELM_CHART_VERSION but release $RELEASE_VERSION ships chart $want; unset HELM_CHART_VERSION or set RELEASE_VERSION to the release you install"
+  fi
+  CHART_DIR="$(mktemp -d)"; trap 'rm -rf "$CHART_DIR"' EXIT
+  helm pull "$HELM_CHART" --version "$want" --untar --untardir "$CHART_DIR" >/dev/null \
+    || die "helm pull $HELM_CHART --version $want failed"
+  HELM_CHART="$CHART_DIR/${HELM_CHART##*/}"
+  have="$(sed -nE 's/^version: *//p' "$HELM_CHART/Chart.yaml" 2>/dev/null | head -n1)"
+  [[ "$have" == "$want" ]] || die "pulled chart is version ${have:-unknown}, expected $want"
+  CHART_PULLED=1
+  info "chart: ${HELM_CHART##*/} $want (release $RELEASE_VERSION), pulled from the OCI registry"
+elif [[ -n "${HELM_CHART:-}" && -f "${HELM_CHART}/Chart.yaml" ]]; then
   want="$(curl -fsSL "$RAW/agent-relay-$RELEASE_VERSION/charts/agent-relay/Chart.yaml" | sed -nE 's/^version: *//p' | head -n1)"
   have="$(sed -nE 's/^version: *//p' "$HELM_CHART/Chart.yaml" | head -n1)"
-  [[ "$want" == "$have" ]] || die "chart $HELM_CHART is $have but release $RELEASE_VERSION is $want: in your infra clone run  git fetch --tags && git checkout agent-relay-$RELEASE_VERSION"
+  [[ "$want" == "$have" ]] || die "chart $HELM_CHART is $have but release $RELEASE_VERSION is $want: install from oci://ghcr.io/agentworkforce/charts/agent-relay, or in your infra clone run  git fetch --tags && git checkout agent-relay-$RELEASE_VERSION"
 fi
+# Extra values files, checked now so a typo stops before anything changes. A path
+# that doesn't exist is looked up in the chart (values-eks.yaml, or the checkout
+# path charts/agent-relay/values-eks.yaml).
+extra=()
+for f in ${HELM_EXTRA_VALUES:-}; do
+  if [[ -f "$f" ]]; then extra+=(-f "$f")
+  elif [[ -n "${HELM_CHART:-}" && -f "$HELM_CHART/${f#charts/agent-relay/}" ]]; then extra+=(-f "$HELM_CHART/${f#charts/agent-relay/}")
+  else die "values file $f not found (here or in the chart)"; fi
+done
 SERVICES_IMAGE="$(sed -nE 's/.*services-image:.*repository: *([^ ,}]+).*digest: *"?(sha256:[0-9a-f]{64}).*/\1@\2/p' "$VALUES" | head -n1)"
 [[ "$SERVICES_IMAGE" == *@sha256:* ]] || die "could not find the services-image repository and digest in $VALUES"
 export SERVICES_IMAGE
@@ -145,7 +186,7 @@ esac
 k get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl --context "$KUBE_CONTEXT" get namespace "$NAMESPACE" >/dev/null \
   || die "cannot reach namespace $NAMESPACE with context $KUBE_CONTEXT (cluster VPN on?)"
 
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d)"; trap 'rm -rf "$WORK" ${CHART_DIR:+"$CHART_DIR"}' EXIT
 
 # 1. Master login in Secrets Manager -----------------------------------------
 if [[ -z "${RDS_ADMIN_SECRET_ARN:-}" ]]; then
@@ -269,7 +310,7 @@ log "5/8 Helm upgrade"
 info "add this overlay LAST in your -f list: $LAYOUT_VALUES"
 if [[ -n "${HELM_CHART:-}" ]]; then
   command -v helm >/dev/null || die "helm is not installed"
-  if [[ -d "$HELM_CHART" ]]; then
+  if [[ -d "$HELM_CHART" && "$CHART_PULLED" == 0 ]]; then
     info "refreshing chart dependencies, nested charts first (stale or missing subcharts drop workloads)"
     # Public chart repositories the nested charts depend on; added only if missing.
     known="$(helm repo list -o json 2>/dev/null | jq -r '.[].url' 2>/dev/null || true)"
@@ -288,15 +329,12 @@ if [[ -n "${HELM_CHART:-}" ]]; then
     done < <(sed -nE 's/^[[:space:]]*repository:[[:space:]]*"?(file:\/\/[^"[:space:]]+)"?.*/\1/p' "$HELM_CHART/Chart.yaml")
     helm dependency build "$HELM_CHART" >/dev/null
   fi
-  extra=()
-  if [[ -n "${HELM_EXTRA_VALUES:-}" ]]; then
-    for f in $HELM_EXTRA_VALUES; do extra+=(-f "$f"); done
-  fi
   helm --kube-context "$KUBE_CONTEXT" upgrade --install "$RELEASE" "$HELM_CHART" -n "$NAMESPACE" \
     "${extra[@]}" -f "$VALUES" -f "$LAYOUT_VALUES" --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
 else
-  info "HELM_CHART is not set. In another terminal, from your infra clone, refresh the chart dependencies"
-  info "and run the same helm upgrade you used for the install with the overlay added at the end, e.g.:"
+  info "HELM_CHART is not set. In another terminal, run the same helm upgrade you used for the install"
+  info "with the overlay added at the end. Next time, set HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay"
+  info "and this step runs it for you. From an infra clone, first refresh the chart dependencies, e.g.:"
   info "  scripts/selfhost/helm-deps.sh   # builds charts/sessions-pipeline then charts/agent-relay; no helm repo add"
   info "  (a release without scripts/selfhost/helm-deps.sh, such as agent-relay-2026.11.18 and earlier, needs instead:"
   info "   helm repo add cnpg https://cloudnative-pg.github.io/charts; helm repo add minio https://charts.min.io/"
