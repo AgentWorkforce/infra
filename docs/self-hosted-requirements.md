@@ -14,7 +14,7 @@ registered, every shipped entry must exist in the charts, planned entries must
 not be referenced by any template, and the compatibility matrix must equal
 the pinned digests.
 
-Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 211 entries: 55 requirements (55 shipped, 0 planned), 156 options (155 shipped, 1 planned).
+Source of truth: [`self-hosted/requirements.yaml`](../self-hosted/requirements.yaml). 212 entries: 55 requirements (55 shipped, 0 planned), 157 options (156 shipped, 1 planned).
 
 ## Contents
 
@@ -1287,6 +1287,7 @@ chart `agent-relay` · values [`values-gcp-proof.yaml`](../charts/agent-relay/va
 | shipped | [Control collector analytics adapter](#opt-relay-control-collector-analytics) | `false`, `true` | `false` | values `analytics.*`; env `SELFHOST_ANALYTICS_DESTINATION`, `SELFHOST_ANALYTICS_PROFILE`, `SELFHOST_ANALYTICS_DEPLOYMENT_ID`, `SELFHOST_ANALYTICS_COLLECTOR_URL`, `SELFHOST_ANALYTICS_COLLECTOR_TOKEN_FILE`, `SELFHOST_ANALYTICS_COLLECTOR_CA_FILE`; Secret `<Control component-bound analytics producer Secret>` keys `token` |
 | shipped | [Control advertises relaygate under gate-only](#opt-relay-control-relaygate-public-url) | `off`, `on` | `off` | values `services.relaycastPublicUrl`; env `SELFHOST_RELAYGATE_PUBLIC_URL` |
 | shipped | [Separate Control introspection credential Secret](#opt-relay-control-external-introspection-secret) | `disabled`, `enabled` | `disabled` | values `introspection.existingSecret`, `introspection.key`; env `RELAYCONTROL_INTROSPECT_SECRET_FILE`; Secret `<Control introspection Secret>` keys `introspect-secret` |
+| shipped | [Database credential guard, install status test and the guided installer](#opt-agent-relay-database-guard) | `enabled`, `enabled-with-status-rbac`, `disabled` | `enabled` | values `databaseGuard.enabled`, `databaseGuard.masterLogins`, `databaseGuard.privilegeCheck.enabled`, `databaseGuard.privilegeCheck.image`, `databaseGuard.statusTest.enabled`, `databaseGuard.statusTest.rbac.create` |
 | shipped | [Single-host mode for the dashboard and the control API](#opt-agent-relay-single-host) | `disabled`, `enabled` | `disabled` | values `global.singleHost.host`, `relay-control:global.singleHost.host`, `relay-control:publicUrl`, `relay-webapp:global.singleHost.host`, `relay-webapp:runtime.publicUrl`, `relay-webapp:ingress.host`; env `SELFHOST_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL` |
 | shipped | [Single GKE ingress for the proof hosts](#opt-agent-relay-gke-ingress) | `enabled`, `disabled` | `disabled` | values `gkeIngress.enabled`, `gkeIngress.staticIpName`, `gkeIngress.managedCertificateName`, `gkeIngress.frontendConfigName`, `gkeIngress.hosts.*`, `gkeIngress.backends.*`, `relayauth.jwksIngress.enabled` |
 | shipped | [GKE edge TLS policy, Cloud Armor and certificate from a Secret](#opt-agent-relay-gke-edge-hardening) | `none`, `sslPolicy`, `securityPolicy`, `tlsSecretName` | `none` | values `gkeIngress.sslPolicy`, `gkeIngress.securityPolicy`, `gkeIngress.tlsSecretName` |
@@ -3596,6 +3597,32 @@ allowAllEgress=false, the level is not off and the transport is https.
 - Secret: `<existingSecret>` from `existingSecret`; keys `<operator-chosen, no default>` from `secretKeys.telemetryInstallKey` (optional: required once the install is registered unless telemetry.level is off)
 - Verify: the default render sets SELFHOST_TELEMETRY_LEVEL=off until installId, install key and (https) endpoint are set; helm template fails when only some of them are set; ci/agent-relay/render.sh checks both and that the egress rule renders only when telemetry is sent over https
 - Sources: [`charts/relay-control/values.yaml`](../charts/relay-control/values.yaml), [`charts/relay-control/templates/_helpers.tpl`](../charts/relay-control/templates/_helpers.tpl), [`charts/relay-control/templates/networkpolicy.yaml`](../charts/relay-control/templates/networkpolicy.yaml)
+
+#### opt.agent-relay.database-guard
+
+<a id="opt-agent-relay-database-guard"></a>
+
+**Database credential guard, install status test and the guided installer** · shipped · chart `agent-relay` · profiles agent-relay
+
+databaseGuard (on by default) stops helm install/upgrade before anything is
+applied when a Secret's database URL is wrong: a render-time lookup refuses a
+master login (masterLogins), two roles sharing a login, a missing Secret or
+key, and wrong shapes; a pre-install/pre-upgrade hook Job (<release>-db-guard,
+relaycast image) checks each login's live privileges with relaycast's
+verifyIdentity. statusTest adds `helm test <release> --logs`, one
+healthy/unhealthy table; statusTest.rbac.create adds the read-only Role its
+Kubernetes rows need. scripts/selfhost/configure-rds.sh is the primary EKS +
+RDS install path: it creates the logins, writes Secrets 01-05 in the shapes
+the guard checks, pins the CA and image digests, runs helm and helm test.
+Hand-written Secrets (examples/aws/secrets) are the bring-your-own option
+and must pass the guard.
+
+- Default: `enabled`
+- Choices: `enabled`: lookup check + privilege hook + helm test; statusTest.rbac.create false; `enabled-with-status-rbac`: also statusTest.rbac.create=true (configure-rds.sh sets it): migrations, workloads and Pod Identity rows; `disabled`: databaseGuard.enabled=false: an unusual setup the checks do not understand; wrong logins then fail only in the migrate Jobs
+- Provided by: operator
+- Values: `databaseGuard.enabled`, `databaseGuard.masterLogins`, `databaseGuard.privilegeCheck.enabled`, `databaseGuard.privilegeCheck.image`, `databaseGuard.statusTest.enabled`, `databaseGuard.statusTest.rbac.create`
+- Verify: helm install --dry-run=server with a Secret URL logging in as postgres fails with "AR_DB_LOGIN"; helm test <release> --logs prints the status table
+- Sources: [`charts/agent-relay/templates/_db-guard.tpl:1`](../charts/agent-relay/templates/_db-guard.tpl#L1), [`charts/agent-relay/templates/db-guard.yaml:1`](../charts/agent-relay/templates/db-guard.yaml#L1), [`charts/agent-relay/templates/status-test.yaml:1`](../charts/agent-relay/templates/status-test.yaml#L1), [`scripts/selfhost/configure-rds.sh:1`](../scripts/selfhost/configure-rds.sh#L1)
 
 #### opt.agent-relay.single-host
 

@@ -332,7 +332,8 @@ class ExecutionTests(unittest.TestCase):
     def test_main_partial_exit_and_private_report_no_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:
             output=Path(directory)/'report.json'
-            with mock.patch.object(diag,'load_credentials',return_value={}), contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(diag,'load_credentials',return_value={}), contextlib.redirect_stdout(io.StringIO()), \
+                 mock.patch.object(diag,'kube',return_value={}):
                 with mock.patch.object(diag,'cluster_checks'):
                     code=diag.main(['--scope','cluster','--context','test','--output',str(output)])
                     self.assertEqual(code,2)
@@ -340,6 +341,35 @@ class ExecutionTests(unittest.TestCase):
                     with contextlib.redirect_stderr(io.StringIO()):
                         self.assertEqual(diag.main(['--scope','cluster','--context','test','--output',str(output)]),2)
 
+
+    def test_unreachable_cluster_is_retried_then_incomplete_never_clean(self):
+        calls=[]
+        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=8):
+            calls.append(probe_timeout); raise diag.DiagnosticError('timeout')
+        with tempfile.TemporaryDirectory() as directory:
+            output=Path(directory)/'report.json'
+            out=io.StringIO()
+            with mock.patch.object(diag,'kube',side_effect=kube), mock.patch.object(diag,'PROBE_SLEEP') as sleep, \
+                 mock.patch.object(diag,'load_credentials',return_value={}), contextlib.redirect_stdout(out):
+                code=diag.main(['--scope','cluster','--context','test','--output',str(output)])
+        self.assertEqual(calls,list(diag.PROBE_TIMEOUTS))
+        self.assertEqual(sleep.call_count,len(diag.PROBE_TIMEOUTS)-1)
+        self.assertEqual(code,3)
+        self.assertIn('RESULT: INCOMPLETE: workload checks skipped',out.getvalue())
+        self.assertNotIn('RESULT: PASS',out.getvalue())
+
+    def test_slow_cluster_answers_on_a_later_attempt(self):
+        attempts=[]
+        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=8):
+            attempts.append(probe_timeout)
+            if len(attempts)<2: raise diag.DiagnosticError('timeout')
+            return {}
+        notes=[]
+        opts=diag.parse_args(['--scope','cluster','--context','test','--values'])
+        with mock.patch.object(diag,'kube',side_effect=kube), mock.patch.object(diag,'PROBE_SLEEP'):
+            diag.discover(opts,notes)
+        self.assertTrue(opts.cluster_reachable)
+        self.assertEqual(attempts,[8,15])
 
 def workload(kind, name, sa, **env):
     pod = {'serviceAccountName': sa, 'containers': [{'name': 'app', 'env': [{'name': k, 'value': v} for k, v in env.items()]}]}

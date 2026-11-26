@@ -262,6 +262,15 @@ account from it): `export PIPPEN_SANDBOX_ACCOUNT_ID=$(aws sts get-caller-identit
 `pippen-agent-session-boundary` permissions boundary, which must exist);
 adapt `ROLE_PATH`, `BOUNDARY` and `TAG_KEY` for your account.
 
+## Install path
+
+For a customer install on EKS with RDS, `scripts/selfhost/configure-rds.sh`
+is the primary path (scripts/selfhost/README.md). It creates the database
+logins, writes the five install Secrets, pins the CA and image digests, runs
+Helm and ends with the `helm test` table below. Hand-written Secrets are the
+bring-your-own option and must pass the chart's `databaseGuard`
+(docs/self-hosted-rds-manual-setup.md §1.13).
+
 ## Check the install (helm test)
 
 Once the migration Jobs have finished, one command prints the state of the
