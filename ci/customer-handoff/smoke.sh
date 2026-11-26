@@ -32,8 +32,10 @@ diff -r "$work/tar" "$work/zip" >/dev/null \
 root="$work/tar/agent-relay-customer-handoff"
 
 # The umbrella resolves every file:// dependency inside the archive, and the
-# shipped helm-deps.sh builds them with no `helm repo add` (empty repository
-# config, as on a customer's fresh machine).
+# shipped helm-deps.sh (included with scripts/selfhost) builds them with no
+# `helm repo add` (empty repository config, as on a customer's fresh machine).
+test -f "$root/scripts/selfhost/helm-deps.sh" \
+  || { echo "error: handoff is missing scripts/selfhost/helm-deps.sh" >&2; exit 1; }
 : >"$work/repositories.yaml"
 HELM_REPOSITORY_CONFIG="$work/repositories.yaml" HELM_REPOSITORY_CACHE="$work/repository-cache" \
   bash "$root/scripts/selfhost/helm-deps.sh" >/dev/null
