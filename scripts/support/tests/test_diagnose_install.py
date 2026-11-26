@@ -322,6 +322,48 @@ class ExecutionTests(unittest.TestCase):
         self.assertTrue(any(c['status']=='UNKNOWN' and '65' in c['detail'] for c in report.checks))
         self.assertTrue(any(c['status']=='PASS' and c['check'].endswith('ready') for c in report.checks))
 
+    def test_cluster_missing_and_overwritten_rds_ca(self):
+        import hashlib
+        pem = '-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n'
+        pod = {'metadata':{'name':'read-api'},'spec':{'volumes':[{'name':'postgres-ca','configMap':{'name':'rds-ca'}},{'name':'x','configMap':{'name':'Bad_Name'}}]},
+               'status':{'phase':'Pending','conditions':[]}}
+        def cluster(configmaps):
+            def kube(opt,resource,**kwargs):
+                if resource=='pods':
+                    return {'items':[pod]}
+                if resource=='configmaps':
+                    return {'items':configmaps}
+                return {'items':[]}
+            report=diag.Report()
+            with mock.patch.object(diag,'kube',side_effect=kube):
+                diag.cluster_checks(options(),report)
+            return {c['check']:c for c in report.checks if c['check'].startswith('cluster.configmaps')}
+        missing = cluster([])
+        self.assertEqual(missing['cluster.configmaps.1']['status'],'FAIL')
+        self.assertEqual(missing['cluster.configmaps.1']['resource'],'rds-ca')
+        self.assertIn('global.rdsCa.bundle', missing['cluster.configmaps.1']['action'])
+        self.assertEqual(len(missing),1)  # an invalid name is never echoed or checked
+        managed = {'metadata':{'name':'rds-ca','annotations':{'agentworkforce.dev/rds-ca-sha256':hashlib.sha256(pem.encode()).hexdigest()}},'data':{'ca.crt':pem}}
+        good = cluster([managed])
+        self.assertEqual([c['status'] for c in good.values()],['PASS','PASS'])
+        managed['data']['ca.crt'] = pem+pem
+        self.assertEqual(cluster([managed])['cluster.configmaps.1.rds-ca-pin']['status'],'FAIL')
+
+    def test_values_lint_global_rds_ca(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            values = Path(tmp)/'values.yaml'
+            values.write_text('global:\n  rdsCa:\n    # region\n    bundle: us-east-1\nworker:\n  postgresCa:\n    sha256: "'+diag.EXAMPLE_CA_SHA+'"\n')
+            report = diag.Report()
+            diag.values_checks(SimpleNamespace(values=[values], ca_file=None), report)
+            by = {c['check'].rsplit('.',1)[1]: c for c in report.checks}
+            self.assertEqual(by['rds-ca']['status'], 'PASS')
+            self.assertEqual(by['ca-sha256']['status'], 'FAIL')
+            self.assertIn('with global.rdsCa.bundle the chart computes them', by['ca-sha256']['action'])
+            values.write_text('global:\n  rdsCa:\n    bundle: us_east\n')
+            report = diag.Report()
+            diag.values_checks(SimpleNamespace(values=[values], ca_file=None), report)
+            self.assertEqual({c['check'].rsplit('.',1)[1]: c['status'] for c in report.checks}['rds-ca'], 'FAIL')
+
     def test_cluster_errors_are_unknown(self):
         report=diag.Report()
         with mock.patch.object(diag,'kube',side_effect=diag.DiagnosticError('permissions')):

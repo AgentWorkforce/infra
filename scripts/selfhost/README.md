@@ -69,7 +69,9 @@ cluster and RDS instance.
 
 The `pre` phase runs before Helm. It retrieves the RDS administrator credential
 from AWS Secrets Manager, runs the reviewed bootstrap SQL in short-lived
-Kubernetes Jobs, creates the `rds-ca` ConfigMap, and writes Secret input files
+Kubernetes Jobs, creates the `rds-ca` ConfigMap those Jobs use (with
+`global.rdsCa.bundle`, delete it before the first Helm install so the chart can
+create its own; a chart-managed `rds-ca` is never rewritten), and writes Secret input files
 under a mode-0700 state directory. It never prints passwords or connection
 strings.
 

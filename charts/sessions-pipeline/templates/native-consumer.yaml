@@ -1,6 +1,6 @@
 {{- include "sessions-pipeline.analytics.validate" .Values.nativeConsumer.analytics -}}
 {{- include "sessions-pipeline.nativeConsumer.validate" . -}}
-{{- $c := .Values.nativeConsumer -}}
+{{- $c := mergeOverwrite (deepCopy .Values.nativeConsumer) (include "sessions-pipeline.rdsCa.block" (dict "root" . "block" "nativeConsumer") | fromJson) -}}
 {{- if $c.enabled -}}
 {{- $name := include "sessions-pipeline.nativeConsumer.name" . -}}
 apiVersion: v1

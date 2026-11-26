@@ -56,7 +56,7 @@ spec:
             {{- include "sessions-pipeline-worker.hoopdbUrlEnv" (dict "root" $ "migrate" false) | nindent 12 }}
             - { name: NATIVE_BRIEF_CA_FILE, value: /etc/postgres-ca/ca.crt }
             - { name: NATIVE_BRIEF_CA_SOURCE, value: /var/run/native-brief-ca-source/ca.crt }
-            - { name: NATIVE_BRIEF_CA_SHA256, value: {{ $.Values.postgresCa.sha256 | quote }} }
+            - { name: NATIVE_BRIEF_CA_SHA256, value: {{ (include "sessions-pipeline-worker.postgresCa" $ | fromJson).sha256 | quote }} }
           securityContext: {{ toYaml $.Values.containerSecurityContext | nindent 12 }}
           resources:
             requests: { cpu: 10m, memory: 32Mi }
@@ -80,7 +80,7 @@ spec:
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           env:
             {{- include "sessions-pipeline-worker.env" (dict "context" $ "service" $component) | nindent 12 }}
-            {{- if ($.Values.postgresCa | default dict).enabled }}
+            {{- if (include "sessions-pipeline-worker.postgresCa" $ | fromJson).enabled }}
             - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
             {{- end }}
             {{- with $.Values.workerHealth }}
@@ -140,7 +140,7 @@ spec:
               mountPath: {{ $.Values.summaryEncryption.mountPath }}
               readOnly: true
             {{- end }}
-            {{- if ($.Values.postgresCa | default dict).enabled }}
+            {{- if (include "sessions-pipeline-worker.postgresCa" $ | fromJson).enabled }}
             {{- if and (eq $component "session-brief") $.Values.nativeBrief.enabled }}
             - { name: native-brief-verified-ca, mountPath: /etc/postgres-ca, readOnly: true }
             {{- if and $.Values.nativeBrief.analytics.enabled $.Values.nativeBrief.analytics.caConfigMap }}

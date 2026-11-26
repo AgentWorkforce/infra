@@ -1,4 +1,4 @@
-{{- $c := .Values.nativeConsumer -}}
+{{- $c := mergeOverwrite (deepCopy .Values.nativeConsumer) (include "sessions-pipeline.rdsCa.block" (dict "root" . "block" "nativeConsumer") | fromJson) -}}
 {{- if and $c.enabled $c.bootstrap.enabled -}}
 {{- include "sessions-pipeline.nativeConsumer.validate" . -}}
 {{- $spec := include "sessions-pipeline.nativeConsumer.pod" (dict "root" . "bootstrap" true) -}}

@@ -192,15 +192,24 @@ affinity:
 volumes:
   - name: tmp
     emptyDir: {}
-{{- if (.Values.postgresCa | default dict).enabled }}
+{{- if (include "alleyoop.postgresCa" . | fromJson).enabled }}
 {{ include "alleyoop.postgresCaVolume" . | indent 2 }}
 {{- end }}
 {{- end }}
 
+{{- /* postgresCa as the chart uses it: the values, or the agent-relay chart-managed
+RDS CA (global.rdsCa.bundle) when postgresCa names no CA source of its own
+(_rds-ca.tpl). */ -}}
+{{- define "alleyoop.postgresCa" -}}
+{{- $ca := deepCopy (.Values.postgresCa | default dict) -}}
+{{- $ca = mergeOverwrite $ca (include "alleyoop.rdsCa.apply" (dict "root" . "ca" $ca "path" "postgresCa" "fields" (dict "configMap" "configMap" "key" "key" "sha256" "sha256" "secret" "secret" "enabled" "enabled")) | fromJson) -}}
+{{- toJson $ca -}}
+{{- end -}}
+
 {{- /* Optional Postgres server CA bundle (postgresCa.*). NODE_EXTRA_CA_CERTS adds the
 mounted PEM to the roots node-pg verifies against for sslmode=verify-full. */ -}}
 {{- define "alleyoop.postgresCaVolume" -}}
-{{- $ca := .Values.postgresCa -}}
+{{- $ca := include "alleyoop.postgresCa" . | fromJson -}}
 - name: postgres-ca
 {{- if $ca.configMap }}
   configMap:
@@ -218,9 +227,9 @@ mounted PEM to the roots node-pg verifies against for sslmode=verify-full. */ -}
 {{- /* Fail closed on a half-configured bundle: a name without enabled=true would
 leave the certificate unverified while looking configured. */ -}}
 {{- define "alleyoop.validatePostgresCa" -}}
-{{- $ca := .Values.postgresCa | default dict -}}
+{{- if not (kindIs "bool" (dig "enabled" false (.Values.postgresCa | default dict))) }}{{ fail "alleyoop: postgresCa.enabled must be a boolean" }}{{ end -}}
+{{- $ca := include "alleyoop.postgresCa" . | fromJson -}}
 {{- $enabled := dig "enabled" false $ca -}}
-{{- if not (kindIs "bool" $enabled) }}{{ fail "alleyoop: postgresCa.enabled must be a boolean" }}{{ end -}}
 {{- $configMap := get $ca "configMap" | default "" | toString -}}
 {{- $secret := get $ca "secret" | default "" | toString -}}
 {{- if not $enabled -}}

@@ -52,6 +52,17 @@ explicit false, which must continue to conflict with the legacy true.
 {{- if dig "relaygate" "gateOnly" "enabled" false (.Values.global | default dict) }}true{{ end -}}
 {{- end -}}
 
+{{- /* postgresCa as the chart uses it: the values, or with postgres.tlsProfile
+custom-ca the agent-relay chart-managed RDS CA (global.rdsCa.bundle) when
+postgresCa names no CA source of its own (_rds-ca.tpl). */ -}}
+{{- define "session-read-api.postgresCa" -}}
+{{- $ca := deepCopy (.Values.postgresCa | default dict) -}}
+{{- if eq (toString .Values.postgres.tlsProfile) "custom-ca" -}}
+{{- $ca = mergeOverwrite $ca (include "session-read-api.rdsCa.apply" (dict "root" . "ca" $ca "path" "postgresCa" "fields" (dict "configMap" "configMap" "key" "key" "sha256" "sha256" "secret" "secret" "enabled" "enabled")) | fromJson) -}}
+{{- end -}}
+{{- toJson $ca -}}
+{{- end -}}
+
 {{- define "session-read-api.validate" -}}
 {{- include "session-read-api.analytics.validate" .Values.analytics -}}
 {{- $c := .Values -}}
@@ -118,10 +129,10 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- /* Postgres TLS: always verified, against the image's pin or a mounted CA. */ -}}
 {{- $profile := required "session-read-api: postgres.tlsProfile is required (supabase or custom-ca); the service refuses to start without it" $c.postgres.tlsProfile -}}
 {{- if not (has $profile (list "supabase" "custom-ca")) }}{{ fail "session-read-api: postgres.tlsProfile must be supabase or custom-ca" }}{{ end -}}
-{{- $ca := $c.postgresCa -}}
-{{- if not (kindIs "bool" $ca.enabled) }}{{ fail "session-read-api: postgresCa.enabled must be a boolean" }}{{ end -}}
+{{- if not (kindIs "bool" $c.postgresCa.enabled) }}{{ fail "session-read-api: postgresCa.enabled must be a boolean" }}{{ end -}}
+{{- $ca := include "session-read-api.postgresCa" . | fromJson -}}
 {{- if eq $profile "custom-ca" -}}
-{{- if not $ca.enabled }}{{ fail "session-read-api: postgres.tlsProfile=custom-ca requires postgresCa.enabled=true" }}{{ end -}}
+{{- if not $ca.enabled }}{{ fail "session-read-api: postgres.tlsProfile=custom-ca requires postgresCa.enabled=true (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
 {{- else if $ca.enabled -}}
 {{- fail "session-read-api: postgresCa.enabled=true requires postgres.tlsProfile=custom-ca; a CA with another profile would be ignored" -}}
 {{- end -}}
@@ -130,7 +141,7 @@ workspace is not on a static list, and its reads would answer 501. */ -}}
 {{- $ref := default $ca.secret $ca.configMap -}}
 {{- if or (gt (len $ref) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $ref)) }}{{ fail "session-read-api: postgresCa.configMap and postgresCa.secret must be a Kubernetes object name" }}{{ end -}}
 {{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString $ca.key)) }}{{ fail "session-read-api: postgresCa.key must be a Kubernetes data key" }}{{ end -}}
-{{- if not (regexMatch "^[a-f0-9]{64}$" (toString $ca.sha256)) }}{{ fail "session-read-api: postgresCa.sha256 must be 64 lowercase hex characters" }}{{ end -}}
+{{- if not (regexMatch "^[a-f0-9]{64}$" (toString $ca.sha256)) }}{{ fail "session-read-api: postgresCa.sha256 must be 64 lowercase hex characters (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
 {{- else if or $ca.configMap $ca.secret -}}
 {{- fail "session-read-api: postgresCa.configMap and postgresCa.secret require postgresCa.enabled=true; a CA name while disabled would leave the certificate unverified" -}}
 {{- end -}}

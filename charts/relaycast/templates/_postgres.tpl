@@ -31,8 +31,19 @@ workload identity on it) stays with the server. */ -}}
 {{- end }}
 {{- end }}
 
+{{- /* postgresCa as the chart uses it: the values, or on the PostgreSQL backend the
+agent-relay chart-managed RDS CA (global.rdsCa.bundle) when postgresCa names no
+CA source of its own (_rds-ca.tpl). */ -}}
+{{- define "relaycast.postgresCa" -}}
+{{- $ca := deepCopy (.Values.postgresCa | default dict) -}}
+{{- if include "relaycast.postgres.enabled" . -}}
+{{- $ca = mergeOverwrite $ca (include "relaycast.rdsCa.apply" (dict "root" . "ca" $ca "path" "postgresCa" "fields" (dict "configMap" "configMap" "key" "key" "sha256" "sha256" "secret" "secret" "enabled" "enabled")) | fromJson) -}}
+{{- end -}}
+{{- toJson $ca -}}
+{{- end }}
+
 {{- define "relaycast.postgres.caVolume" -}}
-{{- $ca := .Values.postgresCa -}}
+{{- $ca := include "relaycast.postgresCa" . | fromJson -}}
 - name: postgres-ca
 {{- if $ca.configMap }}
   configMap:
@@ -161,9 +172,9 @@ spec:
 {{- /* Fail closed on a half-configured backend: the image exits 64 without a URL or
 CA, so an incomplete release would only fail after it is applied. */ -}}
 {{- define "relaycast.postgres.validate" -}}
-{{- $ca := .Values.postgresCa | default dict -}}
+{{- if not (kindIs "bool" (dig "enabled" false (.Values.postgresCa | default dict))) }}{{ fail "postgresCa.enabled must be a boolean" }}{{ end -}}
+{{- $ca := include "relaycast.postgresCa" . | fromJson -}}
 {{- $enabled := dig "enabled" false $ca -}}
-{{- if not (kindIs "bool" $enabled) }}{{ fail "postgresCa.enabled must be a boolean" }}{{ end -}}
 {{- $configMap := get $ca "configMap" | default "" | toString -}}
 {{- $secret := get $ca "secret" | default "" | toString -}}
 {{- if not $enabled -}}
@@ -175,7 +186,7 @@ CA, so an incomplete release would only fail after it is applied. */ -}}
 {{- if not (regexMatch "^[A-Za-z0-9._-]+$" (get $ca "key" | default "" | toString)) }}{{ fail "postgresCa.key must be a Kubernetes data key" }}{{ end -}}
 {{- end -}}
 {{- if include "relaycast.postgres.enabled" . -}}
-{{- if not $enabled }}{{ fail "runtime.backend=postgres requires postgresCa.enabled=true: the image refuses to connect without a CA bundle" }}{{ end -}}
+{{- if not $enabled }}{{ fail "runtime.backend=postgres requires postgresCa.enabled=true: the image refuses to connect without a CA bundle (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
 {{- $keys := .Values.secretKeys | default dict -}}
 {{- range $name := list "databaseOwnerUrl" "databaseRuntimeUrl" -}}
 {{- if not (get $keys $name) }}{{ fail (printf "runtime.backend=postgres requires secretKeys.%s" $name) }}{{ end -}}

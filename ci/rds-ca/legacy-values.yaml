@@ -1,0 +1,45 @@
+# The RDS CA as examples/aws/values.yaml wrote it before global.rdsCa: a
+# hand-made rds-ca ConfigMap and its sha256 pinned in each component.
+# ci/rds-ca/test.sh layers this over the current example to prove such values
+# render exactly as before.
+global:
+  rdsCa:
+    bundle: ""
+relaycast:
+  postgresCa:
+    enabled: true
+    configMap: rds-ca
+    key: ca.crt
+sessions-pipeline:
+  sessionReadApi:
+    postgres: { tlsProfile: custom-ca }
+    postgresCa:
+      enabled: true
+      configMap: rds-ca
+      key: ca.crt
+      sha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
+  ingestEdge:
+    postgres:
+      caConfigMap: rds-ca
+      caSha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
+  searchIndexer:
+    postgres:
+      tlsProfile: custom-ca
+      caConfigMap: rds-ca
+      caSha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
+  worker:
+    postgresCa:
+      enabled: true
+      configMap: rds-ca
+      key: ca.crt
+      sha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
+  alleyoop:
+    postgresCa:
+      enabled: true
+      configMap: rds-ca
+      key: ca.crt
+relay-control:
+  postgresCa:
+    enabled: true
+    configMap: rds-ca
+    key: ca.crt

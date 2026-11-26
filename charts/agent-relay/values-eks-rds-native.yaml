@@ -9,7 +9,13 @@
 #     -f <private-site-values.yaml>
 #
 # This file contains no credentials and is deliberately renderable. Replace
-# every value marked REQUIRED OVERRIDE before install. Terraform must bind EKS
+# every value marked REQUIRED OVERRIDE before install.
+#
+# RDS CA: set global.rdsCa.bundle in the site values to the RDS region (or
+# global). The chart then renders the rds-ca ConfigMap named below from the AWS
+# bundle it ships and replaces the all-zero SHA-256 placeholders below with
+# that bundle's hash, so they need no override. Installs that create rds-ca
+# themselves leave global.rdsCa unset and override every placeholder. Terraform must bind EKS
 # Pod Identity associations to the release namespace and the four exact Service
 # Account names below. The cluster must have a default encrypted EBS StorageClass
 # unless relaycast.persistence.storageClass is set in the private site values.
@@ -120,7 +126,8 @@ sessions-pipeline:
       enabled: true
       configMap: rds-ca
       key: ca.crt
-      # REQUIRED OVERRIDE: lowercase SHA-256 of the immutable RDS CA bundle.
+      # REQUIRED OVERRIDE unless global.rdsCa.bundle is set (then the chart
+      # fills in this placeholder): lowercase SHA-256 of the RDS CA bundle.
       sha256: "0000000000000000000000000000000000000000000000000000000000000000"
     locker:
       provider: s3
@@ -149,7 +156,8 @@ sessions-pipeline:
       enabled: true
       configMap: rds-ca
       key: ca.crt
-      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
+      # REQUIRED OVERRIDE unless global.rdsCa.bundle is set: same RDS CA
+      # SHA-256 as worker.postgresCa.sha256.
       sha256: "0000000000000000000000000000000000000000000000000000000000000000"
     locker:
       provider: s3
@@ -186,7 +194,8 @@ sessions-pipeline:
       enabled: true
       configMap: rds-ca
       key: ca.crt
-      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
+      # REQUIRED OVERRIDE unless global.rdsCa.bundle is set: same RDS CA
+      # SHA-256 as worker.postgresCa.sha256.
       sha256: "0000000000000000000000000000000000000000000000000000000000000000"
     search:
       backend: opensearch
@@ -245,7 +254,8 @@ sessions-pipeline:
     postgres:
       caConfigMap: rds-ca
       caKey: ca.crt
-      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
+      # REQUIRED OVERRIDE unless global.rdsCa.bundle is set: same RDS CA
+      # SHA-256 as worker.postgresCa.sha256.
       caSha256: "0000000000000000000000000000000000000000000000000000000000000000"
     serviceAccountName: agent-relay-session-ingest-api
     locker:
@@ -282,7 +292,8 @@ sessions-pipeline:
       tlsProfile: custom-ca
       caConfigMap: rds-ca
       caKey: ca.crt
-      # REQUIRED OVERRIDE: same RDS CA SHA-256 as worker.postgresCa.sha256.
+      # REQUIRED OVERRIDE unless global.rdsCa.bundle is set: same RDS CA
+      # SHA-256 as worker.postgresCa.sha256.
       caSha256: "0000000000000000000000000000000000000000000000000000000000000000"
     bootstrap:
       enabled: true

@@ -229,7 +229,7 @@ volumes:
         - key: {{ $ctx.Values.summaryEncryption.key | quote }}
           path: {{ $ctx.Values.summaryEncryption.fileName | quote }}
 {{- end }}
-{{- if and ($ctx.Values.postgresCa | default dict).enabled (ne .component "locker-init") }}
+{{- if and (include "sessions-pipeline-worker.postgresCa" $ctx | fromJson).enabled (ne .component "locker-init") }}
 {{ include "sessions-pipeline-worker.postgresCaVolume" $ctx | indent 2 }}
 {{- end }}
 {{- end }}
@@ -335,10 +335,29 @@ The migrate container's profile env, each name exactly once (context: migrations
 {{- end }}
 {{- end }}
 
+{{- /* postgresCa as the chart uses it: the values, or the agent-relay chart-managed
+RDS CA (global.rdsCa.bundle) when postgresCa names no CA source of its own
+(_rds-ca.tpl). */ -}}
+{{- define "sessions-pipeline-worker.postgresCa" -}}
+{{- $ca := deepCopy (.Values.postgresCa | default dict) -}}
+{{- $ca = mergeOverwrite $ca (include "sessions-pipeline-worker.rdsCa.apply" (dict "root" . "ca" $ca "path" "postgresCa" "fields" (dict "configMap" "configMap" "key" "key" "sha256" "sha256" "secret" "secret" "enabled" "enabled")) | fromJson) -}}
+{{- toJson $ca -}}
+{{- end -}}
+
+{{- /* sessionAnalysis.postgresTls as the chart uses it: with profile custom-ca, the
+chart-managed RDS CA when it names no caConfigMap of its own. */ -}}
+{{- define "sessions-pipeline-worker.sessionAnalysisTls" -}}
+{{- $t := deepCopy (dig "postgresTls" dict (.Values.sessionAnalysis | default dict) | default dict) -}}
+{{- if eq (toString ($t.profile | default "")) "custom-ca" -}}
+{{- $t = mergeOverwrite $t (include "sessions-pipeline-worker.rdsCa.apply" (dict "root" . "ca" $t "path" "sessionAnalysis.postgresTls" "fields" (dict "configMap" "caConfigMap" "key" "caKey" "sha256" "sha256")) | fromJson) -}}
+{{- end -}}
+{{- toJson $t -}}
+{{- end -}}
+
 {{- /* Optional Postgres server CA bundle (postgresCa.*). NODE_EXTRA_CA_CERTS adds the
 mounted PEM to the roots node-pg verifies against for sslmode=verify-full. */ -}}
 {{- define "sessions-pipeline-worker.postgresCaVolume" -}}
-{{- $ca := .Values.postgresCa -}}
+{{- $ca := include "sessions-pipeline-worker.postgresCa" . | fromJson -}}
 - name: postgres-ca
 {{- if $ca.configMap }}
   configMap:
@@ -356,9 +375,9 @@ mounted PEM to the roots node-pg verifies against for sslmode=verify-full. */ -}
 {{- /* Fail closed on a half-configured bundle: a name without enabled=true would
 leave the certificate unverified while looking configured. */ -}}
 {{- define "sessions-pipeline-worker.validatePostgresCa" -}}
-{{- $ca := .Values.postgresCa | default dict -}}
+{{- if not (kindIs "bool" (dig "enabled" false (.Values.postgresCa | default dict))) }}{{ fail "sessions-pipeline-worker: postgresCa.enabled must be a boolean" }}{{ end -}}
+{{- $ca := include "sessions-pipeline-worker.postgresCa" . | fromJson -}}
 {{- $enabled := dig "enabled" false $ca -}}
-{{- if not (kindIs "bool" $enabled) }}{{ fail "sessions-pipeline-worker: postgresCa.enabled must be a boolean" }}{{ end -}}
 {{- $configMap := get $ca "configMap" | default "" | toString -}}
 {{- $secret := get $ca "secret" | default "" | toString -}}
 {{- if not $enabled -}}

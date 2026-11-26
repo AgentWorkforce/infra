@@ -120,7 +120,7 @@ spec:
             {{- if .Values.secretKeys.passwordPepper }}
             - { name: SELFHOST_PASSWORD_PEPPER_FILE, value: /var/run/agent-relay/password-pepper/pepper }
             {{- end }}
-            {{- if (.Values.postgresCa | default dict).enabled }}
+            {{- if (include "relay-control.postgresCa" . | fromJson).enabled }}
             - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
             {{- end }}
             {{- if .Values.integrations }}
@@ -164,7 +164,7 @@ spec:
             {{- if .Values.secretKeys.passwordPepper }}
             - { name: password-pepper, mountPath: /var/run/agent-relay/password-pepper, readOnly: true }
             {{- end }}
-            {{- if (.Values.postgresCa | default dict).enabled }}
+            {{- if (include "relay-control.postgresCa" . | fromJson).enabled }}
             - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
             {{- end }}
           startupProbe:
@@ -246,7 +246,7 @@ spec:
         - name: password-pepper
           emptyDir: { medium: Memory, sizeLimit: 1Mi }
         {{- end }}
-        {{- if (.Values.postgresCa | default dict).enabled }}
+        {{- if (include "relay-control.postgresCa" . | fromJson).enabled }}
         {{- include "relay-control.postgresCaVolume" . | nindent 8 }}
         {{- end }}
         {{- range $provider := keys (.Values.integrations | default dict) | sortAlpha }}

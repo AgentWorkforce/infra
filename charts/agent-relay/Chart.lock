@@ -1,16 +1,16 @@
 dependencies:
 - name: relaycast
   repository: file://../relaycast
-  version: 0.3.17
+  version: 0.3.18
 - name: relayauth
   repository: file://../relayauth
   version: 0.1.5
 - name: sessions-pipeline
   repository: file://../sessions-pipeline
-  version: 0.8.60
+  version: 0.8.61
 - name: relay-control
   repository: file://../relay-control
-  version: 0.4.26
+  version: 0.4.27
 - name: relay-webapp
   repository: file://../relay-webapp
   version: 0.2.8
@@ -35,5 +35,5 @@ dependencies:
 - name: relaygate
   repository: file://../relaygate
   version: 0.1.13
-digest: sha256:a912a8117a0ea253f405fea711368a8831807ae9f2b6a26f1bdc84a81a542545
-generated: "2026-11-26T12:46:08.340741-08:00"
+digest: sha256:12d1b3d1d743b832cafe54e1fd0eee37326425c8d63932ab291235f9a2a9f89f
+generated: "2026-11-26T13:18:52.077404-08:00"

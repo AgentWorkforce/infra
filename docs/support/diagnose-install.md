@@ -38,12 +38,18 @@ Detection order:
 
 If something is not found, the run ends with **Missing files - how to fix**:
 which file, where it looked, and the command to fix it (for a missing CA, the
-download URL with your region taken from the RDS hostname).
+chart's bundle for your region, taken from the RDS hostname, and its download
+URL).
 
 The values file is linted for mistakes seen in real installs: example
 placeholders left in (with line numbers), an OpenSearch endpoint without
-`https://`, and an RDS CA `caSha256` that is the example value or does not
-match your local `rds-ca.pem`. Pass `--values FILE` to pick a file, or
+`https://`, an RDS CA `caSha256` that is the example value or does not
+match your local `rds-ca.pem`, and a `global.rdsCa.bundle` that is not an AWS
+region or `global` (with it set, hand-set CA hashes are not needed). The
+cluster checks also report a ConfigMap that a release pod mounts but that does
+not exist (the pod stays in ContainerCreating; `rds-ca` is the usual one) and a
+chart-managed `rds-ca` whose content no longer matches the hash the services
+pin. Pass `--values FILE` to pick a file, or
 `--values` with no file to skip the lint. Every flag below still works and
 overrides detection.
 

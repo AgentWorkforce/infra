@@ -1,0 +1,52 @@
+{{- /* Chart-managed RDS CA (global.rdsCa.bundle): the public AWS RDS CA bundle this
+chart ships (files/rds-ca, provenance in files/rds-ca/manifest.yaml), rendered
+as the ConfigMap every Postgres client mounts. Its sha256 is computed here from
+the bundle and must equal global.rdsCa.bundleSha256, which is what the
+subcharts pin (their _rds-ca.tpl), so the mounted bytes and the pins cannot
+disagree. Bundles are public certificates, not secrets. */ -}}
+{{- $g := dig "rdsCa" dict (.Values.global | default dict) | default dict -}}
+{{- $bundle := dig "bundle" "" $g | default "" | toString -}}
+{{- if $bundle }}
+{{- if not (regexMatch "^(global|[a-z]{2}(-[a-z]+)+-[0-9]+)$" $bundle) }}{{ fail (printf "global.rdsCa.bundle=%q must be an AWS region (us-east-1) or global" $bundle) }}{{ end -}}
+{{- $pem := .Files.Get (printf "files/rds-ca/%s-bundle.pem" $bundle) -}}
+{{- if not $pem }}{{ fail (printf "global.rdsCa.bundle=%q: this chart ships no RDS CA bundle for that region (files/rds-ca/manifest.yaml lists them). Use global, which covers every commercial region, or name your own CA." $bundle) }}{{ end -}}
+{{- $sha := sha256sum $pem -}}
+{{- $pinned := dig "bundleSha256" $bundle "" $g | default "" | toString -}}
+{{- if ne $sha $pinned }}{{ fail (printf "global.rdsCa.bundleSha256.%s=%q does not match the %s bundle this chart ships (sha256 %s). Leave global.rdsCa.bundleSha256 at the chart's defaults: it is generated with the bundles." $bundle $pinned $bundle $sha) }}{{ end -}}
+{{- $name := dig "configMapName" "rds-ca" $g | default "rds-ca" | toString -}}
+{{- if or (gt (len $name) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $name)) }}{{ fail "global.rdsCa.configMapName must be a Kubernetes object name" }}{{ end }}
+{{- /* An rds-ca created outside the release (by hand, or by rds-setup.sh pre for its
+own Jobs) would make Helm refuse the install with a bare ownership error. Taking
+it over in place is not reliable: with server-side apply (Helm 4) its ca.crt
+stays owned by kubectl and the first different bundle conflicts. Deleting it is:
+running pods keep their mounted copy and new ones wait until the chart has
+created it. lookup is empty under helm template. */ -}}
+{{- $live := lookup "v1" "ConfigMap" .Release.Namespace $name -}}
+{{- if $live -}}
+{{- $ann := dig "metadata" "annotations" dict $live | default dict -}}
+{{- if or (ne (get $ann "meta.helm.sh/release-name" | default "") .Release.Name) (ne (get $ann "meta.helm.sh/release-namespace" | default "") .Release.Namespace) -}}
+{{- fail (printf "global.rdsCa.bundle: ConfigMap %s already exists in namespace %s and this release does not own it (it was created by hand or by rds-setup.sh pre). Delete it and run this again; the chart then creates it and keeps it current:\n  kubectl -n %s delete configmap %s\nRunning pods keep their mounted copy, and pods that start in between wait until the chart has created it. Or set global.rdsCa.configMapName to a name that is free." $name .Release.Namespace .Release.Namespace $name) -}}
+{{- end -}}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: agent-relay
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: rds-ca
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
+  annotations:
+    # Left in place if global.rdsCa is turned off, so components that go back to
+    # naming rds-ca themselves keep a CA to mount.
+    helm.sh/resource-policy: keep
+    agentworkforce.dev/rds-ca-bundle: {{ $bundle | quote }}
+    agentworkforce.dev/rds-ca-sha256: {{ $sha | quote }}
+    agentworkforce.dev/rds-ca-source: {{ ternary "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem" (printf "https://truststore.pki.rds.amazonaws.com/%s/%s-bundle.pem" $bundle $bundle) (eq $bundle "global") | quote }}
+data:
+  # The AWS bytes unchanged (a JSON string), so sha256(ca.crt) is the pin above.
+  ca.crt: {{ $pem | toJson }}
+{{- end }}

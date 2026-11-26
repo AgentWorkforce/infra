@@ -101,9 +101,9 @@
 {{- $check := $s.s3VersioningCheck -}}
 {{- if not (or (kindIs "invalid" $check) (eq (toString $check) "") (eq (toString $check) "true")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3VersioningCheck must be \"\" (the runner decides: on with s3Endpoint or static keys) or \"true\"; the check cannot be turned off" }}{{ end -}}
 {{- if ne (.Values.locker.provider | default "s3") "s3" }}{{ fail "sessions-pipeline-worker: sessionAnalysis reads canonical evidence from S3 only; it requires locker.provider=s3" }}{{ end -}}
-{{- $t := $s.postgresTls | default dict -}}
+{{- $t := include "sessions-pipeline-worker.sessionAnalysisTls" . | fromJson -}}
 {{- if not (has ($t.profile | default "") (list "" "supabase" "custom-ca")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.postgresTls.profile must be empty, supabase or custom-ca" }}{{ end -}}
-{{- if and (eq $t.profile "custom-ca") (or (not $t.caConfigMap) (not (regexMatch "^[a-f0-9]{64}$" ($t.sha256 | default "")))) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.postgresTls.profile=custom-ca needs caConfigMap and a 64-hex sha256" }}{{ end -}}
+{{- if and (eq $t.profile "custom-ca") (or (not $t.caConfigMap) (not (regexMatch "^[a-f0-9]{64}$" ($t.sha256 | default "")))) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.postgresTls.profile=custom-ca needs caConfigMap and a 64-hex sha256 (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
 {{- $bounds := dict "tickMs" (list 1000 600000) "batch" (list 1 20) "pgPoolMax" (list 1 16) -}}
 {{- range $k, $b := $bounds }}
 {{- $n := get $s $k -}}

@@ -278,6 +278,15 @@ fi
 # 3. pre ----------------------------------------------------------------------
 log "3/8 Creating databases, service logins and credential files (rds-setup.sh pre)"
 NAMESPACE="$NAMESPACE" "$RDS_SETUP" pre
+# With global.rdsCa.bundle the chart renders rds-ca and pins its hash. pre
+# (re)creates rds-ca for its own Jobs, so delete that copy now: helm upgrade in
+# step 5 creates the chart's. Running pods keep their mounted copy.
+RDS_CA_MANAGED=0
+if grep -qE '^[[:space:]]+bundle:[[:space:]]*"?[a-z0-9-]+' <(sed -n '/^[[:space:]]*rdsCa:/,/^[^[:space:]]/p' "$VALUES"); then
+  RDS_CA_MANAGED=1
+  k delete configmap rds-ca --ignore-not-found >/dev/null
+  info "rds-ca: managed by the chart (global.rdsCa.bundle in $VALUES); the helm upgrade below creates it"
+fi
 FILES="$STATE_DIR/secret-files"
 [[ -d "$FILES" ]] || die "rds-setup.sh pre wrote no credential files under $FILES"
 
@@ -299,7 +308,12 @@ for dir in "$FILES"/*/; do
     info "created $secret"
   fi
 done
-info "rds-ca hash for values.yaml (every caSha256/sha256 under rds-ca): $(cat "$STATE_DIR/rds-ca.sha256" 2>/dev/null || echo unknown)"
+if [[ "$RDS_CA_MANAGED" == 1 ]]; then
+  info "rds-ca: managed by the chart; no hash to copy"
+else
+  info "rds-ca hash for values.yaml (every caSha256/sha256 under rds-ca): $(cat "$STATE_DIR/rds-ca.sha256" 2>/dev/null || echo unknown)"
+  info "  or set global.rdsCa.bundle: $AWS_REGION and drop those hashes: the chart then manages rds-ca"
+fi
 
 # 5. helm upgrade -------------------------------------------------------------
 # rds-setup.sh pre writes the HoopDb layout overlay (which Secret holds the

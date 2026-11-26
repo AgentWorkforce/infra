@@ -277,6 +277,7 @@ def kube(options, resource, name=None, selector=False, probe=False):
 
 
 def cluster_checks(options, report):
+    mounted = set()  # ConfigMaps the release's pods mount
     for resource in ('jobs','pods','deployments','persistentvolumeclaims'):
         try:
             items = kube(options,resource,selector=True)['items']
@@ -295,6 +296,10 @@ def cluster_checks(options, report):
                     else:
                         report.unknown(name,'job-pending-or-running')
                 elif resource == 'pods':
+                    for volume in item.get('spec',{}).get('volumes',[]) or []:
+                        cm = (volume.get('configMap') or {}).get('name')
+                        if isinstance(cm,str) and re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}',cm):
+                            mounted.add(cm)
                     states = status.get('initContainerStatuses',[])+status.get('containerStatuses',[])
                     for j,state in enumerate(states):
                         for origin,container in (('current',state.get('state',{})),('previous',state.get('lastState',{}))):
@@ -332,6 +337,37 @@ def cluster_checks(options, report):
                             check['createdAt'] = created
         except (DiagnosticError, KeyError, TypeError, AttributeError) as exc:
             report.unknown('cluster.'+resource,str(exc) if isinstance(exc,DiagnosticError) else 'invalid-response')
+    if mounted:
+        configmap_checks(options, report, mounted)
+
+
+def configmap_checks(options, report, mounted):
+    """A ConfigMap a pod mounts but nobody created keeps the pod in ContainerCreating
+    (the rds-ca case). A chart-managed rds-ca (global.rdsCa) must still hold the bytes
+    its pinned hash names."""
+    import hashlib
+    try:
+        items = {i['metadata']['name']: i for i in kube(options,'configmaps')['items']}
+        for n, cm in enumerate(sorted(mounted)):
+            name = 'cluster.configmaps.'+str(n+1)
+            if cm not in items:
+                report.add(name,'FAIL','A ConfigMap the release\'s pods mount does not exist; those pods stay in ContainerCreating.',
+                           'For rds-ca set global.rdsCa.bundle to the RDS region so the chart creates it (docs/self-hosted-rds-manual-setup.md 1.2); '
+                           'otherwise create the ConfigMap the values name, or correct the name.')
+            else:
+                report.add(name,'PASS','Mounted ConfigMap exists.')
+                pinned = ((items[cm].get('metadata') or {}).get('annotations') or {}).get('agentworkforce.dev/rds-ca-sha256')
+                if pinned:
+                    actual = hashlib.sha256(((items[cm].get('data') or {}).get('ca.crt') or '').encode()).hexdigest()
+                    report.test(name+'.rds-ca-pin', actual == pinned,
+                                'The chart-managed RDS CA holds the bundle its services pin.' if actual == pinned
+                                else 'The chart-managed RDS CA no longer holds the bundle its services pin (it was overwritten).',
+                                'Run helm upgrade with the same values; the chart rewrites the ConfigMap.')
+            report.checks[-1]['resource'] = cm
+            if len(report.checks) > 1 and report.checks[-2]['check'] == name:
+                report.checks[-2]['resource'] = cm
+    except (DiagnosticError, KeyError, TypeError, AttributeError) as exc:
+        report.unknown('cluster.configmaps',str(exc) if isinstance(exc,DiagnosticError) else 'invalid-response')
 
 
 def _yaml_scalar(raw):
@@ -982,6 +1018,15 @@ def values_checks(options, report):
             report.unknown(tag, 'values-file-unreadable')
             continue
         placeholders, scheme, bad_sha, example_sha = [], [], [], []
+        # global.rdsCa.bundle: the chart renders rds-ca and computes every hash.
+        managed = re.search(r'^([ \t]*)rdsCa:[ \t]*\n(?:\1[ \t]+.*\n|[ \t]*#.*\n)*?\1[ \t]+bundle:[ \t]*["\']?([^"\'\s#]*)', '\n'.join(lines)+'\n', re.M)
+        bundle = managed.group(2) if managed else ''
+        if bundle:
+            valid = bool(re.fullmatch(r'global|[a-z]{2}(?:-[a-z]+)+-[0-9]+', bundle))
+            report.test(tag+'.rds-ca', valid,
+                        'global.rdsCa.bundle is set: the chart creates rds-ca and computes its SHA-256.' if valid
+                        else 'global.rdsCa.bundle is not an AWS region or global.',
+                        'Set global.rdsCa.bundle to the RDS region, for example us-east-1, or to global.')
         for n, line in enumerate(lines, 1):
             body = line.split(' #', 1)[0]
             if body.lstrip().startswith('#') or not body.strip():
@@ -1008,7 +1053,9 @@ def values_checks(options, report):
                     (('Example CA hash on line(s) '+lines_of(example_sha)+'. ' if example_sha else '')
                     + ('CA hash differs from the local CA file on line(s) '+lines_of(bad_sha)+'.' if bad_sha else '')).strip()
                     or ('CA hashes match the local CA file.' if ca_sha else 'No example CA hash (no local CA file to compare).'),
-                    'Set every caSha256/sha256 under rds-ca to: shasum -a 256 rds-ca.pem')
+                    ('Delete the hand-set CA hashes: with global.rdsCa.bundle the chart computes them.' if bundle else
+                     'Set global.rdsCa.bundle: <RDS region> and delete the hand-set CA hashes (the chart computes them), '
+                     'or set every caSha256/sha256 under rds-ca to: shasum -a 256 rds-ca.pem'))
 
 
 def parse_args(argv=None):
@@ -1075,7 +1122,8 @@ def main(argv=None):
                           for m in [re.search(r'\.([a-z]{2}(?:-gov)?-[a-z]+-\d)\.rds\.amazonaws\.com$', c['host'])] if m})
         region = regions[0] if len(regions)==1 else '<region>'
         missing['ca'] = ('No database CA file (looked for rds-ca.pem, database-ca.pem, global-bundle.pem, *-bundle.pem here, '
-                         'then ~/.agent-relay-install/rds-ca.pem); TLS logins will fail. Fix: '
+                         'then ~/.agent-relay-install/rds-ca.pem); TLS logins will fail. Fix: from your infra checkout '
+                         'cp charts/agent-relay/files/rds-ca/'+region+'-bundle.pem rds-ca.pem, or '
                          'curl -fsS -o rds-ca.pem https://truststore.pki.rds.amazonaws.com/'+region+'/'+region+'-bundle.pem '
                          '(or pass --ca-file <path>).')
     if getattr(options,'no_credentials',False):

@@ -386,18 +386,57 @@ helm template agent-relay charts/agent-relay \
 ```
 
 The private overlay must replace every copy marked `REQUIRED OVERRIDE`: the
-organization ID, public origins, S3 bucket and region, RDS CA SHA-256,
+organization ID, public origins, S3 bucket and region, the RDS CA (set
+`global.rdsCa.bundle` to the RDS region, or override every RDS CA SHA-256),
 OpenSearch endpoint/backend ID/region, ALB subnet CIDRs, first owner details,
 and the ingest edge's namespace-qualified Control Service URL. The duplicated
 service values are deliberate chart boundaries, not fallback defaults: keep
 the bucket/region identical under `worker`, `alleyoop`, `sessionReadApi.extraEnv`,
-`ingestEdge` and `searchIndexer`; keep the CA SHA-256 identical on all five
-clients; and keep the read API and indexer OpenSearch projection settings
+`ingestEdge` and `searchIndexer`; without `global.rdsCa`, keep the CA SHA-256
+identical on all five clients; and keep the read API and indexer OpenSearch projection settings
 identical. `ci/agent-relay/eks-rds-native-site-values.yaml` is a complete
 non-secret example, and its render test asserts those equalities. The private
 overlay may mirror the four immutable release images into the customer's ECR,
 but it must retain their digests. This profile renders no Secret; create the
-named Secrets and the immutable `rds-ca` ConfigMap separately.
+named Secrets separately. With `global.rdsCa.bundle` the chart renders the
+`rds-ca` ConfigMap; without it, create `rds-ca` yourself.
+
+### Chart-managed RDS CA
+
+`global.rdsCa.bundle` set to an AWS region (`us-east-1`) or `global` makes the
+chart render the `rds-ca` ConfigMap (key `ca.crt`; `global.rdsCa.configMapName`
+renames it) from the public AWS RDS CA bundle it ships in `files/rds-ca`, and
+pin that bundle's SHA-256 in every Postgres client: relaycast and relay-control
+`postgresCa`, and in sessions-pipeline the worker, alleyoop, read API, ingest
+edge, search indexer, native consumer and session analysis. `files/rds-ca/manifest.yaml`
+records each bundle's URL, fetch date and SHA-256;
+`scripts/selfhost/refresh-rds-ca-bundles.sh` refreshes them and a weekly
+workflow fails when AWS has changed one.
+
+- A component that names another ConfigMap or a Secret keeps that CA (a
+  private CA, or a database that is not RDS).
+- A component that names `rds-ca` or nothing uses the managed CA. A hand-set
+  hash that differs from the bundle's, or a key other than `ca.crt`, fails the
+  render. The all-zero placeholders in `values-eks-rds-native.yaml` count as
+  unset.
+- Values from before `global.rdsCa` (an `rds-ca` created by hand and its hash
+  pinned per component) render unchanged while `global.rdsCa.bundle` is empty.
+- An `rds-ca` that the release does not own (created by hand, or by
+  `rds-setup.sh pre` for its own Jobs) stops the install with the
+  `kubectl delete configmap rds-ca` that clears the way: running pods keep
+  their mounted copy and new ones wait until the chart has created it.
+  (Taking it over with Helm's ownership labels is not reliable: under
+  server-side apply its `ca.crt` stays owned by kubectl and the first
+  different bundle conflicts.) `configure-rds.sh` deletes it for you when the
+  values set `global.rdsCa.bundle`, and `rds-setup.sh pre` leaves a
+  chart-managed `rds-ca` as it is.
+- The managed ConfigMap carries `helm.sh/resource-policy: keep`, so turning
+  `global.rdsCa` off leaves it for components that go back to naming `rds-ca`.
+
+The 34 regional bundles and the global bundle (330 KB of PEM) add about
+290 KiB to the Helm release Secret: about 0.43 MiB in all for the EKS example
+with a regional bundle, 0.54 MiB with `global` (0.15 MiB before; the limit is
+1 MiB). `ci/rds-ca/test.sh` fails the build above 0.9 MiB.
 
 The chart leaves EKS ingress objects external. Publish dashboard, Control,
 Relaycast, native reads and native ingest through the supplied ALB generator
@@ -713,7 +752,8 @@ Notes:
   Remove each key's mapping from the Helm values used for every upgrade and
   from the live ExternalSecret, delete its backing-store value, wait for
   reconciliation, and then delete `hoopdb-admin-jobs`.
-- The `rds-ca` ConfigMap is not a Secret; create it as before.
+- The `rds-ca` ConfigMap is not a Secret. With `global.rdsCa.bundle` the chart
+  renders it; otherwise create it as before.
 
 ## Single-host mode
 

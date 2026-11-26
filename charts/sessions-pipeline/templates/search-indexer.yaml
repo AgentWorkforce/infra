@@ -1,4 +1,4 @@
-{{- $c := .Values.searchIndexer -}}
+{{- $c := mergeOverwrite (deepCopy .Values.searchIndexer) (include "sessions-pipeline.rdsCa.block" (dict "root" . "block" "searchIndexer") | fromJson) -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "searchIndexer.enabled must be a boolean" }}{{ end -}}
 {{- if and (not (kindIs "invalid" $c.readerMaxRuleset)) (not (has (toString $c.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "searchIndexer.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- if $c.enabled -}}
@@ -118,8 +118,8 @@
 {{- $tls := $c.postgres.tlsProfile -}}
 {{- if not (has $tls (list "supabase" "custom-ca")) }}{{ fail "searchIndexer.postgres.tlsProfile must be supabase or custom-ca" }}{{ end -}}
 {{- if eq $tls "custom-ca" -}}
-{{- $_ := required "searchIndexer.postgres.caConfigMap is required for custom-ca" $c.postgres.caConfigMap -}}
-{{- if not (regexMatch "^[a-f0-9]{64}$" $c.postgres.caSha256) }}{{ fail "searchIndexer.postgres.caSha256 must be 64 lowercase hex characters" }}{{ end -}}
+{{- $_ := required "searchIndexer.postgres.caConfigMap is required for custom-ca (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" $c.postgres.caConfigMap -}}
+{{- if not (regexMatch "^[a-f0-9]{64}$" $c.postgres.caSha256) }}{{ fail "searchIndexer.postgres.caSha256 must be 64 lowercase hex characters (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
 {{- end -}}
 {{- if $c.serviceAccount.create }}
 apiVersion: v1

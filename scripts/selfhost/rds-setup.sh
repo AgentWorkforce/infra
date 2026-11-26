@@ -410,14 +410,32 @@ do_remove-rollback-admin-keys() {
 }
 
 ensure_ca() {
-  local bundle="$STATE_DIR/rds-ca.pem"
-  curl -fsS --max-time 60 -o "$bundle" "https://truststore.pki.rds.amazonaws.com/$AWS_REGION/$AWS_REGION-bundle.pem" \
-    || die "could not download the RDS CA bundle for $AWS_REGION"
+  local bundle="$STATE_DIR/rds-ca.pem" live
+  # The Jobs below verify RDS against rds-ca. With global.rdsCa.bundle the
+  # agent-relay chart owns that ConfigMap and pins its hash in every client:
+  # never overwrite it then (a different bundle would break the pins).
+  live="$(kubectl -n "$NS" get configmap rds-ca --ignore-not-found -o json)"
+  if [[ -n "$live" && -n "$(jq -r '.metadata.annotations["agentworkforce.dev/rds-ca-bundle"] // empty' <<<"$live")" ]]; then
+    log "rds-ca ConfigMap is managed by the agent-relay chart (global.rdsCa.bundle=$(jq -r '.metadata.annotations["agentworkforce.dev/rds-ca-bundle"]' <<<"$live")); left as is"
+    jq -r '.data["ca.crt"]' <<<"$live" > "$bundle"
+    sha256sum "$bundle" | cut -d' ' -f1 > "$STATE_DIR/rds-ca.sha256"
+    return
+  fi
+  # Run from a checkout, use the bundle the chart ships for this region, so the
+  # bytes match what global.rdsCa.bundle renders; otherwise download it.
+  local shipped
+  shipped="$(cd "$(dirname "$0")" && pwd)/../../charts/agent-relay/files/rds-ca/$AWS_REGION-bundle.pem"
+  if [[ -f "$shipped" ]]; then
+    cp "$shipped" "$bundle"
+  else
+    curl -fsS --max-time 60 -o "$bundle" "https://truststore.pki.rds.amazonaws.com/$AWS_REGION/$AWS_REGION-bundle.pem" \
+      || die "could not download the RDS CA bundle for $AWS_REGION"
+  fi
   [[ "$(grep -c 'BEGIN CERTIFICATE' "$bundle")" -gt 0 ]] || die "the RDS CA bundle is empty"
   kubectl -n "$NS" create configmap rds-ca --from-file=ca.crt="$bundle" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   sha256sum "$bundle" | cut -d' ' -f1 > "$STATE_DIR/rds-ca.sha256"
-  log "rds-ca ConfigMap applied; sha256 $(cat "$STATE_DIR/rds-ca.sha256") (value for __RDS_CA_SHA256__)"
+  log "rds-ca ConfigMap applied; sha256 $(cat "$STATE_DIR/rds-ca.sha256") (the value for __RDS_CA_SHA256__; with global.rdsCa.bundle delete this rds-ca before the first helm install instead: the chart creates its own)"
 }
 
 do_pre() {
