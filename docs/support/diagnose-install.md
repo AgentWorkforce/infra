@@ -86,8 +86,9 @@ is evaluated separately.
 With a cluster scope (`--scope cluster` or `all`), the diagnostic finds every
 ServiceAccount the release's Deployments, StatefulSets, Jobs and CronJobs run
 as whose pods read S3 (`LOCKER_BUCKET` with no static `LOCKER_ACCESS_KEY_ID`)
-or sign OpenSearch requests (`SEARCH_INDEX_OPENSEARCH_AUTH=sigv4`). It then
-lists the namespace's associations, read-only:
+or sign OpenSearch requests (`SEARCH_INDEX_OPENSEARCH_AUTH=sigv4`), plus an
+S3 re-arm sweeper in Pod Identity mode (`INGEST_REARM_CREDENTIALS=podIdentity`).
+It then lists the namespace's associations, read-only:
 
 ```bash
 aws eks list-pod-identity-associations --cluster-name <cluster> --region <region> --namespace agent-relay
@@ -95,8 +96,11 @@ aws eks list-pod-identity-associations --cluster-name <cluster> --region <region
 
 The cluster and region come from the kube context that `aws eks
 update-kubeconfig` writes (the cluster ARN, or its `--cluster-name`/`--region`
-exec arguments, and its `AWS_PROFILE`). Pass `--eks-cluster` and `--aws-region`
-otherwise, or `--no-aws` to skip the section.
+exec arguments). The AWS calls use the `AWS_PROFILE` that context authenticates
+with, even if your shell sets another, so they look at the same account as the
+workloads; `--aws-profile` overrides it. A context that isn't EKS (GKE, AKS,
+kind) skips the section; `--eks-cluster` and `--aws-region` force it, and
+`--no-aws` skips it.
 
 | ServiceAccount | Needs |
 | --- | --- |
@@ -106,10 +110,13 @@ otherwise, or `--no-aws` to skip the section.
 | `<release>-session-read` | S3 read, OpenSearch read |
 | `<release>-alleyoop` (only profiles that render it) | S3 read/write |
 
-A ServiceAccount with no association is a `FAIL` whose next step is the exact
-command to create it. The role is the one already associated with a
-ServiceAccount that needs the same access, or a placeholder naming that
-access when there is none:
+Only the access a workload actually uses is checked: a read API on PostgreSQL
+search needs no OpenSearch. A ServiceAccount with no association is a `FAIL`
+whose next step is the exact command to create it. The role is the one the
+reference Terraform shares with it (worker, alleyoop and session-ingest-api use
+one sessions role), or a placeholder naming the access. With direct uploads on
+(`HISTORY_UPLOAD_DIRECT`), the ingest edge is the upload consumer and never
+shares a role:
 
 ```text
 FAIL podidentity.agent-relay-worker [agent-relay-worker]: No Pod Identity association for ServiceAccount agent-relay-worker (used by agent-relay-worker-session-summary-worker, ...), which needs S3 read/write. Its pods get no AWS credentials.
@@ -124,12 +131,13 @@ only.
 For each association found, the diagnostic also asks IAM whether the role's
 policies allow the access, with `aws iam simulate-principal-policy` (read only):
 `s3:GetObject`/`s3:ListBucket` (plus `s3:PutObject`/`s3:DeleteObject` for
-read/write) on the bucket in the workload's `LOCKER_BUCKET`, and
-`es:ESHttpGet` (plus `es:ESHttpPost`/`es:ESHttpPut` for write) on the domain in
-`SEARCH_INDEX_OPENSEARCH_URL`. These are checks such as
-`podidentity.agent-relay-search-indexer.os-w`. If your identity may not call
-`iam:SimulatePrincipalPolicy`, they are `UNKNOWN`; `--no-iam-simulate` skips
-them. The simulation covers the role's identity policies only: bucket
+read/write) on the bucket in the workload's `LOCKER_BUCKET`, and the
+`modules/aws/search` action sets on the domain in `SEARCH_INDEX_OPENSEARCH_URL`
+(read: `es:ESHttpGet`/`Head`/`Post`; write: also `Put`/`Delete`/`Patch`). These
+are checks such as `podidentity.agent-relay-search-indexer.os-w`. If your
+identity may not call `iam:SimulatePrincipalPolicy` or
+`eks:DescribePodIdentityAssociation`, they are `UNKNOWN`; `--no-iam-simulate`
+skips them. The simulation covers the role's identity policies only: bucket
 policies, KMS key policies and the OpenSearch domain access policy and
 fine-grained role mapping (install step 7) are not evaluated.
 

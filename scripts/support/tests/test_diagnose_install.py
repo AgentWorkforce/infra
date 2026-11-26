@@ -367,21 +367,26 @@ ROLE = 'arn:aws:iam::123456789012:role/'
 
 class FakeAws:
     """subprocess.run stand-in for aws and kubectl config view; records every argv."""
-    def __init__(self, associations, simulate='allowed', list_error=None, context_cluster='arn:aws:eks:us-west-2:123456789012:cluster/demo'):
+    def __init__(self, associations, simulate='allowed', list_error=None, context_cluster='arn:aws:eks:us-west-2:123456789012:cluster/demo',
+                 describe_error=None, users=()):
         self.associations, self.simulate, self.list_error, self.context_cluster = associations, simulate, list_error, context_cluster
-        self.calls = []
+        self.describe_error, self.users = describe_error, list(users)
+        self.calls, self.envs = [], []
 
     def __call__(self, argv, **kwargs):
         self.calls.append(argv)
+        self.envs.append(kwargs.get('env'))
         ok = lambda data: SimpleNamespace(returncode=0, stdout=json.dumps(data), stderr='')
         if argv[:3] == ['kubectl', 'config', 'view']:
-            return ok({'clusters': [{'name': self.context_cluster}], 'users': []})
+            return ok({'clusters': [{'name': self.context_cluster}], 'users': self.users})
         if argv[:3] == ['aws', 'eks', 'list-pod-identity-associations']:
             if self.list_error:
                 return SimpleNamespace(returncode=255, stdout='', stderr=self.list_error)
             return ok({'associations': [{'serviceAccount': sa, 'associationId': 'a-'+str(i).zfill(10), 'namespace': 'agent-relay'}
                                         for i, sa in enumerate(self.associations)]})
         if argv[:3] == ['aws', 'eks', 'describe-pod-identity-association']:
+            if self.describe_error:
+                return SimpleNamespace(returncode=254, stdout='', stderr=self.describe_error)
             aid = argv[argv.index('--association-id')+1]
             sa = list(self.associations)[int(aid[2:])]
             return ok({'association': {'roleArn': ROLE+self.associations[sa]}})
@@ -415,10 +420,11 @@ class PodIdentityTests(unittest.TestCase):
         self.assertEqual(worker['status'], 'FAIL')
         self.assertIn('needs S3 read/write', worker['detail'])
         self.assertIn('agent-relay-worker-session-summary-worker', worker['detail'])
-        # The worker needs what session-ingest-api has, so its role is the suggestion.
+        # The reference Terraform gives worker, alleyoop and session-ingest-api one sessions role.
         self.assertIn('aws eks create-pod-identity-association --cluster-name demo --region us-west-2 --namespace agent-relay '
-                      '--service-account agent-relay-worker --role-arn '+ROLE+'session-ingest-api', worker['action'])
-        self.assertIn('rollout restart deployment/agent-relay-worker-session-summary-worker', worker['action'])
+                      '--service-account agent-relay-worker --role-arn '+ROLE+'alleyoop', worker['action'])
+        self.assertIn('kubectl --context isolated -n agent-relay rollout restart deployment/agent-relay-worker-session-summary-worker',
+                      worker['action'])
         self.assertNotIn('migrate', worker['action'].split('rollout restart')[1])
         for sa in ('agent-relay-session-ingest-api', 'agent-relay-search-indexer', 'agent-relay-session-read'):
             self.assertEqual(checks['podidentity.'+sa]['status'], 'PASS', sa)
@@ -475,13 +481,13 @@ class PodIdentityTests(unittest.TestCase):
         release = dict(RELEASE, deployments=[
             workload('deployments', 'w', 'agent-relay-worker', LOCKER_BUCKET='b1', LOCKER_ACCESS_KEY_ID='AKIA'),
             workload('deployments', 'i', 'agent-relay-session-ingest-api', LOCKER_BUCKET='b1', LOCKER_PROVIDER='gcs')], jobs=[])
-        checks = self.run_checks(FakeAws({}), release=release)
-        self.assertEqual(checks['podidentity']['detail'], 'no-workloads-using-s3-or-opensearch')
+        self.assertEqual(self.run_checks(FakeAws({}), release=release), {})
 
     def test_cluster_from_flags_or_exec_args(self):
-        fake = FakeAws(self.REHEARSAL, context_cluster='my-alias')
-        checks = self.run_checks(fake)
-        self.assertEqual(checks['podidentity']['detail'], 'eks-cluster-unknown')
+        # A non-EKS context (GKE, kind): the section is skipped, not UNKNOWN.
+        fake = FakeAws(self.REHEARSAL, context_cluster='gke_project_us-central1_cluster')
+        self.assertEqual(self.run_checks(fake), {})
+        self.assertFalse([c for c in fake.calls if c[0] == 'aws'])
         checks = self.run_checks(FakeAws(self.REHEARSAL, context_cluster='my-alias'), eks_cluster='prod-1', aws_region='eu-west-1')
         self.assertIn('--cluster-name prod-1 --region eu-west-1', checks['podidentity.agent-relay-worker']['action'])
         config = {'clusters': [{'name': 'alias'}], 'users': [{'name': 'u', 'user': {'exec': {
@@ -491,6 +497,63 @@ class PodIdentityTests(unittest.TestCase):
         with mock.patch.object(diag.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(config), stderr='')):
             self.assertEqual(diag.eks_target(opts), ('from-exec', 'ap-south-1'))
         self.assertEqual(opts.aws_profile, 'customer-admin')
+
+    def test_the_kube_contexts_profile_wins_over_the_shell(self):
+        users = [{'name': 'u', 'user': {'exec': {'args': ['--region', 'us-west-2', 'eks', 'get-token', '--cluster-name', 'demo'],
+                                                 'env': [{'name': 'AWS_PROFILE', 'value': 'customer-admin'}]}}}]
+        fake = FakeAws({}, users=users)
+        with mock.patch.dict(os.environ, {'AWS_PROFILE': 'someone-else'}):
+            checks = self.run_checks(fake, eks_cluster='demo', aws_region='us-west-2')
+        aws_envs = [e for c, e in zip(fake.calls, fake.envs) if c[0] == 'aws']
+        self.assertTrue(aws_envs and all(e['AWS_PROFILE'] == 'customer-admin' for e in aws_envs))
+        self.assertIn('create-pod-identity-association --profile customer-admin', checks['podidentity.agent-relay-worker']['action'])
+        fake = FakeAws({}, users=users)
+        self.run_checks(fake, aws_profile='explicit')
+        self.assertTrue(all(e['AWS_PROFILE'] == 'explicit' for c, e in zip(fake.calls, fake.envs) if c[0] == 'aws'))
+
+    def test_unreadable_role_makes_its_access_unknown(self):
+        checks = self.run_checks(FakeAws(self.REHEARSAL, describe_error='An error occurred (AccessDeniedException) when calling DescribePodIdentityAssociation'))
+        self.assertEqual(checks['podidentity.agent-relay-session-read']['status'], 'PASS')
+        for level in ('s3-r', 'os-r'):
+            check = checks['podidentity.agent-relay-session-read.'+level]
+            self.assertEqual(check['status'], 'UNKNOWN')
+            self.assertIn('aws-access-denied', check['detail'])
+
+    def test_direct_uploads_never_share_the_ingest_role(self):
+        release = dict(RELEASE, deployments=[
+            dict(d, spec={'template': {'spec': dict(d['spec']['template']['spec'], containers=[dict(
+                d['spec']['template']['spec']['containers'][0],
+                env=d['spec']['template']['spec']['containers'][0]['env']+[{'name': 'HISTORY_UPLOAD_DIRECT', 'value': 'on'}])])}})
+            if d['metadata']['name'] == 'agent-relay-ingest-edge' else d for d in RELEASE['deployments']])
+        checks = self.run_checks(FakeAws({'agent-relay-session-read': 'session-read', 'agent-relay-search-indexer': 'indexer',
+                                          'agent-relay-session-ingest-api': 'upload-consumer'}), release=release)
+        self.assertIn('<ARN of a role with S3 read/write>', checks['podidentity.agent-relay-worker']['action'])
+        checks = self.run_checks(FakeAws({'agent-relay-worker': 'sessions', 'agent-relay-session-read': 'session-read',
+                                          'agent-relay-search-indexer': 'indexer'}), release=release)
+        action = checks['podidentity.agent-relay-session-ingest-api']['action']
+        self.assertIn('its own upload-consumer role', action)
+        self.assertNotIn(ROLE+'sessions', action)
+
+    def test_rearm_sweeper_and_levels_follow_the_workload(self):
+        release = dict(RELEASE, cronjobs=[workload('cronjobs', 'agent-relay-rearm', 'agent-relay-rearm-sweeper',
+                                                   INGEST_REARM_BUCKET='acme-sessions', INGEST_REARM_CREDENTIALS='podIdentity')],
+                       deployments=[workload('deployments', 'agent-relay-read-api', 'agent-relay-session-read', LOCKER_BUCKET='acme-sessions')])
+        fake = FakeAws({'agent-relay-session-read': 'session-read'})
+        checks = self.run_checks(fake, release=release)
+        sweeper = checks['podidentity.agent-relay-rearm-sweeper']
+        self.assertEqual(sweeper['status'], 'FAIL')
+        self.assertIn('S3 re-arm sweep', sweeper['detail'])
+        self.assertNotIn('rollout restart', sweeper['action'])   # a CronJob: the next run picks it up
+        # Postgres search, no OpenSearch URL: no OpenSearch check for the reader.
+        self.assertIn('podidentity.agent-relay-session-read.s3-r', checks)
+        self.assertNotIn('podidentity.agent-relay-session-read.os-r', checks)
+        actions = [c for c in fake.calls if c[:3] == ['aws', 'iam', 'simulate-principal-policy']]
+        self.assertTrue(all('es:ESHttpGet' not in c for c in actions))
+
+    def test_opensearch_actions_match_the_search_module(self):
+        self.assertEqual(diag.ACCESS_ACTIONS['os-r'][0][0], ('es:ESHttpGet', 'es:ESHttpHead', 'es:ESHttpPost'))
+        self.assertEqual(set(diag.ACCESS_ACTIONS['os-w'][0][0]),
+                         {'es:ESHttpGet', 'es:ESHttpHead', 'es:ESHttpPost', 'es:ESHttpPut', 'es:ESHttpDelete', 'es:ESHttpPatch'})
 
     def test_main_skips_pod_identity_with_no_aws_or_unreachable_cluster(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(diag, 'pod_identity_checks') as checks, \
