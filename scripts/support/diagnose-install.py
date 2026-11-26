@@ -277,7 +277,7 @@ def kube(options, resource, name=None, selector=False, probe=False):
 
 
 def cluster_checks(options, report):
-    mounted = set()  # ConfigMaps the release's pods mount
+    mounted = set()  # ConfigMaps the release's pods require (optional mounts excluded)
     for resource in ('jobs','pods','deployments','persistentvolumeclaims'):
         try:
             items = kube(options,resource,selector=True)['items']
@@ -297,8 +297,9 @@ def cluster_checks(options, report):
                         report.unknown(name,'job-pending-or-running')
                 elif resource == 'pods':
                     for volume in item.get('spec',{}).get('volumes',[]) or []:
-                        cm = (volume.get('configMap') or {}).get('name')
-                        if isinstance(cm,str) and re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}',cm):
+                        ref = volume.get('configMap') or {}
+                        cm = ref.get('name')
+                        if not ref.get('optional') and isinstance(cm,str) and re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}',cm):
                             mounted.add(cm)
                     states = status.get('initContainerStatuses',[])+status.get('containerStatuses',[])
                     for j,state in enumerate(states):

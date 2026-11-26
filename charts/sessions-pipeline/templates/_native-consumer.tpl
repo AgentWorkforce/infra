@@ -301,10 +301,13 @@ to merge over a copy of the block; {} when it sets none. It applies with the
 custom-ca TLS profile (always, for nativeConsumer) when the block names no
 caConfigMap of its own (_rds-ca.tpl). */ -}}
 {{- define "sessions-pipeline.rdsCa.block" -}}
-{{- $pg := (index .root.Values .block).postgres | default dict -}}
+{{- $c := index .root.Values .block -}}
+{{- $pg := $c.postgres | default dict -}}
 {{- $profile := ternary "custom-ca" (toString ($pg.tlsProfile | default "custom-ca")) (eq .block "nativeConsumer") -}}
 {{- $out := dict -}}
-{{- if eq $profile "custom-ca" -}}
+{{- /* A disabled block keeps its values untouched: a stale hash there must not
+fail the render. */ -}}
+{{- if and $c.enabled (eq $profile "custom-ca") -}}
 {{- $o := include "sessions-pipeline.rdsCa.apply" (dict "root" .root "ca" $pg "path" (printf "%s.postgres" .block) "fields" (dict "configMap" "caConfigMap" "key" "caKey" "sha256" "caSha256")) | fromJson -}}
 {{- if $o }}{{ $_ := set $out "postgres" $o }}{{ end -}}
 {{- end -}}

@@ -325,7 +325,7 @@ class ExecutionTests(unittest.TestCase):
     def test_cluster_missing_and_overwritten_rds_ca(self):
         import hashlib
         pem = '-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n'
-        pod = {'metadata':{'name':'read-api'},'spec':{'volumes':[{'name':'postgres-ca','configMap':{'name':'rds-ca'}},{'name':'x','configMap':{'name':'Bad_Name'}}]},
+        pod = {'metadata':{'name':'read-api'},'spec':{'volumes':[{'name':'postgres-ca','configMap':{'name':'rds-ca'}},{'name':'x','configMap':{'name':'Bad_Name'}},{'name':'o','configMap':{'name':'opt-cm','optional':True}}]},
                'status':{'phase':'Pending','conditions':[]}}
         def cluster(configmaps):
             def kube(opt,resource,**kwargs):

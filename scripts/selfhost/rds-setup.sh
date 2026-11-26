@@ -417,7 +417,7 @@ ensure_ca() {
   live="$(kubectl -n "$NS" get configmap rds-ca --ignore-not-found -o json)"
   if [[ -n "$live" && -n "$(jq -r '.metadata.annotations["agentworkforce.dev/rds-ca-bundle"] // empty' <<<"$live")" ]]; then
     log "rds-ca ConfigMap is managed by the agent-relay chart (global.rdsCa.bundle=$(jq -r '.metadata.annotations["agentworkforce.dev/rds-ca-bundle"]' <<<"$live")); left as is"
-    jq -r '.data["ca.crt"]' <<<"$live" > "$bundle"
+    jq -j '.data["ca.crt"]' <<<"$live" > "$bundle"
     sha256sum "$bundle" | cut -d' ' -f1 > "$STATE_DIR/rds-ca.sha256"
     return
   fi

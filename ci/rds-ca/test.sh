@@ -123,8 +123,13 @@ else
   grep -Fq "is not an RDS CA bundle the agent-relay chart ships" <<<"$out" && ok || err "standalone: wrong error: $(tail -c 400 <<<"$out")"
 fi
 # The SQLite Relaycast backend takes no CA.
-render "${example[@]}" --set relaycast.runtime.backend=sqlite --set relaycast.retention.messageTtlDays=30 >/dev/null 2>"$tmp/e" \
-  && ok || { grep -q "postgresCa" "$tmp/e" && err "sqlite relaycast got the managed CA: $(cat "$tmp/e")" || ok; }
+if out=$(render "${example[@]}" --set relaycast.runtime.backend=sqlite --set relaycast.retention.messageTtlDays=30 2>&1); then
+  grep -q "^Deployment/relaycast " <<<"$(ca_refs "$out")" && err "sqlite relaycast mounts the managed CA" || ok
+else
+  err "sqlite relaycast with global.rdsCa did not render: $(tail -c 600 <<<"$out")"
+fi
+# A disabled component keeps a stale hand-set hash without failing.
+render "${example[@]}" --set sessions-pipeline.searchIndexer.enabled=false --set sessions-pipeline.searchIndexer.postgres.caSha256=$(printf '2%.0s' $(seq 64)) >/dev/null 2>"$tmp/e" && ok || err "disabled searchIndexer with a stale hash failed: $(tail -c 400 "$tmp/e")"
 
 # 6. Values written before global.rdsCa render as they did: the explicit rds-ca
 #    references and hashes, no ConfigMap. With global.rdsCa they keep working

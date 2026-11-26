@@ -284,8 +284,26 @@ NAMESPACE="$NAMESPACE" "$RDS_SETUP" pre
 # (running pods keep their mounted copy). Whether the values turn it on is
 # decided there, from the rendered chart with every values file.
 release_rds_ca() { # $@: helm template args; prints the bundle the chart would render, or nothing
-  helm template "$RELEASE" "$@" --show-only templates/rds-ca.yaml 2>/dev/null \
-    | sed -n 's/^[[:space:]]*agentworkforce.dev\/rds-ca-bundle:[[:space:]]*"\{0,1\}\([a-z0-9-]*\)"\{0,1\}.*/\1/p' | head -n1
+  # The full render, errors shown: a values mistake stops here with the chart's message.
+  local out
+  out="$(helm template "$RELEASE" "$@")" || die "helm template failed with these values (see above); nothing was upgraded"
+  sed -n 's/^[[:space:]]*agentworkforce.dev\/rds-ca-bundle:[[:space:]]*"\{0,1\}\([a-z0-9-]*\)"\{0,1\}.*/\1/p' <<<"$out" | head -n1
+}
+# Clears the way for the chart's rds-ca: deletes the copy rds-setup.sh pre made,
+# keeps this release's own (unless pre rewrote its bytes), refuses another release's.
+clear_rds_ca() {
+  local live owner pinned actual
+  live="$(k get configmap rds-ca -o json --ignore-not-found)"
+  [[ -n "$live" ]] || return 0
+  owner="$(jq -r '.metadata.annotations["meta.helm.sh/release-name"] // empty' <<<"$live")"
+  pinned="$(jq -r '.metadata.annotations["agentworkforce.dev/rds-ca-sha256"] // empty' <<<"$live")"
+  if [[ -n "$pinned" ]]; then
+    [[ "$owner" == "$RELEASE" ]] || die "rds-ca in $NAMESPACE belongs to Helm release '$owner', not $RELEASE"
+    actual="$(sha256 <(jq -j '.data["ca.crt"] // empty' <<<"$live"))"
+    if [[ "$actual" == "$pinned" ]]; then info "rds-ca: already managed by this release; kept"; return 0; fi
+  fi
+  k delete configmap rds-ca >/dev/null
+  info "rds-ca: removed the copy rds-setup.sh pre wrote, so helm creates the chart's (running pods keep theirs)"
 }
 FILES="$STATE_DIR/secret-files"
 [[ -d "$FILES" ]] || die "rds-setup.sh pre wrote no credential files under $FILES"
@@ -342,8 +360,8 @@ if [[ -n "${HELM_CHART:-}" ]]; then
   bundle="$(release_rds_ca "$HELM_CHART" -n "$NAMESPACE" ${extra[@]+"${extra[@]}"} -f "$VALUES" -f "$LAYOUT_VALUES" \
     --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL")"
   if [[ -n "$bundle" ]]; then
-    k delete configmap rds-ca --ignore-not-found >/dev/null
-    info "rds-ca: the chart manages it (global.rdsCa.bundle=$bundle); removed the setup copy so helm can create it"
+    info "rds-ca: managed by the chart (global.rdsCa.bundle=$bundle)"
+    clear_rds_ca
   fi
   helm --kube-context "$KUBE_CONTEXT" upgrade --install "$RELEASE" "$HELM_CHART" -n "$NAMESPACE" \
     ${extra[@]+"${extra[@]}"} -f "$VALUES" -f "$LAYOUT_VALUES" --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
@@ -358,8 +376,8 @@ else
   info "   helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay)"
   info "  helm upgrade $RELEASE <chart> -n $NAMESPACE <your -f files> -f $VALUES -f $LAYOUT_VALUES \\"
   info "    --set-string relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
-  info "If your values set global.rdsCa.bundle, first run: kubectl -n $NAMESPACE delete configmap rds-ca"
-  info "(the chart creates its own; helm refuses the copy rds-setup.sh pre made)."
+  info "If your values set global.rdsCa.bundle and the install stops on rds-ca, run the"
+  info "kubectl delete configmap rds-ca it prints, then helm upgrade again (the chart creates its own)."
   read -r -p "    Press Enter once helm upgrade has finished... " _
 fi
 
