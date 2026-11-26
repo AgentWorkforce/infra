@@ -18,6 +18,29 @@ explicit migration-compatibility review that matches the deployed Helm
 revision. It also refuses to pass while a selected migration or backup Job is
 active or failed.
 
+## Installing from the published chart
+
+Each release's chart is published to
+`oci://ghcr.io/agentworkforce/charts/agent-relay` with every subchart inside, and
+it is byte-identical to the release's `agent-relay-<chart version>.tgz` asset. A
+release's chart version is `.chart.version` in its `release-manifest.json` asset:
+
+```bash
+REL=2026.11.19
+CHART_VERSION="$(curl -fsSL "https://github.com/AgentWorkforce/infra/releases/download/agent-relay-$REL/release-manifest.json" | jq -r .chart.version)"
+helm pull oci://ghcr.io/agentworkforce/charts/agent-relay --version "$CHART_VERSION" --untar
+helm upgrade --install agent-relay ./agent-relay -n agent-relay \
+  -f agent-relay/values-eks.yaml -f agent-relay/values-eks-native.yaml -f values.yaml
+```
+
+`helm pull --untar` is what makes the bundled `values-eks*.yaml` files usable
+with `-f`; `helm show values` prints only the top-level `values.yaml`. Nothing is
+built, so this needs neither a checkout nor `helm-deps.sh`.
+`configure-rds.sh` does the same with
+`HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay`, at
+`RELEASE_VERSION`'s chart version, and looks up `HELM_EXTRA_VALUES` names such
+as `values-eks.yaml` in the pulled chart.
+
 ## Building chart dependencies
 
 `helm-deps.sh` runs `helm dependency build` for `charts/sessions-pipeline`,
@@ -25,7 +48,8 @@ then `charts/agent-relay`, from the `Chart.lock` files, with no `helm repo add`.
 The CloudNativePG and OpenTelemetry charts come from OCI registries; the MinIO
 chart is published only at `https://charts.min.io/`, which the script registers
 in a throwaway repository config, so your own Helm repositories are neither read
-nor changed. Run it from a checkout before installing from `charts/agent-relay`.
+nor changed. Run it from a checkout before installing from `charts/agent-relay`;
+the published chart above needs neither.
 
 ## Mirroring images to ECR
 
