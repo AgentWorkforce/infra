@@ -278,7 +278,7 @@ Agent Relay install status (release agent-relay, namespace agent-relay)
   workloads     relay-control                             ok      1/1 ready
   database      agent-relay-secrets: database-url         ok      login=control_api_runtime: dedicated service login
   database      agent-relay-secrets: database-owner-url   ok      login=relaycast_owner: relaycast owner identity
-  ca            configMap/rds-ca                          ok      <n> certificate(s), sha256 9f2c... matches values
+  ca            configMap/rds-ca/ca.crt                   ok      <n> certificate(s), sha256 9f2c... matches values
   pod identity  serviceaccount/agent-relay-worker         ok      AWS credentials injected
   s3            example-agent-relay-sessions              ok      endpoint reachable, bucket exists (HTTP 403 unauthenticated)
   search        vpc-agent-relay-...es.amazonaws.com       ok      reachable (HTTP 403)
@@ -309,6 +309,14 @@ command to run instead. Turn it on when the installer may create Roles:
 `--set databaseGuard.statusTest.rbac.create=true`. The test runs in the
 relaycast image the release pins, only when relaycast uses PostgreSQL
 (`databaseGuard.statusTest.enabled=false` removes it).
+
+`helm test` itself creates the status Pod, so whoever runs it needs `create` on
+Pods in the namespace. The operator Role in docs/selfhost-secret-access.md grants
+only Pod reads, so without that right `helm test` fails before printing anything.
+The install and upgrade are unaffected. Run it as someone who may create Pods
+(the installer usually can), or use `scripts/support/diagnose-install.py`
+instead. Granting `create` on Pods also lets that person mount any Secret in the
+namespace, so it is a deliberate choice, not a default.
 
 For a deeper report from your own machine (Secret manifests, values lint,
 ingest pointers, S3 objects), use `scripts/support/diagnose-install.py`.

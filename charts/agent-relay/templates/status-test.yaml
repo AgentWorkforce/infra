@@ -13,15 +13,20 @@ rights the documented namespace-scoped operator Role does not have.
 {{- if include "agent-relay.statusTest.enabled" . }}
 {{- $name := printf "%s-status" .Release.Name | trunc 52 | trimSuffix "-" -}}
 {{- $sp := index .Values "sessions-pipeline" | default dict -}}
-{{- /* "<kind>/<name>" -> the sha256 values components pin for that CA. */ -}}
+{{- /* "<kind>/<name>/<key>" -> the sha256 values components pin for that CA. */ -}}
 {{- $sha := dict -}}
-{{- range $p := list (list (dig "sessionReadApi" "postgresCa" "configMap" "" $sp) (dig "sessionReadApi" "postgresCa" "sha256" "" $sp)) (list (dig "ingestEdge" "postgres" "caConfigMap" "" $sp) (dig "ingestEdge" "postgres" "caSha256" "" $sp)) (list (dig "searchIndexer" "postgres" "caConfigMap" "" $sp) (dig "searchIndexer" "postgres" "caSha256" "" $sp)) (list (dig "worker" "postgresCa" "configMap" "" $sp) (dig "worker" "postgresCa" "sha256" "" $sp)) }}
-{{- if and (index $p 0) (index $p 1) }}{{ $id := printf "configMap/%s" (index $p 0) }}{{ $_ := set $sha $id (append (get $sha $id | default list) (toString (index $p 1)) | uniq) }}{{ end }}
+{{- $rd := dig "sessionReadApi" "postgresCa" dict $sp -}}
+{{- range $p := list
+  (list (ternary "secret" "configMap" (not (empty (get $rd "secret")))) (default (get $rd "secret") (get $rd "configMap")) (get $rd "key" | default "ca.crt") (get $rd "sha256"))
+  (list "configMap" (dig "ingestEdge" "postgres" "caConfigMap" "" $sp) (dig "ingestEdge" "postgres" "caKey" "ca.crt" $sp) (dig "ingestEdge" "postgres" "caSha256" "" $sp))
+  (list "configMap" (dig "searchIndexer" "postgres" "caConfigMap" "" $sp) (dig "searchIndexer" "postgres" "caKey" "ca.crt" $sp) (dig "searchIndexer" "postgres" "caSha256" "" $sp))
+  (list "configMap" (dig "worker" "postgresCa" "configMap" "" $sp) (dig "worker" "postgresCa" "key" "ca.crt" $sp) (dig "worker" "postgresCa" "sha256" "" $sp)) }}
+{{- if and (index $p 1) (index $p 3) }}{{ $id := printf "%s/%s/%s" (index $p 0) (index $p 1) (index $p 2) }}{{ $_ := set $sha $id (append (get $sha $id | default list) (toString (index $p 3)) | uniq) }}{{ end }}
 {{- end -}}
 {{- $search := list -}}
 {{- range $c := list (dig "sessionReadApi" dict $sp) (dig "searchIndexer" dict $sp) }}{{ if and (dig "enabled" false $c) (eq (dig "search" "backend" "" $c | toString) "opensearch") (dig "search" "opensearch" "url" "" $c) }}{{ $search = append $search (dig "search" "opensearch" "url" "" $c) }}{{ end }}{{ end -}}
 {{- $s3 := dict -}}
-{{- range $c := list (dig "ingestEdge" dict $sp) (dig "worker" dict $sp) }}{{ if and (not $s3) (dig "locker" "bucket" "" $c) }}{{ $s3 = dict "bucket" (dig "locker" "bucket" "" $c) "region" (dig "locker" "region" "us-east-1" $c) }}{{ end }}{{ end -}}
+{{- range $c := list (dig "ingestEdge" dict $sp) (dig "worker" dict $sp) }}{{ if and (not $s3) (dig "locker" "bucket" "" $c) }}{{ $s3 = dict "bucket" (dig "locker" "bucket" "" $c) "region" (dig "locker" "region" "us-east-1" $c) "provider" (dig "locker" "provider" "s3" $c | toString) "endpoint" (dig "locker" "endpoint" "" $c | toString) }}{{ end }}{{ end -}}
 {{- $config := dict "release" .Release.Name "namespace" .Release.Namespace "caSha256" $sha "search" ($search | uniq) "s3" $s3 -}}
 {{- $labels := dict "app.kubernetes.io/name" "agent-relay-status" "app.kubernetes.io/managed-by" .Release.Service "helm.sh/chart" (printf "%s-%s" .Chart.Name .Chart.Version) -}}
 apiVersion: v1

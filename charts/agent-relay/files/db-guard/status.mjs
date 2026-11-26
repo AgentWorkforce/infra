@@ -52,7 +52,9 @@ const sel = encodeURIComponent(`app.kubernetes.io/instance=${cfg.release}`);
 if (!rbac) add("migrations", "jobs", "skip", `${howTo}: kubectl -n ${cfg.namespace} get jobs -l app.kubernetes.io/instance=${cfg.release}`);
 else try {
   const jobs = (await kube(`/apis/batch/v1/namespaces/${ns}/jobs?labelSelector=${sel}`)).items
-    .filter((j) => !/-(db-guard|status)$/.test(j.metadata.name));
+    .filter((j) => !/-(db-guard|status)$/.test(j.metadata.name))
+    // Scheduled runs (CronJob-owned) are not migrations; their own retries handle failures.
+    .filter((j) => !(j.metadata.ownerReferences ?? []).some((o) => o.kind === "CronJob"));
   // Only the newest Job of each kind counts: names end in a content hash.
   const latest = new Map();
   for (const j of jobs) {
@@ -80,8 +82,14 @@ else try {
   const deps = (await kube(`/apis/apps/v1/namespaces/${ns}/deployments?labelSelector=${sel}`)).items;
   for (const d of deps.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name))) {
     const want = d.spec.replicas ?? 1;
-    const ready = d.status?.readyReplicas ?? 0;
-    add("workloads", d.metadata.name, ready >= want ? "ok" : "FAIL", `${ready}/${want} ready`);
+    const st = d.status ?? {};
+    const ready = st.readyReplicas ?? 0;
+    const updated = st.updatedReplicas ?? 0;
+    // Old pods stay ready during a stuck rollout: count only the current revision.
+    const current = (st.observedGeneration ?? 0) >= (d.metadata.generation ?? 1);
+    const ok = current && updated >= want && ready >= want && (st.availableReplicas ?? 0) >= want;
+    add("workloads", d.metadata.name, ok ? "ok" : "FAIL",
+      ok ? `${ready}/${want} ready` : `${ready}/${want} ready, ${updated}/${want} on the current revision${current ? "" : " (rollout not observed yet)"}`);
   }
   pods = (await kube(`/api/v1/namespaces/${ns}/pods?labelSelector=${sel}`)).items;
 } catch (err) {
@@ -96,7 +104,7 @@ if (targets.length === 0) add("database", "logins", "skip", "no operator-supplie
 // One row per distinct CA source; cfg.caSha256 maps "<kind>/<name>" to the
 // sha256 values the components pin for it.
 const caSources = new Map();
-for (const t of targets) if (t.ca?.name) caSources.set(`${t.ca.kind}/${t.ca.name}`, t);
+for (const t of targets) if (t.ca?.name) caSources.set(`${t.ca.kind}/${t.ca.name}/${t.ca.key}`, t);
 if (caSources.size === 0 && targets.length) add("ca", "postgres CA", "FAIL", "no CA configured for the database connections");
 for (const [id, t] of [...caSources].sort()) {
   const pem = caFor(t);
@@ -123,22 +131,26 @@ for (const [id, t] of [...caSources].sort()) {
 }
 
 // --- Pod Identity: S3 users got credentials injected ----------------------------
-if (cfg.s3?.bucket) {
+if (cfg.s3?.bucket && cfg.s3.provider === "s3") {
   const users = pods.filter((p) => p.status?.phase === "Running" && (p.spec.containers ?? []).some((c) => (c.env ?? []).some((e) => e.name === "LOCKER_BUCKET")));
+  // Per ServiceAccount, every running S3 pod must have credentials: worker
+  // Deployments share one, so one restarted pod must not hide the others.
   const bySa = new Map();
   for (const p of users) {
     const sa = p.spec.serviceAccountName || "default";
     const envs = p.spec.containers.flatMap((c) => (c.env ?? []).map((e) => e.name));
-    const injected = envs.includes("AWS_CONTAINER_CREDENTIALS_FULL_URI") || envs.includes("AWS_ROLE_ARN");
-    const usesSecret = envs.includes("AWS_ACCESS_KEY_ID");
-    bySa.set(sa, (bySa.get(sa) ?? false) || injected || usesSecret);
+    const injected = ["AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_ROLE_ARN", "AWS_ACCESS_KEY_ID", "LOCKER_ACCESS_KEY_ID"].some((n) => envs.includes(n));
+    const e = bySa.get(sa) ?? { total: 0, ok: 0 };
+    e.total++; if (injected) e.ok++;
+    bySa.set(sa, e);
   }
   if (!rbac) add("pod identity", "s3 workloads", "skip", `${howTo}: kubectl -n ${cfg.namespace} get pods -o yaml | grep AWS_CONTAINER_CREDENTIALS_FULL_URI`);
   else if (bySa.size === 0) add("pod identity", "s3 workloads", "skip", "no running pod uses the S3 bucket yet");
-  for (const [sa, ok] of [...bySa].sort())
-    add("pod identity", `serviceaccount/${sa}`, ok ? "ok" : "FAIL",
-      ok ? "AWS credentials injected" : `no EKS Pod Identity association (or IRSA role) for this ServiceAccount: aws eks create-pod-identity-association --namespace ${cfg.namespace} --service-account ${sa} ...`);
-}
+  for (const [sa, e] of [...bySa].sort())
+    add("pod identity", `serviceaccount/${sa}`, e.ok === e.total ? "ok" : "FAIL",
+      e.ok === e.total ? `AWS credentials in ${e.total}/${e.total} running pod(s)`
+        : `${e.total - e.ok}/${e.total} running pod(s) have no AWS credentials: create the EKS Pod Identity association (or IRSA role) for this ServiceAccount (aws eks create-pod-identity-association --namespace ${cfg.namespace} --service-account ${sa} ...), then restart those pods`);
+} else if (cfg.s3?.bucket) add("pod identity", "s3 workloads", "skip", `locker.provider=${cfg.s3.provider}: no AWS credentials to check`);
 
 // --- Reachability (network only; any HTTP answer counts) -------------------------
 function reach(url) {
@@ -149,7 +161,9 @@ function reach(url) {
     req.end();
   });
 }
-if (cfg.s3?.bucket) {
+if (cfg.s3?.bucket && (cfg.s3.provider !== "s3" || cfg.s3.endpoint)) {
+  add("s3", cfg.s3.bucket, "skip", `locker.provider=${cfg.s3.provider}${cfg.s3.endpoint ? ` with endpoint ${cfg.s3.endpoint}` : ""}: only AWS S3 is checked here`);
+} else if (cfg.s3?.bucket) {
   const url = `https://s3.${cfg.s3.region}.amazonaws.com/${encodeURIComponent(cfg.s3.bucket)}`;
   const r = await reach(url);
   if (r.error) add("s3", cfg.s3.bucket, "FAIL", `cannot reach s3.${cfg.s3.region}.amazonaws.com (${r.error}): check egress, NAT or the S3 VPC endpoint`);

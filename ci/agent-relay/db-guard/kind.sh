@@ -280,7 +280,7 @@ grep -q '^  AREA  *CHECK  *STATUS  DETAIL' "$WORK/status.txt" || { cat "$WORK/st
 [[ "$(grep -cE '^  database  .* ok  ' "$WORK/status.txt")" == 9 ]] || { cat "$WORK/status.txt" >&2; fail "status table: expected 9 database rows ok"; }
 grep -E '^  database  +search-indexer-runtime: ' "$WORK/status.txt" | grep -q 'FAIL  .*no USAGE on schema sessions.*rds-setup.sh post' \
   || { cat "$WORK/status.txt" >&2; fail "status table: search runtime without sessions USAGE not flagged"; }
-grep -qE '^  ca  .*configMap/rds-ca  .*FAIL  .*differs from the configured 9f2c4e1a' "$WORK/status.txt" || { cat "$WORK/status.txt" >&2; fail "status table: CA sha256 mismatch not reported"; }
+grep -qE '^  ca  .*configMap/rds-ca/ca.crt  .*FAIL  .*differs from the configured 9f2c4e1a' "$WORK/status.txt" || { cat "$WORK/status.txt" >&2; fail "status table: CA sha256 mismatch not reported"; }
 for area in migrations workloads s3 search; do
   grep -qE "^  $area  " "$WORK/status.txt" || { cat "$WORK/status.txt" >&2; fail "status table lacks a $area row"; }
 done
