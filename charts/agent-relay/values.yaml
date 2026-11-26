@@ -35,6 +35,37 @@ components:
   # about the install changes. See AgentWorkforce/relaygate.
   relaygate: false
 
+# Database credential guard: stops helm install/upgrade, before anything is
+# deployed, when a Secret's database URL is wrong. Two layers:
+# - Render time (Helm lookup of the Secrets the components reference): a URL
+#   that logs in as a master login below, two jobs sharing one login (the
+#   owner and runtime of a database, or two services), a missing Secret or
+#   key, and a wrong shape (search-indexer-runtime holding a bare URL instead
+#   of {"hoopdb_url":"..."}). lookup returns nothing under helm template,
+#   helm install/upgrade --dry-run (client) and helm lint, so there the check
+#   is a no-op; --dry-run=server runs it.
+# - privilegeCheck: a pre-install/pre-upgrade hook Job that connects once with
+#   each URL and checks the login's real privileges with relaycast's own
+#   identity rules. Read-only, no Kubernetes API access. On failure:
+#   kubectl -n <namespace> logs job/<release>-db-guard
+# See docs/self-hosted-rds-manual-setup.md, "Credential guard".
+databaseGuard:
+  # Opt-out for an unusual setup the checks do not understand. Off, Helm
+  # installs whatever the Secrets hold and the migrate Jobs fail instead.
+  enabled: true
+  # Logins no service may use: the cloud database master/administrator users.
+  # Add your master user's name if it is something else. The HoopDb owner of
+  # a legacy administrator-owned install (rdsLayout master-owner) is exempt.
+  masterLogins: [postgres, rdsadmin, rds_superuser, admin, root, master, cloudsqladmin, cloudsqlsuperuser, azure_superuser, azuresu]
+  privilegeCheck:
+    # Runs when relaycast uses PostgreSQL (its image runs the check and its
+    # postgresCa is the CA). Skipped under helm template --no-hooks.
+    enabled: true
+    # Default: relaycast.runtime.postgres.image.
+    image: {}
+    activeDeadlineSeconds: 120
+    resources: {}
+
 # Single-host mode (off when empty): the dashboard and the control API share
 # this one host. The dashboard is served at /, the API under /cloud/api,
 # /login and /api, and relay-control.publicUrl, relay-webapp

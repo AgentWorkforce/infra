@@ -292,6 +292,43 @@ jobs:
       - name: sessions-pipeline profile matrix (server-side dry run)
         run: ci/sessions-pipeline-profiles/matrix.sh dryrun
 
+  # databaseGuard on kind against an RDS-shaped PostgreSQL with TLS: the
+  # render-time lookup check (master login, shared login, bare URL, missing
+  # Secret, opt-out, template/dry-run no-op, legacy layout) through real helm
+  # install, and the pre-install privilege hook (an unnamed administrator, a
+  # wrong password, the correct logins over verify-full, upgrade regression).
+  db-guard-kind:
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Changed?
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ] \
+            || git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
+              | grep -Eq '^(charts/agent-relay/(templates/(_db-guard\.tpl|db-guard\.yaml)|files/db-guard/|values\.yaml|values-eks)|charts/(relaycast|relay-control|sessions-pipeline)/values\.yaml|ci/agent-relay/db-guard/|examples/aws/)'; then
+            echo run=true >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: azure/setup-helm@v4
+        if: steps.changed.outputs.run == 'true'
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - uses: helm/kind-action@v1.15.1
+        if: steps.changed.outputs.run == 'true'
+        with:
+          cluster_name: ar-dbguard
+
+      - name: Database credential guard
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          scripts/selfhost/helm-deps.sh
+          KEEP_CLUSTER=1 ci/agent-relay/db-guard/kind.sh
+
   # Live install of charts/relaycast on kind against the pinned image:
   # upgrade from the published 0.1.0, first-run bootstrap, register -> node
   # transport -> send -> receive, restart, backup + restore.

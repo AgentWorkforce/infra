@@ -22,3 +22,8 @@ receive the control plane's own S3 credentials, so actors are isolated by bucket
 prefix, not per actor. Use it only for first-party actor code (relaycast and
 relayfile) in accounts where the control plane may not call sts:AssumeRole.
 {{- end }}
+{{- if not (include "agent-relay.dbGuard.enabled" .) }}
+
+WARNING: databaseGuard.enabled=false. Helm did not check the database URLs in
+this release's Secrets; a wrong login now shows up only as failed migrate Jobs.
+{{- end }}

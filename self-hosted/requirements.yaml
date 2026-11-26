@@ -2301,9 +2301,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.83
+    - id: agent-relay-0.7.84
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.84, relay-control: 0.4.26, relay-webapp: 0.2.8 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.17, relayauth: 0.1.5, sessions-pipeline: 0.8.60, relay-control: 0.4.26, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.12, relaygate: 0.1.13 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.83. databaseGuard (on by default): helm install/upgrade refuses, before anything is applied, a Secret whose database URL logs in as a master login (databaseGuard.masterLogins), two jobs sharing one login, a missing Secret or key, or a wrong shape (a bare URL where JSON is expected), via lookup (a no-op under helm template and client dry-run); and a pre-install/pre-upgrade hook Job, <release>-db-guard, in the pinned relaycast image checks each login''s live privileges with relaycast''s verifyIdentity over verify-full TLS. The hook is annotated agentworkforce.dev/preflight and is skipped under --no-hooks. databaseGuard.enabled=false turns both off.'
+    - id: agent-relay-0.7.83
+      status: planned
       charts: { agent-relay: 0.7.83, relay-control: 0.4.26, relay-webapp: 0.2.8 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -4458,6 +4471,8 @@ internal_env:
   - { name: ADMIN_HOST, chart: relaychief-control, why: fixed at 127.0.0.1 so the admin listener stays on loopback; refused in extraEnv }
   - { name: ADMIN_PORT, chart: relaychief-control, why: reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it }
   - { name: ROLE, chart: slack-relay, why: selects the router or host entry point of the one slack-relay image; fixed per workload }
+  - { name: DB_GUARD_TARGETS, chart: agent-relay, why: "Fixed path of the databaseGuard hook's target list (rendered from the Secret references); never a credential." }
+  - { name: DB_GUARD_MASTER_LOGINS, chart: agent-relay, why: "Derived from databaseGuard.masterLogins: login names the hook refuses; never a credential." }
   - { name: LEDGER_PATH, chart: slack-relay, why: fixed /data/ledger.sqlite on the router's ledger PVC }
   - { name: DATA_DIR, chart: slack-relay, why: fixed /data on the agent host's sessions volume }
   - { name: REPOS_DIR, chart: slack-relay, why: "fixed /repos, the repo-sync sidecar's checkout volume (mounted read-only in the host)" }

@@ -1,0 +1,84 @@
+{{- /*
+Database credential guard. Render time: agent-relay.dbGuard.render (lookup;
+a no-op without a live cluster). Install/upgrade time: a pre-install and
+pre-upgrade hook Job that connects once with each URL and checks its real
+privileges with relaycast's verifyIdentity. The hook is an advisory
+preflight: the migrate Jobs enforce the same rules, so dropping it under
+`helm template --no-hooks` loses only the early, readable failure
+(scripts/ci/charts.sh allows hooks annotated agentworkforce.dev/preflight).
+*/ -}}
+{{- include "agent-relay.dbGuard.render" . }}
+{{- if include "agent-relay.dbGuard.hookEnabled" . }}
+{{- $g := .Values.databaseGuard | default dict -}}
+{{- $pc := $g.privilegeCheck | default dict -}}
+{{- $name := printf "%s-db-guard" .Release.Name | trunc 52 | trimSuffix "-" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: db-guard
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+    agentworkforce.dev/preflight: "true"
+data:
+  {{- include "agent-relay.dbGuard.scriptData" . | nindent 2 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: db-guard
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    # A failed Job stays until the next install/upgrade so its log explains
+    # the failure: kubectl -n <namespace> logs job/<release>-db-guard
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    agentworkforce.dev/preflight: "true"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ $pc.activeDeadlineSeconds | default 120 | int64 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: db-guard
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      restartPolicy: Never
+      # No Kubernetes API access: the Secrets arrive as volumes.
+      automountServiceAccountToken: false
+      {{- include "agent-relay.dbGuard.podSecurity" . | nindent 6 }}
+      containers:
+        - name: check
+          image: {{ include "agent-relay.dbGuard.image" . | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [node, /opt/relaycast/db-guard/check.mjs]
+          terminationMessagePolicy: FallbackToLogsOnError
+          env:
+            - name: DB_GUARD_TARGETS
+              value: /opt/relaycast/db-guard/targets.json
+            - name: DB_GUARD_MASTER_LOGINS
+              value: {{ toJson ($g.masterLogins | default list) | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            {{- toYaml ($pc.resources | default (dict "requests" (dict "cpu" "50m" "memory" "128Mi") "limits" (dict "memory" "256Mi"))) | nindent 12 }}
+          volumeMounts:
+            {{- include "agent-relay.dbGuard.volumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "agent-relay.dbGuard.volumes" (dict "root" . "configMap" $name) | nindent 8 }}
+{{- end }}

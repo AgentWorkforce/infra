@@ -194,9 +194,16 @@ for chart in "${charts[@]}"; do
           [ "$summary_value_refs" -eq 0 ] || err "$label: SUMMARY_MASTER_KEYS must never be injected as an environment variable, found $summary_value_refs"
         fi
         # --no-hooks drops hooked objects, so ban hooks on a full render.
-        # Helm test hooks are allowed (e.g. in third-party subcharts): dropping them is harmless.
-        if helm template ci "charts/$chart" --namespace ci "${args[@]}" | grep -E '^\s*"?helm\.sh/hook"?\s*:' | grep -vE ':\s*"?test(-success)?"?\s*$'; then
-          err "$label: renders a helm.sh/hook annotation. Hooks never run under Alchemy (helm template --no-hooks); use a plain Job instead"
+        # Allowed, because dropping them is harmless: Helm test hooks (e.g. in
+        # third-party subcharts), and advisory preflights annotated
+        # agentworkforce.dev/preflight: "true" that only check inputs before
+        # install/upgrade (agent-relay's databaseGuard; the migrate Jobs
+        # enforce the same rules without it).
+        full=$(helm template ci "charts/$chart" --namespace ci "${args[@]}")
+        hooked=$(yq -N 'select(.metadata.annotations["helm.sh/hook"] != null) | select(.metadata.annotations["helm.sh/hook"] | test("^\\s*(test|test-success)\\s*$") | not) | select(.metadata.annotations["agentworkforce.dev/preflight"] != "true" or (.metadata.annotations["helm.sh/hook"] | test("^(pre-install|pre-upgrade)(,(pre-install|pre-upgrade))*$") | not)) | .kind + "/" + .metadata.name' <<<"$full" | grep -v '^---$' || true)
+        if [ -n "$hooked" ]; then
+          echo "$hooked"
+          err "$label: renders a helm.sh/hook annotation. Hooks never run under Alchemy (helm template --no-hooks); use a plain Job instead (or, for an advisory pre-install/pre-upgrade check, annotate it agentworkforce.dev/preflight: \"true\")"
         fi
         if ! diff -q <(echo "$out") <(render "$chart" "$v") >/dev/null; then
           err "$label: render is not deterministic (randAlphaNum/lookup/now?); every render would look like drift"

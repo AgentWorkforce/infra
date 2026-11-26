@@ -685,7 +685,8 @@ class LocalTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         docs = [d for d in yaml.safe_load_all(result.stdout) if d]
         self.assertFalse(any(d["kind"] == "Secret" for d in docs))
-        jobs = [d for d in docs if d["kind"] == "Job"]
+        # Hook Jobs (the databaseGuard preflight) are not part of the release's workloads.
+        jobs = [d for d in docs if d["kind"] == "Job" and "helm.sh/hook" not in (d["metadata"].get("annotations") or {})]
         if local_stack.CAST_BACKEND == "postgres":
             self.assertEqual(len(jobs), 1)
             self.assertIn("relaycast-migrate", jobs[0]["metadata"]["name"])
