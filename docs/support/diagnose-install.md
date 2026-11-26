@@ -4,11 +4,13 @@ Run `scripts/support/diagnose-install.py` on an operator machine that can reach
 Kubernetes and the database. It checks the **PostgreSQL Relaycast** install
 contract used by the AWS/RDS and GCP/Cloud SQL guides. SQLite and durable-actors
 Relaycasts are outside this diagnostic's scope. Custom database names work.
-Python 3.10+, kubectl and psql are required; a database CA bundle must be available
-on the operator machine. No Helm, Python packages or DBA password is needed
-beyond the credentials already configured for the installation. On EKS, the
-`aws` CLI with credentials for the cluster's account adds the
-[Pod Identity checks](#eks-pod-identity); without it they report `UNKNOWN`.
+Python 3.10+ and kubectl are required. For database checks from the operator
+machine, so are psql and a database CA bundle. Without them, or without a route
+to the database, the checks run [inside the cluster](#database-checks-from-inside-the-cluster).
+No Helm, Python packages or DBA password is needed beyond the credentials already
+configured for the installation. On EKS, the `aws` CLI with credentials for the
+cluster's account adds the [Pod Identity checks](#eks-pod-identity); without it
+they report `UNKNOWN`.
 
 The diagnostic performs reads only. It does not repair roles, activate logins,
 run migrations, restart workloads, delete failed Jobs, change Secrets or apply
@@ -145,6 +147,88 @@ The AWS identity needs `eks:ListPodIdentityAssociations`,
 `eks:DescribePodIdentityAssociation` and, for the simulation,
 `iam:SimulatePrincipalPolicy`.
 
+## Database checks from inside the cluster
+
+If this machine can't reach the database (a split VPN, no `psql`, no CA file)
+but can reach the cluster, the database section runs from a short-lived Job in
+the release namespace instead. That happens automatically when every local
+database attempt ends in `network`, `dns`, `timeout`, `tls`, `tool-missing` or
+no credentials, and nothing failed outright. It never falls back when you passed
+`--secret-dir` or `--secret-manifests` (the Job would test the deployed Secrets,
+not your files; it says to rerun with `--in-cluster`), and a credential `FAIL` is
+kept, never replaced. Force it with `--in-cluster`, or prevent it with
+`--no-in-cluster`:
+
+```bash
+python3 scripts/support/diagnose-install.py --scope database --in-cluster
+```
+
+```text
+The database is not reachable from this machine; running the database checks inside the cluster (a short-lived Job in agent-relay; --no-in-cluster to skip).
+PASS credential.control-owner: URL structure, login and TLS mode match the install contract.
+...
+PASS database.control-owner.identity: Authenticated login and database match the configured URL.
+PASS database.control-owner.tls: Connection uses TLS.
+...
+PASS database.in-cluster: Database checks ran inside the cluster (Job deleted).
+```
+
+The Job (`<release>-diagnose-db-<random>`):
+
+- mounts only the ten credential keys of the release's own Secrets
+  (`agent-relay-secrets`, `agent-relay-read-api`,
+  `agent-relay-ingest-edge-runtime`, `search-indexer-runtime`,
+  `search-indexer-owner`) and the database CA: `rds-ca` (from the chart or
+  `rds-setup.sh`), else `cloud-sql-ca` (from `cloud-sql-setup.sh`), or the
+  ConfigMap you name with `--ca-configmap`. It connects with
+  `sslmode=verify-full` against that CA;
+- runs the pinned PostgreSQL client image that `rds-setup.sh` and
+  `configure-rds.sh` use. Set `PSQL_IMAGE` (from `settings.sh`) or pass
+  `--psql-image` for an ECR mirror. It must be pinned by digest
+  (`@sha256:…`), because the Job mounts database credentials into it;
+- runs the same catalog SQL as a local run, in `BEGIN READ ONLY` ...
+  `ROLLBACK`, as the same logins;
+- has no ServiceAccount token, a read-only root filesystem, no capabilities,
+  `backoffLimit: 0`, a 5-minute deadline and `ttlSecondsAfterFinished: 600`.
+
+Inside the pod, each credential is parsed first. The log gets only the URL's
+scheme, user, host, port, database path and query, for the same URL checks a
+local run does. The password and every other field of the Secret value stay in
+the pod's process. The log also gets each query's JSON and fixed error
+categories. Passwords, raw errors and the latest session's object key never
+reach it.
+The diagnostic reads the log, deletes the Job whether or not it succeeded, and
+writes the usual report, with `"databaseChecksFrom": "cluster"`. The S3 HEAD of
+the latest object is skipped in this mode.
+
+You don't need to read Secrets for this mode (the Job does). `--in-cluster`
+checks `kubectl auth can-i create jobs` instead of reading a Secret. It needs
+only:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: agent-relay-diagnose, namespace: agent-relay }
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+```
+
+Creating Jobs in a namespace is as strong as reading its Secrets, because any
+Job can mount them. So grant this Role only to people who may read the install's
+database credentials, for example the operators who ran `rds-setup.sh`. It
+doesn't grant less trust than Secret access, only fewer API calls. The Job's pod has labels no chart
+NetworkPolicy selects, so it reaches the database the way `rds-setup.sh`'s
+Jobs do. A namespace-wide default-deny egress policy would also block it; the
+result is then the same `network` category, from inside the cluster.
+
 ## Cluster and database VPNs cannot coexist
 
 On the cluster VPN, collect the workload and credential-structure checks:
@@ -272,6 +356,9 @@ Helm metadata and resource-pressure evidence. It does not connect to PostgreSQL.
 
 ```bash
 python3 -m unittest discover -s scripts/support/tests -p 'test_*.py' -v
+# The in-cluster Job against an RDS-shaped PostgreSQL with TLS (Docker; opt-in):
+HOOPDB_BOOTSTRAP_DIR=../sessions-pipeline/supabase/bootstrap \
+  scripts/support/tests/diagnose-in-cluster-postgres-test.sh
 ```
 
 Tests cover malformed credentials, swapped logins, custom database names,
