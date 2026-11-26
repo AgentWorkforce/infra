@@ -20,10 +20,16 @@ mkdir -p "$bin" "$tmp/work"
 
 cat >"$bin/curl" <<'MOCK'
 #!/usr/bin/env bash
-url="${*: -1}"
+url="" out="" prev=""
+for a in "$@"; do [[ "$a" == http* ]] && url="$a"; [[ "$prev" == -o ]] && out="$a"; prev="$a"; done
 printf 'curl %s\n' "$url" >>"$MOCK_LOG"
+[[ -n "$out" ]] && exec >"$out"
 case "$url" in
-  */releases/agent-relay-*/pins.json) printf '{"pins":{}}\n' ;;
+  */releases/agent-relay-*/pins.json)
+    printf '{"pins":{"sessions-pipeline":{"repository":"ghcr.io/agentworkforce/sessions-pipeline","digest":"sha256:%s"}}}\n' \
+      1111111111111111111111111111111111111111111111111111111111111111 ;;
+  */scripts/selfhost/rds-setup.sh) cat "$MOCK_RDS_SETUP" ;;
+  */scripts/selfhost/rds-session-erase-search.sql) echo 'select 1;' ;;
   */releases/download/agent-relay-2026.11.19/release-manifest.json) printf '{"chart":{"path":"charts/agent-relay","version":"0.7.81"}}\n' ;;
   */charts/agent-relay/Chart.yaml) printf 'name: agent-relay\nversion: 0.7.81\n' ;;
   *) echo "curl: (22) 404 $url" >&2; exit 22 ;;
@@ -50,21 +56,37 @@ cat >"$bin/kubectl" <<'MOCK'
 printf 'kubectl %s\n' "$*" >>"$MOCK_LOG"
 case "$*" in
   "config current-context") echo test-ctx ;;
-  *"get namespace"*) echo "Error from server (Forbidden)" >&2; exit 1 ;;
+  *"get namespace"*) [[ "${MOCK_NS_OK:-0}" == 1 ]] || { echo "Error from server (Forbidden)" >&2; exit 1; } ;;
+  *"get secret "*) exit 1 ;;
+  *"get jobs "*) echo '{"items":[{"metadata":{"name":"agent-relay-worker-migrate-1","creationTimestamp":"2026-11-26T00:00:00Z"}}]}' ;;
 esac
 MOCK
+# The pinned rds-setup.sh, as the stub the mocked download serves: pre writes
+# one credential file and the HoopDb layout overlay.
+cat >"$tmp/rds-setup-stub.sh" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == pre ]]; then
+  mkdir -p "$STATE_DIR/secret-files/agent-relay-secrets"
+  printf 'postgresql://u:p@db/x?sslmode=verify-full' >"$STATE_DIR/secret-files/agent-relay-secrets/database-url"
+  printf 'sessions-pipeline: {}\n' >"$STATE_DIR/hoopdb-layout-values.yaml"
+fi
+STUB
+# sha256sum: report the pinned checksum, so the stub passes as the pinned script.
+printf '#!/usr/bin/env bash\nprintf "%%s  %%s\\n" %s "$1"\n' "$(sed -n 's/^RDS_SETUP_SHA256=\([0-9a-f]*\).*/\1/p' "$SCRIPT")" >"$bin/sha256sum"
 for t in aws openssl; do printf '#!/usr/bin/env bash\nexit 0\n' >"$bin/$t"; done
 chmod +x "$bin"/*
-cat >"$tmp/work/values.yaml" <<'EOF'
+reset_values() { cp "$tmp/values.orig" "$tmp/work/values.yaml"; rm -f "$tmp/work"/values.yaml.bak-*; }
+cat >"$tmp/values.orig" <<'EOF'
 services-image: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
 relay-control:
   bootstrap:
     adminEmail: owner@corp.test
 EOF
+cp "$tmp/values.orig" "$tmp/work/values.yaml"
 
 run() { # run configure-rds.sh from $tmp/work with extra env; output in $tmp/out
   : >"$log"
-  (cd "$tmp/work" && env PATH="$bin:$PATH" MOCK_LOG="$log" RDS_HOST=db.abc.us-west-2.rds.amazonaws.com \
+  (cd "$tmp/work" && env PATH="$bin:$PATH" MOCK_LOG="$log" MOCK_RDS_SETUP="$tmp/rds-setup-stub.sh" RDS_HOST=db.abc.us-west-2.rds.amazonaws.com \
     KUBE_CONTEXT=test-ctx STATE_DIR="$tmp/state" "$@" "$TEST_BASH" "$SCRIPT" </dev/null) >"$tmp/out" 2>&1
 }
 expect_out() { grep -qF -- "$1" "$tmp/out" || { cat "$tmp/out" >&2; fail "$2: output lacks: $1"; }; }
@@ -105,12 +127,16 @@ fi
 expect_out "could not read the chart version of release 2099.1.1" "no manifest"
 pass "a release without release-manifest.json is refused"
 
-# 5. A values file that is neither local nor in the chart stops early.
+# 5. A values file that is neither local nor in the chart stops before the
+#    release pins rewrite values.yaml (the pins above would change its digest).
+reset_values
 if run RELEASE_VERSION=2026.11.19 HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay HELM_EXTRA_VALUES=values-ekss.yaml; then
   fail "missing values: expected failure"
 fi
 expect_out "values file values-ekss.yaml not found (here or in the chart)" "missing values"
-pass "a missing HELM_EXTRA_VALUES file is refused before anything changes"
+cmp -s "$tmp/work/values.yaml" "$tmp/values.orig" || fail "missing values: values.yaml was rewritten"
+compgen -G "$tmp/work/values.yaml.bak-*" >/dev/null && fail "missing values: a pin backup was made"
+pass "a missing HELM_EXTRA_VALUES file is refused before values.yaml is touched"
 
 # 6. A pulled chart whose Chart.yaml disagrees is refused.
 if run RELEASE_VERSION=2026.11.19 HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay MOCK_PULLED_VERSION=0.7.79; then
@@ -130,3 +156,18 @@ pass "a local chart of the wrong version names both fixes"
 expect_out "ADMIN_EMAIL" "help"; expect_out "HELM_CHART_VERSION" "help"
 grep -q '^set -euo' "$tmp/out" && fail "help: printed code"
 pass "--help prints the full header"
+
+# 9. Through step 5: helm upgrade gets the pulled chart, the bundled values files
+#    in order, then values.yaml and the layout overlay; no dependency build.
+reset_values
+run RELEASE_VERSION=2026.11.19 HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay MOCK_NS_OK=1 \
+    RDS_ADMIN_SECRET_ARN=arn:aws:secretsmanager:us-west-2:111122223333:secret:x \
+    HELM_EXTRA_VALUES="values-eks.yaml charts/agent-relay/values-eks-native.yaml" || { cat "$tmp/out" >&2; fail "step 5: run failed"; }
+upgrade="$(grep '^helm .*upgrade --install' "$log")" || { cat "$tmp/out" >&2; fail "step 5: no helm upgrade"; }
+chart="$(sed -nE 's/^helm pull .* --untardir ([^ ]+).*/\1/p' "$log")/agent-relay"
+want="upgrade --install agent-relay $chart -n agent-relay -f $chart/values-eks.yaml -f $chart/values-eks-native.yaml -f values.yaml -f $tmp/state/hoopdb-layout-values.yaml --set-string relay-control.bootstrap.adminEmail=owner@corp.test"
+[[ "$upgrade" == *"$want" ]] || fail "step 5: helm got: $upgrade"
+grep -q '^helm dependency' "$log" && fail "step 5: ran helm dependency build"
+grep -q 'sha256:1111111111111111111111111111111111111111111111111111111111111111' "$tmp/work/values.yaml" || fail "step 5: pins not applied"
+[[ ! -e "$chart" ]] || fail "step 5: the pulled chart was not cleaned up"
+pass "helm upgrade installs the pulled chart with its bundled values files in order, no dependency build"

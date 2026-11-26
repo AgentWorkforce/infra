@@ -102,30 +102,6 @@ if [[ -z "${KUBE_CONTEXT:-}" ]]; then KUBE_CONTEXT="$(kubectl config current-con
 export KUBE_CONTEXT
 k() { kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" "$@"; }
 
-# Release pins: the values copied from examples/aws pin older image digests; mixing
-# them with this release's chart breaks the install. Update them in place (backup kept).
-PINS_URL="$RAW/agent-relay-$RELEASE_VERSION/releases/agent-relay-$RELEASE_VERSION/pins.json"
-PINS_JSON="$(curl -fsSL "$PINS_URL")" || die "could not download the release pins for $RELEASE_VERSION"
-cp "$VALUES" "$VALUES.bak-$(date +%Y%m%d%H%M%S)"
-PINS_JSON="$PINS_JSON" python3 - "$VALUES" <<'PYPIN'
-import json, os, re, sys
-path = sys.argv[1]
-pins = json.loads(os.environ["PINS_JSON"])["pins"]
-lines = open(path).read().split("\n")
-changed = 0
-for pin in pins.values():
-    repo, digest = pin["repository"], pin["digest"]
-    for i, line in enumerate(lines):
-        if re.search(r"repository:\s*" + re.escape(repo) + r"\b", line):
-            for j in range(i, min(i + 3, len(lines))):
-                m = re.search(r"sha256:[0-9a-f]{64}", lines[j])
-                if m:
-                    if m.group(0) != digest:
-                        lines[j] = lines[j].replace(m.group(0), digest); changed += 1
-                    break
-open(path, "w").write("\n".join(lines))
-print(f"    release pins applied: {changed} digest(s) updated")
-PYPIN
 # The chart. The published OCI chart is pulled once, at the release's chart version,
 # into a private folder, and installed from there: it already contains every
 # subchart, so nothing is built and no checkout is needed. A chart directory must
@@ -162,6 +138,30 @@ for f in ${HELM_EXTRA_VALUES:-}; do
   elif [[ -n "${HELM_CHART:-}" && -f "$HELM_CHART/${f#charts/agent-relay/}" ]]; then extra+=(-f "$HELM_CHART/${f#charts/agent-relay/}")
   else die "values file $f not found (here or in the chart)"; fi
 done
+# Release pins: the values copied from examples/aws pin older image digests; mixing
+# them with this release's chart breaks the install. Update them in place (backup kept).
+PINS_URL="$RAW/agent-relay-$RELEASE_VERSION/releases/agent-relay-$RELEASE_VERSION/pins.json"
+PINS_JSON="$(curl -fsSL "$PINS_URL")" || die "could not download the release pins for $RELEASE_VERSION"
+cp "$VALUES" "$VALUES.bak-$(date +%Y%m%d%H%M%S)"
+PINS_JSON="$PINS_JSON" python3 - "$VALUES" <<'PYPIN'
+import json, os, re, sys
+path = sys.argv[1]
+pins = json.loads(os.environ["PINS_JSON"])["pins"]
+lines = open(path).read().split("\n")
+changed = 0
+for pin in pins.values():
+    repo, digest = pin["repository"], pin["digest"]
+    for i, line in enumerate(lines):
+        if re.search(r"repository:\s*" + re.escape(repo) + r"\b", line):
+            for j in range(i, min(i + 3, len(lines))):
+                m = re.search(r"sha256:[0-9a-f]{64}", lines[j])
+                if m:
+                    if m.group(0) != digest:
+                        lines[j] = lines[j].replace(m.group(0), digest); changed += 1
+                    break
+open(path, "w").write("\n".join(lines))
+print(f"    release pins applied: {changed} digest(s) updated")
+PYPIN
 SERVICES_IMAGE="$(sed -nE 's/.*services-image:.*repository: *([^ ,}]+).*digest: *"?(sha256:[0-9a-f]{64}).*/\1@\2/p' "$VALUES" | head -n1)"
 [[ "$SERVICES_IMAGE" == *@sha256:* ]] || die "could not find the services-image repository and digest in $VALUES"
 export SERVICES_IMAGE
@@ -330,7 +330,7 @@ if [[ -n "${HELM_CHART:-}" ]]; then
     helm dependency build "$HELM_CHART" >/dev/null
   fi
   helm --kube-context "$KUBE_CONTEXT" upgrade --install "$RELEASE" "$HELM_CHART" -n "$NAMESPACE" \
-    "${extra[@]}" -f "$VALUES" -f "$LAYOUT_VALUES" --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
+    ${extra[@]+"${extra[@]}"} -f "$VALUES" -f "$LAYOUT_VALUES" --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
 else
   info "HELM_CHART is not set. In another terminal, run the same helm upgrade you used for the install"
   info "with the overlay added at the end. Next time, set HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay"
