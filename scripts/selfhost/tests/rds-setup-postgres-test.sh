@@ -89,6 +89,9 @@ case "$args" in
     for a in "$@"; do
       case "$a" in --from-file=*=*) f="${a#--from-file=}"; cp "${f#*=}" "$J/cm-$n/${f%%=*}" ;; esac
     done
+    # rds-setup.sh runs under umask 077; a real ConfigMap mount is world-readable,
+    # and the Job container runs as UID 26, so model that.
+    chmod 0755 "$J/cm-$n"; find "$J/cm-$n" -type f -exec chmod 0644 {} +
     printf 'apiVersion: v1\nkind: ConfigMap\nmetadata: {name: %s}\n' "$n"; exit 0 ;;
   *" apply -f - "*)
     doc="$(cat)"
