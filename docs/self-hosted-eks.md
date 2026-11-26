@@ -50,7 +50,7 @@ Files:
 | NEG annotations, BackendConfig | `alb.ingress.kubernetes.io/healthcheck-path` on each Service; ALB idle timeout 3600 s for WebSocket/SSE |
 | GKE Workload Identity | The pinned 0.3.11 proof uses `<release>-worker` and `<release>-alleyoop` (one IAM role with S3 access to the bucket). New descriptive-name charts use `<release>-session-ingest-api`; retain the actual legacy identity through a deliberate cutover. No IRSA/OIDC provider needed. |
 | GCS Locker bucket (`locker.provider: gcs`) | S3 bucket (`locker.provider: s3`, empty endpoint, `credentials.mode: podIdentity`) |
-| Cloud SQL (HoopDb, control API) | HoopDb: the chart's in-cluster CloudNativePG cluster. Control API: any PostgreSQL 17 (the 0.3.11 proof used two more CNPG clusters, one for the control API and one for the since-removed RelayHistory). Production: RDS/Aurora PostgreSQL. |
+| Cloud SQL (HoopDb, control API) | HoopDb: the chart's in-cluster CloudNativePG cluster. Control API: PostgreSQL 16 or later, 17 or 18 recommended (the 0.3.11 proof used two more CNPG clusters, one for the control API and one for the since-removed RelayHistory). Production: RDS/Aurora PostgreSQL. |
 | Memorystore, Pub/Sub (GCS data-path env) | Not used: the services' S3 data path needs neither |
 | GCE load-balancer ranges in NetworkPolicy `ingressFrom` | The ALB's subnet CIDRs (the ALB in IP target mode reaches pods from its subnets). The proof's ALB shares the cluster's public subnets, so it used the VPC CIDR, which also admits any other VPC client |
 | Artifact Registry mirrors | Public GHCR images by digest; no pull secret |

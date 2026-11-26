@@ -111,7 +111,7 @@ Control's native backend. No ClickHouse chart ships in this repository today.
 
 ### Standard (default): PostgreSQL + `pg_trgm`
 
-- PostgreSQL 17 is both the system of record and the search backend.
+- PostgreSQL (16 or later; 17 or 18 recommended) is both the system of record and the search backend.
 - `pg_trgm` is enabled. The CNPG HoopDb image already ships the extension and its
   bootstrap creates it (`deps/cnpg-cluster-values.yaml`, `deps/PINS.md`).
 - Exact `ILIKE` behavior and tenant filters are preserved.

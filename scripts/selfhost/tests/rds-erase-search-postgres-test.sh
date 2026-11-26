@@ -7,8 +7,15 @@ FIXTURE="erase-search-role-test-$$"
 CONTAINER=""
 cleanup() { if [[ -n "$CONTAINER" ]]; then docker rm -fv "$CONTAINER" >/dev/null; fi; }
 trap cleanup EXIT
-# Pin the multi-platform PostgreSQL 17 image for repeatable local and CI checks.
-CONTAINER="$(docker run -d --name "$FIXTURE" -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f)"
+# Pinned multi-platform images for repeatable local and CI checks, one per
+# supported major (16 or later; 17 and 18 recommended), all with the PG16+
+# CREATEROLE/ADMIN semantics. PG_IMAGES (space-separated) overrides the list.
+DEFAULT_PG_IMAGES="postgres:16@sha256:07abc3f43c9395b0bdbbab36bc25ddb0e8d83cd4fcafb5fb7d6abe14ff156dd8
+  postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
+  postgres:18@sha256:64c8b0d31e4ab6ea665e8426ea406a94bf52de3c05b3a4a8bf713704eefa9328"
+run_fixture() {
+local image="$1"
+CONTAINER="$(docker run -d --name "$FIXTURE" -e POSTGRES_HOST_AUTH_METHOD=trust "$image")"
 for attempt in {1..30}; do
   # The image's temporary init server listens on a Unix socket, then stops.
   # TCP becomes available only on the final server used by the SQL checks.
@@ -79,3 +86,12 @@ owner -c 'GRANT bulls96_session_erase_search TO erase_fixture_owner WITH INHERIT
 owner -c 'ALTER ROLE bulls96_session_erase_search INHERIT' >/dev/null
 refuse role_sql true
 echo 'ok - widened privileges, creator inheritance and role attribute drift refuse bootstrap'
+echo "ok - $(admin -Atc 'SHOW server_version' | cut -d' ' -f1): all eraser role checks passed"
+docker rm -fv "$CONTAINER" >/dev/null
+CONTAINER=""
+}
+# A for loop, not while-read: the fixture's docker exec -i would consume stdin.
+for image in ${PG_IMAGES:-$DEFAULT_PG_IMAGES}; do
+  echo "# $image"
+  run_fixture "$image"
+done

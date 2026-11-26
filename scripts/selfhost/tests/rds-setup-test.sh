@@ -248,6 +248,18 @@ probe_out="$(PGUSER=dbadmin MOCK_SERVER_VERSION=150000 MOCK_DB_EXISTS=1 MOCK_DB_
   || fail "PostgreSQL 15 pristine RDS probe failed"
 [[ "$probe_out" == HOOPDB_LAYOUT=fresh-legacy ]] \
   || fail "PostgreSQL 15 pristine RDS database bypassed the version refusal: $probe_out"
+# Supported majors (16+, 17 and 18 recommended) take the dedicated-owner path;
+# there is no upper bound, so a newer major is not refused.
+for version in 160000 170012 180000 180003; do
+  probe_out="$(PGUSER=dbadmin MOCK_SERVER_VERSION=$version MOCK_DB_EXISTS=1 MOCK_DB_OWNER=dbadmin MOCK_PRISTINE=1 sh "$probe")" \
+    || fail "server_version_num $version pristine RDS probe failed"
+  [[ "$probe_out" == HOOPDB_LAYOUT=pristine-admin ]] \
+    || fail "server_version_num $version pristine RDS database classified as: $probe_out"
+  probe_out="$(PGUSER=dbadmin MOCK_SERVER_VERSION=$version MOCK_DB_EXISTS=0 sh "$probe")" \
+    || fail "server_version_num $version fresh RDS probe failed"
+  [[ "$probe_out" == HOOPDB_LAYOUT=fresh-dedicated ]] \
+    || fail "server_version_num $version fresh RDS instance classified as: $probe_out"
+done
 probe_out="$(PGUSER=dbadmin MOCK_DB_EXISTS=1 MOCK_DB_OWNER=third_party MOCK_PRISTINE=0 sh "$probe")" \
   || fail "third-party RDS probe failed"
 [[ "$probe_out" == HOOPDB_LAYOUT=unknown-owner ]] || fail "third-party RDS owner classified as: $probe_out"
@@ -263,7 +275,7 @@ if PGUSER=dbadmin MOCK_PSQL_FAIL_DATABASE=1 sh "$probe" >"$TEST_ROOT/probe-fail.
 fi
 grep -q 'could not inspect the HoopDb database' "$TEST_ROOT/probe-fail.log" \
   || fail "failed RDS pg_database query had no clear refusal"
-pass "RDS classifier executes pristine, third-party-owner and query-failure branches fail closed"
+pass "RDS classifier executes pristine, PG16/17/18, third-party-owner and query-failure branches fail closed"
 
 # The RDS owner handoff is one transaction. A marker cannot convert an
 # administrator-owned non-pristine database; dedicated-owner convergence

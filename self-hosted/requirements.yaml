@@ -74,7 +74,7 @@ profiles:
     install: helm install sessions-pipeline agentworkforce/sessions-pipeline -f profiles/external-selfhosted.yaml --set global.tenant.orgId=<org> --set alleyoop.auth.jwksUrl=<jwks url> --set worker.migrations.runtimeRole=<role> --set worker.migrations.runtimeRoleLogin=<true|false>
     summary: No in-cluster SQL Jobs (the chart cannot exec into an external database); a superuser runs three bootstrap files first; migrate waits for the roles.
   - id: external-rds
-    title: Amazon RDS for PostgreSQL 16+ dedicated HoopDb database
+    title: Amazon RDS for PostgreSQL 16+ (17 or 18 recommended) dedicated HoopDb database
     chart: sessions-pipeline
     values_file: profiles/external-rds.yaml
     services_image: ghcr-rds
@@ -4905,7 +4905,7 @@ entries:
   # =========================================================================
   - id: req.db.postgres-17-extensions
     kind: requirement
-    title: PostgreSQL 17 with pg_trgm and btree_gin (and vector) available
+    title: PostgreSQL 16 or later (17 or 18 recommended) with pg_trgm and btree_gin (and vector) available
     description: |
       The session directory migrations run CREATE EXTENSION IF NOT EXISTS pg_trgm and
       btree_gin WITH SCHEMA public (both trusted, so the migration owner can create

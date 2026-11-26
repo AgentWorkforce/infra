@@ -2,7 +2,9 @@ locals {
   # Fixed buildspec. The caller (a GitHub job) passes only data: the bundle key and digest, the run id and, for
   # the apply project, MODE apply or rollback. The bundle holds scripts/selfhost/ci-deploy.sh, the chart and the
   # environment's values; plan bundles come only from the plan_subjects refs, apply bundles only from the
-  # approval environment.
+  # approval environment. The PostgreSQL client is the newest supported major (18): pg_dump refuses a server
+  # newer than itself and dumps every older one, so it covers 16, 17 and 18. AL2023 added postgresql18 in
+  # 2026, so an image pinned to an older release falls back to the latest repository.
   buildspec = <<-EOT
     version: 0.2
     env:
@@ -18,7 +20,7 @@ locals {
           - curl -fsSL -o "$HOME/bin/kubectl" "https://dl.k8s.io/release/$${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           - echo "$${KUBECTL_SHA256}  $HOME/bin/kubectl" | sha256sum -c - && chmod 0755 "$HOME/bin/kubectl"
           - python3 -m pip install --quiet "pyyaml==6.0.2"
-          - if [ "$${CI_DEPLOY_PROJECT_MODE}" = apply ]; then dnf install -y -q postgresql17 >/dev/null; fi
+          - if [ "$${CI_DEPLOY_PROJECT_MODE}" = apply ]; then dnf install -y -q postgresql18 >/dev/null || dnf install -y -q --releasever=latest postgresql18 >/dev/null; fi
       build:
         commands:
           - set -euo pipefail

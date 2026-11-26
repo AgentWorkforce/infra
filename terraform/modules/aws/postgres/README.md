@@ -1,6 +1,6 @@
 # aws/postgres
 
-PostgreSQL 17 for agent-relay on **RDS for PostgreSQL** (default) or **Aurora PostgreSQL** (`engine_mode = "aurora"`), in your subnets and security groups.
+PostgreSQL for agent-relay (17 by default; 16 or later supported, 17 or 18 recommended) on **RDS for PostgreSQL** (default) or **Aurora PostgreSQL** (`engine_mode = "aurora"`), in your subnets and security groups.
 
 - Private only (`publicly_accessible = false`). Storage encrypted with `kms_key_arn` or the AWS managed key.
 - `rds.force_ssl = 1`. Connect with `sslmode=verify-full` and the RDS CA bundle.
@@ -67,7 +67,7 @@ module "postgres" {
 | enabled | Create the database. false creates no AWS resource (for a stack whose database lives elsewhere) and every connection output is null. Default true; turning it off on an existing database plans its destruction, which deletion\_protection refuses. | `bool` | `true` | no |
 | enabled\_cloudwatch\_logs\_exports | Log types exported to CloudWatch Logs. | `list(string)` | ```[ "postgresql" ]``` | no |
 | engine\_mode | "rds" for RDS for PostgreSQL (one instance, optionally Multi-AZ) or "aurora" for an Aurora PostgreSQL cluster. | `string` | `"rds"` | no |
-| engine\_version | PostgreSQL engine version. RDS accepts a major version ("17") and picks the default minor; Aurora needs a full version (for example "17.5"). The agent-relay services are tested on PostgreSQL 17. | `string` | `"17"` | no |
+| engine\_version | PostgreSQL engine version. RDS accepts a major version ("17") and picks the default minor; Aurora needs a full version (for example "17.5"). Agent Relay supports PostgreSQL 16 or later; 17 (the default) or 18 is recommended. | `string` | `"17"` | no |
 | force\_ssl | Set rds.force\_ssl=1, so the server refuses unencrypted connections. Connect with sslmode=verify-full and the RDS CA bundle. | `bool` | `true` | no |
 | iam\_database\_authentication\_enabled | Allow IAM database authentication in addition to passwords (password roles keep working). | `bool` | `true` | no |
 | instance\_class | Instance class for RDS, or for each Aurora instance ("db.serverless" for Aurora Serverless v2). | `string` | `"db.r7g.large"` | no |
