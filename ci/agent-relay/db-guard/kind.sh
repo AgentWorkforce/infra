@@ -226,6 +226,15 @@ helm_run install --dry-run=server --set relay-control.migrations.enabled=false >
   || fail "relay-control.migrations.enabled=false still required the migrations URL"
 ok "relay-control migrations off: the migrations URL is not required"
 
+# 6e. rdsLayout dropped by a plain helm upgrade (the rehearsal's revision 4).
+write_secrets
+if helm_run install --dry-run=server --set sessions-pipeline.worker.migrations.rdsLayout= >"$WORK/out" 2>&1; then
+  fail "unset rdsLayout with a dedicated owner was accepted"
+fi
+grep -qF 'sessions-pipeline.worker.migrations.rdsLayout is unset, but agent-relay-secrets: HOOPDB_MIGRATION_URL logs in as "hoopdb_owner", a dedicated HoopDb owner: set rdsLayout: separate-database' "$WORK/out" \
+  || { cat "$WORK/out" >&2; fail "unset rdsLayout not explained"; }
+ok "render guard refuses an unset rdsLayout with a dedicated HoopDb owner (a plain upgrade that dropped the overlay)"
+
 # 7. Legacy administrator-owned HoopDb: the owner may be the master.
 write_secrets
 set_key agent-relay-secrets HOOPDB_MIGRATION_URL "$(url postgres hoopdb)"
