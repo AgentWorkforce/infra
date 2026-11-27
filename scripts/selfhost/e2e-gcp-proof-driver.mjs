@@ -124,6 +124,23 @@ async function detectCapabilities() {
   return { capabilities, openapi: spec.status };
 }
 
+// Flows is an optional installation feature (relay-control SELFHOST_FEATURES).
+// Its routes are always declared and routed, so detectCapabilities reports
+// flows=true even when the feature is off; every flows route then answers an
+// authenticated caller 403 feature_not_enabled. Ask once with a tenant token
+// and treat an explicit feature refusal as the capability being absent, so
+// isolation and cleanup do not fail on routes the installation does not serve.
+async function refineFeatureCapabilities(tenant) {
+  if (!state.capabilities?.flows) return;
+  const flows = await call("GET", `${API}/api/v1/flows`, { token: tenant.accessToken });
+  if (flows.status === 403 && errorCode(flows) === "feature_not_enabled") {
+    state.capabilities.flows = false;
+    pass("bootstrap.flows_feature", "flows=false (403 feature_not_enabled: SELFHOST_FEATURES does not select flows)");
+    return;
+  }
+  must(flows.status === 200, `flows list status=${flows.status} error=${errorCode(flows)}`);
+}
+
 // The control plane holds exactly one organization per installation. The
 // proof reuses it and adds two uniquely named test workspaces to it.
 async function installationOrganization(bootstrap) {
@@ -304,6 +321,7 @@ async function phaseBootstrap() {
       `whoami_workspace_matches=true whoami_org_matches=true relaycast_url=${resolved.json.urls?.relaycastUrl}`,
     );
   }
+  await refineFeatureCapabilities(state.a);
   const listed = await call("GET", `${API}/api/v1/organizations/${org.organizationId}/workspaces`, { token: bootstrap });
   must(listed.status === 200 && Array.isArray(listed.json?.workspaces), `workspace list status=${listed.status}`);
   const ids = listed.json.workspaces.map((workspace) => workspace.id);

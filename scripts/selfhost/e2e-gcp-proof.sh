@@ -889,8 +889,9 @@ elif ! $BOOTSTRAPPED; then
   emit FAIL flows.blocked "no tenant"
 elif ! has_capability flows; then
   # Only a control plane with the worker protocol (relaycontrol flows API)
-  # can run this; one that declares it but fails still fails the case.
-  case_skip "control plane has no worker protocol (/api/v1/workers/enrollment-tokens absent)"
+  # and the flows feature selected can run this; one that declares it but
+  # fails still fails the case.
+  case_skip "control plane has no worker protocol (/api/v1/workers/enrollment-tokens absent, or SELFHOST_FEATURES does not select flows)"
 elif ! control_worker_preflight; then
   emit FAIL flows.worker_service "observed Control Service is missing or invalid; worker not started"
 else
