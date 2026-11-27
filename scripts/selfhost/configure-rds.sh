@@ -376,8 +376,6 @@ if [[ "$RESET" == 1 ]]; then
   info "This DROPS those three databases on $RDS_HOST. Only do this for an install with no data."
   read -r -p "    Type RESET to continue: " answer
   [[ "$answer" == RESET ]] || die "not confirmed"
-  info "Scaling the release's deployments to 0 so nothing reconnects"
-  k scale deployment -l "app.kubernetes.io/instance=$RELEASE" --replicas=0 >/dev/null 2>&1 || true
   PSQL_IMAGE="$(sed -nE 's/^PSQL_IMAGE="\$\{PSQL_IMAGE:-(.*)\}"$/\1/p' "$RDS_SETUP" | head -n1)"
   [[ "$PSQL_IMAGE" == *@sha256:* ]] || die "could not read the pinned psql image from rds-setup.sh"
   if ! k get configmap rds-ca >/dev/null 2>&1; then
@@ -390,34 +388,123 @@ if [[ "$RESET" == 1 ]]; then
   jq -jr .username "$WORK/admin.json" > "$WORK/reset-secret/PGUSER"
   jq -jr .password "$WORK/admin.json" > "$WORK/reset-secret/PGPASSWORD"
   rm -f "$WORK/admin.json"
-  k delete job agent-relay-db-reset --ignore-not-found >/dev/null
+  k delete job agent-relay-db-preflight agent-relay-db-reset --ignore-not-found >/dev/null
   k delete secret agent-relay-db-reset --ignore-not-found >/dev/null
   k create secret generic agent-relay-db-reset --from-file="$WORK/reset-secret" >/dev/null
   rm -rf "$WORK/reset-secret"
-  jq -n --arg ns "$NAMESPACE" --arg img "$PSQL_IMAGE" --arg host "$RDS_HOST" '
-    { apiVersion: "batch/v1", kind: "Job", metadata: { name: "agent-relay-db-reset", namespace: $ns },
-      spec: { backoffLimit: 0, ttlSecondsAfterFinished: 1800, template: { spec: {
-        restartPolicy: "Never", automountServiceAccountToken: false,
-        securityContext: { runAsNonRoot: true, runAsUser: 26, runAsGroup: 26, seccompProfile: { type: "RuntimeDefault" } },
-        volumes: [ { name: "ca", configMap: { name: "rds-ca" } }, { name: "tmp", emptyDir: {} } ],
-        containers: [ { name: "psql", image: $img,
-          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } },
-          volumeMounts: [ { name: "ca", mountPath: "/ca", readOnly: true }, { name: "tmp", mountPath: "/tmp" } ],
-          envFrom: [ { secretRef: { name: "agent-relay-db-reset" } } ],
-          env: [ { name: "PGHOST", value: $host }, { name: "PGPORT", value: "5432" }, { name: "PGDATABASE", value: "postgres" },
-                 { name: "PGSSLMODE", value: "verify-full" }, { name: "PGSSLROOTCERT", value: "/ca/ca.crt" }, { name: "HOME", value: "/tmp" } ],
-          command: ["sh", "-c", "set -e; v=$(psql -XAtc \"select current_setting(\u0027server_version_num\u0027)\"); if [ \"$v\" -lt 160000 ]; then echo PG_TOO_OLD $((v/10000)); exit 3; fi; for db in relaycontrol relaycast hoopdb; do o=$(psql -XAtc \"select pg_has_role(current_user, datdba, \u0027MEMBER\u0027) from pg_database where datname = \u0027$db\u0027\"); if [ \"$o\" = f ]; then echo NOT_OWNER $db; exit 4; fi; done; for db in relaycontrol relaycast hoopdb; do psql -X -v ON_ERROR_STOP=1 -c \"DROP DATABASE IF EXISTS $db WITH (FORCE)\"; echo dropped $db; done"] } ] } } } }' \
-    | k apply -f - >/dev/null
-  if ! wait_job agent-relay-db-reset 300; then
-    out="$(k logs job/agent-relay-db-reset --tail=20 2>/dev/null | grep -v -i password || true)"
-    k delete secret agent-relay-db-reset --ignore-not-found >/dev/null
-    if grep -q NOT_OWNER <<<"$out"; then
-      die "database $(sed -n 's/.*NOT_OWNER //p' <<<"$out" | head -n1) is owned by a login the RDS master cannot act as (the dedicated hoopdb_owner layout from an earlier run of this script). Nothing was dropped. --reset-databases only resets an install whose databases the master owns; rerun without it (existing logins and keys are kept), or use a fresh RDS instance."
+  # The checks both Jobs run first: PostgreSQL 16+ (PG_TOO_OLD, exit 3) and every
+  # existing database owned by a role the master can act as (NOT_OWNER, exit 4).
+  db_checks_sh() { cat <<'SH'
+set -e
+v=$(psql -XAtc "select current_setting('server_version_num')")
+if [ "$v" -lt 160000 ]; then echo PG_TOO_OLD $((v/10000)); exit 3; fi
+for db in relaycontrol relaycast hoopdb; do
+  o=$(psql -XAtc "select pg_has_role(current_user, datdba, 'MEMBER') from pg_database where datname = '$db'")
+  if [ "$o" = f ]; then echo NOT_OWNER $db; exit 4; fi
+done
+SH
+  }
+  db_drop_sh() { cat <<'SH'
+for db in relaycontrol relaycast hoopdb; do psql -X -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $db WITH (FORCE)"; echo dropped $db; done
+SH
+  }
+  # db_job <name> <script> <PGOPTIONS>: runs <script> as the master login in a psql Job
+  # (pinned image, verify-full against rds-ca) and waits; 0 once it completes.
+  db_job() {
+    jq -n --arg ns "$NAMESPACE" --arg name "$1" --arg img "$PSQL_IMAGE" --arg host "$RDS_HOST" --arg script "$2" --arg pgopts "$3" '
+      { apiVersion: "batch/v1", kind: "Job", metadata: { name: $name, namespace: $ns },
+        spec: { backoffLimit: 0, ttlSecondsAfterFinished: 1800, template: { spec: {
+          restartPolicy: "Never", automountServiceAccountToken: false,
+          securityContext: { runAsNonRoot: true, runAsUser: 26, runAsGroup: 26, seccompProfile: { type: "RuntimeDefault" } },
+          volumes: [ { name: "ca", configMap: { name: "rds-ca" } }, { name: "tmp", emptyDir: {} } ],
+          containers: [ { name: "psql", image: $img,
+            securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } },
+            volumeMounts: [ { name: "ca", mountPath: "/ca", readOnly: true }, { name: "tmp", mountPath: "/tmp" } ],
+            envFrom: [ { secretRef: { name: "agent-relay-db-reset" } } ],
+            env: [ { name: "PGHOST", value: $host }, { name: "PGPORT", value: "5432" }, { name: "PGDATABASE", value: "postgres" },
+                   { name: "PGSSLMODE", value: "verify-full" }, { name: "PGSSLROOTCERT", value: "/ca/ca.crt" }, { name: "HOME", value: "/tmp" },
+                   { name: "PGOPTIONS", value: $pgopts } ],
+            command: ["sh", "-c", $script] } ] } } } }' \
+      | k apply -f - >/dev/null
+    wait_job "$1" 300
+  }
+  # db_refused <job log> <what changed>: dies with the reason when the checks refused.
+  db_refused() {
+    if grep -q NOT_OWNER <<<"$1"; then
+      die "database $(sed -n 's/.*NOT_OWNER //p' <<<"$1" | head -n1) is owned by a login the RDS master cannot act as (the dedicated hoopdb_owner layout from an earlier run of this script). Nothing was dropped$2. --reset-databases only resets an install whose databases the master owns; rerun without it (existing logins and keys are kept), or use a fresh RDS instance."
     fi
-    if grep -q PG_TOO_OLD <<<"$out"; then
-      die "the RDS instance runs PostgreSQL $(sed -n 's/.*PG_TOO_OLD //p' <<<"$out" | head -n1); Agent Relay needs PostgreSQL 16 or later. Nothing was dropped. Use a PostgreSQL 16+ RDS instance, 17 or 18 recommended (a small dedicated one is fine) and rerun with its RDS_HOST."
+    if grep -q PG_TOO_OLD <<<"$1"; then
+      die "the RDS instance runs PostgreSQL $(sed -n 's/.*PG_TOO_OLD //p' <<<"$1" | head -n1); Agent Relay needs PostgreSQL 16 or later. Nothing was dropped$2. Use a PostgreSQL 16+ RDS instance, 17 or 18 recommended (a small dedicated one is fine) and rerun with its RDS_HOST."
     fi
-    printf '%s\n' "$out"; die "database reset failed"
+  }
+  job_log() { k logs "job/$1" --tail=20 2>/dev/null | grep -v -i password || true; }
+  # Never fatal: a failed cleanup must not skip the replica restore below.
+  drop_reset_secret() {
+    k delete secret agent-relay-db-reset --ignore-not-found >/dev/null 2>&1 \
+      || info "could not remove Secret agent-relay-db-reset (the master login); remove it: kubectl --context $KUBE_CONTEXT -n $NAMESPACE delete secret agent-relay-db-reset"
+  }
+  # stop_job <name>: deletes the Job and waits for its pods; 0 only once the delete
+  # succeeded and neither the Job nor any of its pods is left.
+  stop_job() {
+    local left
+    k delete job "$1" --ignore-not-found --cascade=foreground --wait=true --timeout=120s >/dev/null 2>&1 || return 1
+    left="$(k get job "$1" --ignore-not-found -o name 2>/dev/null)" || return 1
+    [[ -z "$left" ]] || return 1
+    left="$(k get pods -l "job-name=$1" -o name 2>/dev/null)" || return 1
+    [[ -z "$left" ]]
+  }
+
+  # Read-only preflight, before anything changes: a refused reset leaves the
+  # databases and the running release exactly as they were.
+  info "Checking the PostgreSQL version and database ownership (read-only) before changing anything"
+  if ! db_job agent-relay-db-preflight "$(db_checks_sh)
+echo PREFLIGHT_OK" "-c default_transaction_read_only=on"; then
+    out="$(job_log agent-relay-db-preflight)"
+    stop_job agent-relay-db-preflight || true   # read-only either way
+    drop_reset_secret
+    db_refused "$out" " and no deployment was scaled down"
+    printf '%s\n' "$out"; die "the database preflight failed; nothing was dropped and no deployment was scaled down"
+  fi
+  k delete job agent-relay-db-preflight --ignore-not-found >/dev/null || true
+
+  # Record each deployment's replicas so a failed reset can put them back.
+  deploys="$(k get deployments -l "app.kubernetes.io/instance=$RELEASE" -o json)" \
+    || { drop_reset_secret; die "could not list the release's deployments; nothing was dropped and no deployment was scaled down"; }
+  REPLICAS="$(jq -r '.items[] | "\(.metadata.name) \(.spec.replicas // 1)"' <<<"$deploys")"
+  # restore_replicas [print]: puts every recorded deployment back (with "print", only
+  # prints the commands); 0 only when every one was restored.
+  restore_replicas() {
+    local name n failed=0
+    while read -r name n; do
+      [[ -n "$name" ]] || continue
+      if [[ "${1:-}" == print ]]; then
+        info "to restore $name: kubectl --context $KUBE_CONTEXT -n $NAMESPACE scale deployment/$name --replicas=$n"
+      elif ! k scale "deployment/$name" --replicas="$n" >/dev/null 2>&1; then
+        info "could not restore $name: kubectl --context $KUBE_CONTEXT -n $NAMESPACE scale deployment/$name --replicas=$n"
+        failed=1
+      fi
+    done <<<"$REPLICAS"
+    [[ "${1:-}" != print && "$failed" == 0 ]] || return 1
+    info "restored the release's deployments to their earlier replica counts"
+  }
+  info "Scaling the release's deployments to 0 so nothing reconnects"
+  k scale deployment -l "app.kubernetes.io/instance=$RELEASE" --replicas=0 >/dev/null 2>&1 || true
+  if ! db_job agent-relay-db-reset "$(db_checks_sh)
+$(db_drop_sh)" ""; then
+    out="$(job_log agent-relay-db-reset)"
+    # A Job that timed out may still be dropping: stop it before anything reconnects.
+    if stop_job agent-relay-db-reset; then
+      drop_reset_secret
+      if restore_replicas; then back="the deployments were scaled back up"
+      else back="some deployments are still at 0: run each 'could not restore' command above"; fi
+    else
+      drop_reset_secret
+      restore_replicas print || true
+      back="the reset Job could not be confirmed stopped, so the deployments were left at 0 (it could still drop a database the services reconnect to): delete it (kubectl --context $KUBE_CONTEXT -n $NAMESPACE delete job agent-relay-db-reset --cascade=foreground --wait), and once both 'get job agent-relay-db-reset' and 'get pods -l job-name=agent-relay-db-reset' list nothing, run each 'to restore' command above"
+    fi
+    db_refused "$out" "; $back"
+    printf '%s\n' "$out"
+    die "database reset failed; the databases listed as 'dropped' above are gone, the others were kept (unless the Job was stopped mid-drop); $back."
   fi
   k logs job/agent-relay-db-reset --tail=10 | grep -v -i password || true
   k delete secret agent-relay-db-reset --ignore-not-found >/dev/null

@@ -72,6 +72,20 @@ case "$*" in
   *"get secret agent-relay-secrets -o json") [[ "${MOCK_SECRET_OK:-0}" == 1 ]] && echo '{"kind":"Secret"}' || exit 1 ;;
   *"get secret "*) exit 1 ;;
   *"create -f - -o name"*) cat >/dev/null; echo job.batch/probe ;;
+  # --reset-databases: the preflight and reset Jobs, their logs, and scale calls.
+  *"apply -f -"*) cat >>"$MOCK_LOG.apply" ;;
+  *"get job agent-relay-db-preflight -o json"*) [[ -n "${MOCK_PREFLIGHT_LOG:-}" ]] && t=Failed || t=Complete
+    echo '{"status":{"conditions":[{"type":"'"$t"'","status":"True"}]}}' ;;
+  *"logs job/agent-relay-db-preflight"*) printf '%s\n' "${MOCK_PREFLIGHT_LOG:-PREFLIGHT_OK}" ;;
+  *"get job agent-relay-db-reset -o json"*) [[ -n "${MOCK_RESET_LOG:-}" ]] && t=Failed || t=Complete
+    echo '{"status":{"conditions":[{"type":"'"$t"'","status":"True"}]}}' ;;
+  *"logs job/agent-relay-db-reset"*) printf '%s\n' "${MOCK_RESET_LOG:-dropped relaycontrol}" ;;
+  *"delete job agent-relay-db-reset --ignore-not-found --cascade"*) [[ "${MOCK_JOB_DELETE_FAIL:-0}" == 1 ]] && exit 1; exit 0 ;;
+  *"get job agent-relay-db-reset --ignore-not-found -o name"*) [[ "${MOCK_JOB_DELETE_FAIL:-0}" == 1 ]] && echo job.batch/agent-relay-db-reset; exit 0 ;;
+  *"get pods -l job-name=agent-relay-db-reset"*) [[ "${MOCK_RESET_POD_STUCK:-0}" == 1 ]] && echo pod/agent-relay-db-reset-x; exit 0 ;;
+  *"get pods -l job-name="*) exit 0 ;;
+  *"delete secret agent-relay-db-reset"*) [[ "${MOCK_SECRET_DELETE_FAIL:-0}" == 1 ]] && grep -q 'get job agent-relay-db-reset' "$MOCK_LOG" && exit 1; exit 0 ;;
+  *"scale deployment/"*) [[ "${MOCK_RESTORE_FAIL:-0}" == 1 ]] && exit 1; exit 0 ;;
   *"get job "*"-o json"*) echo '{"status":{"succeeded":1,"conditions":[{"type":"Complete","status":"True"}]}}' ;;
   *"logs job/agent-relay-diagnose-os-"*) printf 'AR\tOS\t%s\nAR\tDONE\n' "${MOCK_OS_RESULT:-}" ;;
   *"get deployments"*) none='{"items":[]}'; echo "${MOCK_DEPLOYMENTS:-$none}" ;;
@@ -96,6 +110,7 @@ chmod +x "$bin/fake-get-token"
 # one credential file and the HoopDb layout overlay.
 cat >"$tmp/rds-setup-stub.sh" <<'STUB'
 #!/usr/bin/env bash
+PSQL_IMAGE="${PSQL_IMAGE:-docker.io/library/postgres@sha256:2222222222222222222222222222222222222222222222222222222222222222}"
 if [[ "$1" == pre ]]; then
   mkdir -p "$STATE_DIR/secret-files/agent-relay-secrets"
   printf 'postgresql://u:p@db/x?sslmode=verify-full' >"$STATE_DIR/secret-files/agent-relay-secrets/database-url"
@@ -137,9 +152,9 @@ EOF
 cp "$tmp/values.orig" "$tmp/work/values.yaml"
 
 run() { # run configure-rds.sh from $tmp/work with extra env; output in $tmp/out
-  : >"$log"
+  : >"$log"; rm -f "$log.apply"
   (cd "$tmp/work" && env PATH="$bin:$PATH" MOCK_LOG="$log" MOCK_RDS_SETUP="$tmp/rds-setup-stub.sh" RDS_HOST=db.abc.us-west-2.rds.amazonaws.com \
-    KUBE_CONTEXT=test-ctx STATE_DIR="$tmp/state" "$@" "$TEST_BASH" "$SCRIPT" </dev/null) >"$tmp/out" 2>&1
+    KUBE_CONTEXT=test-ctx STATE_DIR="$tmp/state" "$@" "$TEST_BASH" "$SCRIPT" ${SCRIPT_ARGS:+"$SCRIPT_ARGS"} <"${RUN_INPUT:-/dev/null}") >"$tmp/out" 2>&1
 }
 expect_out() { grep -qF -- "$1" "$tmp/out" || { cat "$tmp/out" >&2; fail "$2: output lacks: $1"; }; }
 
@@ -335,3 +350,81 @@ first_fail=$(grep -n '^exec-plugin failed' "$log" | head -n1 | cut -d: -f1)
 ! tail -n +"$first_fail" "$log" | grep -q '^auth token' || { tail -n +"$first_fail" "$log" | grep -n '^auth token' -B1 | head >&2; fail "refresh failure: a later call still used the cached token"; }
 tail -n +"$first_fail" "$log" | grep -q '^auth exec' || fail "refresh failure: no later call ran"
 pass "a failed token refresh falls back to kubectl's own auth for every later call"
+
+# 21-25. --reset-databases: a read-only preflight Job checks the PostgreSQL
+#        version and database ownership before any deployment is scaled down;
+#        a reset Job that fails after the scale-down puts the replicas back.
+printf 'RESET\n' >"$tmp/reset-answer"
+RESET_DEPLOYMENTS='{"items":[{"metadata":{"name":"agent-relay-relay-control"},"spec":{"replicas":2}},{"metadata":{"name":"agent-relay-search-indexer"},"spec":{"replicas":1}}]}'
+reset_run() { RUN_INPUT="$tmp/reset-answer" SCRIPT_ARGS=--reset-databases pi_run MOCK_ASSOCIATIONS="$ALL" \
+  MOCK_DEPLOYMENTS="$RESET_DEPLOYMENTS" MOCK_OS_RESULT="$(b64 '{"kind":"http","status":200,"body":"{}"}')" "$@"; }
+no_change() { # $1: case name. Nothing scaled, no reset Job, no helm upgrade.
+  ! grep -q ' scale ' "$log" || { grep ' scale ' "$log" >&2; fail "$1: a deployment was scaled"; }
+  ! grep -q 'get job agent-relay-db-reset' "$log" || fail "$1: the reset Job ran"
+  ! jq -se 'map(select(.metadata.name == "agent-relay-db-reset")) | length > 0' "$log.apply" >/dev/null || fail "$1: the reset Job was applied"
+  ! grep -qE '^helm .*upgrade' "$log" || fail "$1: helm upgrade ran"
+}
+if reset_run MOCK_PREFLIGHT_LOG='NOT_OWNER hoopdb'; then fail "preflight NOT_OWNER: went on"; fi
+expect_out "database hoopdb is owned by a login the RDS master cannot act as" "preflight NOT_OWNER"
+expect_out "Nothing was dropped and no deployment was scaled down." "preflight NOT_OWNER"
+no_change "preflight NOT_OWNER"
+jq -se 'map(select(.metadata.name == "agent-relay-db-preflight"))[0].spec.template.spec.containers[0]
+  | (.env[] | select(.name == "PGOPTIONS") | .value == "-c default_transaction_read_only=on")
+    and (.command[2] | contains("NOT_OWNER") and contains("PG_TOO_OLD") and (contains("DROP") | not))' "$log.apply" >/dev/null \
+  || { cat "$log.apply" >&2; fail "preflight NOT_OWNER: the preflight Job is not a read-only version and ownership check"; }
+pass "--reset-databases: a NOT_OWNER preflight refusal scales nothing down and runs no drop"
+
+if reset_run MOCK_PREFLIGHT_LOG='PG_TOO_OLD 15'; then fail "preflight PG_TOO_OLD: went on"; fi
+expect_out "the RDS instance runs PostgreSQL 15; Agent Relay needs PostgreSQL 16 or later. Nothing was dropped and no deployment was scaled down." "preflight PG_TOO_OLD"
+no_change "preflight PG_TOO_OLD"
+pass "--reset-databases: a PostgreSQL 15 preflight refusal scales nothing down and runs no drop"
+
+if reset_run MOCK_PREFLIGHT_LOG='psql: error: connection refused'; then fail "preflight error: went on"; fi
+expect_out "the database preflight failed; nothing was dropped and no deployment was scaled down" "preflight error"
+no_change "preflight error"
+pass "--reset-databases: a preflight that cannot connect scales nothing down"
+
+if reset_run MOCK_RESET_LOG=$'dropped relaycontrol\nERROR:  database "relaycast" is being accessed by other users'; then fail "reset failure: went on"; fi
+expect_out "database reset failed; the databases listed as 'dropped' above are gone" "reset failure"
+expect_out "restored the release's deployments to their earlier replica counts" "reset failure"
+down=$(grep -n 'scale deployment -l app.kubernetes.io/instance=agent-relay --replicas=0' "$log" | cut -d: -f1)
+pre=$(grep -n 'get job agent-relay-db-preflight' "$log" | head -n1 | cut -d: -f1)
+[[ -n "$down" && -n "$pre" && "$pre" -lt "$down" ]] || fail "reset failure: the preflight did not run before the scale-down"
+tail -n +"$down" "$log" | grep -q 'scale deployment/agent-relay-relay-control --replicas=2' || fail "reset failure: relay-control not restored to 2"
+tail -n +"$down" "$log" | grep -q 'scale deployment/agent-relay-search-indexer --replicas=1' || fail "reset failure: search-indexer not restored to 1"
+! grep -qE '^helm .*upgrade' "$log" || fail "reset failure: helm upgrade ran"
+pass "--reset-databases: a reset Job that fails after the scale-down restores each deployment's replicas, then stops"
+
+if reset_run MOCK_RESET_LOG='NOT_OWNER relaycast' MOCK_RESTORE_FAIL=1; then fail "restore failure: went on"; fi
+expect_out "could not restore agent-relay-relay-control: kubectl --context test-ctx -n agent-relay scale deployment/agent-relay-relay-control --replicas=2" "restore failure"
+expect_out "Nothing was dropped; some deployments are still at 0: run each 'could not restore' command above." "restore failure"
+! grep -q "scaled back up" "$tmp/out" || fail "restore failure: claims the deployments were scaled back up"
+pass "--reset-databases: a replica restore that fails prints the exact scale command and says so"
+
+if reset_run MOCK_RESET_LOG='dropped relaycontrol' MOCK_SECRET_DELETE_FAIL=1; then fail "secret cleanup failure: went on"; fi
+grep -q 'scale deployment/agent-relay-relay-control --replicas=2' "$log" || { cat "$tmp/out" >&2; fail "secret cleanup failure: replicas not restored"; }
+expect_out "could not remove Secret agent-relay-db-reset" "secret cleanup failure"
+pass "--reset-databases: a failed Secret cleanup does not skip the replica restore"
+
+if reset_run MOCK_RESET_LOG='dropped relaycontrol' MOCK_RESET_POD_STUCK=1; then fail "stuck reset pod: went on"; fi
+grep -q 'delete job agent-relay-db-reset .*--cascade=foreground --wait=true' "$log" || fail "stuck reset pod: the Job was not stopped"
+! grep -q 'scale deployment/' "$log" || fail "stuck reset pod: deployments were restored while the reset may still run"
+expect_out "to restore agent-relay-relay-control: kubectl --context test-ctx -n agent-relay scale deployment/agent-relay-relay-control --replicas=2" "stuck reset pod"
+expect_out "the reset Job could not be confirmed stopped, so the deployments were left at 0" "stuck reset pod"
+pass "--reset-databases: a reset Job that cannot be confirmed stopped leaves the replicas at 0 and prints the restore commands"
+
+if reset_run MOCK_RESET_LOG='dropped relaycontrol' MOCK_JOB_DELETE_FAIL=1; then fail "job delete failure: went on"; fi
+! grep -q 'scale deployment/' "$log" || fail "job delete failure: deployments were restored with the reset Job still there"
+expect_out "the reset Job could not be confirmed stopped, so the deployments were left at 0" "job delete failure"
+expect_out "delete job agent-relay-db-reset --cascade=foreground --wait" "job delete failure"
+pass "--reset-databases: a failed reset Job delete (with no pod listed) still leaves the replicas at 0"
+
+reset_run || true
+expect_out "==> 3/8" "reset success: the run did not go on"
+pre=$(grep -n 'get job agent-relay-db-preflight' "$log" | head -n1 | cut -d: -f1)
+down=$(grep -n 'scale deployment -l app.kubernetes.io/instance=agent-relay --replicas=0' "$log" | cut -d: -f1)
+drop=$(grep -n 'get job agent-relay-db-reset' "$log" | head -n1 | cut -d: -f1)
+[[ -n "$pre" && -n "$down" && -n "$drop" && "$pre" -lt "$down" && "$down" -lt "$drop" ]] || fail "reset success: order is not preflight, scale-down, drop"
+! grep -q 'scale deployment/' "$log" || fail "reset success: replicas were restored after a successful reset"
+pass "--reset-databases: preflight, then scale-down, then drop; the run goes on"
+
