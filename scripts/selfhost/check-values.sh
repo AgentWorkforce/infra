@@ -56,13 +56,17 @@ problems=0
 # EXAMPLE_MARKERS in scripts/support/diagnose-install.py.
 if [ "$allow_examples" = false ]; then
   markers='selfhost-example|ar\.example\.com|org_example|example-agent-relay-sessions|vpc-agent-relay-example|admin@example\.com|Example Corp|abc123example|placeholder\.company'
+  # The values files the chart ships (no git needed: the customer handoff has
+  # no history). ci/agent-relay/test_site_values.py keeps this list equal to
+  # charts/agent-relay/values*.yaml.
+  shipped_profiles="values.yaml values-branding-example.yaml values-eks-actors-suite.yaml values-eks-actors.yaml values-eks-native.yaml values-eks-rds-native.yaml values-eks-relaygate.yaml values-eks.yaml values-gcp-internal.yaml values-gcp-native.yaml values-gcp-proof-durable-actors.yaml values-gcp-proof-flows.yaml values-gcp-proof-live.yaml values-gcp-proof-relayfile.yaml values-gcp-proof.yaml values-gcp-relaygate.yaml values-gcp-supported-100.yaml values-gcp.yaml values-kind-addons.yaml values-kind-core.yaml values-scrub-wasm-bindgen.yaml values-single-host-example.yaml"
   chart_dir=""
   [ -d "$chart" ] && chart_dir=$(cd "$chart" && pwd)
   for f in "${files[@]}"; do
     # Skip the profiles the chart ships (values-eks.yaml has placeholders of
     # its own that site values replace); a copy such as values-poc.yaml is yours.
     dir=$(cd "$(dirname "$f")" && pwd) base=$(basename "$f")
-    if [ "$dir" = "$chart_dir" ] && git -C "$root" ls-files --error-unmatch "charts/agent-relay/$base" >/dev/null 2>&1; then continue; fi
+    if [ "$dir" = "$chart_dir" ] && [[ " $shipped_profiles " == *" $base "* ]]; then continue; fi
     # Comments do not count: a value is what precedes an unquoted " #".
     hits=$(awk -v re="$markers" '{ v = $0; sub(/^[ \t]*#.*/, "", v); sub(/[ \t]#.*/, "", v); if (v ~ re) printf "   %s:%d: %s\n", FILENAME, FNR, $0 }' "$f")
     if [ -n "$hits" ]; then

@@ -23,9 +23,10 @@ operator view. It renders no object.
 {{- range $k, $_ := $site -}}
 {{- if not (has $k $siteKeys) }}{{ include "agent-relay.site.problem" (dict "st" $st "where" (printf "site.%s" $k) "value" nil "why" "is not a site setting" "fix" (printf "use one of %s" (join ", " $siteKeys))) }}{{ end -}}
 {{- end -}}
+{{- $typeBad := list -}}
 {{- range $k := without $siteKeys "hosts" "rds" -}}
 {{- $v := index $site $k -}}
-{{- if not (or (kindIs "invalid" $v) (kindIs "string" $v)) }}{{ include "agent-relay.site.problem" (dict "st" $st "where" (printf "site.%s" $k) "value" $v "why" "must be a string" "fix" "quote it") }}{{ $_ := set $site $k (toString $v) }}{{ end -}}
+{{- if not (or (kindIs "invalid" $v) (kindIs "string" $v)) }}{{ include "agent-relay.site.problem" (dict "st" $st "where" (printf "site.%s" $k) "value" $v "why" "must be a string" "fix" "quote it") }}{{ $_ := set $site $k (toString $v) }}{{ $typeBad = append $typeBad $k }}{{ end -}}
 {{- end -}}
 
 {{- /* Hosts: site.domain gives <domain>, api.<domain>, cast.<domain> and
@@ -66,17 +67,17 @@ checks below skip them, so one bad site value is one problem. */ -}}
 {{- if or (and $own (include "agent-relay.site.publicHost" (dict "host" $own))) (and (not $own) $domainBad) }}{{ $bad = append $bad $o }}{{ end -}}
 {{- end -}}
 {{- $region := $site.region | default "" -}}
-{{- if and $region (not (regexMatch "^[a-z]{2}(-[a-z0-9]+)+-?[0-9]+$" $region)) -}}
-{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.region" "value" $region "why" "must be a cloud region name such as us-east-1" "fix" "set the region of the sessions bucket and OpenSearch domain") -}}
+{{- if and $region (not (has "region" $typeBad)) (not (regexMatch "^[a-z]+(-[a-z]+)+-?[0-9]+$" $region)) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.region" "value" $region "why" "must be a cloud region name such as us-east-1 or europe-west1" "fix" "set the region of the sessions bucket and OpenSearch domain") -}}
 {{- end -}}
 {{- $bucket := $site.sessionsBucket | default "" -}}
-{{- if $bucket -}}
+{{- if and $bucket (not (has "sessionsBucket" $typeBad)) -}}
 {{- if or (not (regexMatch "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" $bucket)) (contains ".." $bucket) (regexMatch "^[0-9.]+$" $bucket) -}}
 {{- include "agent-relay.site.problem" (dict "st" $st "where" "site.sessionsBucket" "value" $bucket "why" "must be a bucket name (3-63 lowercase letters, digits, dots and hyphens; no s3:// or path)" "fix" "set the bare bucket name, such as acme-agent-relay-sessions") -}}
 {{- end -}}
 {{- end -}}
 {{- $opensearch := $site.opensearchUrl | default "" -}}
-{{- if $opensearch -}}
+{{- if and $opensearch (not (has "opensearchUrl" $typeBad)) -}}
 {{- if regexMatch "^[a-z0-9.-]+(:[0-9]{1,5})?/?$" $opensearch -}}
 {{- include "agent-relay.site.problem" (dict "st" $st "where" "site.opensearchUrl" "value" $opensearch "why" "has no scheme; the services call OpenSearch over HTTPS" "fix" (printf "set it to %s" (toJson (printf "https://%s" (trimSuffix "/" $opensearch))))) -}}
 {{- else if not (regexMatch "^https://[a-z0-9.-]+(:[0-9]{1,5})?$" $opensearch) -}}
@@ -84,10 +85,11 @@ checks below skip them, so one bad site value is one problem. */ -}}
 {{- end -}}
 {{- end -}}
 {{- if and $opensearch (not (regexMatch "^https://[a-z0-9.-]+(:[0-9]{1,5})?$" $opensearch)) }}{{ $bad = append $bad $opensearch }}{{ end -}}
-{{- if and $region (not (regexMatch "^[a-z]{2}(-[a-z0-9]+)+-?[0-9]+$" $region)) }}{{ $bad = append $bad $region }}{{ end -}}
+{{- if and $region (not (regexMatch "^[a-z]+(-[a-z]+)+-?[0-9]+$" $region)) }}{{ $bad = append $bad $region }}{{ end -}}
+{{- range $k := $typeBad }}{{ $bad = append $bad (index $site $k) }}{{ end -}}
 {{- $_ := set $st "bad" $bad -}}
 {{- $orgId := $site.orgId | default "" -}}
-{{- if and $orgId (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" $orgId)) -}}
+{{- if and $orgId (not (has "orgId" $typeBad)) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" $orgId)) -}}
 {{- include "agent-relay.site.problem" (dict "st" $st "where" "site.orgId" "value" $orgId "why" "must be letters, digits, _, . or - (at most 128)" "fix" "pick a stable ID such as org_acme; it partitions session data and must never change after the first upload") -}}
 {{- end -}}
 {{- $orgName := $site.orgName | default "" -}}
@@ -95,7 +97,7 @@ checks below skip them, so one bad site value is one problem. */ -}}
 {{- include "agent-relay.site.problem" (dict "st" $st "where" "site.orgName" "value" $orgName "why" "must be one line of at most 200 characters" "fix" "shorten it") -}}
 {{- end -}}
 {{- $adminEmail := $site.adminEmail | default "" -}}
-{{- if $adminEmail -}}
+{{- if and $adminEmail (not (has "adminEmail" $typeBad)) -}}
 {{- if not (regexMatch "^[^@\\s<>()\",;:]+@[^@\\s<>()\",;:]+\\.[^@\\s<>()\",;:]+$" $adminEmail) -}}
 {{- include "agent-relay.site.problem" (dict "st" $st "where" "site.adminEmail" "value" $adminEmail "why" "must be an email address" "fix" "the first administrator's address, such as admin@acme.com") -}}
 {{- end -}}
@@ -137,7 +139,12 @@ agent-relay.site.derive for must (contradictions fail) and defaults. */ -}}
 {{- if $components.control -}}
 {{- $d = append $d (dict "path" (list "relay-control" "services" "relaycastPublicUrl") "value" $origin.cast "from" $hostSource.cast "must" true) -}}
 {{- $d = append $d (dict "path" (list "relay-control" "services" "sessionReadApiPublicUrl") "value" $origin.history "from" $hostSource.history "must" true) -}}
-{{- if not $singleHost -}}
+{{- if $singleHost -}}
+{{- /* The single host derives these; a profile placeholder left here would be
+refused, so it is cleared (and the dashboard URL is the single host). */ -}}
+{{- $d = append $d (dict "path" (list "relay-control" "publicUrl") "clear" true) -}}
+{{- $d = append $d (dict "path" (list "relay-control" "dashboardUrl") "value" (printf "https://%s/" $singleHost) "from" "global.singleHost.host" "must" false) -}}
+{{- else -}}
 {{- $d = append $d (dict "path" (list "relay-control" "publicUrl") "value" $origin.api "from" $hostSource.api "must" true) -}}
 {{- $d = append $d (dict "path" (list "relay-control" "dashboardUrl") "value" (ternary (printf "%s/" $origin.dashboard) "" (ne $origin.dashboard "")) "from" $hostSource.dashboard "must" true) -}}
 {{- end -}}
@@ -150,8 +157,12 @@ value wins (configure-rds.sh sets bootstrap.adminEmail from ADMIN_EMAIL). */ -}}
 {{- $d = append $d (dict "path" (list "relay-control" "bootstrap" "orgName") "value" $orgName "from" "site.orgName" "must" false) -}}
 {{- $d = append $d (dict "path" (list "relay-control" "bootstrap" "adminEmail") "value" $adminEmail "from" "site.adminEmail" "must" false) -}}
 {{- end -}}
-{{- if and $components.webapp (not $singleHost) -}}
+{{- if $components.webapp -}}
+{{- if $singleHost -}}
+{{- $d = append $d (dict "path" (list "relay-webapp" "runtime" "publicUrl") "clear" true) -}}
+{{- else -}}
 {{- $d = append $d (dict "path" (list "relay-webapp" "runtime" "publicUrl") "value" $origin.dashboard "from" $hostSource.dashboard "must" true) -}}
+{{- end -}}
 {{- end -}}
 {{- $sp := index $V "sessions-pipeline" | default dict -}}
 {{- if $components.sessionsPipeline -}}
@@ -159,7 +170,10 @@ value wins (configure-rds.sh sets bootstrap.adminEmail from ADMIN_EMAIL). */ -}}
 {{- $readApiOn := dig "sessionReadApi" "enabled" false $sp -}}
 {{- if $readApiOn -}}
 {{- $d = append $d (dict "path" (concat $spPath (list "sessionReadApi" "origin")) "value" $origin.history "from" $hostSource.history "must" true) -}}
-{{- $d = append $d (dict "path" (concat $spPath (list "sessionReadApi" "cors" "allowedOrigins")) "value" (ternary (list $origin.dashboard) (list) (ne $origin.dashboard "")) "from" $hostSource.dashboard "must" false) -}}
+{{- /* The dashboard calls the read API from its own origin: the single host in
+single-host mode. */ -}}
+{{- $dashOrigin := ternary (printf "https://%s" $singleHost) $origin.dashboard (ne $singleHost "") -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "sessionReadApi" "cors" "allowedOrigins")) "value" (ternary (list $dashOrigin) (list) (ne $dashOrigin "")) "from" (ternary "global.singleHost.host" $hostSource.dashboard (ne $singleHost "")) "must" false) -}}
 {{- $d = append $d (dict "path" (concat $spPath (list "sessionReadApi" "search" "opensearch" "url")) "value" $opensearch "from" "site.opensearchUrl" "must" true) -}}
 {{- $d = append $d (dict "path" (concat $spPath (list "sessionReadApi" "search" "opensearch" "region")) "value" (ternary $region "" (ne $opensearch "")) "from" "site.region" "must" false "pair" (concat $spPath (list "sessionReadApi" "search" "opensearch" "url"))) -}}
 {{- end -}}
@@ -189,9 +203,21 @@ value wins (configure-rds.sh sets bootstrap.adminEmail from ADMIN_EMAIL). */ -}}
 {{- end -}}
 {{- /* The edge this chart renders, when enabled. */ -}}
 {{- if dig "enabled" false ($V.eksIngress | default dict) -}}
+{{- $eksDomain := dig "domain" "" $V.eksIngress | toString -}}
 {{- if and $domain (empty $hostsIn) (empty (dig "hosts" (dict) $V.eksIngress)) -}}
+{{- /* The hosts follow from the domain alone: eksIngress.domain. */ -}}
 {{- $d = append $d (dict "path" (list "eksIngress" "domain") "value" $domain "from" "site.domain" "must" true) -}}
-{{- else if and $hosts.history (not (dig "domain" "" $V.eksIngress)) -}}
+{{- else if and $hosts.history $eksDomain -}}
+{{- /* eksIngress.domain names <d>, api.<d>, cast.<d> and history.<d>; each must be
+the host site gives that role, or the ALB serves other names than Control and
+the dashboard advertise. */ -}}
+{{- range $role, $prefix := $prefixes -}}
+{{- $want := index $hosts $role -}}
+{{- if and $want (ne (printf "%s%s" $prefix $eksDomain) $want) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "eksIngress.domain" "value" $eksDomain "why" (printf "gives the %s host %s, but %s sets it to %s" $role (toJson (printf "%s%s" $prefix $eksDomain)) (index $hostSource $role) (toJson $want)) "fix" "delete eksIngress.domain: site sets eksIngress.hosts from site.domain and site.hosts") -}}
+{{- end -}}
+{{- end -}}
+{{- else if $hosts.history -}}
 {{- $d = append $d (dict "path" (list "eksIngress" "hosts") "value" $hosts "from" "site.domain and site.hosts" "must" true) -}}
 {{- end -}}
 {{- end -}}

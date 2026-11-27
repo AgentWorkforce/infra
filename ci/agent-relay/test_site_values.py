@@ -164,6 +164,12 @@ class Overrides(unittest.TestCase):
         read = env_of(docs(text), 'Deployment', 'agent-relay-read-api')
         self.assertEqual((read['LOCKER_BUCKET'], read['LOCKER_REGION']), (SITE['sessionsBucket'], SITE['region']))
 
+    def test_single_host_cors_is_the_single_host(self):
+        values = short_with()
+        values.setdefault('global', {})['singleHost'] = {'host': 'one.acme.dev'}
+        read = env_of(docs(render(files=EKS, values=values)), 'Deployment', 'agent-relay-read-api')
+        self.assertEqual(read['READ_API_CORS_ALLOWED_ORIGINS'], 'https://one.acme.dev')
+
     def test_no_site_keeps_the_profiles(self):
         # Without site the profile renders exactly as before (the golden in
         # subdomain-golden.sh pins it); spot-check a placeholder survives.
@@ -178,17 +184,17 @@ class Overrides(unittest.TestCase):
 
 
 class DocValues(unittest.TestCase):
-    """The guides' values templates use site: too (Azure is pinned by subdomain-golden.sh)."""
+    """GKE site values (the guide's values.yaml in the short form, ci/agent-relay/fixtures/gcp-site-values.yaml)."""
 
     def test_gcp_template_fills_from_site(self):
         fill = {'__NAMESPACE__': 'agent-relay', '__ORG_ID__': 'org_acme', '__ORG_NAME__': 'Acme',
-                '__ADMIN_EMAIL__': 'ops@acme.dev', '__DOMAIN__': 'relay.acme.dev', '__REGION__': 'us-central1',
+                '__ADMIN_EMAIL__': 'ops@acme.dev', '__DOMAIN__': 'relay.acme.dev', '__REGION__': 'europe-west1',
                 '__SESSIONS_BUCKET__': 'acme-relay-sessions', '__STATIC_IP_NAME__': 'acme-ip'}
-        text = (ROOT / 'docs/gcp-install/values.yaml').read_text()
+        text = (ROOT / 'ci/agent-relay/fixtures/gcp-site-values.yaml').read_text()
         for k, v in fill.items():
             text = text.replace(k, v)
         # What docs/gcp-install/managed-values-byo.sh writes, for these inputs.
-        gcs = {'provider': 'gcs', 'bucket': 'acme-relay-sessions', 'region': 'us-central1'}
+        gcs = {'provider': 'gcs', 'bucket': 'acme-relay-sessions', 'region': 'europe-west1'}
         managed = {'sessions-pipeline': {'ingestEdge': {'locker': gcs}, 'searchIndexer': {'locker': gcs},
                                          'worker': {'locker': {'bucket': gcs['bucket'], 'region': gcs['region']}}}}
         p = ROOT / 'ci/agent-relay/fixtures/.gcp-managed-test.yaml'
@@ -201,12 +207,12 @@ class DocValues(unittest.TestCase):
         hosts = {r['host'] for o in objs if o['kind'] == 'Ingress' for r in o['spec']['rules']}
         self.assertEqual(hosts, {'relay.acme.dev', 'api.relay.acme.dev', 'cast.relay.acme.dev', 'history.relay.acme.dev'})
         read = env_of(objs, 'Deployment', 'agent-relay-read-api')
-        self.assertEqual((read['LOCKER_BUCKET'], read['LOCKER_REGION']), ('acme-relay-sessions', 'us-central1'))
+        self.assertEqual((read['LOCKER_BUCKET'], read['LOCKER_REGION']), ('acme-relay-sessions', 'europe-west1'))
         control = env_of(objs, 'Deployment', 'relay-control')
         self.assertEqual(control['SELFHOST_PUBLIC_URL'], 'https://api.relay.acme.dev')
 
     def test_gcp_bucket_that_differs_from_terraform_fails(self):
-        text = (ROOT / 'docs/gcp-install/values.yaml').read_text()
+        text = (ROOT / 'ci/agent-relay/fixtures/gcp-site-values.yaml').read_text()
         for k, v in {'__DOMAIN__': 'relay.acme.dev', '__REGION__': 'us-central1', '__SESSIONS_BUCKET__': 'typo-bucket',
                      '__ORG_ID__': 'org_acme', '__ORG_NAME__': 'Acme', '__ADMIN_EMAIL__': 'ops@acme.dev',
                      '__NAMESPACE__': 'agent-relay', '__STATIC_IP_NAME__': 'ip'}.items():
@@ -218,6 +224,24 @@ class DocValues(unittest.TestCase):
 
 
 class Failures(unittest.TestCase):
+    def test_region_names(self):
+        for region in ('us-east-1', 'us-gov-west-1', 'europe-west1', 'australia-southeast1', 'asia-south1'):
+            with self.subTest(region=region):
+                out = helm(files=EKS, values=short_with({'region': region, 'rds': False}))
+                self.assertNotIn('site.region = ', out.stderr)
+        self.assertIn('site.region = "Mars"', fails(files=EKS, values=short_with({'region': 'Mars'})))
+
+    def test_eks_ingress_domain_that_disagrees_with_site_hosts_fails(self):
+        arn = 'arn:aws:acm:us-east-1:111111111111:certificate/x'
+        values = short_with({'hosts': {'dashboard': 'app.acme.dev'}},
+                            eksIngress={'enabled': True, 'certificateArn': arn, 'domain': 'ar.selfhost-example.agentrelay.com'})
+        err = fails(files=EKS, values=values)
+        self.assertIn('eksIngress.domain = "ar.selfhost-example.agentrelay.com"', err)
+        self.assertIn('gives the dashboard host', err)
+        values['eksIngress'].pop('domain')
+        hosts = {r['host'] for o in docs(render(files=EKS, values=values)) if o['kind'] == 'Ingress' for r in o['spec']['rules']}
+        self.assertIn('app.acme.dev', hosts)
+
     def test_contradiction_fails_with_both_values(self):
         values = short_with()
         values['sessions-pipeline']['ingestEdge']['locker']['bucket'] = 'other-bucket'
@@ -256,6 +280,11 @@ class Failures(unittest.TestCase):
         self.assertIn('set it to "https://vpc-x.us-east-1.es.amazonaws.com"', err)
         self.assertIn('site.orgID', err)
 
+    def test_wrong_type_is_one_problem(self):
+        err = fails('--set', 'site.region=123', '--set', 'site.orgID=x', files=EKS, values=short_with())
+        self.assertIn('agent-relay: 2 values problems', err)
+        self.assertIn('site.region = 123\n   must be a string', err)
+
     def test_aggregate_runs_before_subchart_failures(self):
         # relay-control refuses an empty encryption.keyId on its own; the site
         # report must still come first, proving the render order.
@@ -293,6 +322,22 @@ class CheckValues(unittest.TestCase):
 
     def run_script(self, *args):
         return subprocess.run([self.SCRIPT, *args], capture_output=True, text=True, cwd=ROOT)
+
+    def test_shipped_profile_list_matches_the_chart(self):
+        text = Path(self.SCRIPT).read_text()
+        listed = set(re.search(r'shipped_profiles="([^"]*)"', text).group(1).split())
+        self.assertEqual(listed, {p.name for p in CHART.glob('values*.yaml')})
+
+    def test_shipped_profiles_are_not_scanned_without_git(self):
+        # A copy in the chart directory is scanned; the shipped profile is not.
+        copy = CHART / 'values-poc.yaml'
+        copy.write_text('site:\n  domain: ar.selfhost-example.agentrelay.com\n')
+        try:
+            out = self.run_script('-f', EKS[0], '-f', str(copy))
+        finally:
+            copy.unlink()
+        self.assertIn('values-poc.yaml:2:', out.stdout)
+        self.assertNotIn('values-eks.yaml:', out.stdout)
 
     def test_example_values_are_reported_by_line(self):
         out = self.run_script('-f', EKS[0], '-f', EKS[1], '-f', str(SHORT))

@@ -55,8 +55,16 @@ site:
 | `rds: true` (with `region`) | `global.rdsCa.bundle` in every chart: the chart-managed RDS CA for that region ([Chart-managed RDS CA](#chart-managed-rds-ca)). An explicit `global.rdsCa.bundle` (another region, or `global`) wins |
 
 A site key you leave out fills nothing, and a component that is off is left
-alone. In single-host mode (`global.singleHost.host`) the dashboard and api URLs
-are not filled; the single host derives them.
+alone. In single-host mode (`global.singleHost.host`) the single host derives
+the dashboard and api URLs: the chart empties a profile placeholder in
+`relay-control.publicUrl` and `relay-webapp.runtime.publicUrl`, and takes
+`relay-control.dashboardUrl` and the read API's CORS origin from the single
+host.
+
+The GKE and AKS guides' `values.yaml` keep the long form until their pinned
+release carries site values (they install a released chart with the
+checkout's files); `ci/agent-relay/fixtures/gcp-site-values.yaml` is the GKE
+file in the short form.
 
 **Explicit values still work.** A file with every value spelled out (the long
 form, before site values) renders exactly as it did. With `site:` set:

@@ -101,9 +101,16 @@ example bucket, and a real region next to a real one. */ -}}
   .must   true: the value must equal the site value (an explicit value that
           differs is a contradiction); false: an explicit value wins
   .defaults, .pair  see agent-relay.site.unset
+  .clear  instead of .value: empty a profile placeholder (single-host mode)
 An unset value gets the site value. */ -}}
 {{- define "agent-relay.site.derive" -}}
-{{- if .value -}}
+{{- if .clear -}}
+{{- /* .clear: a profile placeholder here is emptied (an explicit value stays). */ -}}
+{{- $got := include "agent-relay.site.get" (dict "root" .root "path" .path) | fromJson -}}
+{{- if and $got.found (not (empty $got.v)) (include "agent-relay.site.unset" .) -}}
+{{- include "agent-relay.site.put" (dict "root" .root "path" .path "value" "") -}}
+{{- end -}}
+{{- else if .value -}}
 {{- if include "agent-relay.site.unset" . -}}
 {{- include "agent-relay.site.put" (dict "root" .root "path" .path "value" .value) -}}
 {{- else -}}

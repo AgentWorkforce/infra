@@ -29,23 +29,6 @@
 # This file holds no secret values: it only names Secrets and keys.
 # postgres-setup.sh creates the database roles and writes the credential files.
 
-# Site values: each host, the bucket, the org and the first admin are set once
-# here, and the chart fills every component value that repeats them (chart
-# README, "Site values"). Each host is a full name (one Azure public IP DNS
-# label per host), so hosts are set one by one instead of from a domain.
-site:
-  hosts:
-    dashboard: __HOST_ROOT__
-    api: __HOST_API__
-    cast: __HOST_CAST__
-    history: __HOST_HISTORY__
-  sessionsBucket: __SESSIONS_BUCKET__
-  # Stable organization ID that partitions session data. Never change it after
-  # the first upload.
-  orgId: __ORG_ID__
-  orgName: __ORG_NAME__
-  adminEmail: __ADMIN_EMAIL__
-
 x-anchors:
   # Traefik runs in its own namespace; every public backend admits it.
   edge: &edge
@@ -53,6 +36,7 @@ x-anchors:
     - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: traefik } }
   locker: &locker
     provider: s3
+    bucket: __SESSIONS_BUCKET__
     region: us-east-1
     endpoint: http://session-object-storage.agent-relay.svc.cluster.local:9000
 
@@ -64,6 +48,11 @@ x-anchors:
 # release").
 traefikIngress:
   enabled: false
+  hosts:
+    root: __HOST_ROOT__
+    api: __HOST_API__
+    cast: __HOST_CAST__
+    history: __HOST_HISTORY__
 
 components:
   relaycast: true
@@ -81,9 +70,14 @@ global:
     engine: wasm-bindgen
     required: wasm-bindgen
     readerMaxRuleset: "10"
+  tenant:
+    # Stable organization ID that partitions session data. Never change it after
+    # the first upload.
+    orgId: __ORG_ID__
 
 relaycast:
   # SQLite backend on an Azure disk (the EKS base profile's backend). One replica.
+  baseUrl: https://__HOST_CAST__
   existingSecret: agent-relay-secrets
   persistence:
     enabled: true
@@ -112,6 +106,7 @@ sessions-pipeline:
     output: { enabled: true }
     digest: { enabled: true }
     replicas: 1
+    origin: https://__HOST_HISTORY__
     completeSince: epoch
     directoryWorkspaces: "*"
     events: { messageIds: true }
@@ -149,6 +144,9 @@ sessions-pipeline:
         internalSecret:
           existingSecret: agent-relay-secrets
           key: session-read-api-secret
+    cors:
+      allowedOrigins:
+        - https://__HOST_ROOT__
     networkPolicy:
       enabled: true
       controlFrom:
@@ -158,6 +156,7 @@ sessions-pipeline:
     serviceAccountName: agent-relay-session-read
     serviceAccountCreate: true
     extraEnv:
+      - { name: LOCKER_BUCKET, value: __SESSIONS_BUCKET__ }
       - { name: LOCKER_REGION, value: us-east-1 }
       - { name: LOCKER_ENDPOINT, value: "http://session-object-storage.agent-relay.svc.cluster.local:9000" }
       - name: LOCKER_ACCESS_KEY_ID
@@ -177,6 +176,7 @@ sessions-pipeline:
 
   ingestEdge:
     enabled: true
+    origin: https://__HOST_HISTORY__
     allowInClusterHttp: true
     sessionSelection: true
     heartbeatAccept: true
@@ -316,6 +316,7 @@ sessions-pipeline:
       <<: *locker
       credentials: { mode: secret }
     auth:
+      historyOrigin: https://__HOST_HISTORY__
       allowInterimRelayAuthBearer: false
     environment: production
 
@@ -330,6 +331,8 @@ relay-control:
     setupKey: selfhost-setup-key
     smtpPassword: ""
   bootstrap:
+    orgName: __ORG_NAME__
+    adminEmail: __ADMIN_EMAIL__
     workspaceName: Default
   auth:
     password:
@@ -337,14 +340,22 @@ relay-control:
     # One hop: Traefik.
     trustedProxies: 1
   selectedFeatures: [usage, launch]
+  publicUrl: https://__HOST_API__
+  dashboardUrl: https://__HOST_ROOT__/
   services:
+    relaycastPublicUrl: https://__HOST_CAST__
     relayauthEnabled: false
     relayauthUrl: ""
     relayhistoryUrl: ""
     relayhistoryPublicUrl: ""
     relayhistoryBackend: native
     sessionReadApiUrl: http://agent-relay-read-api.agent-relay.svc.cluster.local
+    sessionReadApiPublicUrl: https://__HOST_HISTORY__
     sessionReadApiMcpReads: true
+  introspection:
+    audiences:
+      - https://__HOST_HISTORY__
+      - https://__HOST_API__
   postgresCa:
     enabled: true
     configMap: postgres-ca
@@ -355,6 +366,7 @@ relay-control:
 relay-webapp:
   replicaCount: 1
   runtime:
+    publicUrl: https://__HOST_ROOT__
     sessionReadApiEnabled: true
     coordinationOverlapsEnabled: false
   networkPolicy:
