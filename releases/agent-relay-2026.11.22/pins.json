@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "version": "2026.11.22",
+  "pins": {
+    "relay-control": {
+      "repository": "ghcr.io/agentworkforce/relay-control",
+      "digest": "sha256:0e50e62e64880c0798411f792003568be17407959403d9a07f055bf96790b260",
+      "sourceRepository": "AgentWorkforce/relay-control",
+      "sourceRevision": "707fe5cdd381e42818b530cd57cf31202ae7ed39"
+    }
+  }
+}
