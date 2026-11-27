@@ -32,8 +32,21 @@ PY
 for f in secrets/0[1-5]-*.yaml; do k apply -f "$f" >/dev/null; done
 echo "secrets applied:"; k get secrets -o name | grep -v helm | sed 's/^/  /'
 
+# The fake RDS's certificate comes from the test CA, not AWS, so this customer
+# brings their own CA: the rds-ca ConfigMap above, pinned by its hash in every
+# component (ci/rds-ca/legacy-values.yaml), with the chart-managed RDS CA off
+# (site.rds false). The example's own default (site.rds true, AWS's bundle) is
+# for real RDS and would reject this certificate.
 CA_SHA="$(shasum -a 256 "$TEST_CA" | cut -d' ' -f1)"
-sed "s/9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a/$CA_SHA/g" "$INFRA/examples/aws/values.yaml" > values-poc.yaml
+sed "s/9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a/$CA_SHA/g" "$INFRA/ci/rds-ca/legacy-values.yaml" > byo-ca.yaml
+printf 'site:\n  rds: false\n' >> byo-ca.yaml
+# Merged in place (no explode): the x-pins lines keep their one-line form,
+# which configure-rds.sh reads the services image from.
+yq '. *= load("byo-ca.yaml")' "$INFRA/examples/aws/values.yaml" > values-poc.yaml
+rm -f byo-ca.yaml
+[[ "$(yq '.site.rds' values-poc.yaml)" == false && "$(grep -c "$CA_SHA" values-poc.yaml)" -eq 4 ]] \
+  && grep -qE 'services-image:.*repository: *[^ ,}]+.*digest: *"?sha256:[0-9a-f]{64}' values-poc.yaml \
+  || { echo "FAIL: values-poc.yaml does not bring its own CA" >&2; exit 1; }
 
 cd "$INFRA"
 helm repo add cnpg https://cloudnative-pg.github.io/charts >/dev/null 2>&1 || true
