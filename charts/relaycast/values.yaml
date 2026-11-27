@@ -6,12 +6,13 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/agentworkforce/relaycast-self-host
-  # relaycast-self-host:12.10.0, relaycast main fd10195 (v12.10.0: #625
-  # delivery confirmation (SQLite migration 0081, PostgreSQL 0005), 0082 pending
-  # events settled retention, 0083/0084 strict spawn placement token and dispatch
-  # generation, #669/#670 S3 file store behind RELAYCAST_FILE_STORE, default
-  # local), publish run 43671881371. Multi-platform with GitHub build provenance.
-  digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+  # relaycast-self-host:12.15.0-selfhost.1, relaycast main 6682436 (v12.15.0
+  # plus #718: a refused database login leads with a one-line AR_DB_LOGIN
+  # summary). Since 12.10.0: SQLite migrations 0085-0088 and PostgreSQL
+  # 0006-0010 (spawn requester identity and workspace leaders, owner_approval
+  # on messages, quote redaction), publish run 45953549245. Multi-platform with
+  # GitHub build provenance.
+  digest: sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -48,12 +49,13 @@ runtime:
     # Used instead of image.* on this backend.
     image:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      # relaycast-self-host:12.10.0, relaycast main fd10195 (v12.10.0: #625
-      # delivery confirmation (SQLite migration 0081, PostgreSQL 0005), 0082 pending
-      # events settled retention, 0083/0084 strict spawn placement token and dispatch
-      # generation, #669/#670 S3 file store behind RELAYCAST_FILE_STORE, default
-      # local), publish run 43671881371. Multi-platform with GitHub build provenance.
-      digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+      # relaycast-self-host:12.15.0-selfhost.1, relaycast main 6682436 (v12.15.0
+      # plus #718: a refused database login leads with a one-line AR_DB_LOGIN
+      # summary). Since 12.10.0: SQLite migrations 0085-0088 and PostgreSQL
+      # 0006-0010 (spawn requester identity and workspace leaders, owner_approval
+      # on messages, quote redaction), publish run 45953549245. Multi-platform with
+      # GitHub build provenance.
+      digest: sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d
     # TCP keepalive sysctls on the server pod (net.ipv4.tcp_keepalive_intvl /
     # tcp_keepalive_probes, namespaced safe sysctls from Kubernetes 1.29). With
     # the engine's socket keepalive a half-open connection to a failed-over

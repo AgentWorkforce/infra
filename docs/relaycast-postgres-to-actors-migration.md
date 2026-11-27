@@ -19,11 +19,11 @@ the upgrader layers only the `relaycast` and `durable-actors` parts of
 off and moves Relayfile).
 
 The release must first deploy a PostgreSQL image containing the export side of
-the protocol. The EKS RDS-native profile pins `12.10.0`, source
-`fd10195` (which carries the 12.8.0-pg.3 export path from relaycast #653,
+the protocol. The EKS RDS-native profile pins `12.15.0-selfhost.1`, source
+`6682436` (which carries the 12.8.0-pg.3 export path from relaycast #653,
 #657, #663, #664, #667 and #668), digest
-`sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc`,
-from attested publish run 43671881371. The upgrader deliberately requires the
+`sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d`,
+from attested publish run 45953549245. The upgrader deliberately requires the
 target chart version to be live before either migration phase.
 
 ## Facts that shape the design
@@ -91,7 +91,8 @@ upgrader refuses a cutover from any other Relaycast image in plan mode, before
 anything stops. The published actors images (12.8.0-actors.2, relaycast
 997dbb28) predate delivery confirmation (relaycast#625: PostgreSQL migration
 0005, four columns on `deliveries` and `messages`): they import from
-12.8.0-pg.3 but not from 12.10.0. A cutover from 12.10.0 needs an actors build
+12.8.0-pg.3 but not from 12.10.0 or the pinned 12.15.0-selfhost.1 (PostgreSQL
+0006-0010 on top). A cutover from either needs an actors build
 from the same engine source, pinned together with its digest in that list.
 
 ## Phases

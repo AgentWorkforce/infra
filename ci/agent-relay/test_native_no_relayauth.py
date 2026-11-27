@@ -226,7 +226,7 @@ class NativeNoRelayauth(unittest.TestCase):
         self.assertEqual(
             deployments['relaycast']['spec']['template']['spec']['containers'][0]['image'],
             'ghcr.io/agentworkforce/relaycast-self-host@sha256:'
-            'ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc',
+            '33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d',
         )
         for name in ('proof-read-api', 'proof-ingest-edge', 'proof-search-indexer'):
             self.assertIn(name, deployments)

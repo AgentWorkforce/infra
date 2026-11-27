@@ -60,17 +60,19 @@ relaycast:
     postgres:
       image:
         repository: ghcr.io/agentworkforce/relaycast-self-host
-        # 12.10.0, relaycast main fd10195 (publish run 43671881371): carries the
-        # 12.8.0-pg.3 Postgres-to-actors export path (#653, #657, #663, #664,
-        # #667, #668) plus #625 delivery confirmation (PostgreSQL migration
-        # 0005), strict spawn placement/dispatch and the S3 file store option.
+        # 12.15.0-selfhost.1, relaycast main 6682436 (publish run 45953549245):
+        # carries the 12.8.0-pg.3 Postgres-to-actors export path (#653, #657,
+        # #663, #664, #667, #668) plus #625 delivery confirmation (PostgreSQL
+        # migration 0005), strict spawn placement/dispatch, the S3 file store
+        # option, PostgreSQL migrations 0006-0010 and the #718 AR_DB_LOGIN
+        # one-line login summary.
         # Required before --relaycast-actors credentials/cutover. The
         # 12.8.0-actors.2 gateway and deployer (values-eks-actors.yaml) were
         # built before migration 0005 and import only from 12.8.0-pg.3-schema
         # engines; the upgrader refuses a cutover from this image in plan mode
         # (compatibleEngineDigests) until an actors build from the same engine
         # source is pinned there.
-        digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+        digest: sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d
   postgresCa:
     enabled: true
     configMap: rds-ca
