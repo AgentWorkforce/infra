@@ -312,7 +312,16 @@ run against the deployed credential source proves those credentials work.
 The report uses `PASS`, `FAIL` and `UNKNOWN` with a next step for failures and
 unknowns. Exit status: **0** means all requested checks passed, **1** means at
 least one finding failed, **2** means incomplete evidence or an invocation/output
-error. A cluster-only run intentionally reports database checks as unknown.
+error, and **3** means the cluster did not answer, so the workload checks were
+skipped. The last line says which: `RESULT: PASS`, `RESULT: FAIL`,
+`RESULT: PARTIAL` or `RESULT: INCOMPLETE: workload checks skipped`; a skipped
+workload check is never reported as clean. The cluster probe allows each
+attempt at least 30 seconds (or `--timeout`, when higher) and retries once.
+kubeconfig auth through `aws eks get-token` with a slow credential_process
+can take about 15 seconds per call. When every attempt times out and the
+kubeconfig uses an exec plugin, the report says it's most likely slow
+credentials, not an unreachable cluster. A cluster-only run intentionally
+reports database checks as unknown.
 Missing access or tools never become a healthy result. A database query can
 fail because a required role is missing; subsequent checks for that connection
 then remain unknown. This is not a complete application acceptance test, and

@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -386,32 +387,68 @@ class ExecutionTests(unittest.TestCase):
 
     def test_unreachable_cluster_is_retried_then_incomplete_never_clean(self):
         calls=[]
-        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=8):
+        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=30):
             calls.append(probe_timeout); raise diag.DiagnosticError('timeout')
         with tempfile.TemporaryDirectory() as directory:
             output=Path(directory)/'report.json'
             out=io.StringIO()
             with mock.patch.object(diag,'kube',side_effect=kube), mock.patch.object(diag,'PROBE_SLEEP') as sleep, \
+                 mock.patch.object(diag,'exec_plugin',return_value=''), \
                  mock.patch.object(diag,'load_credentials',return_value={}), contextlib.redirect_stdout(out):
                 code=diag.main(['--scope','cluster','--context','test','--output',str(output)])
-        self.assertEqual(calls,list(diag.PROBE_TIMEOUTS))
-        self.assertEqual(sleep.call_count,len(diag.PROBE_TIMEOUTS)-1)
+        # Never below --timeout (default 20) or the 30s floor; one retry.
+        self.assertEqual(calls,[30]*diag.PROBE_ATTEMPTS)
+        self.assertEqual(sleep.call_count,diag.PROBE_ATTEMPTS-1)
         self.assertEqual(code,3)
         self.assertIn('RESULT: INCOMPLETE: workload checks skipped',out.getvalue())
         self.assertNotIn('RESULT: PASS',out.getvalue())
 
-    def test_slow_cluster_answers_on_a_later_attempt(self):
-        attempts=[]
-        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=8):
-            attempts.append(probe_timeout)
-            if len(attempts)<2: raise diag.DiagnosticError('timeout')
-            return {}
-        notes=[]
-        opts=diag.parse_args(['--scope','cluster','--context','test','--values'])
-        with mock.patch.object(diag,'kube',side_effect=kube), mock.patch.object(diag,'PROBE_SLEEP'):
-            diag.discover(opts,notes)
+    def test_probe_honours_a_longer_timeout(self):
+        calls=[]
+        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=30):
+            calls.append(probe_timeout); return {}
+        opts=diag.parse_args(['--scope','cluster','--context','test','--values','--timeout','90'])
+        with mock.patch.object(diag,'kube',side_effect=kube):
+            diag.discover(opts,[])
         self.assertTrue(opts.cluster_reachable)
-        self.assertEqual(attempts,[8,15])
+        self.assertEqual(calls,[90])
+
+    def _fake_kubectl(self, directory, delay, exec_command='aws'):
+        bin_dir=Path(directory)/'bin'; bin_dir.mkdir()
+        user={'name':'u','user':{'exec':{'command':exec_command,'args':['eks','get-token']}}} if exec_command else {'name':'u','user':{}}
+        script=bin_dir/'kubectl'
+        script.write_text('#!/bin/sh\n'
+            'case "$*" in *"config view"*) printf %s \''+json.dumps({'users':[user]})+'\' ;; '
+            '*"get secret"*) sleep '+str(delay)+'; echo \'{"kind":"Secret"}\' ;; esac\n')
+        script.chmod(0o755)
+        return str(bin_dir)
+
+    def test_slow_exec_credentials_12s_are_not_unreachable(self):
+        """A real kubectl stand-in that takes 12s per call (slow aws eks get-token)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path=self._fake_kubectl(directory,12)+os.pathsep+os.environ['PATH']
+            opts=diag.parse_args(['--scope','cluster','--context','test','--values'])
+            notes=[]
+            with mock.patch.dict(os.environ,{'PATH':path}):
+                start=time.monotonic()
+                diag.discover(opts,notes)
+            self.assertTrue(opts.cluster_reachable, notes)
+            self.assertGreaterEqual(time.monotonic()-start,12)
+            self.assertFalse(any('not reachable' in n for n in notes))
+
+    def test_timeout_with_an_exec_plugin_says_slow_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=self._fake_kubectl(directory,6)+os.pathsep+os.environ['PATH']
+            opts=diag.parse_args(['--scope','cluster','--context','test','--values','--timeout','1'])
+            notes=[]
+            with mock.patch.dict(os.environ,{'PATH':path}), mock.patch.object(diag,'PROBE_FLOOR',1), \
+                 mock.patch.object(diag,'PROBE_SLEEP'):
+                diag.discover(opts,notes)
+            self.assertFalse(opts.cluster_reachable)
+            note=[n for n in notes if n.startswith('cluster:')][0]
+            self.assertIn('exec plugin (aws)',note)
+            self.assertIn('slow credentials',note)
+            self.assertNotIn('not reachable',note)
 
 def workload(kind, name, sa, **env):
     pod = {'serviceAccountName': sa, 'containers': [{'name': 'app', 'env': [{'name': k, 'value': v} for k, v in env.items()]}]}

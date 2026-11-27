@@ -154,10 +154,15 @@ def ingest_checks(options, credential, report, query=None):
         latest.clear()
 
 
-# Cluster reachability probe: per-attempt timeouts (seconds) and the pause between.
-PROBE_TIMEOUTS = (8, 15, 30)
+# Cluster reachability probe. Each attempt gets at least PROBE_FLOOR seconds (or
+# --timeout when higher): with kubeconfig auth through `aws eks get-token` and a
+# slow credential_process one kubectl call takes ~14s, so the old 8s cap made a
+# reachable cluster look unreachable and skipped every workload check.
+PROBE_FLOOR = 30
+PROBE_ATTEMPTS = 2
 PROBE_PAUSE = 5
 PROBE_SLEEP = __import__('time').sleep
+PROBE_CLOCK = __import__('time').monotonic
 
 
 class DiagnosticError(Exception):
@@ -271,7 +276,7 @@ class Report:
                 'readOnly':True, 'summary':counts, 'checks':self.checks}
 
 
-def kube(options, resource, name=None, selector=False, probe=False, probe_timeout=8):
+def kube(options, resource, name=None, selector=False, probe=False, probe_timeout=PROBE_FLOOR):
     if not options.context:
         raise DiagnosticError('no-kube-context')
     timeout = probe_timeout if probe else options.timeout
@@ -1295,21 +1300,41 @@ def find_cluster(options, notes):
                                           '--name <cluster> --region <region>, or pass --context <name>. '
                                           'On the database VPN this is expected; use --scope database.')
             return False
-    # Right after rollout restarts the API server can be slow to answer: a
-    # single short probe once declared a reachable cluster unreachable and
-    # skipped every workload check. Retry with growing timeouts first.
-    last = None
-    for attempt, wait in enumerate(PROBE_TIMEOUTS):
+    # Right after rollout restarts the API server, or slow exec-plugin credentials,
+    # can delay an answer: never cap the probe below --timeout, and retry once.
+    wait = max(options.timeout, PROBE_FLOOR)
+    last, took = None, 0.0
+    for attempt in range(PROBE_ATTEMPTS):
+        start = PROBE_CLOCK()
         try:
             kube(options, 'secret', 'agent-relay-secrets', probe=True, probe_timeout=wait)
             return True
         except DiagnosticError as exc:
-            last = exc
-            if attempt + 1 < len(PROBE_TIMEOUTS):
+            last, took = exc, max(took, PROBE_CLOCK() - start)
+            if attempt + 1 < PROBE_ATTEMPTS:
                 PROBE_SLEEP(PROBE_PAUSE)
-    notes.append('cluster: not reachable after '+str(len(PROBE_TIMEOUTS))+' attempts ('+str(last)+
-                 '); on a split VPN, rerun on the cluster VPN for workload checks')
+    plugin = exec_plugin(options)
+    if str(last) == 'timeout' and plugin:
+        notes.append('cluster: no answer within '+str(wait)+'s on '+str(PROBE_ATTEMPTS)+' attempts. This kubeconfig '
+                     'authenticates through an exec plugin ('+plugin+'), so this is most likely slow credentials '
+                     '(e.g. aws eks get-token with a slow credential_process), not an unreachable cluster. '
+                     'Refresh the credentials or rerun with --timeout 90.')
+    else:
+        notes.append('cluster: not reachable after '+str(PROBE_ATTEMPTS)+' attempts ('+str(last)+', '+
+                     str(round(took))+'s); on a split VPN, rerun on the cluster VPN for workload checks')
     return False
+
+
+def exec_plugin(options):
+    """The kubeconfig user's exec plugin command (e.g. aws), or '' when none or unknown."""
+    try:
+        out = subprocess.run(['kubectl', 'config', 'view', '--minify', '--context', options.context, '-o', 'json'],
+                             text=True, capture_output=True, timeout=10)
+        users = json.loads(out.stdout or '{}').get('users') or []
+        command = ((users[0].get('user') or {}).get('exec') or {}).get('command', '') if users else ''
+        return os.path.basename(str(command))[:40] if re.fullmatch(r'[A-Za-z0-9_./-]{1,200}', str(command)) else ''
+    except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError, IndexError):
+        return ''
 
 
 def discover(options, notes):
