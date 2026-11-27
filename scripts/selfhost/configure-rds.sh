@@ -438,6 +438,18 @@ SH
     fi
   }
   job_log() { k logs "job/$1" --tail=20 2>/dev/null | grep -v -i password || true; }
+  # Never fatal: a failed cleanup must not skip the replica restore below.
+  drop_reset_secret() {
+    k delete secret agent-relay-db-reset --ignore-not-found >/dev/null 2>&1 \
+      || info "could not remove Secret agent-relay-db-reset (the master login); remove it: kubectl --context $KUBE_CONTEXT -n $NAMESPACE delete secret agent-relay-db-reset"
+  }
+  # stop_job <name>: deletes the Job and waits for its pods; 0 only once none is left.
+  stop_job() {
+    local pods
+    k delete job "$1" --ignore-not-found --cascade=foreground --wait=true --timeout=120s >/dev/null 2>&1 || true
+    pods="$(k get pods -l "job-name=$1" -o name 2>/dev/null)" || return 1
+    [[ -z "$pods" ]]
+  }
 
   # Read-only preflight, before anything changes: a refused reset leaves the
   # databases and the running release exactly as they were.
@@ -445,7 +457,8 @@ SH
   if ! db_job agent-relay-db-preflight "$(db_checks_sh)
 echo PREFLIGHT_OK" "-c default_transaction_read_only=on"; then
     out="$(job_log agent-relay-db-preflight)"
-    k delete secret agent-relay-db-reset --ignore-not-found >/dev/null
+    stop_job agent-relay-db-preflight || true   # read-only either way
+    drop_reset_secret
     db_refused "$out" " and no deployment was scaled down"
     printf '%s\n' "$out"; die "the database preflight failed; nothing was dropped and no deployment was scaled down"
   fi
@@ -453,30 +466,42 @@ echo PREFLIGHT_OK" "-c default_transaction_read_only=on"; then
 
   # Record each deployment's replicas so a failed reset can put them back.
   deploys="$(k get deployments -l "app.kubernetes.io/instance=$RELEASE" -o json)" \
-    || { k delete secret agent-relay-db-reset --ignore-not-found >/dev/null; die "could not list the release's deployments; nothing was dropped and no deployment was scaled down"; }
+    || { drop_reset_secret; die "could not list the release's deployments; nothing was dropped and no deployment was scaled down"; }
   REPLICAS="$(jq -r '.items[] | "\(.metadata.name) \(.spec.replicas // 1)"' <<<"$deploys")"
-  restore_replicas() { # puts every recorded deployment back; prints the command for any that fails
+  # restore_replicas [print]: puts every recorded deployment back (with "print", only
+  # prints the commands); 0 only when every one was restored.
+  restore_replicas() {
     local name n failed=0
     while read -r name n; do
       [[ -n "$name" ]] || continue
-      if ! k scale "deployment/$name" --replicas="$n" >/dev/null 2>&1; then
+      if [[ "${1:-}" == print ]]; then
+        info "to restore $name: kubectl --context $KUBE_CONTEXT -n $NAMESPACE scale deployment/$name --replicas=$n"
+      elif ! k scale "deployment/$name" --replicas="$n" >/dev/null 2>&1; then
         info "could not restore $name: kubectl --context $KUBE_CONTEXT -n $NAMESPACE scale deployment/$name --replicas=$n"
         failed=1
       fi
     done <<<"$REPLICAS"
-    [[ "$failed" == 0 ]] && info "restored the release's deployments to their earlier replica counts"
-    return 0
+    [[ "${1:-}" != print && "$failed" == 0 ]] || return 1
+    info "restored the release's deployments to their earlier replica counts"
   }
   info "Scaling the release's deployments to 0 so nothing reconnects"
   k scale deployment -l "app.kubernetes.io/instance=$RELEASE" --replicas=0 >/dev/null 2>&1 || true
   if ! db_job agent-relay-db-reset "$(db_checks_sh)
 $(db_drop_sh)" ""; then
     out="$(job_log agent-relay-db-reset)"
-    k delete secret agent-relay-db-reset --ignore-not-found >/dev/null
-    restore_replicas
-    db_refused "$out" "; the deployments were scaled back up"
+    # A Job that timed out may still be dropping: stop it before anything reconnects.
+    if stop_job agent-relay-db-reset; then
+      drop_reset_secret
+      if restore_replicas; then back="the deployments were scaled back up"
+      else back="some deployments are still at 0: run each 'could not restore' command above"; fi
+    else
+      drop_reset_secret
+      restore_replicas print || true
+      back="the reset Job could not be confirmed stopped, so the deployments were left at 0 (it could still drop a database the services reconnect to): once 'kubectl --context $KUBE_CONTEXT -n $NAMESPACE get pods -l job-name=agent-relay-db-reset' lists none, run each 'to restore' command above"
+    fi
+    db_refused "$out" "; $back"
     printf '%s\n' "$out"
-    die "database reset failed; the databases listed as 'dropped' above are gone, the others were kept. The deployments were scaled back up (any line above saying 'could not restore' has the command to run)."
+    die "database reset failed; the databases listed as 'dropped' above are gone, the others were kept (unless the Job was stopped mid-drop); $back."
   fi
   k logs job/agent-relay-db-reset --tail=10 | grep -v -i password || true
   k delete secret agent-relay-db-reset --ignore-not-found >/dev/null

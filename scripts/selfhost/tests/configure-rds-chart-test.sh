@@ -80,6 +80,9 @@ case "$*" in
   *"get job agent-relay-db-reset -o json"*) [[ -n "${MOCK_RESET_LOG:-}" ]] && t=Failed || t=Complete
     echo '{"status":{"conditions":[{"type":"'"$t"'","status":"True"}]}}' ;;
   *"logs job/agent-relay-db-reset"*) printf '%s\n' "${MOCK_RESET_LOG:-dropped relaycontrol}" ;;
+  *"get pods -l job-name=agent-relay-db-reset"*) [[ "${MOCK_RESET_POD_STUCK:-0}" == 1 ]] && echo pod/agent-relay-db-reset-x; exit 0 ;;
+  *"get pods -l job-name="*) exit 0 ;;
+  *"delete secret agent-relay-db-reset"*) [[ "${MOCK_SECRET_DELETE_FAIL:-0}" == 1 ]] && grep -q 'get job agent-relay-db-reset' "$MOCK_LOG" && exit 1; exit 0 ;;
   *"scale deployment/"*) [[ "${MOCK_RESTORE_FAIL:-0}" == 1 ]] && exit 1; exit 0 ;;
   *"get job "*"-o json"*) echo '{"status":{"succeeded":1,"conditions":[{"type":"Complete","status":"True"}]}}' ;;
   *"logs job/agent-relay-diagnose-os-"*) printf 'AR\tOS\t%s\nAR\tDONE\n' "${MOCK_OS_RESULT:-}" ;;
@@ -392,8 +395,21 @@ pass "--reset-databases: a reset Job that fails after the scale-down restores ea
 
 if reset_run MOCK_RESET_LOG='NOT_OWNER relaycast' MOCK_RESTORE_FAIL=1; then fail "restore failure: went on"; fi
 expect_out "could not restore agent-relay-relay-control: kubectl --context test-ctx -n agent-relay scale deployment/agent-relay-relay-control --replicas=2" "restore failure"
-expect_out "Nothing was dropped; the deployments were scaled back up." "restore failure"
-pass "--reset-databases: a replica restore that fails prints the exact scale command"
+expect_out "Nothing was dropped; some deployments are still at 0: run each 'could not restore' command above." "restore failure"
+! grep -q "scaled back up" "$tmp/out" || fail "restore failure: claims the deployments were scaled back up"
+pass "--reset-databases: a replica restore that fails prints the exact scale command and says so"
+
+if reset_run MOCK_RESET_LOG='dropped relaycontrol' MOCK_SECRET_DELETE_FAIL=1; then fail "secret cleanup failure: went on"; fi
+grep -q 'scale deployment/agent-relay-relay-control --replicas=2' "$log" || { cat "$tmp/out" >&2; fail "secret cleanup failure: replicas not restored"; }
+expect_out "could not remove Secret agent-relay-db-reset" "secret cleanup failure"
+pass "--reset-databases: a failed Secret cleanup does not skip the replica restore"
+
+if reset_run MOCK_RESET_LOG='dropped relaycontrol' MOCK_RESET_POD_STUCK=1; then fail "stuck reset pod: went on"; fi
+grep -q 'delete job agent-relay-db-reset .*--cascade=foreground --wait=true' "$log" || fail "stuck reset pod: the Job was not stopped"
+! grep -q 'scale deployment/' "$log" || fail "stuck reset pod: deployments were restored while the reset may still run"
+expect_out "to restore agent-relay-relay-control: kubectl --context test-ctx -n agent-relay scale deployment/agent-relay-relay-control --replicas=2" "stuck reset pod"
+expect_out "the reset Job could not be confirmed stopped, so the deployments were left at 0" "stuck reset pod"
+pass "--reset-databases: a reset Job that cannot be confirmed stopped leaves the replicas at 0 and prints the restore commands"
 
 reset_run || true
 expect_out "==> 3/8" "reset success: the run did not go on"
