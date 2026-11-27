@@ -504,6 +504,11 @@ fi
 say "   images added (+) / removed (-) against what is running:"
 changes=$(diff "$work/live-images.txt" "$work/new-images.txt" | grep -E '^[<>]' | sed 's/^</   -/;s/^>/   +/' || true)
 if [ -n "$changes" ]; then say "$changes"; else say "   (no image changes)"; fi
+# A new Relaycast engine image runs its PostgreSQL migrations on upgrade; the
+# previous image's verify-db refuses a ledger it does not know, so a Helm-only
+# rollback after those commit leaves Relaycast down (rollback_hint says so).
+relaycast_engine_changed=false
+if comm -13 "$work/live-images.txt" "$work/new-images.txt" | grep -q '/relaycast-self-host@'; then relaycast_engine_changed=true; fi
 current_rev=$("${helmx[@]}" history "$release" -o json 2>/dev/null | jq -r '[.[]|select(.status=="deployed")]|last.revision // empty' || true)
 
 # One line per rendered resource: "<kind>/<namespace>/<name><TAB><canonical JSON>".
@@ -572,6 +577,11 @@ rollback_hint() {
   local rollback_prepare rollback_delete rollback_helm rollback_manifest rollback_uses_old_keys=false
   say ""; say "$($first_install && echo INSTALL || echo UPGRADE) FAILED. Nothing further was changed."
   if [ -n "$current_rev" ]; then
+    if $relaycast_engine_changed; then
+      say "   CAUTION: this upgrade changes the Relaycast engine image. If its migration Job (relaycast-migrate-*) completed on PostgreSQL,"
+      say "   the previous image refuses the newer migration ledger and a Helm-only rollback leaves Relaycast down. Repair forward"
+      say "   (fix the failure and re-run this upgrade), or restore snapshot $snapshot before rolling back."
+    fi
     if $rds_setup && [ "$hoopdb_layout" = legacy-admin ]; then
       rollback_manifest=$("${helmx[@]}" get manifest "$release" --revision "$current_rev" 2>/dev/null || true)
       if yq -e '

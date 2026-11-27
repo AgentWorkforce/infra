@@ -51,8 +51,10 @@ make_release() {
   imgs="[{\"name\":\"relay-control\",\"ref\":\"ghcr.io/agentworkforce/relay-control@$D1\"},{\"name\":\"relay-webapp\",\"ref\":\"ghcr.io/agentworkforce/relay-webapp@$D2\"},{\"name\":\"sessions-pipeline\",\"ref\":\"ghcr.io/agentworkforce/sessions-pipeline@$D3\"},{\"name\":\"sessions-migration-postgresql\",\"ref\":\"ghcr.io/cloudnative-pg/postgresql@$D4\"}]"
   if [ "$v" = unpinned ]; then imgs='[{"name":"relay-control","ref":"ghcr.io/agentworkforce/relay-control:latest"}]'; fi
   if [ "$v" = swapped ]; then o1=$D2; o2=$D1; fi
+  if [ "$v" = relaycast ]; then imgs="${imgs%]},{\"name\":\"relaycast\",\"ref\":\"ghcr.io/agentworkforce/relaycast-self-host@$D5\"}]"; fi
   printf '{"schema":1,"version":"2026.11.1","infraCommit":"%s","chart":{"path":"charts/agent-relay","version":"%s"},"valuesOverlay":"release-images.values.yaml","valuesOverlayProfile":"eks","images":%s}\n' "$COMMIT" "$cv" "$imgs" > "$d/release-manifest.json"
   printf 'relayControl:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relay-control, digest: "%s" }\nrelayWebapp:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relay-webapp, digest: "%s" }\n' "$o1" "$o2" > "$d/release-images.values.yaml"
+  if [ "$v" = relaycast ]; then printf 'relaycast:\n  image: { repository: __IMAGE_MIRROR_ROOT__/ghcr.io/agentworkforce/relaycast-self-host, digest: "%s" }\n' "$D5" >> "$d/release-images.values.yaml"; fi
   if [ "$v" = chartver ]; then cv=9.9.9; fi
   printf 'name: agent-relay\nversion: "%s"\n' "$cv" > "$d/pkg/agent-relay/Chart.yaml"
   : > "$d/pkg/agent-relay/values-eks.yaml"; : > "$d/pkg/agent-relay/values-eks-native.yaml"
@@ -1045,3 +1047,15 @@ out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) || fail "apply 
 grep -q 'census deferred' <<<"$out" && fail "--apply must never defer the census"
 grep -q 'path: blocking build for this upgrade. 4000 rows' <<<"$out" || fail "--apply did not run the census: $out"
 pass "census: a read-only plan role defers the census to --apply, which always runs it"
+
+# 52. a failed upgrade that changes the Relaycast engine warns that a Helm-only
+#     rollback cannot start the previous engine once its migrations committed
+make_release "$root/rel-relaycast" relaycast; setup_mocks "$root/rel-relaycast" ok; write_helm "exit 1"
+out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) && fail "failed upgrade reported success"
+grep -q 'CAUTION: this upgrade changes the Relaycast engine image' <<<"$out" || fail "no Relaycast ledger caution on a failed engine upgrade: $out"
+grep -q 'restore snapshot agent-relay-pre-' <<<"$out" || fail "the Relaycast caution did not name the pre-upgrade snapshot: $out"
+grep -q 'rollback agent-relay 7' <<<"$out" || fail "the Relaycast caution replaced the rollback guidance: $out"
+setup_mocks "$root/rel-ok" ok; write_helm "exit 1"
+out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) && fail "failed upgrade reported success"
+grep -q 'CAUTION: this upgrade changes the Relaycast engine image' <<<"$out" && fail "Relaycast caution printed without a Relaycast image change: $out"
+pass "failed upgrade that changes the Relaycast engine warns before a Helm-only rollback"
