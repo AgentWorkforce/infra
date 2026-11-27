@@ -61,11 +61,11 @@ gkeIngress:
 relaycast:
   fullnameOverride: relaycast
   image:
-    # Release image (public GHCR, relaycast 12.10.0, main fd10195, publish run
-    # 43671881371, SBOM + provenance). Mirror it by digest to your registry and
+    # Release image (public GHCR, relaycast 12.15.0-selfhost.1, main 6682436,
+    # publish run 45953549245, SBOM + provenance). Mirror it by digest to your registry and
     # override repository.
     repository: ghcr.io/agentworkforce/relaycast-self-host
-    digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+    digest: sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d
   # REQUIRED OVERRIDE: must use the same cast host as gkeIngress.hosts.cast.
   baseUrl: https://cast.placeholder.company
   # REQUIRED OVERRIDE: existing Secret name; see README for required keys.

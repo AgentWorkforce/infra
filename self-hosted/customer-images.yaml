@@ -100,35 +100,35 @@ images:
       - Deployment/relaycast:relaycast
     current:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+      digest: sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d
       chartStatus: shipped
     source:
       repository: https://github.com/AgentWorkforce/relaycast
-      revision: fd10195436054d97c75504d1c803df0d1f2fed98
+      revision: 668243677fab6da168333f5af2862f5d31201fca
       path: Dockerfile
       reproducibleReference: true
       note: >-
-        Relaycast 12.10.0 (release v12.10.0): #625 delivery confirmation
-        (SQLite migration 0081, PostgreSQL 0005), 0082 pending-events settled
-        retention, 0083/0084 strict spawn placement token and dispatch
-        generation, and the optional S3 file store (#669, #670; the
-        RELAYCAST_FILE_STORE default stays local). The image engine-version
-        label is 12.10.0.
+        Relaycast 12.15.0-selfhost.1: release v12.15.0 plus #718 (a refused
+        database login leads with a one-line AR_DB_LOGIN summary). Since
+        v12.10: SQLite migrations 0085-0088 and PostgreSQL 0006-0010 (spawn
+        requester identity and workspace leaders, owner_approval on messages,
+        quote redaction). Keeps #625 delivery confirmation and the optional S3
+        file store (RELAYCAST_FILE_STORE default local).
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relaycast/blob/fd10195436054d97c75504d1c803df0d1f2fed98/LICENSE
+      evidence: https://github.com/AgentWorkforce/relaycast/blob/668243677fab6da168333f5af2862f5d31201fca/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relaycast/blob/fd10195436054d97c75504d1c803df0d1f2fed98/.github/workflows/publish-container.yml
-      run: https://github.com/AgentWorkforce/relaycast/actions/runs/43671881371
+      workflow: https://github.com/AgentWorkforce/relaycast/blob/668243677fab6da168333f5af2862f5d31201fca/.github/workflows/publish-container.yml
+      run: https://github.com/AgentWorkforce/relaycast/actions/runs/45953549245
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["12.10.0", latest]
+      publishedTags: ["12.15.0-selfhost.1"]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation
@@ -153,36 +153,36 @@ images:
       - Job/relaycast-migration-export-*:export
     current:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+      digest: sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d
       chartStatus: optional-preview
       valuesFile: charts/agent-relay/values-eks-actors.yaml
     source:
       repository: https://github.com/AgentWorkforce/relaycast
-      revision: fd10195436054d97c75504d1c803df0d1f2fed98
+      revision: 668243677fab6da168333f5af2862f5d31201fca
       path: Dockerfile
       reproducibleReference: true
       note: >-
-        Relaycast 12.10.0 (publish run 43671881371), the same digest as the
-        default pin. Carries the reviewed 12.8.0-pg.3 PostgreSQL-to-actors
+        Relaycast 12.15.0-selfhost.1 (publish run 45953549245), the same digest
+        as the default pin. Carries the reviewed 12.8.0-pg.3 PostgreSQL-to-actors
         export path (#653), the PostgreSQL deadlock fix (#657), #663, #664,
         failover recovery without a restart and split health endpoints (#667)
         and #668, plus the PostgreSQL delivery-confirmation migration 0005
-        (#625); the image engine-version label is 12.10.0.
+        (#625) and PostgreSQL 0006-0010.
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relaycast/blob/fd10195436054d97c75504d1c803df0d1f2fed98/LICENSE
+      evidence: https://github.com/AgentWorkforce/relaycast/blob/668243677fab6da168333f5af2862f5d31201fca/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relaycast/blob/fd10195436054d97c75504d1c803df0d1f2fed98/.github/workflows/publish-container.yml
-      run: https://github.com/AgentWorkforce/relaycast/actions/runs/43671881371
+      workflow: https://github.com/AgentWorkforce/relaycast/blob/668243677fab6da168333f5af2862f5d31201fca/.github/workflows/publish-container.yml
+      run: https://github.com/AgentWorkforce/relaycast/actions/runs/45953549245
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["12.10.0", latest]
+      publishedTags: ["12.15.0-selfhost.1"]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation
@@ -206,35 +206,35 @@ images:
       - Deployment/relaycast:relaycast
     current:
       repository: ghcr.io/agentworkforce/relaycast-self-host
-      digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+      digest: sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d
       chartStatus: shipped
       valuesFile: charts/agent-relay/values-eks.yaml
       note: >-
-        Relaycast 12.10.0 collector-capable Node runtime for EKS, the same
+        Relaycast 12.15.0-selfhost.1 collector-capable Node runtime for EKS, the same
         digest as the default pin. The neutral profile keeps analytics
         disabled until an operator supplies the component-bound producer
         token and trusted collector TLS binding.
     source:
       repository: https://github.com/AgentWorkforce/relaycast
-      revision: fd10195436054d97c75504d1c803df0d1f2fed98
+      revision: 668243677fab6da168333f5af2862f5d31201fca
       path: Dockerfile
       reproducibleReference: true
-      note: The OCI revision label and engine-version label report fd10195 and 12.10.0.
+      note: Built from relaycast main 6682436 (v12.15.0 plus #718).
     license:
       status: approved
       spdx: Apache-2.0
-      evidence: https://github.com/AgentWorkforce/relaycast/blob/fd10195436054d97c75504d1c803df0d1f2fed98/LICENSE
+      evidence: https://github.com/AgentWorkforce/relaycast/blob/668243677fab6da168333f5af2862f5d31201fca/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      workflow: https://github.com/AgentWorkforce/relaycast/blob/fd10195436054d97c75504d1c803df0d1f2fed98/.github/workflows/publish-container.yml
-      run: https://github.com/AgentWorkforce/relaycast/actions/runs/43671881371
+      workflow: https://github.com/AgentWorkforce/relaycast/blob/668243677fab6da168333f5af2862f5d31201fca/.github/workflows/publish-container.yml
+      run: https://github.com/AgentWorkforce/relaycast/actions/runs/45953549245
       trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: ["12.10.0", latest]
+      publishedTags: ["12.15.0-selfhost.1"]
       publishesSbom: true
       publishesProvenance: true
       provenanceMode: max-plus-github-attestation

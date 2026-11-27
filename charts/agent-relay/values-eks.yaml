@@ -79,12 +79,12 @@ eksIngress:
 relaycast:
   fullnameOverride: relaycast
   image:
-    # Release image (public GHCR, relaycast main fd10195, engine 12.10.0,
-    # publish run 43671881371). This build contains the optional collector
+    # Release image (public GHCR, relaycast main 6682436, engine
+    # 12.15.0-selfhost.1, publish run 45953549245). This build contains the optional collector
     # adapter; analytics remains off until the operator supplies its dedicated
     # token and TLS binding.
     repository: ghcr.io/agentworkforce/relaycast-self-host
-    digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+    digest: sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d
   # REQUIRED OVERRIDE: the public cast origin (https://cast.<your domain>,
   # served by the ALB with an ACM certificate). The charts refuse http
   # public origins.
