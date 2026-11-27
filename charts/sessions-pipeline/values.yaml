@@ -782,6 +782,10 @@ rearmSweeper:
   # field falls back to ingestEdge.image, so {} keeps the sweeper on the ingest image. Lets the
   # sweeper take a newer services image without rolling the ingest-edge Deployment.
   image: {}
+  # Optional pull secrets for the sweeper CronJob only. null (the default) inherits
+  # ingestEdge.imagePullSecrets; a list replaces it (e.g. a rearmSweeper.image.repository in another
+  # private registry); [] renders none, so the sweeper ServiceAccount's imagePullSecrets apply.
+  imagePullSecrets: null
   credentials:
     # secret: static keys from existingSecret (MinIO or AWS), mounted as files
     # (INGEST_REARM_CREDENTIALS=keys, INGEST_REARM_S3_*_FILE).
