@@ -330,6 +330,43 @@ class S3Ledger(unittest.TestCase):
         sa = [d for d in docs if d["kind"] == "ServiceAccount" and d["metadata"]["name"] == "rearm-sweeper"]
         self.assertEqual(len(sa), 1)
 
+    def test_sweeper_image_override(self):
+        base = load(S3_FIXTURE)
+        ingest = base["ingestEdge"]["image"]
+        def image_and_env(values):
+            c = self.cronjob(self.render(values))["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+            return c["image"], {e["name"]: e.get("value") for e in c["env"]}["INGEST_REARM_IMAGE_DIGEST"]
+        # Unset: the sweeper runs the ingest image.
+        self.assertEqual(image_and_env(base), ("{}@{}".format(ingest["repository"], ingest["digest"]), ingest["digest"]))
+        # Digest only: ingest repository, override digest; the receipt env follows the sweeper image.
+        d = "sha256:" + "e" * 64
+        self.assertEqual(image_and_env(merge(base, {"rearmSweeper": {"image": {"digest": d}}})),
+                         ("{}@{}".format(ingest["repository"], d), d))
+        # The ingest-edge Deployment is untouched by the override.
+        dep = lambda docs: next(x for x in docs if x["kind"] == "Deployment" and x["metadata"]["name"].endswith("ingest-edge"))
+        self.assertEqual(dep(self.render(base)), dep(self.render(merge(base, {"rearmSweeper": {"image": {"digest": d}}}))))
+        # A malformed digest is refused, including falsy values that would otherwise fall back silently.
+        for bad in ("latest", "", False, 0, None):
+            self.render(merge(base, {"rearmSweeper": {"image": {"digest": bad}}}), fail="rearmSweeper.image.digest must be sha256")
+
+    def test_sweeper_image_override_unified_contract(self):
+        base = load(S3_FIXTURE)
+        d0 = base["ingestEdge"]["image"]["digest"]
+        # Satisfy the single-digest contract for every service, so only the sweeper check can fail.
+        unified = merge(base, {
+            "releaseContract": {"unifiedServicesDigest": True},
+            "worker": {"image": {"digest": d0, "tag": ""}},
+            "alleyoop": {"image": {"digest": d0, "tag": ""}},
+            "sessionReadApi": {"image": {"digest": d0}},
+            "searchIndexer": {"image": {"digest": d0}},
+        })
+        self.render(unified)
+        # A different sweeper digest breaks the single-image contract.
+        self.render(merge(unified, {"rearmSweeper": {"image": {"digest": "sha256:" + "e" * 64}}}),
+                    fail="releaseContract.unifiedServicesDigest requires rearmSweeper.image.digest to equal worker.image.digest")
+        # The same digest is allowed.
+        self.render(merge(unified, {"rearmSweeper": {"image": {"digest": d0}}}))
+
     def test_sweeper_pod_identity(self):
         docs = self.render(merge(load(S3_FIXTURE), {"rearmSweeper": {"credentials": {"mode": "podIdentity", "existingSecret": ""}}}))
         pod = self.cronjob(docs)["spec"]["jobTemplate"]["spec"]["template"]["spec"]
