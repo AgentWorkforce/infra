@@ -189,7 +189,6 @@ export interface Principal {
 }
 
 export interface CredentialRequest {
-  profile?: string;
   account: string;
   purpose: string;
   actions: string[];
@@ -204,7 +203,8 @@ export interface CredentialRequest {
   /** A delegated approver (allowlist delegatedApprovers) the requester asks to approve this instead of Khaliq. */
   delegate?: string;
   /**
-   * A named target-role profile (ROLE_PROFILES), e.g. "edge-dns". Asked for
+   * A named profile: a target-role profile (ROLE_PROFILES), e.g. "edge-dns", or
+   * stagingSummaryProfile (refused with its reason). Asked for
    * explicitly, never inferred from the actions. The request must then fall
    * entirely inside the profile, or it is refused; it is still approval-only.
    */
