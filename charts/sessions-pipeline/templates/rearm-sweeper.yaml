@@ -118,7 +118,13 @@ spec:
           {{- with $s.serviceAccountName }}
           serviceAccountName: {{ . | quote }}
           {{- end }}
-          {{- with $c.imagePullSecrets }}
+          {{- /* rearmSweeper.imagePullSecrets: null inherits the ingest list; a list replaces it; [] defers to the ServiceAccount. */}}
+          {{- $pullSecrets := $c.imagePullSecrets }}
+          {{- if not (kindIs "invalid" $s.imagePullSecrets) }}
+          {{- if not (kindIs "slice" $s.imagePullSecrets) }}{{ fail "rearmSweeper.imagePullSecrets must be a list (or null to inherit ingestEdge.imagePullSecrets)" }}{{ end }}
+          {{- $pullSecrets = $s.imagePullSecrets }}
+          {{- end }}
+          {{- with $pullSecrets }}
           imagePullSecrets:
             {{- toYaml . | nindent 12 }}
           {{- end }}
