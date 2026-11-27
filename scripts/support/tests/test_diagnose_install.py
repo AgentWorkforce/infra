@@ -365,6 +365,36 @@ class ExecutionTests(unittest.TestCase):
             diag.values_checks(SimpleNamespace(values=[values], ca_file=None), report)
             self.assertEqual({c['check'].rsplit('.',1)[1]: c['status'] for c in report.checks}['rds-ca'], 'FAIL')
 
+    def test_earlier_restarts_of_a_ready_pod_are_not_reported(self):
+        pod = {'metadata': {'name': 'agent-relay-search-indexer-abc'}, 'status': {'phase': 'Running',
+               'conditions': [{'type': 'Ready', 'status': 'True'}],
+               'containerStatuses': [{'ready': True, 'restartCount': 5, 'state': {'running': {}},
+                                      'lastState': {'terminated': {'exitCode': 1}}}]}}
+        crashing = {'metadata': {'name': 'agent-relay-worker-x'}, 'status': {'phase': 'Running',
+               'conditions': [{'type': 'Ready', 'status': 'False'}],
+               'containerStatuses': [{'ready': False, 'restartCount': 2, 'state': {'waiting': {'reason': 'CrashLoopBackOff'}},
+                                      'lastState': {'terminated': {'exitCode': 1}}}]}}
+        report=diag.Report()
+        items={'jobs': [], 'pods': [pod, crashing], 'deployments': [], 'persistentvolumeclaims': []}
+        with mock.patch.object(diag,'kube',side_effect=lambda opt,res,name=None,selector=False,probe=False: {'items': items[res]}):
+            diag.cluster_checks(options(),report)
+        rows={c['check']: c for c in report.checks}
+        self.assertNotIn('pods.1.container.1.previous', rows)
+        self.assertEqual(rows['pods.1.ready']['status'], 'PASS')
+        self.assertIn('pods.2.container.1.previous', rows)
+        # An init container that timed out once and then completed is settled too.
+        recovered = {'metadata': {'name': 'agent-relay-search-indexer-def'}, 'status': {'phase': 'Running',
+               'conditions': [{'type': 'Ready', 'status': 'True'}],
+               'initContainerStatuses': [{'ready': True, 'restartCount': 1, 'state': {'terminated': {'exitCode': 0}},
+                                          'lastState': {'terminated': {'exitCode': 1}}}],
+               'containerStatuses': [{'ready': True, 'restartCount': 0, 'state': {'running': {}}, 'lastState': {}}]}}
+        report=diag.Report()
+        items={'jobs': [], 'pods': [recovered], 'deployments': [], 'persistentvolumeclaims': []}
+        with mock.patch.object(diag,'kube',side_effect=lambda opt,res,name=None,selector=False,probe=False: {'items': items[res]}):
+            diag.cluster_checks(options(),report)
+        self.assertFalse([c for c in report.checks if '.container.' in c['check']])
+        self.assertEqual(rows['pods.2.waiting.1']['status'], 'FAIL')
+
     def test_cluster_errors_are_unknown(self):
         report=diag.Report()
         with mock.patch.object(diag,'kube',side_effect=diag.DiagnosticError('permissions')):
@@ -1059,6 +1089,123 @@ class SearchReadinessTests(unittest.TestCase):
         self.assertEqual(diag.parse_search_probe('noise\n'+line+'\nAR\tDONE\n')['status'], 403)
         with self.assertRaises(diag.DiagnosticError):
             diag.parse_search_probe(line)
+
+
+class TokenCacheTests(unittest.TestCase):
+    """A fake kubectl and a fake exec plugin that sleeps, like aws eks get-token behind a slow credential_process."""
+    TOKEN = 'k8s-aws-v1.SECRET-TOKEN-VALUE'
+
+    def make(self, directory, plugin_delay=2, with_exec=True, user_extra=None, command=None):
+        d = Path(directory)
+        (d/'bin').mkdir()
+        log = d/'calls.log'
+        plugin = d/'bin'/'fake-get-token'
+        plugin.write_text('#!/bin/sh\necho plugin >>"'+str(log)+'"\nsleep '+str(plugin_delay)+'\n'
+                          'printf \'{"kind":"ExecCredential","apiVersion":"client.authentication.k8s.io/v1beta1","status":{"token":"'+self.TOKEN
+                          +'","expirationTimestamp":"2099-01-01T00:00:00Z"}}\'\n')
+        user = {'exec': {'apiVersion': 'client.authentication.k8s.io/v1beta1', 'command': command or str(plugin), 'args': ['eks', 'get-token']}} if with_exec else {'token': 'static'}
+        user.update(user_extra or {})
+        config = {'apiVersion': 'v1', 'kind': 'Config', 'current-context': 'test',
+                  'clusters': [{'name': 'c', 'cluster': {'server': 'https://127.0.0.1:1'}}],
+                  'contexts': [{'name': 'test', 'context': {'cluster': 'c', 'user': 'u'}}], 'users': [{'name': 'u', 'user': user}]}
+        # kubectl: "config view" answers from the real kubeconfig; any other call records
+        # its argv and whether it ran with the token kubeconfig (fast) or would run the plugin.
+        kubectl = d/'bin'/'kubectl'
+        kubectl.write_text('#!/bin/sh\n'
+            'case "$*" in *"config view"*) printf %s \''+json.dumps(config)+'\'; exit 0;; esac\n'
+            'echo "argv $*" >>"'+str(log)+'"\n'
+            'if grep -q \'"token": "'+self.TOKEN+'"\' "${KUBECONFIG:-/nonexistent}" 2>/dev/null; then echo token-kubeconfig >>"'+str(log)+'"; '
+            'else echo exec-auth >>"'+str(log)+'"; fi\n'
+            'echo \'{"items":[]}\'\n')
+        for f in (plugin, kubectl):
+            f.chmod(0o755)
+        return str(d/'bin')+os.pathsep+os.environ['PATH'], log
+
+    def test_one_plugin_run_for_many_calls_and_no_token_in_argv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, log = self.make(directory)
+            opts = diag.parse_args(['--context', 'test', '--scope', 'cluster', '--values'])
+            with mock.patch.dict(os.environ, {'PATH': path}):
+                for _ in range(5):
+                    diag.kube(opts, 'deployments', selector=True)
+                diag.kubectl_text(opts, ['get', 'pods', '-o', 'json'])
+            calls = log.read_text().splitlines()
+            self.assertEqual(calls.count('plugin'), 1)
+            self.assertEqual(calls.count('token-kubeconfig'), 6)
+            self.assertNotIn('exec-auth', calls)
+            self.assertFalse(any(self.TOKEN in c for c in calls if c.startswith('argv')))
+            mode = os.stat(opts.kube_auth['path']).st_mode & 0o777
+            self.assertEqual(mode, 0o600)
+
+    def test_refreshes_before_expiry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, log = self.make(directory, plugin_delay=0)
+            opts = diag.parse_args(['--context', 'test', '--values'])
+            clock = [1000.0]
+            with mock.patch.dict(os.environ, {'PATH': path}), mock.patch.object(diag, 'PROBE_CLOCK', lambda: clock[0]):
+                diag.kube(opts, 'pods')
+                clock[0] += diag.TOKEN_REFRESH_SECONDS - 5
+                diag.kube(opts, 'pods')
+                clock[0] += 10
+                diag.kube(opts, 'pods')
+            self.assertEqual(log.read_text().splitlines().count('plugin'), 2)
+
+    def test_no_exec_plugin_keeps_kubectls_own_auth(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, log = self.make(directory, with_exec=False)
+            opts = diag.parse_args(['--context', 'test', '--values'])
+            with mock.patch.dict(os.environ, {'PATH': path}):
+                diag.kube(opts, 'pods')
+            self.assertIs(opts.kube_auth, False)
+            self.assertNotIn('plugin', log.read_text())
+
+    def test_write_token_kubeconfig_for_shell_callers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, log = self.make(directory, plugin_delay=0)
+            out, target = io.StringIO(), Path(directory)/'kc'
+            with mock.patch.dict(os.environ, {'PATH': path}), contextlib.redirect_stdout(out):
+                code = diag.main(['--context', 'test', '--write-token-kubeconfig', str(target)])
+            self.assertEqual(code, 0)
+            self.assertRegex(out.getvalue(), r'^TOKEN_KUBECONFIG \d{10}\n$')
+            self.assertNotIn(self.TOKEN, out.getvalue())
+            self.assertEqual(json.loads(target.read_text())['users'][0]['user'], {'token': self.TOKEN})
+            self.assertEqual(os.stat(target).st_mode & 0o777, 0o600)
+
+
+    def test_impersonation_is_kept_and_an_existing_file_is_replaced_0600(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, log = self.make(directory, plugin_delay=0, user_extra={'as': 'deployer', 'as-groups': ['ops']})
+            target = Path(directory)/'kc'
+            target.write_text('old')
+            target.chmod(0o644)
+            with mock.patch.dict(os.environ, {'PATH': path}), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(diag.main(['--context', 'test', '--write-token-kubeconfig', str(target)]), 0)
+            self.assertEqual(json.loads(target.read_text())['users'][0]['user'],
+                             {'as': 'deployer', 'as-groups': ['ops'], 'token': self.TOKEN})
+            self.assertEqual(os.stat(target).st_mode & 0o777, 0o600)
+
+    def test_existing_basic_auth_keeps_kubectls_own_auth(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, log = self.make(directory, plugin_delay=0, user_extra={'username': 'admin', 'password': 'pw'})
+            opts = diag.parse_args(['--context', 'test', '--values'])
+            with mock.patch.dict(os.environ, {'PATH': path}):
+                diag.kube(opts, 'pods')
+            self.assertIs(opts.kube_auth, False)
+            self.assertNotIn('plugin', log.read_text())
+
+    def test_relative_plugin_path_and_opt_out_keep_kubectls_own_auth(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, log = self.make(directory, plugin_delay=0, command='./bin/fake-get-token')
+            opts = diag.parse_args(['--context', 'test', '--values'])
+            with mock.patch.dict(os.environ, {'PATH': path}):
+                diag.kube(opts, 'pods')
+            self.assertIs(opts.kube_auth, False)
+        with tempfile.TemporaryDirectory() as directory:
+            path, log = self.make(directory, plugin_delay=0)
+            opts = diag.parse_args(['--context', 'test', '--values'])
+            with mock.patch.dict(os.environ, {'PATH': path, 'NO_TOKEN_CACHE': '1'}):
+                diag.kube(opts, 'pods')
+            self.assertNotIn('plugin', log.read_text())
 
 
 class PostgreSQLCatalogTests(unittest.TestCase):

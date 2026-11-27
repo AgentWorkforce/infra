@@ -220,16 +220,6 @@ case "$ADMIN_EMAIL" in
     printf '    That address becomes the owner. Set ADMIN_EMAIL=<real address> (or fix it in %s) and rerun.\n' "$VALUES"
     read -r -p "    Continue anyway? [y/N] " ok; [[ "$ok" == y || "$ok" == Y ]] || die "set ADMIN_EMAIL first";;
 esac
-if ! ns_err="$(kubectl --context "$KUBE_CONTEXT" get namespace "$NAMESPACE" -o name 2>&1)"; then
-  # A fresh install: the cluster answered and the namespace isn't there yet.
-  if grep -q '(NotFound)' <<<"$ns_err"; then
-    kubectl --context "$KUBE_CONTEXT" create namespace "$NAMESPACE" >/dev/null || die "could not create namespace $NAMESPACE"
-    info "created namespace $NAMESPACE"
-  else
-    die "cannot reach namespace $NAMESPACE with context $KUBE_CONTEXT (cluster VPN on?)"
-  fi
-fi
-
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK" ${CHART_DIR:+"$CHART_DIR"}' EXIT
 
 # The install diagnostic (scripts/support/diagnose-install.py): the copy next to
@@ -243,7 +233,54 @@ elif ! curl -fsSL "$RAW/agent-relay-$RELEASE_VERSION/scripts/support/diagnose-in
 fi
 DIAG_SECTIONS=0
 if [[ -s "$DIAG" ]] && python3 "$DIAG" --help 2>/dev/null | grep -q -- '--only'; then DIAG_SECTIONS=1; fi
+# One bearer token for every kubectl/helm call. With an exec credential plugin
+# (aws eks get-token behind a slow credential_process) each kubectl call runs the
+# plugin: ~14s a call against 0.2s with a token. The diagnostic runs the plugin
+# once and writes a kubeconfig holding the token to $WORK (mode 0600, removed at
+# exit, never printed, never exported); it is refreshed before it expires. No exec
+# plugin, an older diagnostic, or NO_TOKEN_CACHE=1: kubectl keeps its own auth.
+TOKEN_KC="$WORK/kubeconfig-token"
+refresh_token() {
+  [[ -e "$WORK/token-off" || ! -s "$DIAG" || "${NO_TOKEN_CACHE:-0}" == 1 ]] && return 0
+  local due out
+  due="$(cat "$WORK/token-refresh" 2>/dev/null || echo 0)"
+  (( $(date +%s) < due )) && return 0
+  if out="$(python3 "$DIAG" --context "$KUBE_CONTEXT" --write-token-kubeconfig "$TOKEN_KC" 2>/dev/null)" \
+      && [[ "$out" =~ ^TOKEN_KUBECONFIG\ ([0-9]+)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}" >"$WORK/token-refresh"
+    if [[ ! -e "$WORK/token-on" ]]; then : >"$WORK/token-on"; info "using one cached cluster token for kubectl and helm (exec credential plugin)"; fi
+  else
+    # No exec plugin, an older diagnostic, or the plugin failed here: kubectl's own
+    # auth from now on (state in files, so a failure inside $(...) sticks too).
+    : >"$WORK/token-off"
+  fi
+}
+# KUBECONFIG is chosen per call, never exported: a fallback decided inside a
+# $(...) subshell then applies to every later call as well.
+with_kube_auth() {
+  refresh_token
+  if [[ -e "$WORK/token-on" && ! -e "$WORK/token-off" ]]; then KUBECONFIG="$TOKEN_KC" "$@"; else "$@"; fi
+}
+kubectl() { with_kube_auth command kubectl "$@"; }
+helm() { with_kube_auth command helm "$@"; }
+# Waits that can outlast one cached token (rollout status, helm test) keep
+# kubectl's own auth, like rds-setup.sh: the exec plugin renews as they run.
+k_long() { command kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" "$@"; }
+# The diagnostic reads the context's own exec config (the EKS cluster name) and
+# caches its own token, so it gets the original kubeconfig.
 diag() { python3 "$DIAG" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" --release "$RELEASE" "$@"; }
+refresh_token
+
+if ! ns_err="$(kubectl --context "$KUBE_CONTEXT" get namespace "$NAMESPACE" -o name 2>&1)"; then
+  # A fresh install: the cluster answered and the namespace isn't there yet.
+  if grep -q '(NotFound)' <<<"$ns_err"; then
+    kubectl --context "$KUBE_CONTEXT" create namespace "$NAMESPACE" >/dev/null || die "could not create namespace $NAMESPACE"
+    info "created namespace $NAMESPACE"
+  else
+    die "cannot reach namespace $NAMESPACE with context $KUBE_CONTEXT (cluster VPN on?)"
+  fi
+fi
+
 CREATED_ASSOCIATIONS=""
 # Restarts still owed for associations created earlier (this run or a previous one,
 # whose rollout restart failed): kept in STATE_DIR until they succeed.
@@ -392,6 +429,7 @@ fi
 
 # 3. pre ----------------------------------------------------------------------
 log "3/8 Creating databases, service logins and credential files (rds-setup.sh pre)"
+# rds-setup.sh keeps kubectl's own auth: its Jobs can outlast one cached token.
 NAMESPACE="$NAMESPACE" "$RDS_SETUP" pre
 # With global.rdsCa.bundle the chart renders rds-ca and pins its hash, and
 # refuses an rds-ca it does not own. pre (re)creates rds-ca for its own Jobs, so
@@ -692,9 +730,9 @@ fi
 # 8. Diagnostic -----------------------------------------------------------------
 log "8/8 Install status (helm test)"
 # Crash-looping Deployments never finish rolling out; helm test says why.
-k rollout status deployment -l "app.kubernetes.io/instance=$RELEASE" --timeout=300s >/dev/null 2>&1 || true
+k_long rollout status deployment -l "app.kubernetes.io/instance=$RELEASE" --timeout=300s >/dev/null 2>&1 || true
 STATUS_VERDICT=""
-helm --kube-context "$KUBE_CONTEXT" test "$RELEASE" -n "$NAMESPACE" --logs --timeout 5m >"$WORK/status.txt" 2>&1 || true
+command helm --kube-context "$KUBE_CONTEXT" test "$RELEASE" -n "$NAMESPACE" --logs --timeout 5m >"$WORK/status.txt" 2>&1 || true
 sed -n '/^Agent Relay install status/,/^\(HEALTHY\|UNHEALTHY\)/p' "$WORK/status.txt"
 STATUS_VERDICT="$(grep -oE '^(HEALTHY|UNHEALTHY)' "$WORK/status.txt" | tail -n1 || true)"
 [[ -n "$STATUS_VERDICT" ]] || { info "helm test printed no status table:"; tail -n 5 "$WORK/status.txt" | sed 's/^/      /'; }
@@ -727,7 +765,7 @@ MINTED="" code=""
 # 127.0.0.1:18787 failed): wait for the rollout, then retry the port-forward
 # and the request until the API answers.
 if [[ -n "$SVC" && -n "$PORT" && -n "$TOKEN" ]]; then
-  k rollout status "deployment/$SVC" --timeout=600s >/dev/null 2>&1 || info "relay-control is not rolled out yet; trying anyway"
+  k_long rollout status "deployment/$SVC" --timeout=600s >/dev/null 2>&1 || info "relay-control is not rolled out yet; trying anyway"
   for attempt in 1 2 3 4 5 6; do
     k port-forward "svc/$SVC" 18787:"$PORT" >/dev/null 2>&1 & PF=$!
     for _ in $(seq 1 20); do

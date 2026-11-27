@@ -40,6 +40,9 @@ MOCK
 cat >"$bin/helm" <<'MOCK'
 #!/usr/bin/env bash
 printf 'helm %s\n' "$*" >>"$MOCK_LOG"
+if [[ "${MOCK_EXEC:-0}" == 1 && "$1" != pull && "$1" != repo && "$1" != dependency ]]; then
+  if grep -q "$MOCK_TOKEN" "${KUBECONFIG:-/nonexistent}" 2>/dev/null; then echo 'auth token helm' >>"$MOCK_LOG"; else echo 'auth exec helm' >>"$MOCK_LOG"; fi
+fi
 [[ "$1" == pull ]] || exit 0
 ref="$2" version="" dir=""
 shift 2
@@ -54,6 +57,9 @@ MOCK
 cat >"$bin/kubectl" <<'MOCK'
 #!/usr/bin/env bash
 printf 'kubectl %s\n' "$*" >>"$MOCK_LOG"
+if [[ "${MOCK_EXEC:-0}" == 1 && "$*" != *"config "* ]]; then
+  if grep -q "$MOCK_TOKEN" "${KUBECONFIG:-/nonexistent}" 2>/dev/null; then echo 'auth token kubectl' >>"$MOCK_LOG"; else echo 'auth exec kubectl' >>"$MOCK_LOG"; fi
+fi
 case "$*" in
   "config current-context") echo test-ctx ;;
   *"create namespace"*) exit 0 ;;
@@ -61,7 +67,8 @@ case "$*" in
     [[ "${MOCK_NS_MISSING:-0}" == 1 ]] && { echo 'Error from server (NotFound): namespaces "agent-relay" not found' >&2; exit 1; }
     echo "Error from server (Forbidden)" >&2; exit 1 ;;
   *"get serviceaccounts default"*) echo '{"kind":"ServiceAccount"}' ;;
-  *"config view --minify"*) [[ "${MOCK_EKS:-0}" == 1 ]] && echo '{"clusters":[{"name":"arn:aws:eks:us-west-2:123456789012:cluster/demo"}],"users":[]}' ;;
+  *"config view --minify"*) [[ "${MOCK_EXEC:-0}" == 1 ]] && { printf '{"clusters":[{"name":"arn:aws:eks:us-west-2:123456789012:cluster/demo","cluster":{"server":"https://127.0.0.1:1"}}],"contexts":[{"name":"test-ctx","context":{"cluster":"arn:aws:eks:us-west-2:123456789012:cluster/demo","user":"u"}}],"current-context":"test-ctx","users":[{"name":"u","user":{"exec":{"apiVersion":"client.authentication.k8s.io/v1beta1","command":"%s","args":["eks","get-token","--cluster-name","demo","--region","us-west-2"]}}}]}\n' "$(dirname "$0")/fake-get-token"; exit 0; }
+    [[ "${MOCK_EKS:-0}" == 1 ]] && echo '{"clusters":[{"name":"arn:aws:eks:us-west-2:123456789012:cluster/demo"}],"users":[]}' ;;
   *"get secret agent-relay-secrets -o json") [[ "${MOCK_SECRET_OK:-0}" == 1 ]] && echo '{"kind":"Secret"}' || exit 1 ;;
   *"get secret "*) exit 1 ;;
   *"create -f - -o name"*) cat >/dev/null; echo job.batch/probe ;;
@@ -73,6 +80,18 @@ case "$*" in
   *"get jobs "*) echo '{"items":[{"metadata":{"name":"agent-relay-worker-migrate-1","creationTimestamp":"2026-11-26T00:00:00Z"}}]}' ;;
 esac
 MOCK
+# A slow exec credential plugin (aws eks get-token behind a slow credential_process).
+cat >"$bin/fake-get-token" <<'MOCK'
+#!/usr/bin/env bash
+echo 'exec-plugin run' >>"$MOCK_LOG"
+sleep "${MOCK_PLUGIN_DELAY:-2}"
+# MOCK_PLUGIN_FAIL_AFTER=N: the (N+1)th run fails, like a credential_process that stops working.
+if [[ -n "${MOCK_PLUGIN_FAIL_AFTER:-}" ]] && (( $(grep -c '^exec-plugin run' "$MOCK_LOG") > MOCK_PLUGIN_FAIL_AFTER )); then
+  echo 'exec-plugin failed' >>"$MOCK_LOG"; exit 1
+fi
+printf '{"kind":"ExecCredential","apiVersion":"client.authentication.k8s.io/v1beta1","status":{"token":"%s","expirationTimestamp":"%s"}}\n' "$MOCK_TOKEN" "${MOCK_TOKEN_EXPIRES:-2099-01-01T00:00:00Z}"
+MOCK
+chmod +x "$bin/fake-get-token"
 # The pinned rds-setup.sh, as the stub the mocked download serves: pre writes
 # one credential file and the HoopDb layout overlay.
 cat >"$tmp/rds-setup-stub.sh" <<'STUB'
@@ -287,3 +306,32 @@ grep -q 'rollout restart deployment/agent-relay-worker-session-summary-worker' "
 [[ ! -e "$tmp/state/pending-pod-identity-restarts" ]] || fail "pending restart: not cleared after it succeeded"
 pass "a pending restart from an earlier run is retried and cleared once it succeeds"
 
+
+# 19. An exec credential plugin runs once for the script's own kubectl/helm calls
+#     (each diagnostic run fetches its own): every call uses the cached token,
+#     and the token is never printed.
+pi_run MOCK_EXEC=1 MOCK_TOKEN=k8s-aws-v1.SECRET-TOKEN-VALUE MOCK_ASSOCIATIONS="$ALL" \
+  MOCK_OS_RESULT="$(b64 '{"kind":"http","status":200,"body":"{}"}')" || true
+# Only the long waits (rollout status, helm test) keep the exec plugin.
+short_exec="$(grep -B1 '^auth exec' "$log" | grep -E '^(kubectl|helm) ' | grep -vE 'rollout status| test ' || true)"
+[[ -z "$short_exec" ]] || { printf '%s\n' "$short_exec" >&2; fail "token cache: a short kubectl/helm call ran the exec plugin"; }
+grep -q '^auth token helm' "$log" || fail "token cache: helm did not use the cached token"
+grep -q '^auth token kubectl' "$log" || fail "token cache: kubectl did not use the cached token"
+! grep -q 'SECRET-TOKEN-VALUE' "$tmp/out" || fail "token cache: the token was printed"
+! grep -q 'SECRET-TOKEN-VALUE' "$log" || fail "token cache: the token reached a command line"
+expect_out "using one cached cluster token for kubectl and helm (exec credential plugin)" "token cache"
+runs=$(grep -c '^exec-plugin run' "$log"); calls=$(grep -c '^auth token' "$log")
+(( runs < calls / 4 )) || fail "token cache: $runs plugin runs for $calls calls"
+grep -A1 -E '^kubectl .*rollout status|^helm .* test ' "$log" | grep -q '^auth token' && fail "token cache: a long wait (rollout status / helm test) used the cached token"
+pass "an exec credential plugin runs once per process, not once per kubectl call ($runs runs, $calls calls), and the token is never printed"
+
+# 20. A refresh that fails (here inside a $(...) subshell, with a token that is
+#     always due) falls back to kubectl's own auth for every later call: no call
+#     keeps using the stale cached token.
+pi_run MOCK_EXEC=1 MOCK_TOKEN=k8s-aws-v1.SECRET-TOKEN-VALUE MOCK_PLUGIN_DELAY=0 MOCK_PLUGIN_FAIL_AFTER=1 \
+  MOCK_TOKEN_EXPIRES=2000-01-01T00:00:00Z MOCK_ASSOCIATIONS="$ALL" MOCK_OS_RESULT="$(b64 '{"kind":"http","status":200,"body":"{}"}')" || true
+grep -q '^exec-plugin failed' "$log" || fail "refresh failure: the plugin never failed"
+first_fail=$(grep -n '^exec-plugin failed' "$log" | head -n1 | cut -d: -f1)
+! tail -n +"$first_fail" "$log" | grep -q '^auth token' || { tail -n +"$first_fail" "$log" | grep -n '^auth token' -B1 | head >&2; fail "refresh failure: a later call still used the cached token"; }
+tail -n +"$first_fail" "$log" | grep -q '^auth exec' || fail "refresh failure: no later call ran"
+pass "a failed token refresh falls back to kubectl's own auth for every later call"
