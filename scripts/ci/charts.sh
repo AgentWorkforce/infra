@@ -952,6 +952,8 @@ for chart in "${charts[@]}"; do
         out=$(render "$chart" "$v")
         [ "$(rq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + "=" + .pathType] | join(",")' "$out")" = "/chief/v1=Prefix" ] \
           || err "$chart: the default Ingress must expose only /chief/v1 (Prefix)"
+        [ "$(rq 'select(.kind == "Ingress") | .metadata.annotations."alb.ingress.kubernetes.io/ssl-policy"' "$out")" = "ELBSecurityPolicy-TLS13-1-2-2021-06" ] \
+          || err "$chart: the ALB example must set a TLS 1.2+ ssl-policy (the controller default accepts TLS 1.0)"
         [ "$(rq 'select(.kind == "NetworkPolicy" and (.metadata.name | test("migration$") | not)) | [.spec.ingress[0].from[].ipBlock.cidr] | join(",")' "$out")" = "10.0.1.0/24,10.0.2.0/24" ] \
           || err "$chart: networkPolicy.ingressFrom must admit ALB subnets"
         [ "$(yq 'select(.kind == "ConfigMap") | .data.RELAYCHIEF_CONTROL_BROWSER_ORIGINS' <<<"$out")" = "https://app.example.com, https://admin.example.com" ] \
@@ -1005,6 +1007,8 @@ for chart in "${charts[@]}"; do
         out=$(render "$chart" "$v")
         [ "$(rq 'select(.kind == "Ingress") | [.spec.rules[0].http.paths[] | .path + "=" + .pathType] | join(",")' "$out")" = "/cloud/api/v1/flows=Prefix,/cloud/api/v1/workers=Prefix,/cloud/api/v1/workflows=Prefix,/api/v1/flows=Prefix,/api/v1/workers=Prefix,/api/v1/workflows=Prefix" ] \
           || err "$chart: the Ingress must route exactly the Flows paths and their /cloud aliases"
+        [ "$(rq 'select(.kind == "Ingress") | .metadata.annotations."alb.ingress.kubernetes.io/ssl-policy"' "$out")" = "ELBSecurityPolicy-TLS13-1-2-2021-06" ] \
+          || err "$chart: the ALB example must set a TLS 1.2+ ssl-policy (the controller default accepts TLS 1.0)"
         for name in RELAYCONTROL_INTROSPECT_SECRET RELAYFILE_CONTROL_BROKER_SECRET RELAYFILE_CONTROL_ENCRYPTION_KEY; do
           [ "$(yq "select(.kind == \"Deployment\") | .spec.template.spec.containers[0].env[] | select(.name == \"$name\") | .valueFrom.secretKeyRef.key" <<<"$out")" = "$name" ] \
             || err "$chart: $name must come from the existing Secret"
