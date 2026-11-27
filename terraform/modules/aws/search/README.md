@@ -71,7 +71,7 @@ Put the four `os PUT` requests from the steps below inside the subshell. An appr
 
    ```sh
    os PUT /_plugins/_security/api/roles/relayhistory_indexer \
-     -d '{"cluster_permissions":["cluster_monitor","indices:data/write/bulk"],"index_permissions":[{"index_patterns":["'"$INDEX_PATTERN"'"],"allowed_actions":["write","create_index","indices:data/write/bulk*","indices:monitor/settings/get","indices:admin/mapping/put","indices:data/read/search*","indices:data/read/scroll*","indices:data/read/mget*","indices:data/write/delete/byquery","indices:admin/refresh*","indices:admin/get"]}]}'
+     -d '{"cluster_permissions":["cluster_monitor","indices:data/write/bulk","indices:data/read/mget"],"index_permissions":[{"index_patterns":["'"$INDEX_PATTERN"'"],"allowed_actions":["write","create_index","indices:data/write/bulk*","indices:monitor/settings/get","indices:admin/mapping/put","indices:data/read/search*","indices:data/read/scroll*","indices:data/read/mget*","indices:data/write/delete/byquery","indices:admin/refresh*","indices:admin/get"]}]}'
    os PUT /_plugins/_security/api/rolesmapping/relayhistory_indexer \
      -d "{\"backend_roles\":[\"$INDEXER_ROLE_ARN\"]}"
    ```
@@ -85,7 +85,7 @@ Put the four `os PUT` requests from the steps below inside the subshell. An appr
      -d "{\"backend_roles\":[\"$READER_ROLE_ARN\"]}"
    ```
 
-The indexer needs this whole list. OpenSearch checks `_bulk` at cluster level, so it needs the `indices:data/write/bulk` cluster permission, and index bootstrap returns 403 without `create_index`, `indices:monitor/settings/get` and `indices:admin/mapping/put` on the pattern. The reader mapping is the minimum: a reader that sends `_msearch` or `_mget` also needs `cluster_composite_ops_ro`, because those are checked at cluster level too.
+The indexer needs this whole list. OpenSearch checks `_bulk` and `_mget` at cluster level, so it needs the `indices:data/write/bulk` and `indices:data/read/mget` cluster permissions (the indexer sends `_mget` after a `_bulk` version conflict to tell a delete tombstone from a newer document, for example when an erased session is reconciled; without it that session's search-index stage fails with `http_403:security_exception`), and index bootstrap returns 403 without `create_index`, `indices:monitor/settings/get` and `indices:admin/mapping/put` on the pattern. The reader mapping is the minimum: a reader that sends `_msearch` or `_mget` also needs `cluster_composite_ops_ro`, because those are checked at cluster level too.
 
 The mandatory pure classifier is `creation_mode.py`; it accepts only native saved-plan `show -json` objects for exact `module.search` addresses used by `examples/aws-environments` and `examples/aws-search-proof`. It accepts no caller mode, path override, skip flag or digest as authority. Both runner paths check before publishing the plan receipt and again before apply; existing exact-plan review, source/input seals and state locks remain required. Search-proof's closed AWS address/action contract remains unchanged apart from the new built-in marker.
 

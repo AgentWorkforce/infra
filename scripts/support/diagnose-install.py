@@ -1153,7 +1153,7 @@ def classify_opensearch(result, target, role_arn=''):
     if status == 403 and re.search(r'security_exception|no permissions for', body):
         forms = iam_role_forms(role_arn, who.get('user', ''))
         roles = json.dumps(forms or ['<the search indexer role ARN>'])
-        role_body = json.dumps({'cluster_permissions': ['cluster_monitor', 'indices:data/write/bulk'], 'index_permissions': [{
+        role_body = json.dumps({'cluster_permissions': ['cluster_monitor', 'indices:data/write/bulk', 'indices:data/read/mget'], 'index_permissions': [{
             'index_patterns': [prefix+'-*'], 'allowed_actions': ['write', 'create_index', 'indices:data/write/bulk*',
             'indices:monitor/settings/get', 'indices:admin/mapping/put', 'indices:data/read/search*', 'indices:data/read/scroll*',
             'indices:data/read/mget*', 'indices:data/write/delete/byquery', 'indices:admin/refresh*', 'indices:admin/get']}]},
