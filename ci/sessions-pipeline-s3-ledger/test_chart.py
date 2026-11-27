@@ -367,6 +367,22 @@ class S3Ledger(unittest.TestCase):
         # The same digest is allowed.
         self.render(merge(unified, {"rearmSweeper": {"image": {"digest": d0}}}))
 
+    def test_sweeper_image_pull_secrets(self):
+        base = merge(load(S3_FIXTURE), {"ingestEdge": {"imagePullSecrets": [{"name": "ingest-registry-creds"}]}})
+        pod = lambda docs: self.cronjob(docs)["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        dep = lambda docs: next(x for x in docs if x["kind"] == "Deployment" and x["metadata"]["name"].endswith("ingest-edge"))
+        docs = self.render(base)
+        # Unset: the sweeper inherits the ingest list.
+        self.assertEqual(pod(docs)["imagePullSecrets"], [{"name": "ingest-registry-creds"}])
+        # A list replaces it for the sweeper only; the ingest Deployment is unchanged.
+        own = self.render(merge(base, {"rearmSweeper": {"imagePullSecrets": [{"name": "sweeper-registry-creds"}]}}))
+        self.assertEqual(pod(own)["imagePullSecrets"], [{"name": "sweeper-registry-creds"}])
+        self.assertEqual(dep(own), dep(docs))
+        # [] defers to the ServiceAccount: no imagePullSecrets on the Pod.
+        self.assertNotIn("imagePullSecrets", pod(self.render(merge(base, {"rearmSweeper": {"imagePullSecrets": []}}))))
+        # A non-list is refused.
+        self.render(merge(base, {"rearmSweeper": {"imagePullSecrets": "sweeper-registry-creds"}}), fail="rearmSweeper.imagePullSecrets must be a list")
+
     def test_sweeper_pod_identity(self):
         docs = self.render(merge(load(S3_FIXTURE), {"rearmSweeper": {"credentials": {"mode": "podIdentity", "existingSecret": ""}}}))
         pod = self.cronjob(docs)["spec"]["jobTemplate"]["spec"]["template"]["spec"]
