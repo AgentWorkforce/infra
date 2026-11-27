@@ -1,0 +1,2 @@
+# Hosted observations stay local. Commit synthetic examples only.
+prod-*.json

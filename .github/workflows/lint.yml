@@ -135,6 +135,7 @@ jobs:
           python3 ci/agent-relay/test_gate_relayfacts_routes.py -v
           python3 ci/agent-relay/test_release_candidate.py -v
           python3 ci/agent-relay/test_release_candidate_gate.py -v
+          python3 bench/relaycast/test_profile.py
           python3 ci/agent-relay/test_install_pack.py -v
           python3 ci/agent-relay/test_release_manifest.py -v
           python3 ci/agent-relay/test_search_limits.py -v
