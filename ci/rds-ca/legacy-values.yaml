@@ -2,6 +2,9 @@
 # hand-made rds-ca ConfigMap and its sha256 pinned in each component.
 # ci/rds-ca/test.sh layers this over the current example to prove such values
 # render exactly as before.
+# site.rds (the example's way to turn the managed CA on) off too.
+site:
+  rds: false
 global:
   rdsCa:
     bundle: ""

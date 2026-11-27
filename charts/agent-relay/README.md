@@ -26,6 +26,74 @@ off by default; see `docs/self-hosted-durable-actors.md`. Relay Chief
 Requires Helm 3.10 or newer: the relay-control subchart uses
 `{{ continue }}`, which older Helm versions cannot parse.
 
+## Site values
+
+Set each site fact once, at the top level of your values file, and the chart
+fills every component value that repeats it:
+
+```yaml
+site:
+  domain: relay.acme.com            # <domain>, api., cast., history.<domain>
+  region: us-east-1                 # S3 bucket (and OpenSearch) region
+  sessionsBucket: acme-agent-relay-sessions
+  opensearchUrl: https://vpc-agent-relay-abc123.us-east-1.es.amazonaws.com
+  orgId: org_acme                   # never change it after the first upload
+  orgName: Acme
+  adminEmail: admin@acme.com
+  rds: true                         # databases on RDS in region: chart-managed CA
+  # hosts: { dashboard: app.acme.com }   # optional: replace one hostname
+```
+
+| `site.` | Fills |
+|---|---|
+| `domain` (or `hosts.dashboard/api/cast/history`) | `relaycast.baseUrl`; `relay-control` `publicUrl`, `dashboardUrl`, `services.relaycastPublicUrl`, `services.sessionReadApiPublicUrl`, `introspection.audiences`; `relay-webapp.runtime.publicUrl`; in `sessions-pipeline`: `sessionReadApi.origin`, `sessionReadApi.cors.allowedOrigins`, `ingestEdge.origin`, `alleyoop.auth.historyOrigin` (and `nativeRouting.origin` when enabled); `eksIngress.domain`/`hosts`, `gkeIngress.hosts`, `traefikIngress.hosts` when that edge is enabled |
+| `region` | every `locker.region` (`worker`, `alleyoop`, `ingestEdge`, `searchIndexer`, `nativeConsumer`), the read API's `LOCKER_REGION`, and both `search.opensearch.region` values when `opensearchUrl` is set |
+| `sessionsBucket` | every `locker.bucket` and the read API's `LOCKER_BUCKET` |
+| `opensearchUrl` | `sessionReadApi.search.opensearch.url` and `searchIndexer.search.opensearch.url` |
+| `orgId` | `global.tenant.orgId`, in every chart |
+| `orgName`, `adminEmail` | `relay-control.bootstrap.orgName` and `.adminEmail` |
+| `rds: true` (with `region`) | `global.rdsCa.bundle` in every chart: the chart-managed RDS CA for that region ([Chart-managed RDS CA](#chart-managed-rds-ca)). An explicit `global.rdsCa.bundle` (another region, or `global`) wins |
+
+A site key you leave out fills nothing, and a component that is off is left
+alone. In single-host mode (`global.singleHost.host`) the dashboard and api URLs
+are not filled; the single host derives them.
+
+**Explicit values still work.** A file with every value spelled out (the long
+form, before site values) renders exactly as it did. With `site:` set:
+
+- A component value that is empty, or still the example the chart's own
+  profile ships (`values-eks.yaml`'s `placeholder.company` hosts,
+  `example-agent-relay-sessions`, `example-org`), gets the site value. A
+  profile region such as `us-west-2` counts as an example only while the bucket
+  or OpenSearch URL next to it is also an example.
+- Where a value may differ (`search.opensearch.region` for an OpenSearch domain
+  in another region, `cors.allowedOrigins`, `introspection.audiences`, and
+  `relay-control.bootstrap`, which only Control reads), your value wins.
+- Where it must agree (hosts, bucket, bucket region, OpenSearch URL, org ID),
+  a different value fails the render, naming both:
+  `sessions-pipeline.worker.locker.bucket = "old-bucket" contradicts
+  site.sessionsBucket`. Delete the component value.
+
+**Every values problem in one report.** Before any component renders, the chart
+checks the site values, the contradictions above and the checks that the
+components otherwise make one at a time (the public History origin, OpenSearch
+URLs, the shared bucket, matching origins), and fails once with the full list:
+each value's path, what is wrong and the fix. Checks it does not cover still
+come from the component, one at a time, once the list is clear. To see the list
+without a cluster, run `scripts/selfhost/check-values.sh` with the same `-f`
+files as the helm command; it also points out example values (the
+`examples/aws` domain, bucket, org, email) left in your own files, by line.
+
+How it works: Helm only lets a parent chart pass `global` to its subcharts, so
+the umbrella fills the values instead, from
+`templates/site/runs-before-subcharts/1/2/3/4/5/site.yaml`. Helm renders the
+deepest template path first and gives each subchart the same values map the
+umbrella sees, so that template sets the values before any subchart reads
+them. `ci/agent-relay/test_site_values.py` fails if another template becomes
+as deep, or if the report stops coming out before a subchart's own failure.
+The release keeps the values you supplied (`helm get values` shows `site:`,
+not the filled values).
+
 ## Customer-neutral GCP template
 
 `values-gcp.yaml` is the customer-neutral starting point for a full GKE
@@ -385,7 +453,9 @@ helm template agent-relay charts/agent-relay \
   -f <private-site-values.yaml> >/dev/null
 ```
 
-The private overlay must replace every copy marked `REQUIRED OVERRIDE`: the
+[Site values](#site-values) (`site:`) fill the domain, bucket, region,
+OpenSearch URL and org copies below from one line each. Otherwise the private
+overlay must replace every copy marked `REQUIRED OVERRIDE`: the
 organization ID, public origins, S3 bucket and region, the RDS CA (set
 `global.rdsCa.bundle` to the RDS region, or override every RDS CA SHA-256),
 OpenSearch endpoint/backend ID/region, ALB subnet CIDRs, first owner details,

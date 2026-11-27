@@ -15,6 +15,21 @@ Use it to check the shape of your own files. **Every value here is an example.**
 | `secrets/05-search-indexer-owner.yaml` | Secret `search-indexer-owner` | `rds-setup.sh pre` (fresh dedicated-owner installs) |
 | `secrets/06-agent-relay-llm.optional.yaml` | Secret `agent-relay-llm` (optional) | Your model endpoint, see after-install |
 
+`values.yaml` sets each site fact once, in its `site:` block: domain, region,
+bucket, OpenSearch URL, org ID, org name, admin email, and `rds: true` for the
+chart-managed RDS CA. The chart fills every component value that repeats one
+(agent-relay chart 0.7.86 or later; the chart README, "Site values", lists
+them). A release older than that has a copy of this file with every value
+spelled out on each line; use the copy from the release you install. Check your
+filled-in file before installing. With no cluster, this lists every problem at
+once (example values left in, by line, and each chart check that fails, with
+the value's path and the fix):
+
+```sh
+scripts/selfhost/check-values.sh -f charts/agent-relay/values-eks.yaml \
+  -f charts/agent-relay/values-eks-native.yaml -f values.yaml
+```
+
 The secret values are fake. Don't hand-write real ones: `rds-setup.sh` and step 10
 generate them under `~/.agent-relay-install/secret-files/<Secret>/<key>` and create
 the Secrets from those files. If you can't run shell scripts, do the same

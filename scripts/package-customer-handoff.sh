@@ -151,6 +151,7 @@ REQUIRED_FILES = (
     "scripts/conformance/tests/run-tests.sh",
     "scripts/release/validate-customer-release.py",
     "scripts/selfhost/README.md",
+    "scripts/selfhost/check-values.sh",
     "scripts/selfhost/rds-setup.sh",
     "scripts/selfhost/verify-agent-relay.sh",
     "scripts/selfhost/session-identities.py",

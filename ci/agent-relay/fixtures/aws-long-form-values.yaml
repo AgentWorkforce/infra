@@ -1,0 +1,339 @@
+# EXAMPLE values.yaml for agent-relay-2026.11.18 (chart 0.7.63), filled in.
+# Every site value is an example: domain ar.selfhost-example.agentrelay.com, orgId, org name, admin
+# email, region (also global.rdsCa.bundle), bucket, OpenSearch URL, ALB subnet
+# CIDRs, and the nativeBrief model (disabled until after-install).
+# The unfilled template is https://agentrelay.com/self-hosting/files/eks/values.yaml.
+
+# Agent Relay on your own EKS cluster: site values.
+#
+# Apply after the chart's EKS profiles, in this order:
+#   helm upgrade --install agent-relay charts/agent-relay --namespace agent-relay \
+#     -f charts/agent-relay/values-eks.yaml \
+#     -f charts/agent-relay/values-eks-native.yaml \
+#     -f values.yaml
+#
+# Replace every placeholder first (step 9 of agentrelay.com/docs/self-hosting/install-eks does it with sed). This file
+# holds no secret values: it only names Secrets and keys, listed at
+# agentrelay.com/docs/self-hosting/secrets.
+#
+# Sizing: a small install for one or two teams (db.t4g.medium, m7g.large.search,
+# 2 x m6i.large nodes scaling to 4). These are estimates that have not been load
+# tested. agentrelay.com/docs/self-hosting ("Scaling up") has the changes for a larger install.
+#
+# Single-replica components are listed at agentrelay.com/docs/self-hosting under "Availability".
+
+# One line per image: each holds that image's repository and digest, and every
+# workload using it takes both from here. To move to a newer build or a new image
+# name, change only that line. See the Images table at agentrelay.com/docs/self-hosting/install-eks.
+x-pins:
+  services-image: &services_image { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: "sha256:e51749eb2b7c91b790a1e05c126cc4a7b47243ab5d8d116c62732746e223c4a5" }
+  webapp-image: &webapp_image { repository: ghcr.io/agentworkforce/relay-webapp, digest: "sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e" }
+
+components:
+  relaycast: true
+  relayauth: false
+  sessionsPipeline: true
+  control: true
+  webapp: true
+  relayflows: false
+  durableActors: false
+  relayfile: false
+
+global:
+  # Fresh installs start every Services reader and writer on the qualified
+  # ruleset-10 wasm-bindgen contract. Populated installs must follow the
+  # reader-first two-revision procedure at agentrelay.com/docs/self-hosting/upgrades before applying this file
+  # unchanged.
+  scrubEngine:
+    engine: wasm-bindgen
+    required: wasm-bindgen
+    readerMaxRuleset: "10"
+  tenant:
+    # Stable organization ID that partitions session data. Never change it after
+    # the first upload.
+    orgId: org_example
+  # The RDS CA: the chart ships AWS's public RDS CA bundles, renders the rds-ca
+  # ConfigMap for this region and pins its sha256 in every Postgres client. Set
+  # it to the RDS instance's region, or to global. Nothing to download or hash.
+  rdsCa:
+    bundle: us-east-1
+
+relaycast:
+  # PostgreSQL backend. The chart allows exactly one replica on this backend:
+  # realtime, presence and rate limits are in-process, and uploads use one volume.
+  runtime:
+    backend: postgres
+    postgres:
+      image:
+        repository: ghcr.io/agentworkforce/relaycast-self-host
+        digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+  # A SQLite-only setting that this backend refuses.
+  retention:
+    messageTtlDays: null
+  baseUrl: https://cast.ar.selfhost-example.agentrelay.com
+  existingSecret: agent-relay-secrets
+  persistence:
+    enabled: true
+    size: 20Gi
+  networkPolicy:
+    ingressFrom:
+      - podSelector: {}
+      - ipBlock: { cidr: 10.0.0.0/20 }
+      - ipBlock: { cidr: 10.0.16.0/20 }
+
+sessions-pipeline:
+  # HoopDb is on RDS; rds-setup.sh runs its privileged bootstrap.
+  hoopdb:
+    enabled: false
+  searchWorkerRole: { bootstrapJob: { enabled: false } }
+  runtimeRole: { bootstrapJob: { enabled: false } }
+  functionDefaultRevoke: { bootstrapJob: { enabled: false } }
+
+  # The read API: session reads and search, on the history origin.
+  sessionReadApi:
+    enabled: true
+    image: *services_image
+    output: { enabled: true }
+    digest: { enabled: true }
+    replicas: 1
+    origin: https://history.ar.selfhost-example.agentrelay.com
+    completeSince: epoch
+    directoryWorkspaces: "*"
+    events: { messageIds: true }
+    turns: { assumeNoLegacy: true }
+    login: { advertisesSync: false }
+    config:
+      existingSecret: agent-relay-read-api
+      key: RELAYHISTORY_READ_API_SECRET
+    # Verified against the chart-managed RDS CA (global.rdsCa).
+    postgres: { tlsProfile: custom-ca }
+    search:
+      backend: opensearch
+      backendId: opensearch-main
+      opensearch:
+        url: https://vpc-agent-relay-example.us-east-1.es.amazonaws.com
+        region: us-east-1
+        indexPrefix: relayhistory
+    auth:
+      mode: self_issued
+      relaycontrol: { enabled: false, url: "", existingSecret: "" }
+      selfIssued:
+        internalSecret:
+          existingSecret: agent-relay-secrets
+          key: session-read-api-secret
+    cors:
+      allowedOrigins:
+        - https://ar.selfhost-example.agentrelay.com
+    networkPolicy:
+      enabled: true
+      controlFrom:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: relay-control } }
+      publicFrom:
+        - ipBlock: { cidr: 10.0.0.0/20 }
+        - ipBlock: { cidr: 10.0.16.0/20 }
+    timing: { assumeNoTurns: true }
+    canonical: { pinLaggingPointer: true }
+    serviceAccountName: agent-relay-session-read
+    serviceAccountCreate: true
+    extraEnv:
+      - { name: LOCKER_BUCKET, value: example-agent-relay-sessions }
+      - { name: LOCKER_REGION, value: us-east-1 }
+      - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+      - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+      - { name: READ_API_BRIEF_TITLES_WORKSPACES, value: "*" }
+      - { name: READ_API_SESSION_QUERY, value: "true" }
+      # How much of one session the read API loads. Raise it only together with
+      # the memory limit below: 64MiB needs at least 1Gi.
+      - { name: READ_API_CANONICAL_SCOPE_BYTES, value: "64MiB" }
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1536Mi }
+
+  # The upload edge, on the same history origin.
+  ingestEdge:
+    enabled: true
+    image: *services_image
+    origin: https://history.ar.selfhost-example.agentrelay.com
+    allowInClusterHttp: true
+    sessionSelection: true
+    heartbeatAccept: true
+    relaycontrol:
+      url: http://relay-control.agent-relay.svc.cluster.local
+    config:
+      existingSecret: agent-relay-ingest-edge-runtime
+      databaseUrlKey: database-url
+      introspectSecretKey: introspect-secret
+    serviceAccountName: agent-relay-session-ingest-api
+    locker:
+      bucket: example-agent-relay-sessions
+      region: us-east-1
+      credentials: { mode: podIdentity }
+
+  # Writes transcript search into OpenSearch. The chart runs exactly one replica.
+  searchIndexer:
+    enabled: true
+    image: *services_image
+    completeSince: epoch
+    config: { existingSecret: search-indexer-runtime }
+    search:
+      backend: opensearch
+      backendId: opensearch-main
+      opensearch:
+        url: https://vpc-agent-relay-example.us-east-1.es.amazonaws.com
+        region: us-east-1
+        indexPrefix: relayhistory
+    locker:
+      bucket: example-agent-relay-sessions
+      region: us-east-1
+    postgres: { tlsProfile: custom-ca }
+    bootstrap:
+      enabled: true
+      existingSecret: search-indexer-owner
+    # Writes the Postgres facts used by Output, digest and coordination views.
+    outputFacts:
+      enabled: true
+
+  # Reserved native-consumer cadence for the qualified cutover. This file
+  # runs searchIndexer and leaves nativeConsumer disabled; if the native
+  # consumer is enabled by a reviewed site overlay, reconcile every minute and
+  # retain a lookback wider than that cadence.
+  nativeConsumer:
+    reconcileEveryMinutes: 1
+    reconcileLookbackMinutes: 30
+
+  worker:
+    acknowledgeWorkloadRename: true
+    image: *services_image
+    existingSecret: agent-relay-secrets
+    summaryEncryption:
+      existingSecret: agent-relay-secrets
+    hoopdb:
+      existingSecret: agent-relay-secrets
+      key: HOOPDB_URL
+    migrations:
+      hoopdb:
+        existingSecret: agent-relay-secrets
+        key: HOOPDB_MIGRATION_URL
+      databaseMode: rds
+      rdsLayout: separate-database
+      supabaseShim: false
+      runtimeRole: sessions_pipeline_runtime
+      runtimeRoleLogin: true
+      functionBoundaryMode: global-default-revoke
+      waitForRole: { enabled: false, functionDefault: false }
+    locker:
+      bucket: example-agent-relay-sessions
+      region: us-east-1
+    # Session titles and briefs. Needs a workspace ID, which exists only after
+    # first sign-in, so agentrelay.com/docs/self-hosting/after-install turns this on.
+    nativeBrief:
+      enabled: false
+      image: *services_image
+      workspaceIds: []
+      model: gpt-4o-mini
+      sweepSeconds: 300
+      # For an OpenAI-compatible gateway such as Bedrock, see agentrelay.com/docs/self-hosting/after-install.
+      # baseUrl: https://<gateway>/v1
+      # allowInClusterHttp: true   # only for an http Service URL
+      openaiSecret:
+        name: agent-relay-llm
+        key: OPENAI_API_KEY
+    components:
+      session-brief:
+        enabled: false
+      bob-costas:
+        # "off" writes extractive summaries only; agentrelay.com/docs/self-hosting/after-install sets a model.
+        env:
+          - { name: BOB_COSTAS_MODEL, value: "off" }
+
+  # The legacy RelayAuth ingest path is unused here: uploads go to the ingest
+  # edge. Only its Deployment is omitted; the ServiceAccount that the ingest edge
+  # uses is still created.
+  alleyoop:
+    deployment:
+      enabled: false
+    image: *services_image
+    hoopdb:
+      existingSecret: agent-relay-secrets
+      key: HOOPDB_URL
+    existingSecret: agent-relay-secrets
+    locker:
+      bucket: example-agent-relay-sessions
+      region: us-east-1
+    auth:
+      historyOrigin: https://history.ar.selfhost-example.agentrelay.com
+      allowInterimRelayAuthBearer: false
+    environment: production
+
+relay-control:
+  image:
+    repository: ghcr.io/agentworkforce/relay-control
+    digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9
+  # The chart allows one replica: login and device rate limits are per process.
+  replicaCount: 1
+  existingSecret: agent-relay-secrets
+  secretKeys:
+    relayauthApiKey: ""
+    introspectSecret: relaycontrol-introspect-secret
+    relaycastInternalSecret: relaycast-internal-secret
+    sessionReadApiSecret: session-read-api-secret
+    # First admin signs in with this one-time key (step 16 of the install guide): no SMTP needed.
+    setupKey: selfhost-setup-key
+    # Set to smtp-password, and fill in the smtp block below, only if you add SMTP.
+    smtpPassword: ""
+  bootstrap:
+    orgName: Example Corp
+    adminEmail: admin@example.com
+    workspaceName: Default
+  # Optional. Password sign-in, the setup key and temporary passwords work
+  # without email. With SMTP, users can also self-register and reset passwords.
+  # smtp:
+  #   host: <smtp host>
+  #   port: 587
+  #   security: starttls
+  #   username: <smtp username>
+  #   from: "Agent Relay <relay@<domain>>"
+  auth:
+    password:
+      enabled: true
+    # One hop: the load balancer. Rate limits depend on this being right.
+    trustedProxies: 1
+  # Owner-only Usage and qualified MCP agent launch. Flows, Chief and Relayfile
+  # remain outside this install.
+  selectedFeatures: [usage, launch]
+  publicUrl: https://api.ar.selfhost-example.agentrelay.com
+  dashboardUrl: https://ar.selfhost-example.agentrelay.com/
+  services:
+    relaycastPublicUrl: https://cast.ar.selfhost-example.agentrelay.com
+    relayauthEnabled: false
+    relayauthUrl: ""
+    relayhistoryUrl: ""
+    relayhistoryPublicUrl: ""
+    relayhistoryBackend: native
+    sessionReadApiUrl: http://agent-relay-read-api.agent-relay.svc.cluster.local
+    sessionReadApiPublicUrl: https://history.ar.selfhost-example.agentrelay.com
+    sessionReadApiMcpReads: true
+  introspection:
+    audiences:
+      - https://history.ar.selfhost-example.agentrelay.com
+      - https://api.ar.selfhost-example.agentrelay.com
+  networkPolicy:
+    ingressFrom:
+      - podSelector: {}
+      - ipBlock: { cidr: 10.0.0.0/20 }
+      - ipBlock: { cidr: 10.0.16.0/20 }
+
+relay-webapp:
+  image: *webapp_image
+  # The chart allows one replica.
+  replicaCount: 1
+  runtime:
+    publicUrl: https://ar.selfhost-example.agentrelay.com
+    sessionReadApiEnabled: true
+    # The backend endpoint is enabled; keep its web view explicitly default-off.
+    coordinationOverlapsEnabled: false
+  networkPolicy:
+    ingressFrom:
+      - podSelector: {}
+      - ipBlock: { cidr: 10.0.0.0/20 }
+      - ipBlock: { cidr: 10.0.16.0/20 }

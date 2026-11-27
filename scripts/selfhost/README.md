@@ -51,6 +51,24 @@ in a throwaway repository config, so your own Helm repositories are neither read
 nor changed. Run it from a checkout before installing from `charts/agent-relay`;
 the published chart above needs neither.
 
+## Checking values before an install
+
+`check-values.sh` takes the same `-f` files as the helm command and, with no
+cluster, lists every values problem at once: example values (the
+`examples/aws` domain, bucket, OpenSearch endpoint, org and admin email) still
+in your own files, by file and line, then every check the chart makes before
+it renders anything (site values, a component value that contradicts them, the
+public History origin, OpenSearch URLs, the shared bucket), each with the
+value's path and the fix. It exits 0 when it finds nothing.
+
+```sh
+scripts/selfhost/check-values.sh -f charts/agent-relay/values-eks.yaml \
+  -f charts/agent-relay/values-eks-native.yaml -f values.yaml
+```
+
+`--chart oci://... --version <v>` checks a published chart instead of the
+checkout; `--allow-example-values` skips the example-value scan.
+
 ## Mirroring images to ECR
 
 `mirror-images-to-ecr.sh` copies the images an environment's chart render pins

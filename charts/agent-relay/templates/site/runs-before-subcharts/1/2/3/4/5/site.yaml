@@ -1,0 +1,347 @@
+{{- /*
+Site values and the aggregated values check. This file must stay the deepest
+template path in the chart: Helm renders deepest paths first, so it runs before
+every subchart template, fills what `site:` derives, and fails once with every
+problem it finds. templates/_site.tpl has the details; README "Site values" the
+operator view. It renders no object.
+*/ -}}
+{{- $st := dict "problems" (list) "profiles" (list) -}}
+{{- range $file, $_ := .Files.Glob "values-*.yaml" -}}
+{{- $parsed := $.Files.Get $file | fromYaml -}}
+{{- if and (kindIs "map" $parsed) (not (hasKey $parsed "Error")) }}{{ $_ := set $st "profiles" (append $st.profiles $parsed) }}{{ end -}}
+{{- end -}}
+{{- $V := .Values -}}
+{{- $components := $V.components | default dict -}}
+
+{{- /* 1. The site block itself. */ -}}
+{{- $site := $V.site | default dict -}}
+{{- if not (kindIs "map" $site) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site" "value" $site "why" "must be a map" "fix" "see the chart README, \"Site values\"") -}}
+{{- $site = dict -}}
+{{- end -}}
+{{- $siteKeys := list "domain" "hosts" "region" "sessionsBucket" "opensearchUrl" "orgId" "orgName" "adminEmail" "rds" -}}
+{{- range $k, $_ := $site -}}
+{{- if not (has $k $siteKeys) }}{{ include "agent-relay.site.problem" (dict "st" $st "where" (printf "site.%s" $k) "value" nil "why" "is not a site setting" "fix" (printf "use one of %s" (join ", " $siteKeys))) }}{{ end -}}
+{{- end -}}
+{{- range $k := without $siteKeys "hosts" "rds" -}}
+{{- $v := index $site $k -}}
+{{- if not (or (kindIs "invalid" $v) (kindIs "string" $v)) }}{{ include "agent-relay.site.problem" (dict "st" $st "where" (printf "site.%s" $k) "value" $v "why" "must be a string" "fix" "quote it") }}{{ $_ := set $site $k (toString $v) }}{{ end -}}
+{{- end -}}
+
+{{- /* Hosts: site.domain gives <domain>, api.<domain>, cast.<domain> and
+history.<domain>; site.hosts.<role> replaces one of them. */ -}}
+{{- $domain := $site.domain | default "" -}}
+{{- $hostsIn := $site.hosts | default dict -}}
+{{- if not (kindIs "map" $hostsIn) }}{{ include "agent-relay.site.problem" (dict "st" $st "where" "site.hosts" "value" $hostsIn "why" "must be a map of dashboard, api, cast and history hostnames" "fix" "for example hosts: { api: api.relay.example.org }") }}{{ $hostsIn = dict }}{{ end -}}
+{{- $prefixes := dict "dashboard" "" "api" "api." "cast" "cast." "history" "history." -}}
+{{- range $k, $_ := $hostsIn -}}
+{{- if not (hasKey $prefixes $k) }}{{ include "agent-relay.site.problem" (dict "st" $st "where" (printf "site.hosts.%s" $k) "value" nil "why" "is not a host role" "fix" "use dashboard, api, cast or history") }}{{ end -}}
+{{- end -}}
+{{- if $domain -}}
+{{- $why := include "agent-relay.site.publicHost" (dict "host" $domain) -}}
+{{- if $why }}{{ include "agent-relay.site.problem" (dict "st" $st "where" "site.domain" "value" $domain "why" $why "fix" "set site.domain to the base domain your DNS and certificate cover, such as relay.example.org (no https://)") }}{{ end -}}
+{{- end -}}
+{{- $hosts := dict -}}
+{{- range $role, $prefix := $prefixes -}}
+{{- $h := index $hostsIn $role | default "" | toString -}}
+{{- if $h -}}
+{{- $why := include "agent-relay.site.publicHost" (dict "host" $h) -}}
+{{- if $why }}{{ include "agent-relay.site.problem" (dict "st" $st "where" (printf "site.hosts.%s" $role) "value" $h "why" $why "fix" "use a hostname your DNS and certificate cover, with no https://") }}{{ end -}}
+{{- else if $domain -}}
+{{- $h = printf "%s%s" $prefix $domain -}}
+{{- end -}}
+{{- $_ := set $hosts $role $h -}}
+{{- end -}}
+{{- $hostSource := dict -}}
+{{- range $role, $_ := $prefixes }}{{ $_ := set $hostSource $role (ternary (printf "site.hosts.%s" $role) "site.domain" (hasKey $hostsIn $role)) }}{{ end -}}
+{{- $origin := dict -}}
+{{- range $role, $h := $hosts }}{{ $_ := set $origin $role (ternary (printf "https://%s" $h) "" (ne $h "")) }}{{ end -}}
+
+{{- /* Values derived from a site value already reported above: the mirrored
+checks below skip them, so one bad site value is one problem. */ -}}
+{{- $bad := list -}}
+{{- $domainBad := and $domain (include "agent-relay.site.publicHost" (dict "host" $domain)) -}}
+{{- range $role, $o := $origin -}}
+{{- $own := index $hostsIn $role | default "" | toString -}}
+{{- if or (and $own (include "agent-relay.site.publicHost" (dict "host" $own))) (and (not $own) $domainBad) }}{{ $bad = append $bad $o }}{{ end -}}
+{{- end -}}
+{{- $region := $site.region | default "" -}}
+{{- if and $region (not (regexMatch "^[a-z]{2}(-[a-z0-9]+)+-?[0-9]+$" $region)) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.region" "value" $region "why" "must be a cloud region name such as us-east-1" "fix" "set the region of the sessions bucket and OpenSearch domain") -}}
+{{- end -}}
+{{- $bucket := $site.sessionsBucket | default "" -}}
+{{- if $bucket -}}
+{{- if or (not (regexMatch "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" $bucket)) (contains ".." $bucket) (regexMatch "^[0-9.]+$" $bucket) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.sessionsBucket" "value" $bucket "why" "must be a bucket name (3-63 lowercase letters, digits, dots and hyphens; no s3:// or path)" "fix" "set the bare bucket name, such as acme-agent-relay-sessions") -}}
+{{- end -}}
+{{- end -}}
+{{- $opensearch := $site.opensearchUrl | default "" -}}
+{{- if $opensearch -}}
+{{- if regexMatch "^[a-z0-9.-]+(:[0-9]{1,5})?/?$" $opensearch -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.opensearchUrl" "value" $opensearch "why" "has no scheme; the services call OpenSearch over HTTPS" "fix" (printf "set it to %s" (toJson (printf "https://%s" (trimSuffix "/" $opensearch))))) -}}
+{{- else if not (regexMatch "^https://[a-z0-9.-]+(:[0-9]{1,5})?$" $opensearch) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.opensearchUrl" "value" $opensearch "why" "must be a base HTTPS origin: https:// plus the lowercase domain endpoint, with no path, trailing slash, credentials or query" "fix" "copy the domain endpoint from the OpenSearch console, such as https://vpc-agent-relay-abc123.us-east-1.es.amazonaws.com") -}}
+{{- end -}}
+{{- end -}}
+{{- if and $opensearch (not (regexMatch "^https://[a-z0-9.-]+(:[0-9]{1,5})?$" $opensearch)) }}{{ $bad = append $bad $opensearch }}{{ end -}}
+{{- if and $region (not (regexMatch "^[a-z]{2}(-[a-z0-9]+)+-?[0-9]+$" $region)) }}{{ $bad = append $bad $region }}{{ end -}}
+{{- $_ := set $st "bad" $bad -}}
+{{- $orgId := $site.orgId | default "" -}}
+{{- if and $orgId (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" $orgId)) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.orgId" "value" $orgId "why" "must be letters, digits, _, . or - (at most 128)" "fix" "pick a stable ID such as org_acme; it partitions session data and must never change after the first upload") -}}
+{{- end -}}
+{{- $orgName := $site.orgName | default "" -}}
+{{- if and $orgName (or (gt (len $orgName) 200) (regexMatch "[[:cntrl:]]" $orgName)) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.orgName" "value" $orgName "why" "must be one line of at most 200 characters" "fix" "shorten it") -}}
+{{- end -}}
+{{- $adminEmail := $site.adminEmail | default "" -}}
+{{- if $adminEmail -}}
+{{- if not (regexMatch "^[^@\\s<>()\",;:]+@[^@\\s<>()\",;:]+\\.[^@\\s<>()\",;:]+$" $adminEmail) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.adminEmail" "value" $adminEmail "why" "must be an email address" "fix" "the first administrator's address, such as admin@acme.com") -}}
+{{- end -}}
+{{- end -}}
+{{- if ne (empty $orgName) (empty $adminEmail) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" (ternary "site.adminEmail" "site.orgName" (empty $adminEmail)) "value" nil "why" "site.orgName and site.adminEmail go together (the first organization and its administrator)" "fix" "set both or neither") -}}
+{{- end -}}
+
+{{- /* site.rds: the databases are on Amazon RDS or Aurora in site.region, so
+the chart-managed RDS CA (global.rdsCa.bundle) uses that region's bundle. An
+explicit global.rdsCa.bundle (another region, or global) wins. */ -}}
+{{- $rds := $site.rds -}}
+{{- if not (or (kindIs "invalid" $rds) (kindIs "bool" $rds)) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.rds" "value" $rds "why" "must be true or false" "fix" "true when the databases are on Amazon RDS or Aurora") -}}
+{{- $rds = false -}}
+{{- end -}}
+{{- if $rds -}}
+{{- $bundle := dig "rdsCa" "bundle" "" ($V.global | default (dict)) | toString -}}
+{{- if not $bundle -}}
+{{- if not $region -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.rds" "value" true "why" "needs the database region" "fix" "set site.region, or global.rdsCa.bundle to the RDS region or global") -}}
+{{- else if has $region $st.bad -}}
+{{- /* site.region is already reported. */ -}}
+{{- else if not ($.Files.Get (printf "files/rds-ca/%s-bundle.pem" $region)) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "site.rds" "value" true "why" (printf "this chart ships no RDS CA bundle for site.region %s (files/rds-ca/manifest.yaml lists them)" (toJson $region)) "fix" "set global.rdsCa.bundle: global, which covers every commercial region") -}}
+{{- else -}}
+{{- include "agent-relay.site.setGlobal" (dict "ctx" $ "path" (list "rdsCa" "bundle") "value" $region) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* 2. Derive. Each entry fills one subchart value; see
+agent-relay.site.derive for must (contradictions fail) and defaults. */ -}}
+{{- $singleHost := dig "singleHost" "host" "" ($V.global | default dict) -}}
+{{- $d := list -}}
+{{- if $components.relaycast -}}
+{{- $d = append $d (dict "path" (list "relaycast" "baseUrl") "value" $origin.cast "from" $hostSource.cast "must" true) -}}
+{{- end -}}
+{{- if $components.control -}}
+{{- $d = append $d (dict "path" (list "relay-control" "services" "relaycastPublicUrl") "value" $origin.cast "from" $hostSource.cast "must" true) -}}
+{{- $d = append $d (dict "path" (list "relay-control" "services" "sessionReadApiPublicUrl") "value" $origin.history "from" $hostSource.history "must" true) -}}
+{{- if not $singleHost -}}
+{{- $d = append $d (dict "path" (list "relay-control" "publicUrl") "value" $origin.api "from" $hostSource.api "must" true) -}}
+{{- $d = append $d (dict "path" (list "relay-control" "dashboardUrl") "value" (ternary (printf "%s/" $origin.dashboard) "" (ne $origin.dashboard "")) "from" $hostSource.dashboard "must" true) -}}
+{{- end -}}
+{{- $audiences := list -}}
+{{- if $origin.history }}{{ $audiences = append $audiences $origin.history }}{{ end -}}
+{{- if and $origin.api (not $singleHost) }}{{ $audiences = append $audiences $origin.api }}{{ end -}}
+{{- $d = append $d (dict "path" (list "relay-control" "introspection" "audiences") "value" $audiences "from" "site.domain" "must" false) -}}
+{{- /* Only Control reads these, so nothing else has to agree: an explicit
+value wins (configure-rds.sh sets bootstrap.adminEmail from ADMIN_EMAIL). */ -}}
+{{- $d = append $d (dict "path" (list "relay-control" "bootstrap" "orgName") "value" $orgName "from" "site.orgName" "must" false) -}}
+{{- $d = append $d (dict "path" (list "relay-control" "bootstrap" "adminEmail") "value" $adminEmail "from" "site.adminEmail" "must" false) -}}
+{{- end -}}
+{{- if and $components.webapp (not $singleHost) -}}
+{{- $d = append $d (dict "path" (list "relay-webapp" "runtime" "publicUrl") "value" $origin.dashboard "from" $hostSource.dashboard "must" true) -}}
+{{- end -}}
+{{- $sp := index $V "sessions-pipeline" | default dict -}}
+{{- if $components.sessionsPipeline -}}
+{{- $spPath := list "sessions-pipeline" -}}
+{{- $readApiOn := dig "sessionReadApi" "enabled" false $sp -}}
+{{- if $readApiOn -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "sessionReadApi" "origin")) "value" $origin.history "from" $hostSource.history "must" true) -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "sessionReadApi" "cors" "allowedOrigins")) "value" (ternary (list $origin.dashboard) (list) (ne $origin.dashboard "")) "from" $hostSource.dashboard "must" false) -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "sessionReadApi" "search" "opensearch" "url")) "value" $opensearch "from" "site.opensearchUrl" "must" true) -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "sessionReadApi" "search" "opensearch" "region")) "value" (ternary $region "" (ne $opensearch "")) "from" "site.region" "must" false "pair" (concat $spPath (list "sessionReadApi" "search" "opensearch" "url"))) -}}
+{{- end -}}
+{{- if dig "ingestEdge" "enabled" false $sp -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "ingestEdge" "origin")) "value" $origin.history "from" $hostSource.history "must" true) -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "ingestEdge" "locker" "bucket")) "value" $bucket "from" "site.sessionsBucket" "must" true) -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "ingestEdge" "locker" "region")) "value" $region "from" "site.region" "must" true "defaults" (list "us-east-1") "pair" (concat $spPath (list "ingestEdge" "locker" "bucket"))) -}}
+{{- end -}}
+{{- if dig "searchIndexer" "enabled" false $sp -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "searchIndexer" "locker" "bucket")) "value" $bucket "from" "site.sessionsBucket" "must" true) -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "searchIndexer" "locker" "region")) "value" $region "from" "site.region" "must" true "defaults" (list "us-east-1") "pair" (concat $spPath (list "searchIndexer" "locker" "bucket"))) -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "searchIndexer" "search" "opensearch" "url")) "value" $opensearch "from" "site.opensearchUrl" "must" true) -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "searchIndexer" "search" "opensearch" "region")) "value" (ternary $region "" (ne $opensearch "")) "from" "site.region" "must" false "pair" (concat $spPath (list "searchIndexer" "search" "opensearch" "url"))) -}}
+{{- end -}}
+{{- if dig "nativeConsumer" "enabled" false $sp -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "nativeConsumer" "locker" "bucket")) "value" $bucket "from" "site.sessionsBucket" "must" true) -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "nativeConsumer" "locker" "region")) "value" $region "from" "site.region" "must" true "defaults" (list "us-east-1") "pair" (concat $spPath (list "nativeConsumer" "locker" "bucket"))) -}}
+{{- end -}}
+{{- if dig "nativeRouting" "enabled" false $sp -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "nativeRouting" "origin")) "value" $origin.history "from" $hostSource.history "must" true) -}}
+{{- end -}}
+{{- range $c := list "worker" "alleyoop" -}}
+{{- $d = append $d (dict "path" (concat $spPath (list $c "locker" "bucket")) "value" $bucket "from" "site.sessionsBucket" "must" true) -}}
+{{- $d = append $d (dict "path" (concat $spPath (list $c "locker" "region")) "value" $region "from" "site.region" "must" true "pair" (concat $spPath (list $c "locker" "bucket"))) -}}
+{{- end -}}
+{{- $d = append $d (dict "path" (concat $spPath (list "alleyoop" "auth" "historyOrigin")) "value" $origin.history "from" $hostSource.history "must" true) -}}
+{{- end -}}
+{{- /* The edge this chart renders, when enabled. */ -}}
+{{- if dig "enabled" false ($V.eksIngress | default dict) -}}
+{{- if and $domain (empty $hostsIn) (empty (dig "hosts" (dict) $V.eksIngress)) -}}
+{{- $d = append $d (dict "path" (list "eksIngress" "domain") "value" $domain "from" "site.domain" "must" true) -}}
+{{- else if and $hosts.history (not (dig "domain" "" $V.eksIngress)) -}}
+{{- $d = append $d (dict "path" (list "eksIngress" "hosts") "value" $hosts "from" "site.domain and site.hosts" "must" true) -}}
+{{- end -}}
+{{- end -}}
+{{- range $edge := list "gkeIngress" "traefikIngress" -}}
+{{- if dig "enabled" false (index $V $edge | default dict) -}}
+{{- range $role, $key := dict "dashboard" "root" "api" "api" "cast" "cast" "history" "history" -}}
+{{- /* Single-host mode serves the dashboard and api from global.singleHost.host. */ -}}
+{{- if not (and $singleHost (has $role (list "dashboard" "api"))) -}}
+{{- $d = append $d (dict "path" (list $edge "hosts" $key) "value" (index $hosts $role) "from" (index $hostSource $role) "must" true) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* Regions first: they look at their bucket or URL before it is filled. */ -}}
+{{- range $e := $d }}{{ if $e.pair }}{{ include "agent-relay.site.derive" (merge (dict "st" $st "root" $V) $e) }}{{ end }}{{ end -}}
+{{- range $e := $d }}{{ if not $e.pair }}{{ include "agent-relay.site.derive" (merge (dict "st" $st "root" $V) $e) }}{{ end }}{{ end -}}
+
+{{- /* The read API takes the bucket and region as literal env (LOCKER_BUCKET,
+LOCKER_REGION, first in extraEnv as the install guide writes them). An entry
+holding a profile's placeholder (values-eks-rds-native.yaml ships both) is
+replaced in place; LOCKER_REGION only while LOCKER_BUCKET is a placeholder or
+missing, as for the locker regions above. */ -}}
+{{- $readApi := dig "sessionReadApi" (dict) $sp -}}
+{{- if and $components.sessionsPipeline (dig "enabled" false $readApi) -}}
+{{- $env := $readApi.extraEnv | default (list) -}}
+{{- $profileEnv := dict "LOCKER_BUCKET" (list) "LOCKER_REGION" (list) -}}
+{{- range $p := $st.profiles -}}
+{{- range $e := (dig "sessions-pipeline" "sessionReadApi" "extraEnv" (list) $p) -}}
+{{- if and (kindIs "map" $e) (hasKey $profileEnv (toString $e.name)) (hasKey $e "value") }}{{ $_ := set $profileEnv (toString $e.name) (append (index $profileEnv (toString $e.name)) (toString $e.value)) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- $bucketUnset := true -}}
+{{- range $e := $env -}}
+{{- if and (kindIs "map" $e) (eq (toString $e.name) "LOCKER_BUCKET") (hasKey $e "value") (toString $e.value) (not (has (toString $e.value) $profileEnv.LOCKER_BUCKET)) }}{{ $bucketUnset = false }}{{ end -}}
+{{- end -}}
+{{- $add := list -}}
+{{- range $name := list "LOCKER_BUCKET" "LOCKER_REGION" -}}
+{{- $want := ternary $bucket $region (eq $name "LOCKER_BUCKET") -}}
+{{- if $want -}}
+{{- $seen := false -}}
+{{- range $e := $env -}}
+{{- if and (kindIs "map" $e) (eq (toString $e.name) $name) -}}
+{{- $seen = true -}}
+{{- $v := toString ($e.value | default "") -}}
+{{- if or (not $v) (and (has $v (index $profileEnv $name)) $bucketUnset) -}}
+{{- $_ := set $e "value" $want -}}
+{{- else if ne $v $want -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" (printf "sessions-pipeline.sessionReadApi.extraEnv %s" $name) "value" $e.value "why" (printf "contradicts %s, which sets it to %s" (ternary "site.sessionsBucket" "site.region" (eq $name "LOCKER_BUCKET")) (toJson $want)) "fix" (printf "delete the %s entry from extraEnv (site sets it)" $name)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not $seen }}{{ $add = append $add (dict "name" $name "value" $want) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- if $add }}{{ $_ := set $readApi "extraEnv" (concat $add $env) }}{{ end -}}
+{{- end -}}
+
+{{- if $orgId -}}
+{{- $cur := dig "tenant" "orgId" "" ($V.global | default dict) -}}
+{{- $placeholder := or (not $cur) (has $cur (list "example-org" "example-tenant")) -}}
+{{- range $profile := $st.profiles }}{{ if eq (dig "global" "tenant" "orgId" "" $profile) $cur }}{{ $placeholder = true }}{{ end }}{{ end -}}
+{{- if or $placeholder (eq $cur $orgId) -}}
+{{- include "agent-relay.site.setGlobal" (dict "ctx" $ "path" (list "tenant" "orgId") "value" $orgId) -}}
+{{- else -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "where" "global.tenant.orgId" "value" $cur "why" (printf "contradicts site.orgId, which sets it to %s" (toJson $orgId)) "fix" "delete global.tenant.orgId (site.orgId sets it); never change the org ID of an install that has uploaded sessions") -}}
+{{- end -}}
+{{- range $c := list "worker" "alleyoop" -}}
+{{- $own := dig $c "tenant" "orgId" "" $sp -}}
+{{- if and $own (ne $own $orgId) }}{{ include "agent-relay.site.problem" (dict "st" $st "where" (printf "sessions-pipeline.%s.tenant.orgId" $c) "value" $own "why" (printf "contradicts site.orgId (%s)" (toJson $orgId)) "fix" (printf "delete sessions-pipeline.%s.tenant.orgId" $c)) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* 3. Checks the subcharts make one at a time, mirrored here on the
+effective values so they are reported together. Each is no stricter than the
+subchart's own, which still runs. */ -}}
+{{- if $components.sessionsPipeline -}}
+{{- $historyFix := "set site.domain (it gives https://history.<domain>), or fix this value" -}}
+{{- $publicWhy := "must be a public HTTPS origin: https:// plus a public multi-label DNS name, with no path, credentials, query or fragment; .internal, .local, .lan, .test, .example, .localhost, .invalid, .home.arpa, .onion and example.com/.net/.org names are refused" -}}
+{{- $readOrigin := "" -}}
+{{- if dig "enabled" false $readApi -}}
+{{- $readOrigin = toString ($readApi.origin | default "") -}}
+{{- if not $readOrigin -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.sessionReadApi.origin" "value" nil "why" "is required (the public History origin)" "fix" $historyFix) -}}
+{{- else if or (not (regexMatch "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" $readOrigin)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $readOrigin) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $readOrigin) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.sessionReadApi.origin" "value" $readOrigin "why" $publicWhy "fix" $historyFix) -}}
+{{- end -}}
+{{- $search := $readApi.search | default dict -}}
+{{- if and (eq (toString $search.backend) "opensearch") (not (dig "clickhouse" "enabled" false $search)) -}}
+{{- $url := dig "opensearch" "url" "" $search | toString -}}
+{{- if not (regexMatch "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$" $url) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.sessionReadApi.search.opensearch.url" "value" $url "why" "must be a base HTTPS origin (https://<domain endpoint>, no path or trailing slash)" "fix" "set site.opensearchUrl to https://<the OpenSearch domain endpoint>") -}}
+{{- end -}}
+{{- $osRegion := dig "opensearch" "region" "" $search | toString -}}
+{{- if not (regexMatch "^[a-z]{2}(-[a-z]+)+-[0-9]+$" $osRegion) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.sessionReadApi.search.opensearch.region" "value" $osRegion "why" "must be an AWS region" "fix" "set site.region (or this value when OpenSearch is in another region)") -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $ingest := dig "ingestEdge" (dict) $sp -}}
+{{- if dig "enabled" false $ingest -}}
+{{- $o := toString ($ingest.origin | default "") -}}
+{{- $oHost := regexReplaceAll ":[0-9]+$" (trimPrefix "https://" $o) "" -}}
+{{- if not $o -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.ingestEdge.origin" "value" nil "why" "is required (the History origin uploads go to)" "fix" $historyFix) -}}
+{{- else if or (not (regexMatch "^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?(:[0-9]{1,5})?$" $o)) (gt (len $oHost) 253) (regexMatch "\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $o) (regexMatch "(^|\\.)example\\.(com|net|org)$" $oHost) (hasSuffix ":443" $o) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.ingestEdge.origin" "value" $o "why" (printf "%s; lowercase, and no :443" $publicWhy) "fix" $historyFix) -}}
+{{- else if and (dig "enabled" false $readApi) $readOrigin (ne $o $readOrigin) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.ingestEdge.origin" "value" $o "why" (printf "must equal sessions-pipeline.sessionReadApi.origin (%s): uploads and reads share the History origin" (toJson $readOrigin)) "fix" "set site.domain once and delete both origins") -}}
+{{- end -}}
+{{- $lb := dig "locker" "bucket" "" $ingest | toString -}}
+{{- if not $lb -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.ingestEdge.locker.bucket" "value" nil "why" "is required (the sessions bucket)" "fix" "set site.sessionsBucket") -}}
+{{- else if dig "enabled" false $readApi -}}
+{{- range $e := ($readApi.extraEnv | default list) -}}
+{{- if and (kindIs "map" $e) (eq (toString $e.name) "LOCKER_BUCKET") (ne (toString $e.value) $lb) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.sessionReadApi.extraEnv LOCKER_BUCKET" "value" $e.value "why" (printf "must equal sessions-pipeline.ingestEdge.locker.bucket (%s): the read API reads the objects the ingest edge writes" (toJson $lb)) "fix" "set site.sessionsBucket once and delete LOCKER_BUCKET and every locker.bucket") -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not (dig "locker" "region" "" $ingest) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.ingestEdge.locker.region" "value" nil "why" "is required" "fix" "set site.region") -}}
+{{- end -}}
+{{- end -}}
+{{- $indexer := dig "searchIndexer" (dict) $sp -}}
+{{- if dig "enabled" false $indexer -}}
+{{- if not (dig "locker" "bucket" "" $indexer) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.searchIndexer.locker.bucket" "value" nil "why" "is required (the sessions bucket)" "fix" "set site.sessionsBucket") -}}
+{{- end -}}
+{{- if eq (toString (dig "search" "backend" "" $indexer)) "opensearch" -}}
+{{- $url := dig "search" "opensearch" "url" "" $indexer | toString -}}
+{{- if not (regexMatch "^https://[a-z0-9.-]+(:[0-9]{1,5})?$" $url) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.searchIndexer.search.opensearch.url" "value" $url "why" "must be an https endpoint, lowercase, with no path, trailing slash, credentials or query" "fix" "set site.opensearchUrl to https://<the OpenSearch domain endpoint>") -}}
+{{- end -}}
+{{- if not (dig "search" "opensearch" "region" "" $indexer) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" "sessions-pipeline.searchIndexer.search.opensearch.region" "value" nil "why" "is required" "fix" "set site.region") -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $components.control -}}
+{{- $services := dig "services" (dict) (index $V "relay-control" | default (dict)) -}}
+{{- $urls := dict "relaycastPublicUrl" (toString ($services.relaycastPublicUrl | default "")) -}}
+{{- with $services.sessionReadApiPublicUrl }}{{ $_ := set $urls "sessionReadApiPublicUrl" (toString .) }}{{ end -}}
+{{- range $name, $url := $urls -}}
+{{- if or (not (regexMatch "^https://([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(:[0-9]{1,5})?$" $url)) (regexMatch "(?i)\\.(localhost|local|internal|lan|invalid|test|example|home\\.arpa|onion)(:[0-9]{1,5})?$" $url) (regexMatch "(?i)\\.example\\.(com|net|org)(:[0-9]{1,5})?$" $url) -}}
+{{- include "agent-relay.site.problem" (dict "st" $st "mirror" true "where" (printf "relay-control.services.%s" $name) "value" $url "why" "must be a public HTTPS origin: https:// plus a public multi-label DNS name, with no path; .internal, .local, .test, .example and example.com/.net/.org names are refused" "fix" "set site.domain (it gives https://cast.<domain> and https://history.<domain>), or fix this value") -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- if $st.problems -}}
+{{- fail (include "agent-relay.site.message" (dict "problems" $st.problems)) -}}
+{{- end -}}

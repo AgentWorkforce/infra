@@ -20,6 +20,22 @@
 # regional, Memorystore Standard HA 5 GB, 3 x e2-standard-4 nodes). Estimates,
 # not load tested.
 
+# Site values: the domain, region, bucket, org and first admin are set once
+# here, and the chart fills every component value that repeats them: the four
+# hosts (<domain>, api., cast., history.), every public URL and origin, the
+# read API's LOCKER_BUCKET and LOCKER_REGION, global.tenant.orgId and the first
+# organization (chart README, "Site values"). The bucket and region must match
+# managed-values.json; the chart fails the render, naming both, if they differ.
+site:
+  domain: __DOMAIN__
+  region: __REGION__
+  sessionsBucket: __SESSIONS_BUCKET__
+  # Stable organization ID that partitions session data. Never change it after
+  # the first upload.
+  orgId: __ORG_ID__
+  orgName: __ORG_NAME__
+  adminEmail: __ADMIN_EMAIL__
+
 components:
   relaycast: true
   relayauth: false
@@ -40,10 +56,6 @@ global:
     engine: wasm-bindgen
     required: wasm-bindgen
     readerMaxRuleset: "10"
-  tenant:
-    # Stable organization ID that partitions session data. Never change it after
-    # the first upload.
-    orgId: __ORG_ID__
   # Optional co-branding (step 9): the relay-brand ConfigMap's two PNGs.
   # branding:
   #   logo:
@@ -67,11 +79,7 @@ gkeIngress:
   # certificate from a Secret when a proxy such as Cloudflare is in front.
   # securityPolicy: agent-relay-edge
   # tlsSecretName: agent-relay-origin-tls
-  hosts:
-    root: __DOMAIN__
-    api: api.__DOMAIN__
-    cast: cast.__DOMAIN__
-    history: history.__DOMAIN__
+  # hosts: filled from site.domain (<domain>, api., cast., history.)
 
 relaycast:
   # PostgreSQL backend (database relaycast on Cloud SQL). The chart allows
@@ -85,7 +93,6 @@ relaycast:
   # A SQLite-only setting that this backend refuses.
   retention:
     messageTtlDays: null
-  baseUrl: https://cast.__DOMAIN__
   existingSecret: agent-relay-secrets
   secretKeys:
     internalSecret: relaycast-internal-secret
@@ -110,7 +117,6 @@ sessions-pipeline:
     output: { enabled: true }
     digest: { enabled: true }
     replicas: 1
-    origin: https://history.__DOMAIN__
     completeSince: epoch
     directoryWorkspaces: "*"
     events: { messageIds: true }
@@ -145,9 +151,6 @@ sessions-pipeline:
         internalSecret:
           existingSecret: agent-relay-secrets
           key: session-read-api-secret
-    cors:
-      allowedOrigins:
-        - https://__DOMAIN__
     networkPolicy:
       enabled: true
       controlFrom:
@@ -163,8 +166,8 @@ sessions-pipeline:
     # lists, so these entries repeat them.
     extraEnv:
       - { name: LOCKER_PROVIDER, value: gcs }
-      - { name: LOCKER_BUCKET, value: __SESSIONS_BUCKET__ }
-      - { name: LOCKER_REGION, value: __REGION__ }
+      - { name: LOCKER_BUCKET }   # value: site.sessionsBucket
+      - { name: LOCKER_REGION }   # value: site.region
       - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
       - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
       - { name: READ_API_BRIEF_TITLES_WORKSPACES, value: "*" }
@@ -184,7 +187,6 @@ sessions-pipeline:
   # The upload edge, on the same history origin.
   ingestEdge:
     enabled: true
-    origin: https://history.__DOMAIN__
     allowInClusterHttp: true
     sessionSelection: true
     heartbeatAccept: true
@@ -267,7 +269,6 @@ sessions-pipeline:
       key: HOOPDB_URL
     existingSecret: agent-relay-secrets
     auth:
-      historyOrigin: https://history.__DOMAIN__
       allowInterimRelayAuthBearer: false
     environment: production
 
@@ -284,8 +285,6 @@ relay-control:
     setupKey: selfhost-setup-key
     smtpPassword: ""
   bootstrap:
-    orgName: __ORG_NAME__
-    adminEmail: __ADMIN_EMAIL__
     workspaceName: Default
   auth:
     password:
@@ -298,16 +297,8 @@ relay-control:
     # otherwise a direct caller can forge the address the API trusts.
     trustedProxies: 2
   selectedFeatures: [usage, launch]
-  publicUrl: https://api.__DOMAIN__
-  dashboardUrl: https://__DOMAIN__/
   services:
-    relaycastPublicUrl: https://cast.__DOMAIN__
     sessionReadApiUrl: http://agent-relay-read-api.__NAMESPACE__.svc.cluster.local
-    sessionReadApiPublicUrl: https://history.__DOMAIN__
-  introspection:
-    audiences:
-      - https://history.__DOMAIN__
-      - https://api.__DOMAIN__
   service:
     backendConfig: agent-relay-api
   # Optional co-branding (step 9): the name beside the sign-in logo.
@@ -318,7 +309,6 @@ relay-webapp:
   # The chart allows one replica.
   replicaCount: 1
   runtime:
-    publicUrl: https://__DOMAIN__
     sessionReadApiEnabled: true
     coordinationOverlapsEnabled: false
   # Optional co-branding (step 9). productName stays unset: the product is
