@@ -98,7 +98,7 @@ EOF
 
 setup_mocks() { # $1 release fixture dir, $2 attestation result (ok|fail)
   local bin="$root/bin"; rm -rf "$bin"; mkdir -p "$bin"; : > "$root/log"
-  rm -f "$root/rekey-fail" "$root/crane-missing" "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml" "$root/external-secrets.json"; rm -rf "$root/secrets"; touch "$root/exists"
+  rm -f "$root/live-images" "$root/rekey-fail" "$root/crane-missing" "$root/rendered-extra.yaml" "$root/rendered-target.yaml" "$root/live-manifest.yaml" "$root/patches" "$root/live-values.yaml" "$root/external-secrets.json"; rm -rf "$root/secrets"; touch "$root/exists"
   rm -rf "$root/jobstate"; mkdir -p "$root/jobstate"; rm -f "$root/no-version" "$root/applied.yaml" "$root/census.out" "$root/census-phase" "$root/can-i-denied" "$root/release-job-states"
   printf 'v1\napps/v1\nbatch/v1\npolicy/v1\nautoscaling/v2\n' > "$root/api-versions"
   cat > "$bin/gh" <<EOF
@@ -122,7 +122,7 @@ case "\$*" in
     case "\$ph" in INT|TERM) kill -"\$ph" "\$(pgrep -o -f "$root/selfhost/agent-relay-upgrade.sh")"; ph=Running ;; esac
     printf '{"status":{"phase":"%s"}}\n' "\$ph" ;;
   *"logs pod/"*"-c census"*) cat "$root/census.out" 2>/dev/null || true ;;
-  *jsonpath*) echo "old/relay-control@sha256:old" ;;
+  *jsonpath*) cat "$root/live-images" 2>/dev/null || echo "old/relay-control@sha256:old" ;;
   *"version -o json"*) [ -f "$root/no-version" ] || echo '{"serverVersion":{"gitVersion":"v1.31.4-eks-2d5f260"}}' ;;
   *api-versions*) cat "$root/api-versions" ;;
   *"get job "*) # state from $root/jobstate/<name>, one per call; the last state sticks
@@ -1058,4 +1058,17 @@ grep -q 'rollback agent-relay 7' <<<"$out" || fail "the Relaycast caution replac
 setup_mocks "$root/rel-ok" ok; write_helm "exit 1"
 out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) && fail "failed upgrade reported success"
 grep -q 'CAUTION: this upgrade changes the Relaycast engine image' <<<"$out" && fail "Relaycast caution printed without a Relaycast image change: $out"
+# a retry after a failed attempt: the pods already run the new engine, but the
+# deployed revision (the rollback target) still pins the old one
+rc_new="$REG/agent-relay/ghcr.io/agentworkforce/relaycast-self-host@$D5"
+setup_mocks "$root/rel-relaycast" ok; write_helm "exit 1"
+printf '%s\n' "$rc_new" > "$root/live-images"
+printf 'image: %s/agent-relay/ghcr.io/agentworkforce/relaycast-self-host@%s\n' "$REG" "$D4" > "$root/live-manifest.yaml"
+out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) && fail "failed upgrade reported success"
+grep -q 'CAUTION: this upgrade changes the Relaycast engine image' <<<"$out" || fail "a retry hid the caution although the rollback revision runs another engine: $out"
+# the deployed revision already pins the new engine: no caution
+setup_mocks "$root/rel-relaycast" ok; write_helm "exit 1"
+printf 'image: %s\n' "$rc_new" > "$root/live-manifest.yaml"
+out=$(run "${args[@]}" --apply --db-instance prod-db --yes 2>&1) && fail "failed upgrade reported success"
+grep -q 'CAUTION: this upgrade changes the Relaycast engine image' <<<"$out" && fail "caution printed although the rollback revision runs the same engine: $out"
 pass "failed upgrade that changes the Relaycast engine warns before a Helm-only rollback"

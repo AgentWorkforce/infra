@@ -504,12 +504,24 @@ fi
 say "   images added (+) / removed (-) against what is running:"
 changes=$(diff "$work/live-images.txt" "$work/new-images.txt" | grep -E '^[<>]' | sed 's/^</   -/;s/^>/   +/' || true)
 if [ -n "$changes" ]; then say "$changes"; else say "   (no image changes)"; fi
+current_rev=$("${helmx[@]}" history "$release" -o json 2>/dev/null | jq -r '[.[]|select(.status=="deployed")]|last.revision // empty' || true)
 # A new Relaycast engine image runs its PostgreSQL migrations on upgrade; the
 # previous image's verify-db refuses a ledger it does not know, so a Helm-only
 # rollback after those commit leaves Relaycast down (rollback_hint says so).
+# Compared with the revision rollback_hint would restore, not the running
+# pods: a failed earlier attempt may already run the new engine. A revision
+# whose manifest cannot be read counts as changed.
 relaycast_engine_changed=false
-if comm -13 "$work/live-images.txt" "$work/new-images.txt" | grep -q '/relaycast-self-host@'; then relaycast_engine_changed=true; fi
-current_rev=$("${helmx[@]}" history "$release" -o json 2>/dev/null | jq -r '[.[]|select(.status=="deployed")]|last.revision // empty' || true)
+if [ -n "$current_rev" ] && grep -q '/relaycast-self-host@' "$work/new-images.txt"; then
+  if { "${helmx[@]}" get manifest "$release" --revision "$current_rev" && printf '\n---\n' \
+       && "${helmx[@]}" get hooks "$release" --revision "$current_rev"; } > "$work/rollback-rev.yaml" 2>/dev/null \
+     && yq -N -r '.. | select(tag == "!!map") | select(has("image")) | .image | select(tag == "!!str")' \
+          "$work/rollback-rev.yaml" 2>/dev/null | sort -u > "$work/rollback-rev-images.txt"; then
+    if grep '/relaycast-self-host@' "$work/new-images.txt" | grep -qvxF -f "$work/rollback-rev-images.txt"; then relaycast_engine_changed=true; fi
+  else
+    relaycast_engine_changed=true
+  fi
+fi
 
 # One line per rendered resource: "<kind>/<namespace>/<name><TAB><canonical JSON>".
 normalize() {
