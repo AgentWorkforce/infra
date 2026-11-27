@@ -55,7 +55,10 @@ credential endpoint and token file into the Pod; the chart sets nothing else and
 {{- if or (gt (len $name) 52) (not (regexMatch "^[a-z]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "the rearm-sweeper CronJob name (<release>-rearm-sweeper) must be a DNS-1035 label of at most 52 characters" }}{{ end -}}
 {{- /* rearmSweeper.image: optional override; each field falls back to ingestEdge.image, so unset renders as before. */ -}}
 {{- $si := $s.image | default dict -}}
-{{- if and $si.digest (not (regexMatch "^sha256:[0-9a-f]{64}$" (toString $si.digest))) }}{{ fail "rearmSweeper.image.digest must be sha256:<64 hex>" }}{{ end -}}
+{{- if hasKey $si "digest" }}
+{{- if not (and (kindIs "string" $si.digest) (regexMatch "^sha256:[0-9a-f]{64}$" $si.digest)) }}{{ fail "rearmSweeper.image.digest must be sha256:<64 hex>" }}{{ end -}}
+{{- if and .Values.releaseContract.unifiedServicesDigest (ne $si.digest (toString .Values.worker.image.digest)) }}{{ fail "releaseContract.unifiedServicesDigest requires rearmSweeper.image.digest to equal worker.image.digest" }}{{ end -}}
+{{- end -}}
 {{- $repository := $si.repository | default (required "ingestEdge.image.repository is required" $c.image.repository) -}}
 {{- $digest := $si.digest | default (required "ingestEdge.image.digest requires a qualified SERVICE=session-ingest image" $c.image.digest) -}}
 {{- $bucket := required "ingestEdge.locker.bucket is required" $c.locker.bucket -}}
