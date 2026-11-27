@@ -778,6 +778,10 @@ rearmSweeper:
   # (1..10000); null keeps the binary defaults (4 and 500).
   concurrency: null
   maxMarkers: null
+  # Optional image for the sweeper CronJob only ({repository, digest, pullPolicy}). Each unset
+  # field falls back to ingestEdge.image, so {} keeps the sweeper on the ingest image. Lets the
+  # sweeper take a newer services image without rolling the ingest-edge Deployment.
+  image: {}
   credentials:
     # secret: static keys from existingSecret (MinIO or AWS), mounted as files
     # (INGEST_REARM_CREDENTIALS=keys, INGEST_REARM_S3_*_FILE).
