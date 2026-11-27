@@ -309,6 +309,18 @@ run against the deployed credential source proves those credentials work.
 | Workloads / Jobs / exit codes | Failed migrations, init waits, image pull failures, missing container configuration, unready Deployments or unbound volumes. |
 | Pod Identity (`podidentity.*`) | A ServiceAccount that reads S3 or OpenSearch has no EKS Pod Identity association, or its role's IAM policy lacks that access. |
 
+One section at a time: `--only pod-identity` checks the EKS Pod Identity
+association of every ServiceAccount the release uses (add
+`--create-pod-identity <sa>=<role ARN>,...` to create the missing ones; it is the
+only option that changes anything). `--only search` checks the search bootstrap
+Job and runs one signed `GET /_cluster/health` against OpenSearch from inside the
+cluster, as the search indexer's ServiceAccount, with the services image's own
+SigV4 signer. It classifies the result: unreachable (DNS, network, security
+group), no AWS credentials, 403 from fine-grained access control (with the exact
+`relayhistory_indexer` role and rolesmapping bodies, the role ARN in its path and
+pathless forms), 403 from the domain access policy, or a Postgres permission in
+the bootstrap. A full run includes the search section; `--no-search` skips it.
+
 The report uses `PASS`, `FAIL` and `UNKNOWN` with a next step for failures and
 unknowns. Exit status: **0** means all requested checks passed, **1** means at
 least one finding failed, **2** means incomplete evidence or an invocation/output

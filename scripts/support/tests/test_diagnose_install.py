@@ -480,6 +480,7 @@ class FakeAws:
                  describe_error=None, users=()):
         self.associations, self.simulate, self.list_error, self.context_cluster = associations, simulate, list_error, context_cluster
         self.describe_error, self.users = describe_error, list(users)
+        self.create_error, self.created = None, []
         self.calls, self.envs = [], []
 
     def __call__(self, argv, **kwargs):
@@ -506,6 +507,12 @@ class FakeAws:
             actions = argv[argv.index('--action-names')+1:argv.index('--resource-arns')]
             decision = self.simulate(role, actions) if callable(self.simulate) else self.simulate
             return ok({'EvaluationResults': [{'EvalActionName': a, 'EvalDecision': decision} for a in actions]})
+        if argv[:3] == ['aws', 'eks', 'create-pod-identity-association']:
+            if self.create_error:
+                return SimpleNamespace(returncode=254, stdout='', stderr=self.create_error)
+            sa = argv[argv.index('--service-account')+1]
+            self.created.append((sa, argv[argv.index('--role-arn')+1]))
+            return ok({'association': {'serviceAccount': sa, 'associationId': 'a-new0000000'}})
         raise AssertionError('unexpected command '+' '.join(argv))
 
 
@@ -541,6 +548,36 @@ class PodIdentityTests(unittest.TestCase):
         self.assertIn('agent-relay-alleyoop', checks['podidentity.unused']['detail'])
         self.assertIn(['aws', 'eks', 'list-pod-identity-associations', '--cluster-name', 'demo', '--region', 'us-west-2',
                        '--namespace', 'agent-relay', '--output', 'json'], fake.calls)
+
+    def test_opt_in_creates_the_missing_association(self):
+        fake = FakeAws(self.REHEARSAL)
+        opts = dict(no_iam_simulate=True)
+        report = diag.Report()
+        o = options(**opts)
+        o.create_pod_identity = {'agent-relay-worker': ROLE+'sessions'}
+        o.created_associations = []
+        with mock.patch.object(diag, 'kube', side_effect=lambda opt, res, name=None, selector=False, probe=False: {'items': RELEASE[res]}), \
+             mock.patch.object(diag.subprocess, 'run', side_effect=fake):
+            diag.pod_identity_checks(o, report)
+        worker = {c['check']: c for c in report.checks}['podidentity.agent-relay-worker']
+        self.assertEqual(worker['status'], 'PASS')
+        self.assertIn('created', worker['detail'])
+        self.assertEqual(fake.created, [('agent-relay-worker', ROLE+'sessions')])
+        self.assertEqual(o.created_associations[0]['deployments'], ['agent-relay-worker-session-summary-worker'])
+
+    def test_a_failed_create_is_a_fail_with_the_manual_line(self):
+        fake = FakeAws(self.REHEARSAL)
+        fake.create_error = 'An error occurred (AccessDeniedException) when calling CreatePodIdentityAssociation'
+        report = diag.Report()
+        o = options(no_iam_simulate=True)
+        o.create_pod_identity, o.created_associations = {'agent-relay-worker': ROLE+'sessions'}, []
+        with mock.patch.object(diag, 'kube', side_effect=lambda opt, res, name=None, selector=False, probe=False: {'items': RELEASE[res]}), \
+             mock.patch.object(diag.subprocess, 'run', side_effect=fake):
+            diag.pod_identity_checks(o, report)
+        worker = {c['check']: c for c in report.checks}['podidentity.agent-relay-worker']
+        self.assertEqual(worker['status'], 'FAIL')
+        self.assertIn('aws eks create-pod-identity-association', worker['action'])
+        self.assertIn('iam:PassRole', worker['action'])
 
     def test_access_levels_and_simulated_resources(self):
         fake = FakeAws(dict(self.REHEARSAL, **{'agent-relay-worker': 'session-ingest-api'}))
@@ -927,6 +964,73 @@ class InClusterTests(unittest.TestCase):
         self.assertEqual(diag.parse_args([]).psql_image, os.environ.get('PSQL_IMAGE') or diag.PSQL_IMAGE)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             diag.parse_args(['--psql-image', 'ghcr.io/cloudnative-pg/postgresql:17'])   # a tag can be swapped
+
+
+class SearchReadinessTests(unittest.TestCase):
+    TARGET = {'sa': 'agent-relay-search-indexer', 'image': 'ghcr.io/agentworkforce/sessions-pipeline@sha256:'+'1'*64,
+              'url': OS_URL, 'region': 'us-west-2', 'prefix': 'relayhistory', 'deployment': 'agent-relay-search-indexer'}
+    HOST = OS_URL[len('https://'):]
+
+    def test_fgac_403_gives_role_and_mapping_bodies_with_both_arn_forms(self):
+        result = {'kind': 'http', 'status': 403, 'who': {'user': 'arn:aws:sts::123456789012:assumed-role/agent-relay-indexer/eks-pod'},
+                  'body': '{"error":{"root_cause":[{"type":"security_exception","reason":"no permissions for [cluster:monitor/health]"}]}}'}
+        status, detail, action = diag.classify_opensearch(result, self.TARGET, 'arn:aws:iam::123456789012:role/search/agent-relay-indexer')
+        self.assertEqual(status, 'FAIL')
+        self.assertIn('fine-grained access control', detail)
+        self.assertIn('PUT _plugins/_security/api/rolesmapping/relayhistory_indexer {"backend_roles":'
+                      '["arn:aws:iam::123456789012:role/search/agent-relay-indexer", "arn:aws:iam::123456789012:role/agent-relay-indexer"]}', action)
+        self.assertIn('PUT _plugins/_security/api/roles/relayhistory_indexer {"cluster_permissions":["cluster_monitor"', action)
+        self.assertIn('"index_patterns":["relayhistory-*"]', action)
+
+    def test_fgac_403_without_an_association_uses_the_assumed_role(self):
+        result = {'kind': 'http', 'status': 403, 'body': 'security_exception', 'who': {'user': 'arn:aws:sts::123456789012:assumed-role/idx/s'}}
+        self.assertIn('["arn:aws:iam::123456789012:role/idx"]', diag.classify_opensearch(result, self.TARGET)[2])
+
+    def test_domain_policy_403(self):
+        result = {'kind': 'http', 'status': 403, 'body': '{"Message":"User: anonymous is not authorized to perform: es:ESHttpGet"}'}
+        status, detail, action = diag.classify_opensearch(result, self.TARGET)
+        self.assertEqual(status, 'FAIL')
+        self.assertIn('domain access policy', detail)
+        self.assertIn('es:ESHttp*', action)
+
+    def test_unreachable_and_no_credentials_and_success(self):
+        s, d, a = diag.classify_opensearch({'kind': 'network', 'detail': 'ENOTFOUND'}, self.TARGET)
+        self.assertEqual(s, 'FAIL'); self.assertIn(self.HOST+' is unreachable from the cluster (ENOTFOUND)', d); self.assertIn('security group', a)
+        s, d, a = diag.classify_opensearch({'kind': 'no-credentials'}, self.TARGET)
+        self.assertEqual(s, 'FAIL'); self.assertIn('Pod Identity association', a)
+        s, d, a = diag.classify_opensearch({'kind': 'http', 'status': 200, 'body': '{}', 'who': {'user': 'arn:x'}}, self.TARGET)
+        self.assertEqual(s, 'PASS')
+
+    def test_search_checks_bootstrap_cause_and_probe(self):
+        job = {'metadata': {'name': 'agent-relay-search-indexer-bootstrap-1234abcd', 'creationTimestamp': '2026-11-26T00:00:00Z'},
+               'status': {'conditions': [{'type': 'Failed', 'status': 'True'}]}}
+        pod = {'metadata': {'labels': {'job-name': job['metadata']['name']}}, 'status': {'containerStatuses': [{'state': {'terminated': {
+            'message': 'search bootstrap failed: OpenSearch x unreachable (network): check searchIndexer.search.opensearch.url'}}}]}}
+        dep = workload('deployments', 'agent-relay-search-indexer', 'agent-relay-search-indexer', SEARCH_INDEX_OPENSEARCH_AUTH='sigv4',
+                       SEARCH_INDEX_OPENSEARCH_URL=OS_URL, SEARCH_INDEX_OPENSEARCH_AWS_REGION='us-west-2')
+        dep['spec']['template']['spec']['containers'][0]['image'] = self.TARGET['image']
+        items = {'jobs': [job], 'pods': [pod], 'deployments': [dep]}
+        report = diag.Report()
+        with mock.patch.object(diag, 'kube', side_effect=lambda opt, res, name=None, selector=False, probe=False: {'items': items.get(res, [])}), \
+             mock.patch.object(diag, 'eks_target', return_value=(None, None)), \
+             mock.patch.object(diag, 'run_in_cluster', return_value={'kind': 'http', 'status': 200, 'body': '{}'}) as run:
+            diag.search_checks(options(), report)
+        checks = {c['check']: c for c in report.checks}
+        self.assertEqual(checks['search.bootstrap']['status'], 'FAIL')
+        self.assertIn('OpenSearch x unreachable', checks['search.bootstrap']['detail'])
+        self.assertIn('delete job agent-relay-search-indexer-bootstrap-1234abcd', checks['search.bootstrap']['action'])
+        self.assertEqual(checks['search.opensearch']['status'], 'PASS')
+        manifest = diag.search_probe_job(options(), 'probe', self.TARGET)
+        spec = manifest['spec']['template']['spec']
+        self.assertEqual(spec['serviceAccountName'], 'agent-relay-search-indexer')
+        self.assertEqual(spec['containers'][0]['image'], self.TARGET['image'])
+        self.assertEqual(run.call_args.kwargs['kind'], 'os')
+
+    def test_probe_output_parser(self):
+        line = 'AR\tOS\t'+base64.b64encode(json.dumps({'kind': 'http', 'status': 403}).encode()).decode()
+        self.assertEqual(diag.parse_search_probe('noise\n'+line+'\nAR\tDONE\n')['status'], 403)
+        with self.assertRaises(diag.DiagnosticError):
+            diag.parse_search_probe(line)
 
 
 class PostgreSQLCatalogTests(unittest.TestCase):

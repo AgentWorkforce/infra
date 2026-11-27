@@ -847,6 +847,11 @@ def pod_identity_checks(options, report):
         return
     cluster, region = eks_target(options)
     if not (cluster and region):
+        if getattr(options, 'only', None) == 'pod-identity' and accounts:
+            report.add('podidentity', 'UNKNOWN', 'Not an EKS kube context (or the cluster name and region are not in it): '
+                       'Pod Identity not checked for '+', '.join(sorted(accounts))+'.',
+                       'On EKS, pass --eks-cluster <name> --aws-region <region>, or check by hand: aws eks list-pod-identity-associations '
+                       '--cluster-name <cluster> --region <region> --namespace '+options.namespace)
         return  # Not an EKS context (GKE, AKS, kind): nothing to check. --eks-cluster/--aws-region force it.
     if not accounts:
         return  # No workload reads S3 or signs OpenSearch requests (GCS, static keys).
@@ -909,6 +914,19 @@ def pod_identity_checks(options, report):
                     report.add(name+'.'+level, 'UNKNOWN', ACCESS_LABEL[level]+': not simulated (role not readable: '+unreadable.get(sa, 'unknown')+').',
                                'Allow eks:DescribePodIdentityAssociation, or check the role\'s policy by hand.')
                     report.checks[-1]['resource'] = sa
+        elif sa in getattr(options, 'create_pod_identity', {}):
+            role = options.create_pod_identity[sa]
+            deployments = sorted(n for r, n in entry['workloads'] if r == 'deployments')
+            try:
+                aws_json(options, ['eks', 'create-pod-identity-association', *base, '--namespace', options.namespace,
+                                   '--service-account', sa, '--role-arn', role])
+                options.created_associations.append({'serviceAccount': sa, 'roleArn': role, 'deployments': deployments})
+                report.add(name, 'PASS', 'Pod Identity association created for '+sa+' (role '+role+'); its pods need a restart: '
+                           +(', '.join(deployments) or 'none running')+'.')
+            except DiagnosticError as exc:
+                report.add(name, 'FAIL', 'Could not create the Pod Identity association for '+sa+' ('+str(exc)+').',
+                           create_line(sa, role)+'   (needs eks:CreatePodIdentityAssociation and iam:PassRole on the role)')
+            report.checks[-1]['resource'] = sa
         else:
             workloads = ', '.join(n for _, n in entry['workloads'][:4])
             deployments = ' '.join('deployment/'+n for r, n in entry['workloads'] if r == 'deployments')
@@ -1005,6 +1023,221 @@ for my $line (grep { length } split /\n/, $ENV{AR_PLAN}) {
 }
 out('DONE');
 """
+
+
+# --- Search readiness ---------------------------------------------------------
+# One signed GET from inside the cluster, as the search indexer's ServiceAccount,
+# with the services image's own SigV4 signer and Pod Identity credential source.
+SEARCH_PROBE = r"""
+const out = (o) => console.log("AR\tOS\t" + Buffer.from(JSON.stringify(o)).toString("base64"));
+const url = (process.env.AR_OS_URL || "").replace(/\/$/, ""), region = process.env.AR_OS_REGION || "";
+try {
+  if (!process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI) out({ kind: "no-credentials" });
+  else {
+    const { podIdentityCredentials } = await import("/app/src/shared/locker.ts");
+    const { signRequest } = await import("/app/packages/object-store/src/sigv4.ts");
+    const { sha256Hex } = await import("/app/packages/object-store/src/crypto.ts");
+    let creds = null;
+    try { creds = await podIdentityCredentials(); } catch (e) { out({ kind: "no-credentials", detail: String(e && e.message || e).slice(0, 160) }); }
+    if (creds) {
+      const call = async (path) => {
+        const u = new URL(url + path);
+        const h = new Headers({ accept: "application/json" });
+        await signRequest({ method: "GET", url: u, headers: h, payloadSha256: await sha256Hex(""), region, service: "es", credentials: creds });
+        const r = await fetch(u, { headers: h, redirect: "error", signal: AbortSignal.timeout(10000) });
+        return { status: r.status, body: (await r.text()).slice(0, 800) };
+      };
+      let who = null;
+      try { const a = await call("/_plugins/_security/authinfo"); if (a.status === 200) { const j = JSON.parse(a.body); who = { user: j.user_name, backend_roles: j.backend_roles }; } } catch {}
+      try { const r = await call("/_cluster/health"); out({ kind: "http", status: r.status, body: r.body, who }); }
+      catch (e) { out({ kind: "network", detail: String((e && (e.code || (e.cause && e.cause.code) || e.name)) || e).slice(0, 80) }); }
+    }
+  }
+} catch (e) { out({ kind: "error", detail: String(e && e.message || e).slice(0, 160) }); }
+console.log("AR\tDONE");
+"""
+
+
+def search_indexer(options):
+    """The release's search indexer: {sa, image, url, region, prefix, deployment} or None."""
+    for item in kube(options, 'deployments', selector=True).get('items', []):
+        pod = (((item.get('spec') or {}).get('template') or {}).get('spec') or {})
+        for c in pod.get('containers') or []:
+            env = {e.get('name'): e.get('value') for e in c.get('env') or [] if isinstance(e, dict) and isinstance(e.get('value'), str)}
+            if (env.get('SEARCH_INDEX_OPENSEARCH_AUTH') or '').lower() == 'sigv4' and env.get('SEARCH_INDEX_OPENSEARCH_URL') \
+               and (item.get('metadata') or {}).get('name', '').endswith('search-indexer'):
+                return {'sa': pod.get('serviceAccountName') or 'default', 'image': c.get('image', ''),
+                        'url': env['SEARCH_INDEX_OPENSEARCH_URL'], 'region': env.get('SEARCH_INDEX_OPENSEARCH_AWS_REGION', ''),
+                        'prefix': env.get('SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX') or 'relayhistory',
+                        'deployment': (item.get('metadata') or {}).get('name', '')}
+    return None
+
+
+def search_probe_job(options, name, target=None):
+    target = target or options.search_target
+    labels = {'app.kubernetes.io/name': 'agent-relay-diagnose', 'app.kubernetes.io/part-of': 'agent-relay-support'}
+    return {
+        'apiVersion': 'batch/v1', 'kind': 'Job',
+        'metadata': {'name': name, 'namespace': options.namespace, 'labels': labels},
+        'spec': {'backoffLimit': 0, 'activeDeadlineSeconds': 120, 'ttlSecondsAfterFinished': 600,
+                 'template': {'metadata': {'labels': labels}, 'spec': {
+                     # The indexer's own ServiceAccount: its Pod Identity association, its credentials.
+                     'serviceAccountName': target['sa'], 'restartPolicy': 'Never', 'enableServiceLinks': False,
+                     'securityContext': {'runAsNonRoot': True, 'runAsUser': 1000, 'runAsGroup': 1000,
+                                         'seccompProfile': {'type': 'RuntimeDefault'}},
+                     'volumes': [{'name': 'tmp', 'emptyDir': {'medium': 'Memory', 'sizeLimit': '16Mi'}}],
+                     'containers': [{
+                         'name': 'probe', 'image': target['image'], 'command': ['bun', '-e', SEARCH_PROBE],
+                         'env': [{'name': 'AR_OS_URL', 'value': target['url']}, {'name': 'AR_OS_REGION', 'value': target['region']},
+                                 {'name': 'HOME', 'value': '/tmp'}],
+                         'volumeMounts': [{'name': 'tmp', 'mountPath': '/tmp'}],
+                         'resources': {'requests': {'cpu': '50m', 'memory': '96Mi'}, 'limits': {'memory': '256Mi'}},
+                         'securityContext': {'allowPrivilegeEscalation': False, 'readOnlyRootFilesystem': True,
+                                             'capabilities': {'drop': ['ALL']}},
+                     }]}}}}
+
+
+def parse_search_probe(text):
+    result, done = None, False
+    for line in text.splitlines():
+        parts = line.split('\t')
+        if parts[:2] == ['AR', 'DONE']:
+            done = True
+        elif len(parts) == 3 and parts[:2] == ['AR', 'OS']:
+            try:
+                result = json.loads(base64.b64decode(parts[2], validate=True).decode())
+            except (ValueError, UnicodeError):
+                result = {'kind': 'error', 'detail': 'invalid-response'}
+    if not done or not isinstance(result, dict):
+        raise DiagnosticError('in-cluster-output-incomplete')
+    return result
+
+
+def iam_role_forms(role_arn='', assumed=''):
+    """The IAM role ARN with its path and without it; OpenSearch FGAC matches the
+    backend role exactly, and which form arrives depends on the domain's version."""
+    forms = []
+    m = re.fullmatch(r'arn:(aws[a-z-]*):sts::(\d{12}):assumed-role/([A-Za-z0-9+=,.@_-]{1,64})/[^/]+', assumed or '')
+    if re.fullmatch(ROLE_ARN_RE, role_arn or ''):
+        forms.append(role_arn)
+        part, acct, rest = role_arn.split(':')[1], role_arn.split(':')[4], role_arn.split(':role/', 1)[1]
+        forms.append('arn:'+part+':iam::'+acct+':role/'+rest.rsplit('/', 1)[-1])
+    elif m:
+        forms.append('arn:'+m.group(1)+':iam::'+m.group(2)+':role/'+m.group(3))
+    return list(dict.fromkeys(forms))
+
+
+def classify_opensearch(result, target, role_arn=''):
+    """(status, detail, action) for the signed probe's result."""
+    host = re.sub(r'^https://|/.*$', '', target.get('url', ''))
+    sa, prefix = target.get('sa', ''), target.get('prefix', 'relayhistory')
+    kind = result.get('kind')
+    if kind == 'no-credentials':
+        return ('FAIL', 'The search indexer\'s ServiceAccount '+sa+' got no AWS credentials to sign OpenSearch requests.',
+                'Create its EKS Pod Identity association (OpenSearch write), then restart the search indexer.')
+    if kind == 'network':
+        return ('FAIL', 'OpenSearch '+host+' is unreachable from the cluster ('+str(result.get('detail', ''))+').',
+                'Check the OpenSearch URL (site.opensearchUrl or searchIndexer.search.opensearch.url), DNS from the cluster, '
+                'and that the domain\'s security group allows TCP 443 from the cluster nodes.')
+    if kind != 'http':
+        return ('UNKNOWN', 'The OpenSearch probe could not run ('+str(result.get('detail') or kind)+').',
+                'Rerun; if it persists, check the search indexer image.')
+    status, body = result.get('status'), str(result.get('body') or '')
+    who = result.get('who') or {}
+    if status == 200:
+        return ('PASS', 'A signed request to OpenSearch '+host+' as '+(who.get('user') or sa)+' was accepted (cluster health).', '')
+    if status == 403 and re.search(r'security_exception|no permissions for', body):
+        forms = iam_role_forms(role_arn, who.get('user', ''))
+        roles = json.dumps(forms or ['<the search indexer role ARN>'])
+        role_body = json.dumps({'cluster_permissions': ['cluster_monitor', 'indices:data/write/bulk'], 'index_permissions': [{
+            'index_patterns': [prefix+'-*'], 'allowed_actions': ['write', 'create_index', 'indices:data/write/bulk*',
+            'indices:monitor/settings/get', 'indices:admin/mapping/put', 'indices:data/read/search*', 'indices:data/read/scroll*',
+            'indices:data/read/mget*', 'indices:data/write/delete/byquery', 'indices:admin/refresh*', 'indices:admin/get']}]},
+            separators=(',', ':'))
+        return ('FAIL', 'OpenSearch '+host+' refused the search indexer (403 from fine-grained access control): its role is not mapped'
+                +(' (it arrived as '+who['user']+')' if who.get('user') else '')+'.',
+                'As the OpenSearch admin (install guide step 7, opensearch-roles-via-cluster.sh), run: '
+                'PUT _plugins/_security/api/roles/relayhistory_indexer '+role_body+'  and  '
+                'PUT _plugins/_security/api/rolesmapping/relayhistory_indexer {"backend_roles":'+roles+'}'
+                '  (both forms: with and without the role\'s IAM path; PUT replaces the mapping, so include any backend roles it already has).')
+    if status == 403:
+        return ('FAIL', 'OpenSearch '+host+' refused the search indexer (403 from the domain access policy'
+                +(': '+re.sub(r'\s+', ' ', body)[:160] if body else '')+').',
+                'Allow es:ESHttp* on the domain for the search indexer role in the domain\'s access policy '
+                '(or leave the policy open to the account and rely on fine-grained access control).')
+    if status == 401:
+        return ('FAIL', 'OpenSearch '+host+' rejected the signature (401).',
+                'Check searchIndexer.search.opensearch.region matches the domain\'s region.')
+    return ('FAIL', 'OpenSearch '+host+' answered HTTP '+str(status)+' to a signed request.', 'Check the domain\'s health in the AWS console.')
+
+
+def search_checks(options, report):
+    """Search readiness: the bootstrap Job, then one signed OpenSearch request from inside the cluster."""
+    try:
+        jobs = kube(options, 'jobs', selector=True).get('items', [])
+    except DiagnosticError as exc:
+        report.unknown('search.bootstrap', str(exc))
+        jobs = []
+    boots = sorted((j for j in jobs if 'search-indexer-bootstrap' in (j.get('metadata') or {}).get('name', '')),
+                   key=lambda j: (j.get('metadata') or {}).get('creationTimestamp', ''))
+    if boots:
+        job = boots[-1]
+        name = job['metadata']['name']
+        conditions = {c.get('type'): c.get('status') for c in (job.get('status') or {}).get('conditions', [])}
+        if conditions.get('Complete') == 'True':
+            report.add('search.bootstrap', 'PASS', 'The search bootstrap Job completed.')
+        elif conditions.get('Failed') == 'True':
+            cause = ''
+            try:
+                for pod in kube(options, 'pods', selector=True).get('items', []):
+                    if (pod.get('metadata') or {}).get('labels', {}).get('job-name') == name:
+                        for st in (pod.get('status') or {}).get('containerStatuses') or []:
+                            cause = cause or ((st.get('state') or {}).get('terminated') or {}).get('message', '')
+            except DiagnosticError:
+                pass
+            cause = re.sub(r'postgres(?:ql)?://\S+', '<url>', cause.strip().split('\n')[0])[:300]
+            if not cause or not cause.startswith('search bootstrap failed'):
+                cause = 'search bootstrap failed'+(': '+cause if cause else '')
+            if re.search(r'permission denied|not permitted to log in|search_consumer_runtime', cause):
+                fix = 'Run rds-setup.sh post (configure-rds.sh does), then '
+            else:
+                fix = 'Fix the cause, then '
+            report.add('search.bootstrap', 'FAIL', cause+' (Job '+name+').',
+                       fix+'kubectl -n '+options.namespace+' delete job '+name+' and helm upgrade again; log: kubectl -n '
+                       +options.namespace+' logs job/'+name)
+        else:
+            report.unknown('search.bootstrap', 'job-pending-or-running')
+        report.checks[-1]['resource'] = name
+    try:
+        target = search_indexer(options)
+    except DiagnosticError as exc:
+        report.unknown('search.opensearch', str(exc))
+        return
+    if not target:
+        return  # No SigV4 OpenSearch indexer in this release.
+    options.search_target = target
+    role = ''
+    try:
+        cluster, region = eks_target(options)
+        if cluster and region:
+            listed = aws_json(options, ['eks', 'list-pod-identity-associations', '--cluster-name', cluster, '--region', region,
+                                        '--namespace', options.namespace, '--service-account', target['sa']])
+            for a in listed.get('associations') or []:
+                d = aws_json(options, ['eks', 'describe-pod-identity-association', '--cluster-name', cluster, '--region', region,
+                                       '--association-id', a.get('associationId', '')])
+                role = (d.get('association') or {}).get('roleArn', '') or role
+    except DiagnosticError:
+        role = ''
+    try:
+        result = run_in_cluster(options, build=search_probe_job, parse=parse_search_probe, kind='os')
+    except DiagnosticError as exc:
+        report.add('search.opensearch', 'UNKNOWN', 'The in-cluster OpenSearch probe did not finish ('+str(exc)+').',
+                   'Check that this identity can create Jobs in '+options.namespace+' and that the nodes can pull '
+                   +target['image'].split('@')[0]+'.')
+        return
+    status, detail, action = classify_opensearch(result, target, role)
+    report.add('search.opensearch', status, detail, action)
+    report.checks[-1]['resource'] = target['deployment']
 
 
 def kubectl_text(options, args, stdin=None, timeout=None):
@@ -1115,12 +1348,13 @@ def parse_probe_output(text):
     return values, results
 
 
-def run_in_cluster(options):
-    """Run the probe Job, return its parsed output, and always delete the Job."""
+def run_in_cluster(options, build=None, parse=None, kind='db'):
+    """Run a probe Job (default: the database probe), return its parsed output, and always delete the Job."""
     import secrets as _secrets
     import time
-    name = (options.release+'-diagnose-db-')[:56]+_secrets.token_hex(3)
-    manifest = json.dumps(in_cluster_job(options, name))
+    build, parse = build or in_cluster_job, parse or parse_probe_output
+    name = (options.release+'-diagnose-'+kind+'-')[:56]+_secrets.token_hex(3)
+    manifest = json.dumps(build(options, name))
     options.in_cluster_job = {'name': name, 'deleted': None}
     created = False
     try:
@@ -1161,7 +1395,7 @@ def run_in_cluster(options):
         # serving certificate can lag ("tls: internal error"), so retry.
         for attempt in range(6):
             try:
-                return parse_probe_output(kubectl_text(options, ['logs', 'job/'+name, '--tail=-1']))
+                return parse(kubectl_text(options, ['logs', 'job/'+name, '--tail=-1']))
             except DiagnosticError as exc:
                 if attempt == 5 or str(exc) == 'in-cluster-output-incomplete':
                     raise
@@ -1475,6 +1709,13 @@ def parse_args(argv=None):
     parser.add_argument('--ca-configmap',help='ConfigMap (key ca.crt) with the database CA for --in-cluster '
                                                '(default: rds-ca, else cloud-sql-ca).')
     parser.add_argument('--in-cluster-deadline',type=int,default=300,help=argparse.SUPPRESS)
+    parser.add_argument('--only',choices=('pod-identity','search'),
+                        help='Run one section against the cluster: pod-identity (EKS Pod Identity associations for every '
+                             'ServiceAccount the release uses) or search (the search bootstrap Job and one signed OpenSearch '
+                             'request from inside the cluster, as the search indexer).')
+    parser.add_argument('--create-pod-identity',metavar='SA=ROLE_ARN,...',
+                        help='With --only pod-identity: create the missing associations named here (opt-in; changes AWS).')
+    parser.add_argument('--no-search',action='store_true',help='Skip the search readiness checks (bootstrap Job and the OpenSearch probe).')
     parser.add_argument('--timeout',type=int,default=20)
     parser.add_argument('--output',type=Path,help='New JSON report file, mode 0600; never overwrites (default: ./install-diagnostic-<time>.json).')
     options = parser.parse_args(argv)
@@ -1491,11 +1732,54 @@ def parse_args(argv=None):
         parser.error('--psql-image (or PSQL_IMAGE) must be pinned by digest: <image>@sha256:<64 hex>')
     if not 1<=options.timeout<=120:
         parser.error('--timeout must be 1..120 seconds')
+    spec, options.create_pod_identity, options.created_associations = options.create_pod_identity, {}, []
+    if spec:
+        if options.only != 'pod-identity':
+            parser.error('--create-pod-identity needs --only pod-identity')
+        for item in spec.split(','):
+            sa, _, role = item.strip().partition('=')
+            if not (re.fullmatch(NAME_RE, sa) and re.fullmatch(ROLE_ARN_RE, role)):
+                parser.error('--create-pod-identity: each item is <ServiceAccount>=<IAM role ARN>, got '+item.strip()[:80])
+            options.create_pod_identity[sa] = role
     return options
+
+
+def only_section(options):
+    """--only: one cluster section, its rows and a RESULT line. Exit 0 PASS, 1 FAIL, 2 UNKNOWN, 3 cluster unreachable."""
+    report, notes = Report(), []
+    options.missing = {}
+    reachable = find_cluster(options, notes)
+    for note in notes:
+        print('  '+note)
+    if not reachable:
+        print('RESULT: INCOMPLETE: the cluster did not answer; '+options.only+' not checked.')
+        return 3
+    if options.only == 'pod-identity':
+        pod_identity_checks(options, report)
+        if not report.checks:
+            report.add('podidentity', 'PASS', 'No workload of this release reads S3 or signs OpenSearch requests (or none is deployed yet).')
+    else:
+        search_checks(options, report)
+        if not report.checks:
+            report.add('search', 'PASS', 'No search indexer in this release.')
+    for c in report.checks:
+        print(c['status']+' '+c['check']+(' ['+c['resource']+']' if c.get('resource') else '')+': '+c['detail'])
+        if c.get('action'):
+            print('  Next: '+c['action'])
+    for created in options.created_associations:
+        print('CREATED '+created['serviceAccount']+' '+created['roleArn']+' '+','.join(created['deployments']))
+    statuses = {c['status'] for c in report.checks}
+    if 'FAIL' in statuses:
+        print('RESULT: FAIL'); return 1
+    if 'UNKNOWN' in statuses:
+        print('RESULT: PARTIAL'); return 2
+    print('RESULT: PASS'); return 0
 
 
 def main(argv=None):
     options = parse_args(argv)
+    if options.only:
+        return only_section(options)
     explicit_credentials = bool(options.secret_dir or options.secret_manifests)
     report = Report()
     notes = []
@@ -1510,6 +1794,8 @@ def main(argv=None):
             cluster_checks(options,report)
             if not getattr(options,'no_aws',False):
                 pod_identity_checks(options,report)
+            if not getattr(options,'no_search',False):
+                search_checks(options,report)
         else:
             report.unknown('cluster','not-reachable')
     missing = getattr(options,'missing',{})
