@@ -29,6 +29,18 @@ them. `--help` lists every setting.
 `RELEASE_VERSION=checkout` runs this checkout's scripts and chart as they are
 (the default pins a release).
 
+Before it changes anything (even with `--reset-databases`) it checks that every
+ServiceAccount the release uses for S3 or OpenSearch has an EKS Pod Identity
+association, and stops with the exact `aws eks create-pod-identity-association`
+line for each one missing. `POD_IDENTITY_ROLES="agent-relay-worker=arn:aws:iam::<account>:role/<role>,..."`
+creates them instead and restarts their pods. Without AWS credentials (or off
+EKS) it reports that and goes on; `POD_IDENTITY_STRICT=1` stops it. At the end it
+runs the full diagnostic, including the search bootstrap and one signed
+OpenSearch request from inside the cluster as the search indexer, and prints one
+table: migrations, Secrets, database logins and CA, Pod Identity, S3, search
+bootstrap, OpenSearch auth, every Deployment, and helm test. It exits 0 only
+when every row passes.
+
 Hand-written Secrets are the bring-your-own option (SOPS, SSM, a DBA who
 creates the logins: docs/self-hosted-rds-manual-setup.md). They must pass the
 chart's `databaseGuard`, which refuses an install whose URLs log in as the RDS

@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -386,32 +387,95 @@ class ExecutionTests(unittest.TestCase):
 
     def test_unreachable_cluster_is_retried_then_incomplete_never_clean(self):
         calls=[]
-        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=8):
+        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=30):
             calls.append(probe_timeout); raise diag.DiagnosticError('timeout')
         with tempfile.TemporaryDirectory() as directory:
             output=Path(directory)/'report.json'
             out=io.StringIO()
             with mock.patch.object(diag,'kube',side_effect=kube), mock.patch.object(diag,'PROBE_SLEEP') as sleep, \
+                 mock.patch.object(diag,'exec_plugin',return_value=''), \
                  mock.patch.object(diag,'load_credentials',return_value={}), contextlib.redirect_stdout(out):
                 code=diag.main(['--scope','cluster','--context','test','--output',str(output)])
-        self.assertEqual(calls,list(diag.PROBE_TIMEOUTS))
-        self.assertEqual(sleep.call_count,len(diag.PROBE_TIMEOUTS)-1)
+        # Never below --timeout (default 20) or the 30s floor; one retry.
+        self.assertEqual(calls,[30]*diag.PROBE_ATTEMPTS)
+        self.assertEqual(sleep.call_count,diag.PROBE_ATTEMPTS-1)
         self.assertEqual(code,3)
         self.assertIn('RESULT: INCOMPLETE: workload checks skipped',out.getvalue())
         self.assertNotIn('RESULT: PASS',out.getvalue())
 
-    def test_slow_cluster_answers_on_a_later_attempt(self):
-        attempts=[]
-        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=8):
-            attempts.append(probe_timeout)
-            if len(attempts)<2: raise diag.DiagnosticError('timeout')
-            return {}
+    def test_probe_honours_a_longer_timeout(self):
+        calls=[]
+        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=30):
+            calls.append(probe_timeout); return {}
+        opts=diag.parse_args(['--scope','cluster','--context','test','--values','--timeout','90'])
+        with mock.patch.object(diag,'kube',side_effect=kube):
+            diag.discover(opts,[])
+        self.assertTrue(opts.cluster_reachable)
+        self.assertEqual(calls,[90])
+
+    def _fake_kubectl(self, directory, delay, exec_command='aws'):
+        bin_dir=Path(directory)/'bin'; bin_dir.mkdir()
+        user={'name':'u','user':{'exec':{'command':exec_command,'args':['eks','get-token']}}} if exec_command else {'name':'u','user':{}}
+        script=bin_dir/'kubectl'
+        script.write_text('#!/bin/sh\n'
+            'case "$*" in *"config view"*) printf %s \''+json.dumps({'users':[user]})+'\' ;; '
+            '*"get secret"*) sleep '+str(delay)+'; echo \'{"kind":"Secret"}\' ;; esac\n')
+        script.chmod(0o755)
+        return str(bin_dir)
+
+    def test_a_mixed_failure_keeps_the_earlier_error_visible(self):
+        errors = iter([diag.DiagnosticError('permissions'), diag.DiagnosticError('timeout')])
+        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=30):
+            raise next(errors)
         notes=[]
         opts=diag.parse_args(['--scope','cluster','--context','test','--values'])
-        with mock.patch.object(diag,'kube',side_effect=kube), mock.patch.object(diag,'PROBE_SLEEP'):
+        with mock.patch.object(diag,'kube',side_effect=kube), mock.patch.object(diag,'PROBE_SLEEP'), \
+             mock.patch.object(diag,'exec_plugin',return_value='aws'):
             diag.discover(opts,notes)
-        self.assertTrue(opts.cluster_reachable)
-        self.assertEqual(attempts,[8,15])
+        note=[n for n in notes if n.startswith('cluster:')][0]
+        self.assertIn('permissions, timeout', note)
+        self.assertNotIn('slow credentials', note)
+
+    def test_only_sections_count_not_found_as_an_answer(self):
+        calls=[]
+        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=30):
+            calls.append((resource,name))
+            if probe: raise diag.DiagnosticError('not-found')
+            return {'items': []}
+        out=io.StringIO()
+        with mock.patch.object(diag,'kube',side_effect=kube), contextlib.redirect_stdout(out):
+            code=diag.main(['--only','pod-identity','--context','test'])
+        self.assertEqual(calls[0],('serviceaccounts','default'))
+        self.assertNotIn(('secret','agent-relay-secrets'),calls)
+        self.assertEqual(code,0)
+        self.assertIn('RESULT: PASS',out.getvalue())
+
+    def test_slow_exec_credentials_12s_are_not_unreachable(self):
+        """A real kubectl stand-in that takes 12s per call (slow aws eks get-token)."""
+        with tempfile.TemporaryDirectory() as directory:
+            path=self._fake_kubectl(directory,12)+os.pathsep+os.environ['PATH']
+            opts=diag.parse_args(['--scope','cluster','--context','test','--values'])
+            notes=[]
+            with mock.patch.dict(os.environ,{'PATH':path}):
+                start=time.monotonic()
+                diag.discover(opts,notes)
+            self.assertTrue(opts.cluster_reachable, notes)
+            self.assertGreaterEqual(time.monotonic()-start,12)
+            self.assertFalse(any('not reachable' in n for n in notes))
+
+    def test_timeout_with_an_exec_plugin_says_slow_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=self._fake_kubectl(directory,6)+os.pathsep+os.environ['PATH']
+            opts=diag.parse_args(['--scope','cluster','--context','test','--values','--timeout','1'])
+            notes=[]
+            with mock.patch.dict(os.environ,{'PATH':path}), mock.patch.object(diag,'PROBE_FLOOR',1), \
+                 mock.patch.object(diag,'PROBE_SLEEP'):
+                diag.discover(opts,notes)
+            self.assertFalse(opts.cluster_reachable)
+            note=[n for n in notes if n.startswith('cluster:')][0]
+            self.assertIn('exec plugin (aws)',note)
+            self.assertIn('slow credentials',note)
+            self.assertNotIn('not reachable',note)
 
 def workload(kind, name, sa, **env):
     pod = {'serviceAccountName': sa, 'containers': [{'name': 'app', 'env': [{'name': k, 'value': v} for k, v in env.items()]}]}
@@ -443,6 +507,7 @@ class FakeAws:
                  describe_error=None, users=()):
         self.associations, self.simulate, self.list_error, self.context_cluster = associations, simulate, list_error, context_cluster
         self.describe_error, self.users = describe_error, list(users)
+        self.create_error, self.created = None, []
         self.calls, self.envs = [], []
 
     def __call__(self, argv, **kwargs):
@@ -469,6 +534,12 @@ class FakeAws:
             actions = argv[argv.index('--action-names')+1:argv.index('--resource-arns')]
             decision = self.simulate(role, actions) if callable(self.simulate) else self.simulate
             return ok({'EvaluationResults': [{'EvalActionName': a, 'EvalDecision': decision} for a in actions]})
+        if argv[:3] == ['aws', 'eks', 'create-pod-identity-association']:
+            if self.create_error:
+                return SimpleNamespace(returncode=254, stdout='', stderr=self.create_error)
+            sa = argv[argv.index('--service-account')+1]
+            self.created.append((sa, argv[argv.index('--role-arn')+1]))
+            return ok({'association': {'serviceAccount': sa, 'associationId': 'a-new0000000'}})
         raise AssertionError('unexpected command '+' '.join(argv))
 
 
@@ -504,6 +575,36 @@ class PodIdentityTests(unittest.TestCase):
         self.assertIn('agent-relay-alleyoop', checks['podidentity.unused']['detail'])
         self.assertIn(['aws', 'eks', 'list-pod-identity-associations', '--cluster-name', 'demo', '--region', 'us-west-2',
                        '--namespace', 'agent-relay', '--output', 'json'], fake.calls)
+
+    def test_opt_in_creates_the_missing_association(self):
+        fake = FakeAws(self.REHEARSAL)
+        opts = dict(no_iam_simulate=True)
+        report = diag.Report()
+        o = options(**opts)
+        o.create_pod_identity = {'agent-relay-worker': ROLE+'sessions'}
+        o.created_associations = []
+        with mock.patch.object(diag, 'kube', side_effect=lambda opt, res, name=None, selector=False, probe=False: {'items': RELEASE[res]}), \
+             mock.patch.object(diag.subprocess, 'run', side_effect=fake):
+            diag.pod_identity_checks(o, report)
+        worker = {c['check']: c for c in report.checks}['podidentity.agent-relay-worker']
+        self.assertEqual(worker['status'], 'PASS')
+        self.assertIn('created', worker['detail'])
+        self.assertEqual(fake.created, [('agent-relay-worker', ROLE+'sessions')])
+        self.assertEqual(o.created_associations[0]['deployments'], ['agent-relay-worker-session-summary-worker'])
+
+    def test_a_failed_create_is_a_fail_with_the_manual_line(self):
+        fake = FakeAws(self.REHEARSAL)
+        fake.create_error = 'An error occurred (AccessDeniedException) when calling CreatePodIdentityAssociation'
+        report = diag.Report()
+        o = options(no_iam_simulate=True)
+        o.create_pod_identity, o.created_associations = {'agent-relay-worker': ROLE+'sessions'}, []
+        with mock.patch.object(diag, 'kube', side_effect=lambda opt, res, name=None, selector=False, probe=False: {'items': RELEASE[res]}), \
+             mock.patch.object(diag.subprocess, 'run', side_effect=fake):
+            diag.pod_identity_checks(o, report)
+        worker = {c['check']: c for c in report.checks}['podidentity.agent-relay-worker']
+        self.assertEqual(worker['status'], 'FAIL')
+        self.assertIn('aws eks create-pod-identity-association', worker['action'])
+        self.assertIn('iam:PassRole', worker['action'])
 
     def test_access_levels_and_simulated_resources(self):
         fake = FakeAws(dict(self.REHEARSAL, **{'agent-relay-worker': 'session-ingest-api'}))
@@ -890,6 +991,74 @@ class InClusterTests(unittest.TestCase):
         self.assertEqual(diag.parse_args([]).psql_image, os.environ.get('PSQL_IMAGE') or diag.PSQL_IMAGE)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             diag.parse_args(['--psql-image', 'ghcr.io/cloudnative-pg/postgresql:17'])   # a tag can be swapped
+
+
+class SearchReadinessTests(unittest.TestCase):
+    TARGET = {'sa': 'agent-relay-search-indexer', 'image': 'ghcr.io/agentworkforce/sessions-pipeline@sha256:'+'1'*64,
+              'url': OS_URL, 'region': 'us-west-2', 'prefix': 'relayhistory', 'deployment': 'agent-relay-search-indexer'}
+    HOST = OS_URL[len('https://'):]
+
+    def test_fgac_403_gives_role_and_mapping_bodies_with_both_arn_forms(self):
+        result = {'kind': 'http', 'status': 403, 'who': {'user': 'arn:aws:sts::123456789012:assumed-role/agent-relay-indexer/eks-pod'},
+                  'body': '{"error":{"root_cause":[{"type":"security_exception","reason":"no permissions for [cluster:monitor/health]"}]}}'}
+        status, detail, action = diag.classify_opensearch(result, self.TARGET, 'arn:aws:iam::123456789012:role/search/agent-relay-indexer')
+        self.assertEqual(status, 'FAIL')
+        self.assertIn('fine-grained access control', detail)
+        self.assertIn('PUT _plugins/_security/api/rolesmapping/relayhistory_indexer {"backend_roles":'
+                      '["arn:aws:iam::123456789012:role/search/agent-relay-indexer", "arn:aws:iam::123456789012:role/agent-relay-indexer"]}', action)
+        self.assertIn('PUT _plugins/_security/api/roles/relayhistory_indexer {"cluster_permissions":["cluster_monitor"', action)
+        self.assertIn('"index_patterns":["relayhistory-*"]', action)
+
+    def test_fgac_403_without_an_association_uses_the_assumed_role(self):
+        result = {'kind': 'http', 'status': 403, 'body': 'security_exception', 'who': {'user': 'arn:aws:sts::123456789012:assumed-role/idx/s'}}
+        self.assertIn('["arn:aws:iam::123456789012:role/idx"]', diag.classify_opensearch(result, self.TARGET)[2])
+
+    def test_domain_policy_403(self):
+        result = {'kind': 'http', 'status': 403, 'body': '{"Message":"User: anonymous is not authorized to perform: es:ESHttpGet"}'}
+        status, detail, action = diag.classify_opensearch(result, self.TARGET)
+        self.assertEqual(status, 'FAIL')
+        self.assertIn('domain access policy', detail)
+        self.assertIn('es:ESHttp*', action)
+
+    def test_unreachable_and_no_credentials_and_success(self):
+        s, d, a = diag.classify_opensearch({'kind': 'network', 'detail': 'ENOTFOUND'}, self.TARGET)
+        self.assertEqual(s, 'FAIL'); self.assertIn(self.HOST+' is unreachable from the cluster (ENOTFOUND)', d); self.assertIn('security group', a)
+        s, d, a = diag.classify_opensearch({'kind': 'no-credentials'}, self.TARGET)
+        self.assertEqual(s, 'FAIL'); self.assertIn('Pod Identity association', a)
+        s, d, a = diag.classify_opensearch({'kind': 'http', 'status': 200, 'body': '{}', 'who': {'user': 'arn:x'}}, self.TARGET)
+        self.assertEqual(s, 'PASS')
+
+    def test_search_checks_bootstrap_cause_and_probe(self):
+        job = {'metadata': {'name': 'agent-relay-search-indexer-bootstrap-1234abcd', 'creationTimestamp': '2026-11-26T00:00:00Z'},
+               'status': {'conditions': [{'type': 'Failed', 'status': 'True'}]}}
+        pod = {'metadata': {'labels': {'job-name': job['metadata']['name']}}, 'status': {'containerStatuses': [{'state': {'terminated': {
+            'message': 'search bootstrap failed: OpenSearch x unreachable (network): check searchIndexer.search.opensearch.url'}}}]}}
+        dep = workload('deployments', 'agent-relay-search-indexer', 'agent-relay-search-indexer', SEARCH_INDEX_OPENSEARCH_AUTH='sigv4',
+                       SEARCH_INDEX_OPENSEARCH_URL=OS_URL, SEARCH_INDEX_OPENSEARCH_AWS_REGION='us-west-2')
+        dep['spec']['template']['spec']['containers'][0]['image'] = self.TARGET['image']
+        items = {'jobs': [job], 'pods': [pod], 'deployments': [dep]}
+        report = diag.Report()
+        with mock.patch.object(diag, 'kube', side_effect=lambda opt, res, name=None, selector=False, probe=False: {'items': items.get(res, [])}), \
+             mock.patch.object(diag, 'eks_target', return_value=(None, None)), \
+             mock.patch.object(diag, 'run_in_cluster', return_value={'kind': 'http', 'status': 200, 'body': '{}'}) as run:
+            diag.search_checks(options(), report)
+        checks = {c['check']: c for c in report.checks}
+        self.assertEqual(checks['search.bootstrap']['status'], 'FAIL')
+        self.assertIn('OpenSearch x unreachable', checks['search.bootstrap']['detail'])
+        self.assertIn('delete job agent-relay-search-indexer-bootstrap-1234abcd', checks['search.bootstrap']['action'])
+        self.assertEqual(checks['search.opensearch']['status'], 'PASS')
+        manifest = diag.search_probe_job(options(), 'probe', dict(self.TARGET, pullSecrets=[{'name': 'ghcr'}]))
+        self.assertEqual(manifest['spec']['template']['spec']['imagePullSecrets'], [{'name': 'ghcr'}])
+        spec = manifest['spec']['template']['spec']
+        self.assertEqual(spec['serviceAccountName'], 'agent-relay-search-indexer')
+        self.assertEqual(spec['containers'][0]['image'], self.TARGET['image'])
+        self.assertEqual(run.call_args.kwargs['kind'], 'os')
+
+    def test_probe_output_parser(self):
+        line = 'AR\tOS\t'+base64.b64encode(json.dumps({'kind': 'http', 'status': 403}).encode()).decode()
+        self.assertEqual(diag.parse_search_probe('noise\n'+line+'\nAR\tDONE\n')['status'], 403)
+        with self.assertRaises(diag.DiagnosticError):
+            diag.parse_search_probe(line)
 
 
 class PostgreSQLCatalogTests(unittest.TestCase):

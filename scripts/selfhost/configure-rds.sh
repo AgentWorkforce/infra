@@ -53,6 +53,12 @@
 #                      out the matching tag: git checkout agent-relay-2026.11.18
 #                      "checkout": use this infra checkout as it is (its chart, its
 #                      rds-setup.sh and diagnose-install.py, the digests in VALUES)
+#   POD_IDENTITY_ROLES opt-in "sa=roleArn,..." : create the EKS Pod Identity associations
+#                      that are missing (e.g. agent-relay-worker=arn:aws:iam::123:role/x), then
+#                      restart their pods. Unset: a missing association stops the run before
+#                      anything changes, with the exact aws eks create-pod-identity-association line.
+#   POD_IDENTITY_STRICT 1: also stop when the associations can't be checked (no AWS
+#                      credentials, not EKS). Default 0: report and continue.
 #   STATUS_RBAC        1 (default) lets helm test read Jobs/Deployments/Pods through a
 #                      read-only Role; 0 if you may not create Roles in the namespace
 #   AWS_REGION         default: taken from RDS_HOST
@@ -214,10 +220,81 @@ case "$ADMIN_EMAIL" in
     printf '    That address becomes the owner. Set ADMIN_EMAIL=<real address> (or fix it in %s) and rerun.\n' "$VALUES"
     read -r -p "    Continue anyway? [y/N] " ok; [[ "$ok" == y || "$ok" == Y ]] || die "set ADMIN_EMAIL first";;
 esac
-k get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl --context "$KUBE_CONTEXT" get namespace "$NAMESPACE" >/dev/null \
-  || die "cannot reach namespace $NAMESPACE with context $KUBE_CONTEXT (cluster VPN on?)"
+if ! ns_err="$(kubectl --context "$KUBE_CONTEXT" get namespace "$NAMESPACE" -o name 2>&1)"; then
+  # A fresh install: the cluster answered and the namespace isn't there yet.
+  if grep -q '(NotFound)' <<<"$ns_err"; then
+    kubectl --context "$KUBE_CONTEXT" create namespace "$NAMESPACE" >/dev/null || die "could not create namespace $NAMESPACE"
+    info "created namespace $NAMESPACE"
+  else
+    die "cannot reach namespace $NAMESPACE with context $KUBE_CONTEXT (cluster VPN on?)"
+  fi
+fi
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK" ${CHART_DIR:+"$CHART_DIR"}' EXIT
+
+# The install diagnostic (scripts/support/diagnose-install.py): the copy next to
+# this script (a release checkout), else the release's own, else the old pin.
+# Its --only sections need a release that has them; older copies skip those steps.
+DIAG="$WORK/diagnose-install.py"
+if [[ -f "$SCRIPT_DIR/../support/diagnose-install.py" ]]; then
+  cp "$SCRIPT_DIR/../support/diagnose-install.py" "$DIAG"
+elif ! curl -fsSL "$RAW/agent-relay-$RELEASE_VERSION/scripts/support/diagnose-install.py" -o "$DIAG" 2>/dev/null; then
+  if ! { curl -fsSL "$DIAG_URL" -o "$DIAG" && [[ "$(sha256 "$DIAG")" == "$DIAG_SHA256" ]]; }; then rm -f "$DIAG"; fi
+fi
+DIAG_SECTIONS=0
+if [[ -s "$DIAG" ]] && python3 "$DIAG" --help 2>/dev/null | grep -q -- '--only'; then DIAG_SECTIONS=1; fi
+diag() { python3 "$DIAG" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" --release "$RELEASE" "$@"; }
+CREATED_ASSOCIATIONS=""
+# Restarts still owed for associations created earlier (this run or a previous one,
+# whose rollout restart failed): kept in STATE_DIR until they succeed.
+PENDING_RESTARTS_FILE="$STATE_DIR/pending-pod-identity-restarts"
+RESTART_DEPLOYMENTS="$(cat "$PENDING_RESTARTS_FILE" 2>/dev/null || true)"
+# pod_identity <when>: check (and with POD_IDENTITY_ROLES create) the EKS Pod Identity
+# association of every ServiceAccount the release's workloads use for S3 or OpenSearch.
+pod_identity() {
+  local rc=0 out
+  if [[ "$DIAG_SECTIONS" != 1 ]]; then
+    [[ "${POD_IDENTITY_STRICT:-0}" == 1 ]] && die "Pod Identity can't be checked ($1): this release's diagnostic has no --only, and POD_IDENTITY_STRICT=1"
+    info "Pod Identity: not checked ($1): this release's diagnostic has no --only"
+    return 0
+  fi
+  # Associations only here; the final diagnostic also simulates each role's IAM policy.
+  out="$(diag --only pod-identity --no-iam-simulate ${POD_IDENTITY_ROLES:+--create-pod-identity "$POD_IDENTITY_ROLES"} 2>&1)" || rc=$?
+  { grep -vE '^(CREATED|RESULT)' <<<"$out" | sed 's/^/    /'; } || true
+  while read -r _ sa role deps; do
+    info "created the Pod Identity association for $sa ($role)"
+    CREATED_ASSOCIATIONS="$CREATED_ASSOCIATIONS $sa"
+    RESTART_DEPLOYMENTS="$RESTART_DEPLOYMENTS ${deps//,/ }"
+  done < <(grep '^CREATED ' <<<"$out" || true)
+  case "$rc" in
+    0) info "Pod Identity: every ServiceAccount that needs AWS has an association ($1)" ;;
+    1) restart_created   # what was created is kept: restart its pods before stopping
+       local done_note="Nothing has been changed yet."
+       [[ -z "$CREATED_ASSOCIATIONS" ]] || done_note="Only Pod Identity associations have been created so far:$CREATED_ASSOCIATIONS."
+       [[ "$1" == "before any change" ]] || done_note="helm has already installed the release; the run stops before the migration wait.${CREATED_ASSOCIATIONS:+ Created in this run:$CREATED_ASSOCIATIONS.}"
+       die "Pod Identity associations are missing ($1). $done_note Run each 'Next:' line above (the role needs the access listed), or rerun with POD_IDENTITY_ROLES=\"<sa>=<role ARN>,...\" to create them, then rerun this script." ;;
+    *) if [[ "${POD_IDENTITY_STRICT:-0}" == 1 ]]; then die "Pod Identity could not be checked ($1) and POD_IDENTITY_STRICT=1"; fi
+       info "Pod Identity: could not be checked ($1); the lines above say how to check by hand. Continuing (POD_IDENTITY_STRICT=1 to stop)." ;;
+  esac
+}
+restart_created() {
+  local d failed=""
+  for d in $RESTART_DEPLOYMENTS; do
+    if k rollout restart "deployment/$d" >/dev/null 2>&1; then
+      info "restarted $d (new Pod Identity association)"
+    else
+      info "could not restart $d: kubectl --context $KUBE_CONTEXT -n $NAMESPACE rollout restart deployment/$d"
+      failed="$failed $d"
+    fi
+  done
+  RESTART_DEPLOYMENTS="$failed"   # still pending: the final table fails until they restart
+  if [[ -n "${failed// /}" ]]; then printf '%s\n' "$failed" >"$PENDING_RESTARTS_FILE"; else rm -f "$PENDING_RESTARTS_FILE"; fi
+}
+
+# 0. Pod Identity preflight: before anything destructive (including --reset-databases).
+log "0/8 Pod Identity preflight"
+pod_identity "before any change"
+restart_created
 
 # 1. Master login in Secrets Manager -----------------------------------------
 if [[ -z "${RDS_ADMIN_SECRET_ARN:-}" ]]; then
@@ -556,6 +633,11 @@ else
   read -r -p "    Press Enter once helm upgrade has finished... " _
 fi
 
+# A fresh install had no workloads to check before helm (automatic or manual
+# helm path): check them now, creating any POD_IDENTITY_ROLES names.
+pod_identity "after helm"
+restart_created
+
 # 6. Wait for the HoopDb migration -------------------------------------------
 log "6/8 Waiting for the HoopDb migration Job"
 MIGRATION_JOB=""
@@ -616,17 +698,15 @@ helm --kube-context "$KUBE_CONTEXT" test "$RELEASE" -n "$NAMESPACE" --logs --tim
 sed -n '/^Agent Relay install status/,/^\(HEALTHY\|UNHEALTHY\)/p' "$WORK/status.txt"
 STATUS_VERDICT="$(grep -oE '^(HEALTHY|UNHEALTHY)' "$WORK/status.txt" | tail -n1 || true)"
 [[ -n "$STATUS_VERDICT" ]] || { info "helm test printed no status table:"; tail -n 5 "$WORK/status.txt" | sed 's/^/      /'; }
-# The diagnostic next to this script matches this checkout (a release tag);
-# the pinned download is only for a script copied on its own.
-if [[ -f "$SCRIPT_DIR/../support/diagnose-install.py" ]]; then
-  cp "$SCRIPT_DIR/../support/diagnose-install.py" "$WORK/diagnose-install.py"
-fi
+# The full diagnostic, after the rollouts: migrations, Secrets, database logins
+# and CA, Pod Identity, the search bootstrap and a signed OpenSearch request
+# from inside the cluster, S3, and every Deployment. Its JSON feeds the table.
 DIAG_RC=""
-if command -v python3 >/dev/null && { [[ -s "$WORK/diagnose-install.py" ]] || { curl -fsSL "$DIAG_URL" -o "$WORK/diagnose-install.py" \
-   && [[ "$(sha256 "$WORK/diagnose-install.py")" == "$DIAG_SHA256" ]]; }; }; then
+if command -v python3 >/dev/null && [[ -s "$DIAG" ]]; then
+  log "Install diagnostic (Pod Identity, search, workloads)"
   DIAG_RC=0
-  python3 "$WORK/diagnose-install.py" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" --release "$RELEASE" \
-    --scope cluster --values "$VALUES" || DIAG_RC=$?
+  diag --scope all --values "$VALUES" --output "$WORK/diagnostic.json" >"$WORK/diagnostic.txt" 2>&1 || DIAG_RC=$?
+  { sed -n '/^Likely problems/,$p' "$WORK/diagnostic.txt" | grep -v '^Report written' | sed 's/^/    /'; } || true
 else
   info "support diagnostic skipped (python3 or download unavailable)"
 fi
@@ -681,23 +761,70 @@ elif [[ "$code" != 409 ]]; then
 fi
 
 # Verdict --------------------------------------------------------------------
-# One plain line, never a clean result unless the checks actually ran and passed.
+# One table by area, from the diagnostic's report and helm test. Exit 0 only when
+# every row is PASS: never a clean result unless the checks ran and passed.
 log "Result"
-case "$STATUS_VERDICT:${DIAG_RC:-none}" in
-  HEALTHY:0|HEALTHY:none) info "HEALTHY: every install check passed." ;;
-  HEALTHY:3|*:3) info "INCOMPLETE: the support diagnostic could not reach the cluster, so its workload checks were skipped." ;;
-  UNHEALTHY:*) info "UNHEALTHY: the status table above lists each FAIL with its fix." ;;
-  *) info "INCOMPLETE: the status test did not report (see above)." ;;
-esac
+FINAL_RC=0
+STATUS_VERDICT="$STATUS_VERDICT" DIAG_RC="${DIAG_RC:-none}" PENDING_RESTARTS="$RESTART_DEPLOYMENTS" python3 - "$WORK/diagnostic.json" <<'PYTABLE' || FINAL_RC=$?
+import json, os, sys
+AREAS = [('migrations', ('jobs.',)), ('Secrets', ('credential',)),
+         ('database logins + CA', ('database', 'cast.', 'control.', 'hoop.')),
+         ('Pod Identity', ('podidentity',)), ('S3', ('ingest.',)), ('search bootstrap', ('search.bootstrap',)),
+         ('OpenSearch auth', ('search.opensearch',)), ('workloads', ('deployments.', 'pods.', 'persistentvolumeclaims.')),
+         ('values', ('values.',)), ('cluster', ('cluster',))]
+try:
+    checks = json.load(open(sys.argv[1])).get('checks', [])
+except (OSError, ValueError):
+    checks = []
+rows = []
+for area, prefixes in AREAS:
+    mine = [c for c in checks if c['check'].startswith(prefixes)]
+    if not mine:
+        continue
+    status = 'FAIL' if any(c['status'] == 'FAIL' for c in mine) else 'UNKNOWN' if any(c['status'] == 'UNKNOWN' for c in mine) else 'PASS'
+    bad = [c for c in mine if c['status'] == status and status != 'PASS']
+    detail = '; '.join((c.get('resource') + ': ' if c.get('resource') else '') + c['detail'] for c in bad[:3]) if bad else str(len(mine))+' check(s)'
+    rows.append((area, status, detail[:220]))
+covered = {c['check'] for _, prefixes in AREAS for c in checks if c['check'].startswith(prefixes)}
+other = [c for c in checks if c['check'] not in covered]
+if other:
+    status = 'FAIL' if any(c['status'] == 'FAIL' for c in other) else 'UNKNOWN' if any(c['status'] == 'UNKNOWN' for c in other) else 'PASS'
+    bad = [c for c in other if c['status'] == status and status != 'PASS']
+    rows.append(('other checks', status, ('; '.join(c['check']+': '+c['detail'] for c in bad[:3]) if bad else str(len(other))+' check(s)')[:220]))
+verdict, diag_rc = os.environ.get('STATUS_VERDICT', ''), os.environ.get('DIAG_RC', 'none')
+pending = os.environ.get('PENDING_RESTARTS', '').split()
+if pending:
+    rows.append(('pod restarts', 'FAIL', 'not restarted after their Pod Identity association: ' + ', '.join(pending)))
+rows.append(('helm test', {'HEALTHY': 'PASS', 'UNHEALTHY': 'FAIL'}.get(verdict, 'UNKNOWN'),
+             verdict or 'no status table (see above)'))
+if diag_rc in ('none', '3') or not checks:
+    rows.append(('diagnostic', 'UNKNOWN', 'skipped or could not reach the cluster: workload checks did not run'))
+elif diag_rc not in ('0',) and all(r[1] == 'PASS' for r in rows):
+    # A failed or partial diagnostic never becomes a healthy result.
+    rows.append(('diagnostic', 'FAIL' if diag_rc == '1' else 'UNKNOWN', 'exited '+diag_rc+' (see its output above)'))
+w = max(len(r[0]) for r in rows)
+print('    %-*s  %-7s  %s' % (w, 'AREA', 'STATUS', 'DETAIL'))
+for r in rows:
+    print('    %-*s  %-7s  %s' % (w, r[0], r[1], r[2]))
+failed = [r for r in rows if r[1] != 'PASS']
+if not failed:
+    print('    HEALTHY: every area passed.')
+    sys.exit(0)
+print('    ' + ('UNHEALTHY' if any(r[1] == 'FAIL' for r in failed) else 'INCOMPLETE') + ': ' + ', '.join(r[0] for r in failed)
+      + ' (details: the diagnostic and helm test output above).')
+sys.exit(1)
+PYTABLE
+cp "$WORK/diagnostic.json" "$STATE_DIR/last-install-diagnostic.json" 2>/dev/null && info "report kept: $STATE_DIR/last-install-diagnostic.json"
 info "Next:"
-if [[ "$STATUS_VERDICT" == HEALTHY && ( "${DIAG_RC:-0}" == 0 ) ]]; then
+if [[ "$FINAL_RC" == 0 ]]; then
   info "  1. sign in with the setup key above; 2. create the load balancer (install guide step 14)."
 else
-  info "  1. fix each FAIL row above (S3, OpenSearch and Pod Identity rows are fixed in AWS, not by rerunning this script);"
+  info "  1. fix each FAIL row (S3, OpenSearch and Pod Identity are fixed in AWS: the diagnostic above gives the exact command);"
   info "  2. rerun this script without --reset-databases: it keeps existing keys and logins, reruns helm,"
   info "     and deletes and reruns a failed search bootstrap itself (read a failed migration Job's log first);"
-  info "  3. check again: helm test $RELEASE -n $NAMESPACE --logs   (on the cluster VPN)."
+  info "  3. check again: python3 diagnose-install.py --scope all, and helm test $RELEASE -n $NAMESPACE --logs."
 fi
 
 log "Done. Credential files are private under $FILES; keep them, never commit or share them."
 info "RDS rotates the master password if it is RDS-managed: before a later helm upgrade run rds-setup.sh refresh-admin"
+exit "$FINAL_RC"
