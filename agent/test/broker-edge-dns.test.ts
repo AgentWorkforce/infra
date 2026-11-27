@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Broker } from "../broker/src/broker.ts";
 import { defaultDeliverer } from "../broker/src/deliver.ts";
-import { checkWorkspaceAuto, decide as decideWith, EDGE_DNS_PROFILE, SESSION_POLICY_MAX_CHARS, type Allowlist, type CredentialRequest, type PolicyStatement, type Principal } from "../broker/src/policy.ts";
+import { checkWorkspaceAuto, decide as decideWith, EDGE_DNS_PROFILE, ownerDelegableProblem, SESSION_POLICY_MAX_CHARS, type Allowlist, type CredentialRequest, type PolicyStatement, type Principal } from "../broker/src/policy.ts";
 import type { StsClient } from "../broker/src/sts.ts";
 
 const shipped = JSON.parse(readFileSync(new URL("../broker/allowlist.json", import.meta.url), "utf8")) as Allowlist;
@@ -252,4 +252,16 @@ test("end to end: pending on the edge-dns role, the prompt names the profile, Kh
   // The policy STS is given is the per-grant one: the delete stays on the lockfile.
   assert.deepEqual(calls[0]!.policy.Statement.filter((s) => s.Action?.includes("s3:DeleteObject")).map((s) => [s.Resource].flat()), [[LOCK]]);
   assert.deepEqual(grantsOn(calls[0]!.policy, "s3:DeleteObject", STATE), []);
+});
+
+test("an owner delegate can never approve a profile request, even for actions it could otherwise approve", () => {
+  const d = decide(edgeReq());
+  assert.equal(d.outcome, "approval", d.reasons.join("; "));
+  if (d.outcome !== "approval") return;
+  assert.match(ownerDelegableProblem({ request: edgeReq(), sessionPolicy: d.sessionPolicy }, shipped) ?? "", /owner delegates cannot approve this: profile "edge-dns" requests need the owner per request/);
+  // Only the read actions: still refused, because the profile is the reason.
+  const reads = edgeReq({ actions: ["s3:GetObject"], resources: [STATE] });
+  const r = decide(reads);
+  if (r.outcome !== "approval") return assert.fail(r.reasons.join("; "));
+  assert.match(ownerDelegableProblem({ request: reads, sessionPolicy: r.sessionPolicy }, shipped) ?? "", /profile "edge-dns"/);
 });

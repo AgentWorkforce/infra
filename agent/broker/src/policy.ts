@@ -1109,6 +1109,8 @@ function readOnlyRuleAction(action: string, list: Allowlist): boolean {
  */
 export function ownerDelegableProblem(p: { request: CredentialRequest; sessionPolicy: SessionPolicy }, list: Allowlist): string | undefined {
   const no = (why: string) => `owner delegates cannot approve this: ${why}; needs ${list.humanApprovers.join(", ")}'s own DM`;
+  // A target-role profile (e.g. edge-dns) is owner approval per request, like a named delegate (profileProblems).
+  if (p.request.profile !== undefined) return no(`profile ${JSON.stringify(p.request.profile)} requests need the owner per request`);
   for (const a of p.request.actions) {
     const why = neverDelegable(a, list);
     if (why) return no(why);
