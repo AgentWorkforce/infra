@@ -443,12 +443,15 @@ SH
     k delete secret agent-relay-db-reset --ignore-not-found >/dev/null 2>&1 \
       || info "could not remove Secret agent-relay-db-reset (the master login); remove it: kubectl --context $KUBE_CONTEXT -n $NAMESPACE delete secret agent-relay-db-reset"
   }
-  # stop_job <name>: deletes the Job and waits for its pods; 0 only once none is left.
+  # stop_job <name>: deletes the Job and waits for its pods; 0 only once the delete
+  # succeeded and neither the Job nor any of its pods is left.
   stop_job() {
-    local pods
-    k delete job "$1" --ignore-not-found --cascade=foreground --wait=true --timeout=120s >/dev/null 2>&1 || true
-    pods="$(k get pods -l "job-name=$1" -o name 2>/dev/null)" || return 1
-    [[ -z "$pods" ]]
+    local left
+    k delete job "$1" --ignore-not-found --cascade=foreground --wait=true --timeout=120s >/dev/null 2>&1 || return 1
+    left="$(k get job "$1" --ignore-not-found -o name 2>/dev/null)" || return 1
+    [[ -z "$left" ]] || return 1
+    left="$(k get pods -l "job-name=$1" -o name 2>/dev/null)" || return 1
+    [[ -z "$left" ]]
   }
 
   # Read-only preflight, before anything changes: a refused reset leaves the
@@ -497,7 +500,7 @@ $(db_drop_sh)" ""; then
     else
       drop_reset_secret
       restore_replicas print || true
-      back="the reset Job could not be confirmed stopped, so the deployments were left at 0 (it could still drop a database the services reconnect to): once 'kubectl --context $KUBE_CONTEXT -n $NAMESPACE get pods -l job-name=agent-relay-db-reset' lists none, run each 'to restore' command above"
+      back="the reset Job could not be confirmed stopped, so the deployments were left at 0 (it could still drop a database the services reconnect to): delete it (kubectl --context $KUBE_CONTEXT -n $NAMESPACE delete job agent-relay-db-reset --cascade=foreground --wait), and once both 'get job agent-relay-db-reset' and 'get pods -l job-name=agent-relay-db-reset' list nothing, run each 'to restore' command above"
     fi
     db_refused "$out" "; $back"
     printf '%s\n' "$out"

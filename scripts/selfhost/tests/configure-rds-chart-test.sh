@@ -80,6 +80,8 @@ case "$*" in
   *"get job agent-relay-db-reset -o json"*) [[ -n "${MOCK_RESET_LOG:-}" ]] && t=Failed || t=Complete
     echo '{"status":{"conditions":[{"type":"'"$t"'","status":"True"}]}}' ;;
   *"logs job/agent-relay-db-reset"*) printf '%s\n' "${MOCK_RESET_LOG:-dropped relaycontrol}" ;;
+  *"delete job agent-relay-db-reset --ignore-not-found --cascade"*) [[ "${MOCK_JOB_DELETE_FAIL:-0}" == 1 ]] && exit 1; exit 0 ;;
+  *"get job agent-relay-db-reset --ignore-not-found -o name"*) [[ "${MOCK_JOB_DELETE_FAIL:-0}" == 1 ]] && echo job.batch/agent-relay-db-reset; exit 0 ;;
   *"get pods -l job-name=agent-relay-db-reset"*) [[ "${MOCK_RESET_POD_STUCK:-0}" == 1 ]] && echo pod/agent-relay-db-reset-x; exit 0 ;;
   *"get pods -l job-name="*) exit 0 ;;
   *"delete secret agent-relay-db-reset"*) [[ "${MOCK_SECRET_DELETE_FAIL:-0}" == 1 ]] && grep -q 'get job agent-relay-db-reset' "$MOCK_LOG" && exit 1; exit 0 ;;
@@ -410,6 +412,12 @@ grep -q 'delete job agent-relay-db-reset .*--cascade=foreground --wait=true' "$l
 expect_out "to restore agent-relay-relay-control: kubectl --context test-ctx -n agent-relay scale deployment/agent-relay-relay-control --replicas=2" "stuck reset pod"
 expect_out "the reset Job could not be confirmed stopped, so the deployments were left at 0" "stuck reset pod"
 pass "--reset-databases: a reset Job that cannot be confirmed stopped leaves the replicas at 0 and prints the restore commands"
+
+if reset_run MOCK_RESET_LOG='dropped relaycontrol' MOCK_JOB_DELETE_FAIL=1; then fail "job delete failure: went on"; fi
+! grep -q 'scale deployment/' "$log" || fail "job delete failure: deployments were restored with the reset Job still there"
+expect_out "the reset Job could not be confirmed stopped, so the deployments were left at 0" "job delete failure"
+expect_out "delete job agent-relay-db-reset --cascade=foreground --wait" "job delete failure"
+pass "--reset-databases: a failed reset Job delete (with no pod listed) still leaves the replicas at 0"
 
 reset_run || true
 expect_out "==> 3/8" "reset success: the run did not go on"
