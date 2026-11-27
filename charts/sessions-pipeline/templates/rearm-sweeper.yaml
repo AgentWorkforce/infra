@@ -53,8 +53,14 @@ credential endpoint and token file into the Pod; the chart sets nothing else and
 {{- if and $s.createServiceAccount $c.createServiceAccount (eq $s.serviceAccountName $c.serviceAccountName) }}{{ fail "rearmSweeper.serviceAccountName must differ from ingestEdge.serviceAccountName when both are created" }}{{ end -}}
 {{- $name := printf "%s-rearm-sweeper" .Release.Name -}}
 {{- if or (gt (len $name) 52) (not (regexMatch "^[a-z]([-a-z0-9]*[a-z0-9])?$" $name)) }}{{ fail "the rearm-sweeper CronJob name (<release>-rearm-sweeper) must be a DNS-1035 label of at most 52 characters" }}{{ end -}}
-{{- $repository := required "ingestEdge.image.repository is required" $c.image.repository -}}
-{{- $digest := required "ingestEdge.image.digest requires a qualified SERVICE=session-ingest image" $c.image.digest -}}
+{{- /* rearmSweeper.image: optional override; each field falls back to ingestEdge.image, so unset renders as before. */ -}}
+{{- $si := $s.image | default dict -}}
+{{- if hasKey $si "digest" }}
+{{- if not (and (kindIs "string" $si.digest) (regexMatch "^sha256:[0-9a-f]{64}$" $si.digest)) }}{{ fail "rearmSweeper.image.digest must be sha256:<64 hex>" }}{{ end -}}
+{{- if and .Values.releaseContract.unifiedServicesDigest (ne $si.digest (toString .Values.worker.image.digest)) }}{{ fail "releaseContract.unifiedServicesDigest requires rearmSweeper.image.digest to equal worker.image.digest" }}{{ end -}}
+{{- end -}}
+{{- $repository := $si.repository | default (required "ingestEdge.image.repository is required" $c.image.repository) -}}
+{{- $digest := $si.digest | default (required "ingestEdge.image.digest requires a qualified SERVICE=session-ingest image" $c.image.digest) -}}
 {{- $bucket := required "ingestEdge.locker.bucket is required" $c.locker.bucket -}}
 {{- $region := required "ingestEdge.locker.region is required" $c.locker.region -}}
 {{- $endpoint := "" -}}
@@ -137,7 +143,7 @@ spec:
           containers:
             - name: rearm-sweeper
               image: {{ printf "%s@%s" $repository $digest | quote }}
-              imagePullPolicy: {{ $c.image.pullPolicy }}
+              imagePullPolicy: {{ $si.pullPolicy | default $c.image.pullPolicy }}
               # One pass (no --loop); see the header.
               command: ["bun", "run", "/app/src/session-ingest/rearm-sweeper-main.ts"]
               securityContext:
