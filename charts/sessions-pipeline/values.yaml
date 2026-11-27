@@ -489,6 +489,12 @@ searchIndexer:
     # retries disabled so a recovered upgrade does not leave an Error Pod.
     backoffLimit: 0
     activeDeadlineSeconds: 900
+    # The indexer's init container waits (as its own login) until the bootstrap has
+    # created and granted what it needs, instead of crash-looping on "permission
+    # denied for schema sessions" while the bootstrap Job runs. waitSeconds bounds
+    # it; then the pod fails naming what is missing.
+    waitBeforeStart: true
+    waitSeconds: 1800
     # Managed-RDS installers can start this Job before their post-migration
     # ceremony activates the runtime login. Provider profiles opt into the
     # bounded wait; ordinary profiles let the bootstrap create its own role.

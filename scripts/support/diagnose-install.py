@@ -277,6 +277,96 @@ class Report:
                 'readOnly':True, 'summary':counts, 'checks':self.checks}
 
 
+# --- One bearer token for every kubectl call -----------------------------------
+# A kubeconfig user with an exec plugin (aws eks get-token, gke-gcloud-auth-plugin,
+# kubelogin) runs that plugin on every kubectl call: with a slow credential_process
+# that is ~14s a call against 0.2s with a token. Run the plugin once, keep its token
+# in a private kubeconfig (mode 0600, never in argv or output), and refresh it before
+# it expires. Without an exec plugin, or when the plugin can't run here, kubectl
+# keeps its own auth.
+TOKEN_REFRESH_SECONDS = 14 * 60
+
+
+def token_kubeconfig(options, path=None):
+    """{'env', 'path', 'refresh_at' (monotonic), 'refresh_epoch'} for a token kubeconfig, or None."""
+    import tempfile
+    import time
+    try:
+        # --flatten embeds certificate data, so relative file paths survive the move.
+        out = subprocess.run(['kubectl', 'config', 'view', '--minify', '--flatten', '--context', options.context, '-o', 'json'],
+                             text=True, capture_output=True, timeout=15)
+        config = json.loads(out.stdout) if out.returncode == 0 else {}
+        users = config.get('users') or []
+        ex = ((users[0].get('user') or {}).get('exec') or {}) if users else {}
+        command = ex.get('command')
+        # Credentials already in the user win over exec in client-go; adding a token
+        # next to them would be a second auth method. Leave those users alone.
+        if any((users[0].get('user') or {}).get(k) for k in ('token', 'tokenFile', 'username', 'password')):
+            return None
+        # A relative path with a separator is resolved against the kubeconfig's own
+        # directory, which kubectl knows and we don't: leave that to kubectl.
+        if not (isinstance(command, str) and command) or ('/' in command and not os.path.isabs(command)):
+            return None
+        env = dict(os.environ)
+        for item in ex.get('env') or []:
+            if isinstance(item, dict) and isinstance(item.get('name'), str):
+                env[item['name']] = str(item.get('value') or '')
+        env['KUBERNETES_EXEC_INFO'] = json.dumps({'apiVersion': ex.get('apiVersion') or 'client.authentication.k8s.io/v1beta1',
+                                                  'kind': 'ExecCredential', 'spec': {'interactive': False}})
+        args = [a for a in ex.get('args') or [] if isinstance(a, str)]
+        result = subprocess.run([command, *args], text=True, capture_output=True, timeout=120, env=env)
+        status = (json.loads(result.stdout) if result.returncode == 0 else {}).get('status') or {}
+        token = status.get('token')
+        if not (isinstance(token, str) and token):
+            return None
+        lifetime = TOKEN_REFRESH_SECONDS
+        expires = status.get('expirationTimestamp')
+        if isinstance(expires, str):
+            try:
+                left = dt.datetime.fromisoformat(expires.replace('Z', '+00:00')).timestamp() - time.time()
+                lifetime = max(0, min(lifetime, left - 60))
+            except ValueError:
+                pass
+        # Replace only the exec block: impersonation (as, as-groups, as-uid,
+        # as-user-extra) and the rest of the user stay as configured.
+        user = dict(users[0].get('user') or {})
+        user.pop('exec', None)
+        user['token'] = token
+        users[0]['user'] = user
+        if path is None:
+            fd, path = tempfile.mkstemp(prefix='kubeconfig-token-')
+            os.close(fd)
+            import atexit
+            atexit.register(lambda p=path: os.path.exists(p) and os.unlink(p))
+        # Always a fresh 0600 file: an existing file could keep looser permissions.
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as f:
+            json.dump(config, f)
+        return {'env': dict(os.environ, KUBECONFIG=path), 'path': path,
+                'refresh_at': PROBE_CLOCK() + lifetime, 'refresh_epoch': int(time.time() + lifetime)}
+    except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError, IndexError, TypeError):
+        return None
+
+
+def kube_auth_env(options):
+    """The environment for a kubectl call: a cached token kubeconfig when the context's
+    user runs an exec plugin, else None (kubectl's own auth)."""
+    if not getattr(options, 'context', None) or getattr(options, 'no_token_cache', False) \
+            or os.environ.get('NO_TOKEN_CACHE') == '1':
+        return None
+    auth = getattr(options, 'kube_auth', None)
+    if auth is False:
+        return None
+    if auth is None or PROBE_CLOCK() >= auth['refresh_at']:
+        made = token_kubeconfig(options, auth['path'] if auth else None)
+        options.kube_auth = made or False
+        return made['env'] if made else None
+    return auth['env']
+
+
 def kube(options, resource, name=None, selector=False, probe=False, probe_timeout=PROBE_FLOOR):
     if not options.context:
         raise DiagnosticError('no-kube-context')
@@ -287,7 +377,7 @@ def kube(options, resource, name=None, selector=False, probe=False, probe_timeou
         argv.append(name)
     if selector:
         argv += ['-l','app.kubernetes.io/instance='+options.release]
-    return run(argv+['-o','json'],timeout+2)
+    return run(argv+['-o','json'],timeout+2,env=kube_auth_env(options))
 
 
 def cluster_checks(options, report):
@@ -315,9 +405,18 @@ def cluster_checks(options, report):
                         cm = ref.get('name')
                         if not ref.get('optional') and isinstance(cm,str) and re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}',cm):
                             mounted.add(cm)
-                    states = status.get('initContainerStatuses',[])+status.get('containerStatuses',[])
+                    inits = status.get('initContainerStatuses',[]) or []
+                    states = inits+(status.get('containerStatuses',[]) or [])
                     for j,state in enumerate(states):
+                        # Running and ready now (or an init container that has since completed):
+                        # earlier exits, e.g. the search indexer before its bootstrap finished,
+                        # are history, not a workload problem.
+                        now = state.get('state') or {}
+                        settled = (state.get('ready') is True and 'running' in now) or \
+                            (j < len(inits) and (now.get('terminated') or {}).get('exitCode') == 0)
                         for origin,container in (('current',state.get('state',{})),('previous',state.get('lastState',{}))):
+                            if origin == 'previous' and settled:
+                                continue
                             terminated = container.get('terminated',{})
                             code = terminated.get('exitCode')
                             if code and isinstance(code,int):
@@ -1249,7 +1348,7 @@ def kubectl_text(options, args, stdin=None, timeout=None):
             '--request-timeout='+str(options.timeout)+'s'] + args
     try:
         result = subprocess.run(argv, input=stdin, text=True, capture_output=True,
-                                timeout=timeout or options.timeout+5, shell=False)
+                                timeout=timeout or options.timeout+5, shell=False, env=kube_auth_env(options))
     except FileNotFoundError:
         raise DiagnosticError('tool-missing') from None
     except subprocess.TimeoutExpired:
@@ -1723,6 +1822,10 @@ def parse_args(argv=None):
                              'request from inside the cluster, as the search indexer).')
     parser.add_argument('--create-pod-identity',metavar='SA=ROLE_ARN,...',
                         help='With --only pod-identity: create the missing associations named here (opt-in; changes AWS).')
+    parser.add_argument('--write-token-kubeconfig',metavar='PATH',
+                        help='Write a kubeconfig holding one bearer token from the context\'s exec plugin to PATH (mode 0600), '
+                             'print TOKEN_KUBECONFIG <refresh-by epoch>, and exit (4 when the context has no exec plugin).')
+    parser.add_argument('--no-token-cache',action='store_true',help='Let kubectl run the exec credential plugin on every call.')
     parser.add_argument('--no-search',action='store_true',help='Skip the search readiness checks (bootstrap Job and the OpenSearch probe).')
     parser.add_argument('--timeout',type=int,default=20)
     parser.add_argument('--output',type=Path,help='New JSON report file, mode 0600; never overwrites (default: ./install-diagnostic-<time>.json).')
@@ -1788,6 +1891,18 @@ def only_section(options):
 
 def main(argv=None):
     options = parse_args(argv)
+    if options.write_token_kubeconfig:
+        if not options.context:
+            try:
+                options.context = subprocess.run(['kubectl', 'config', 'current-context'], text=True,
+                                                 capture_output=True, timeout=10).stdout.strip()
+            except (OSError, subprocess.TimeoutExpired):
+                options.context = ''
+        made = token_kubeconfig(options, str(options.write_token_kubeconfig)) if options.context else None
+        if not made:
+            return 4
+        print('TOKEN_KUBECONFIG '+str(made['refresh_epoch']))
+        return 0
     if options.only:
         return only_section(options)
     explicit_credentials = bool(options.secret_dir or options.secret_manifests)

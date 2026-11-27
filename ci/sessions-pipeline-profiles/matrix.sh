@@ -28,7 +28,7 @@ fail=0
 err() { echo "::error::$*"; fail=1; }
 render() { helm template ci "$CHART" --namespace ci --no-hooks "$@"; }
 
-node --test "$ROOT/ci/sessions-pipeline-profiles/search-indexer-bootstrap-guard.test.mjs"
+node --test "$ROOT/ci/sessions-pipeline-profiles/search-indexer-bootstrap-guard.test.mjs" "$ROOT/ci/sessions-pipeline-profiles/search-indexer-bootstrap-wait.test.mjs"
 
 # The inputs a shipped profile leaves to the operator (CI values files carry
 # their own).
