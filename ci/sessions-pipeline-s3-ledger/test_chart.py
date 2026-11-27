@@ -307,6 +307,22 @@ class S3Ledger(unittest.TestCase):
             "INGEST_REARM_CREDENTIALS": "keys",
             "INGEST_REARM_S3_ACCESS_KEY_ID_FILE": "/var/run/secrets/rearm-sweeper/access-key-id",
             "INGEST_REARM_S3_SECRET_ACCESS_KEY_FILE": "/var/run/secrets/rearm-sweeper/secret-access-key",
+            # Pass-receipt provenance: two literals and five downward-API values.
+            "INGEST_REARM_CRONJOB_NAME": "ci-rearm-sweeper",
+            "INGEST_REARM_IMAGE_DIGEST": values["ingestEdge"]["image"]["digest"],
+            "INGEST_REARM_JOB_NAME": None,
+            "INGEST_REARM_JOB_UID": None,
+            "INGEST_REARM_POD_NAME": None,
+            "INGEST_REARM_POD_UID": None,
+            "INGEST_REARM_POD_NAMESPACE": None,
+        })
+        refs = {e["name"]: e["valueFrom"]["fieldRef"]["fieldPath"] for e in c["env"] if "valueFrom" in e}
+        self.assertEqual(refs, {
+            "INGEST_REARM_JOB_NAME": "metadata.labels['batch.kubernetes.io/job-name']",
+            "INGEST_REARM_JOB_UID": "metadata.labels['batch.kubernetes.io/controller-uid']",
+            "INGEST_REARM_POD_NAME": "metadata.name",
+            "INGEST_REARM_POD_UID": "metadata.uid",
+            "INGEST_REARM_POD_NAMESPACE": "metadata.namespace",
         })
         vol = next(v for v in pod["volumes"] if v["name"] == "credentials")["secret"]
         self.assertEqual(vol["secretName"], "rearm-sweeper-store")
@@ -321,7 +337,8 @@ class S3Ledger(unittest.TestCase):
         env = {e["name"]: e.get("value") for e in c["env"]}
         self.assertEqual(env["INGEST_REARM_CREDENTIALS"], "podIdentity")
         self.assertFalse([n for n in env if n.startswith("INGEST_REARM_S3_") or n.startswith("AWS_")])
-        self.assertTrue(all("valueFrom" not in e for e in c["env"]))
+        # No credential from a Secret or ConfigMap; only downward-API fieldRefs (provenance) may use valueFrom.
+        self.assertTrue(all(set(e.get("valueFrom", {})) <= {"fieldRef"} for e in c["env"]))
         self.assertEqual([m["name"] for m in c["volumeMounts"]], ["tmp"])
         self.assertEqual([v["name"] for v in pod["volumes"]], ["tmp"])
         self.assertEqual(pod["serviceAccountName"], "rearm-sweeper")
