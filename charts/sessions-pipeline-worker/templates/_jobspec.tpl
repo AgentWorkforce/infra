@@ -39,7 +39,7 @@ template:
           - { name: FUNCTION_DEFAULT, value: {{ ternary "true" "false" (eq $w.functionDefault true) | quote }} }
           - { name: INTERVAL, value: {{ $w.intervalSeconds | quote }} }
           - { name: HOME, value: /tmp }
-          {{- if ($.Values.postgresCa | default dict).enabled }}
+          {{- if (include "sessions-pipeline-worker.postgresCa" $ | fromJson).enabled }}
           - { name: PGSSLROOTCERT, value: /etc/postgres-ca/ca.crt }
           {{- end }}
         command: ["/bin/sh", "-c"]
@@ -72,7 +72,7 @@ template:
         volumeMounts:
           - name: tmp
             mountPath: /tmp
-          {{- if ($.Values.postgresCa | default dict).enabled }}
+          {{- if (include "sessions-pipeline-worker.postgresCa" $ | fromJson).enabled }}
           - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
           {{- end }}
     {{- end }}
@@ -87,7 +87,7 @@ template:
           # Always on: readiness needs the phase 2 PASS marker this run writes.
           - name: HOOPDB_ROLE_VERIFY
             value: "true"
-          {{- if ($.Values.postgresCa | default dict).enabled }}
+          {{- if (include "sessions-pipeline-worker.postgresCa" $ | fromJson).enabled }}
           - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
           {{- end }}
           {{- end }}
@@ -102,7 +102,7 @@ template:
         volumeMounts:
           - name: tmp
             mountPath: /tmp
-          {{- if and ($.Values.postgresCa | default dict).enabled (eq .job "migrate") }}
+          {{- if and (include "sessions-pipeline-worker.postgresCa" $ | fromJson).enabled (eq .job "migrate") }}
           - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
           {{- end }}
 {{- end }}

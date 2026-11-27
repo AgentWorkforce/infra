@@ -40,12 +40,18 @@ Detection order:
 
 If something is not found, the run ends with **Missing files - how to fix**:
 which file, where it looked, and the command to fix it (for a missing CA, the
-download URL with your region taken from the RDS hostname).
+chart's bundle for your region, taken from the RDS hostname, and its download
+URL).
 
 The values file is linted for mistakes seen in real installs: example
 placeholders left in (with line numbers), an OpenSearch endpoint without
-`https://`, and an RDS CA `caSha256` that is the example value or does not
-match your local `rds-ca.pem`. Pass `--values FILE` to pick a file, or
+`https://`, an RDS CA `caSha256` that is the example value or does not
+match your local `rds-ca.pem`, and a `global.rdsCa.bundle` that is not an AWS
+region or `global` (with it set, hand-set CA hashes are not needed). The
+cluster checks also report a ConfigMap that a release pod mounts but that does
+not exist (the pod stays in ContainerCreating; `rds-ca` is the usual one) and a
+chart-managed `rds-ca` whose content no longer matches the hash the services
+pin. Pass `--values FILE` to pick a file, or
 `--values` with no file to skip the lint. Every flag below still works and
 overrides detection.
 
@@ -76,7 +82,9 @@ unverified alias.
 The script reads exactly five named Kubernetes Secrets using `get`, keeps their
 values in memory, validates all ten database credential slots, and connects as
 the configured logins. It does not need `list` on Secrets. Your identity also
-needs `list` on Jobs, Pods, Deployments and PersistentVolumeClaims in the namespace.
+needs `list` on Jobs, Pods, Deployments, PersistentVolumeClaims and ConfigMaps
+in the namespace (ConfigMaps for the mounted-ConfigMap and `rds-ca` checks;
+without it those checks are UNKNOWN).
 Workload reads use `app.kubernetes.io/instance=RELEASE`; custom labels can leave
 sections unknown. Names and creation times identify failed resources in the
 report, including old Jobs that may predate corrected credentials. A previous

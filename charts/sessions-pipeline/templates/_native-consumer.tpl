@@ -33,7 +33,7 @@
 {{- end -}}
 {{- end -}}
 {{- define "sessions-pipeline.nativeConsumer.validate" -}}
-{{- $c := .Values.nativeConsumer -}}
+{{- $c := mergeOverwrite (deepCopy .Values.nativeConsumer) (include "sessions-pipeline.rdsCa.block" (dict "root" . "block" "nativeConsumer") | fromJson) -}}
 {{- range $name, $flag := dict "enabled" $c.enabled "migrationDriverVerified" $c.migrationDriverVerified "legacyRuntimesQualified" $c.legacyRuntimesQualified "legacyIndexerDrained" $c.legacyIndexerDrained "allowInClusterHttp" $c.allowInClusterHttp "bootstrap.enabled" $c.bootstrap.enabled "outputFacts.enabled" $c.outputFacts.enabled -}}
 {{- if not (kindIs "bool" $flag) }}{{ fail (printf "nativeConsumer.%s must be a boolean" $name) }}{{ end -}}
 {{- end -}}
@@ -58,7 +58,7 @@
 {{- if and $activeIngest (ne (include "alleyoop.image" .Subcharts.alleyoop) $nativeImage) }}{{ fail "nativeConsumer requires active legacy alleyoop to resolve to the same qualified immutable image; scale it to zero otherwise" }}{{ end -}}
 {{- if or $activeWorker $activeIngest -}}
 {{- if not $c.legacyRuntimesQualified }}{{ fail "nativeConsumer requires legacyRuntimesQualified=true after active legacy runtimes pass strict URL/TLS/database/role/generation proof" }}{{ end -}}
-{{- range $legacyTarget := list (dict "active" $activeWorker "ca" .Values.worker.postgresCa) (dict "active" $activeIngest "ca" .Values.alleyoop.postgresCa) -}}
+{{- range $legacyTarget := list (dict "active" $activeWorker "ca" (include "sessions-pipeline.rdsCa.postgresCa" (dict "root" . "ca" .Values.worker.postgresCa "path" "worker.postgresCa") | fromJson)) (dict "active" $activeIngest "ca" (include "sessions-pipeline.rdsCa.postgresCa" (dict "root" . "ca" .Values.alleyoop.postgresCa "path" "alleyoop.postgresCa") | fromJson)) -}}
 {{- if $legacyTarget.active -}}
 {{- if or (ne $legacyTarget.ca.enabled true) (ne $legacyTarget.ca.configMap $c.postgres.caConfigMap) $legacyTarget.ca.secret (ne $legacyTarget.ca.key $c.postgres.caKey) }}{{ fail "nativeConsumer requires active legacy runtimes to mount the same public CA ConfigMap/key through postgresCa" }}{{ end -}}
 {{- end -}}
@@ -91,7 +91,7 @@
 {{- if le (int $c.bootstrap.activeDeadlineSeconds) (int $c.preflight.timeoutSeconds) }}{{ fail "nativeConsumer.bootstrap.activeDeadlineSeconds must exceed preflight.timeoutSeconds" }}{{ end -}}
 {{- $_ := include "sessions-pipeline.nativeConsumer.ref" (dict "name" "nativeConsumer.config.existingSecret" "value" $c.config.existingSecret) -}}
 {{- $_ := include "sessions-pipeline.nativeConsumer.ref" (dict "name" "nativeConsumer.postgres.caConfigMap" "value" $c.postgres.caConfigMap) -}}
-{{- if not (regexMatch "^[a-f0-9]{64}$" $c.postgres.caSha256) }}{{ fail "nativeConsumer.postgres.caSha256 must be 64 lowercase hex characters" }}{{ end -}}
+{{- if not (regexMatch "^[a-f0-9]{64}$" $c.postgres.caSha256) }}{{ fail "nativeConsumer.postgres.caSha256 must be 64 lowercase hex characters (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
 {{- if or (gt (len $c.postgres.host) 253) (regexMatch "^[0-9]+(\\.[0-9]+){3}$" $c.postgres.host) (not (regexMatch "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" $c.postgres.host)) }}{{ fail "nativeConsumer.postgres.host requires an explicit DNS hostname" }}{{ end -}}
 {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_-]{0,62}$" $c.postgres.database) }}{{ fail "nativeConsumer.postgres.database requires an explicit database name" }}{{ end -}}
 {{- if not (has $c.bootstrap.phase (list "prepare" "serve")) }}{{ fail "nativeConsumer.bootstrap.phase must be prepare or serve" }}{{ end -}}
@@ -130,7 +130,7 @@
 {{- if or (ne $c.image.repository .Values.ingestEdge.image.repository) (ne $c.image.digest .Values.ingestEdge.image.digest) }}{{ fail "nativeConsumer and enabled ingestEdge require the same qualified composed image" }}{{ end -}}
 {{- end -}}
 {{- if .Values.sessionReadApi.enabled -}}
-{{- $ca := .Values.sessionReadApi.postgresCa -}}
+{{- $ca := include "sessions-pipeline.rdsCa.postgresCa" (dict "root" . "ca" .Values.sessionReadApi.postgresCa "path" "sessionReadApi.postgresCa" "want" (eq (toString .Values.sessionReadApi.postgres.tlsProfile) "custom-ca")) | fromJson -}}
 {{- if or (ne .Values.sessionReadApi.postgres.tlsProfile "custom-ca") (ne $ca.enabled true) (ne $ca.configMap $c.postgres.caConfigMap) $ca.secret (ne $ca.key $c.postgres.caKey) (ne $ca.sha256 $c.postgres.caSha256) }}{{ fail "nativeConsumer and enabled sessionReadApi require the same pinned public custom CA ConfigMap/key/hash" }}{{ end -}}
 {{- if or (ne .Values.sessionReadApi.search.backend "postgres") (ne $c.completeSince .Values.sessionReadApi.completeSince) }}{{ fail "nativeConsumer and enabled sessionReadApi require postgres and the same completeSince" }}{{ end -}}
 {{- if or (ne $c.image.repository .Values.sessionReadApi.image.repository) (ne $c.image.digest .Values.sessionReadApi.image.digest) }}{{ fail "nativeConsumer and enabled sessionReadApi require the same qualified composed image" }}{{ end -}}
@@ -146,7 +146,7 @@
 {{- end -}}
 
 {{- define "sessions-pipeline.nativeConsumer.env" -}}
-{{- $c := .root.Values.nativeConsumer -}}
+{{- $c := mergeOverwrite (deepCopy .root.Values.nativeConsumer) (include "sessions-pipeline.rdsCa.block" (dict "root" .root "block" "nativeConsumer") | fromJson) -}}
 - { name: SERVICE, value: {{ ternary "session-pipeline-consumer-bootstrap" "session-pipeline-consumer" .bootstrap }} }
 {{- include "sessions-pipeline.scrubEngine" (dict "root" .root "localReader" $c.readerMaxRuleset "localName" "nativeConsumer.readerMaxRuleset") }}
 - { name: RELAYHISTORY_SELFHOST_PIPELINE_CONSUMER, value: "true" }
@@ -201,7 +201,7 @@
 {{- end -}}
 
 {{- define "sessions-pipeline.nativeConsumer.pod" -}}
-{{- $c := .root.Values.nativeConsumer -}}
+{{- $c := mergeOverwrite (deepCopy .root.Values.nativeConsumer) (include "sessions-pipeline.rdsCa.block" (dict "root" .root "block" "nativeConsumer") | fromJson) -}}
 automountServiceAccountToken: false
 terminationGracePeriodSeconds: 90
 securityContext:
@@ -293,4 +293,34 @@ volumes:
     configMap:
       name: {{ include "sessions-pipeline.nativeConsumer.contractName" .root | quote }}
       defaultMode: 0444
+{{- end -}}
+
+{{- /* The CA fields of ingestEdge, searchIndexer or nativeConsumer .postgres that the
+agent-relay chart-managed RDS CA (global.rdsCa.bundle) sets, as {"postgres": {...}}
+to merge over a copy of the block; {} when it sets none. It applies with the
+custom-ca TLS profile (always, for nativeConsumer) when the block names no
+caConfigMap of its own (_rds-ca.tpl). */ -}}
+{{- define "sessions-pipeline.rdsCa.block" -}}
+{{- $c := index .root.Values .block -}}
+{{- $pg := $c.postgres | default dict -}}
+{{- $profile := ternary "custom-ca" (toString ($pg.tlsProfile | default "custom-ca")) (eq .block "nativeConsumer") -}}
+{{- $out := dict -}}
+{{- /* A disabled block keeps its values untouched: a stale hash there must not
+fail the render. */ -}}
+{{- if and $c.enabled (eq $profile "custom-ca") -}}
+{{- $o := include "sessions-pipeline.rdsCa.apply" (dict "root" .root "ca" $pg "path" (printf "%s.postgres" .block) "fields" (dict "configMap" "caConfigMap" "key" "caKey" "sha256" "caSha256")) | fromJson -}}
+{{- if $o }}{{ $_ := set $out "postgres" $o }}{{ end -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{- /* A subchart's postgresCa (worker, alleyoop, sessionReadApi) as that subchart
+uses it, for the cross-chart checks above: root, ca, path, want (default true;
+the read API applies the chart-managed CA only with tlsProfile custom-ca). */ -}}
+{{- define "sessions-pipeline.rdsCa.postgresCa" -}}
+{{- $ca := deepCopy (.ca | default dict) -}}
+{{- if or (not (hasKey . "want")) .want -}}
+{{- $ca = mergeOverwrite $ca (include "sessions-pipeline.rdsCa.apply" (dict "root" .root "ca" $ca "path" .path "fields" (dict "configMap" "configMap" "key" "key" "sha256" "sha256" "secret" "secret" "enabled" "enabled")) | fromJson) -}}
+{{- end -}}
+{{- toJson $ca -}}
 {{- end -}}

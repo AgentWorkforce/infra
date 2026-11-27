@@ -229,8 +229,15 @@ that it has no `sessions` schema or HoopDb roles and then treats it as fresh.
 An administrator-owned database with either kind of state is classified as an
 existing legacy installation and is not converted.
 
-The command creates the `rds-ca` ConfigMap and mode-restricted Secret input
-files under `$STATE_DIR/secret-files`. It prints neither database passwords nor
+The command creates the `rds-ca` ConfigMap its Jobs verify TLS with, and
+mode-restricted Secret input files under `$STATE_DIR/secret-files`. Set
+`global.rdsCa.bundle` to the RDS region (or `global`) in the private site
+values: the chart then renders `rds-ca` from the AWS bundle it ships and pins
+its SHA-256 in every Postgres client, so the RDS CA hashes in
+`values-eks-rds-native.yaml` need no override. Delete the `rds-ca` that `pre`
+created before the first Helm install (`kubectl -n "$NAMESPACE" delete
+configmap rds-ca`; the install refuses an `rds-ca` it does not own and says
+so). A later `pre` leaves the chart-managed `rds-ca` as it is. It prints neither database passwords nor
 connection strings. Merge those files with the non-database secrets in the
 private release packet and create the referenced Kubernetes Secrets; never put
 their contents in values or the source checkout.

@@ -106,7 +106,7 @@ volumeMounts:
 {{- $root = .root -}}
 {{- $bootstrapGuard = .bootstrapGuard -}}
 {{- end -}}
-{{- $c := $root.Values.searchIndexer -}}
+{{- $c := mergeOverwrite (deepCopy $root.Values.searchIndexer) (include "sessions-pipeline.rdsCa.block" (dict "root" $root "block" "searchIndexer") | fromJson) -}}
 automountServiceAccountToken: false
 serviceAccountName: {{ $c.serviceAccount.name | quote }}
 {{- with $c.imagePullSecrets }}

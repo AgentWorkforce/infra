@@ -1,6 +1,7 @@
 {{- include "session-read-api.validate" . -}}
 {{- include "session-read-api.upstreamAssertion.validate" . -}}
 {{- $c := .Values -}}
+{{- $pgCa := include "session-read-api.postgresCa" . | fromJson -}}
 {{- $timingCompat := include "session-read-api.compatLegacyBool" (dict "structured" $c.timing.assumeNoTurns "path" "timing.assumeNoTurns" "name" "READ_API_TIMING_ASSUME_NO_TURNS" "extraEnv" $c.extraEnv) | fromJson -}}
 {{- $canonicalCompat := include "session-read-api.compatLegacyBool" (dict "structured" $c.canonical.pinLaggingPointer "path" "canonical.pinLaggingPointer" "name" "READ_API_CANONICAL_PIN_LAGGING_POINTER" "extraEnv" $c.extraEnv) | fromJson -}}
 {{- $legacyBoolNames := list "READ_API_TIMING_ASSUME_NO_TURNS" "READ_API_CANONICAL_PIN_LAGGING_POINTER" -}}
@@ -131,9 +132,9 @@ spec:
             {{- end }}
             - { name: ALLOW_IN_CLUSTER_HTTP, value: {{ $c.allowInClusterHttp | quote }} }
             - { name: SESSION_POSTGRES_TLS_PROFILE, value: {{ $c.postgres.tlsProfile | quote }} }
-            {{- if $c.postgresCa.enabled }}
+            {{- if $pgCa.enabled }}
             - { name: SESSION_POSTGRES_CA_FILE, value: /etc/session-read-postgres/ca.crt }
-            - { name: SESSION_POSTGRES_CA_SHA256, value: {{ $c.postgresCa.sha256 | quote }} }
+            - { name: SESSION_POSTGRES_CA_SHA256, value: {{ $pgCa.sha256 | quote }} }
             {{- end }}
             {{- if $c.cors.allowedOrigins }}
             - { name: READ_API_CORS_ALLOWED_ORIGINS, value: {{ join "," $c.cors.allowedOrigins | quote }} }
@@ -225,7 +226,7 @@ spec:
             {{- toYaml $c.resources | nindent 12 }}
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
-            {{- if $c.postgresCa.enabled }}
+            {{- if $pgCa.enabled }}
             - { name: postgres-ca, mountPath: /etc/session-read-postgres, readOnly: true }
             {{- end }}
             {{- include "session-read-api.analytics.mount" $c.analytics | nindent 12 }}
@@ -235,18 +236,18 @@ spec:
       volumes:
         - name: tmp
           emptyDir: { sizeLimit: 64Mi }
-        {{- if $c.postgresCa.enabled }}
+        {{- if $pgCa.enabled }}
         - name: postgres-ca
-          {{- if $c.postgresCa.configMap }}
+          {{- if $pgCa.configMap }}
           configMap:
-            name: {{ $c.postgresCa.configMap | quote }}
-            items: [{ key: {{ $c.postgresCa.key | quote }}, path: ca.crt }]
+            name: {{ $pgCa.configMap | quote }}
+            items: [{ key: {{ $pgCa.key | quote }}, path: ca.crt }]
           {{- else }}
           secret:
-            secretName: {{ $c.postgresCa.secret | quote }}
+            secretName: {{ $pgCa.secret | quote }}
             # Public certificates, readable whatever the Pod's fsGroup is.
             defaultMode: 0444
-            items: [{ key: {{ $c.postgresCa.key | quote }}, path: ca.crt }]
+            items: [{ key: {{ $pgCa.key | quote }}, path: ca.crt }]
           {{- end }}
         {{- end }}
         {{- include "session-read-api.analytics.volume" $c.analytics | nindent 8 }}

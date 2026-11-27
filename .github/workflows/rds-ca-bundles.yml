@@ -1,0 +1,58 @@
+name: RDS CA bundles
+
+# The agent-relay chart ships AWS's public RDS CA bundles
+# (charts/agent-relay/files/rds-ca) and pins their sha256. This compares them
+# with truststore.pki.rds.amazonaws.com every week. When AWS has changed one,
+# the run fails, puts the refresh diff in the job summary and uploads the
+# patch: apply it (or run scripts/selfhost/refresh-rds-ca-bundles.sh), bump
+# charts/agent-relay/Chart.yaml and open a PR.
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/selfhost/refresh-rds-ca-bundles.sh
+      - charts/agent-relay/files/rds-ca/**
+      - .github/workflows/rds-ca-bundles.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shipped bundles, manifest and values table agree
+        run: scripts/selfhost/refresh-rds-ca-bundles.sh --verify
+
+      - name: Shipped bundles match AWS
+        id: check
+        run: scripts/selfhost/refresh-rds-ca-bundles.sh --check
+
+      - name: Refresh diff
+        if: failure() && steps.check.outcome == 'failure'
+        run: |
+          scripts/selfhost/refresh-rds-ca-bundles.sh
+          git diff --binary > rds-ca-refresh.patch
+          {
+            echo "## AWS changed an RDS CA bundle"
+            echo
+            echo "Apply rds-ca-refresh.patch (artifact) or run scripts/selfhost/refresh-rds-ca-bundles.sh,"
+            echo "bump charts/agent-relay/Chart.yaml and open a PR."
+            echo
+            echo '```diff'
+            git diff -- charts/agent-relay/files/rds-ca/manifest.yaml charts/agent-relay/values.yaml
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the refresh patch
+        if: failure() && steps.check.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rds-ca-refresh
+          path: rds-ca-refresh.patch

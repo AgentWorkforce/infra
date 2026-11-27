@@ -20,7 +20,7 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
+      {{- with merge (dict) (include "alleyoop.rdsCa.podAnnotations" (dict "root" . "ca" (include "alleyoop.postgresCa" . | fromJson)) | fromJson) (.Values.podAnnotations | default dict) }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -37,7 +37,7 @@ spec:
               protocol: TCP
           env:
             {{- include "alleyoop.env" (dict "context" . "service" $component) | nindent 12 }}
-            {{- if (.Values.postgresCa | default dict).enabled }}
+            {{- if (include "alleyoop.postgresCa" . | fromJson).enabled }}
             - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
             {{- end }}
             - name: INGEST_PORT
@@ -90,7 +90,7 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            {{- if (.Values.postgresCa | default dict).enabled }}
+            {{- if (include "alleyoop.postgresCa" . | fromJson).enabled }}
             - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
             {{- end }}
 {{- end }}

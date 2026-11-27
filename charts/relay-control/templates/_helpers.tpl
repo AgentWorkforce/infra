@@ -159,7 +159,7 @@ the chart already sets, including duplicates inside extraEnv. */ -}}
 {{- if .Values.services.relayhistoryReadApiUrl }}{{ $managed = concat $managed (list "RELAYHISTORY_READ_API_URL" "RELAYHISTORY_READ_API_EVENTS") }}{{ end -}}
 {{- /* The sharing.* values own these names whether or not they are set, so extraEnv cannot shadow or duplicate them. */ -}}
 {{- $managed = concat $managed (list "SELFHOST_DEFAULT_SHARING_MODE" "SELFHOST_SHARING_MODE_OVERRIDE_ROLES") -}}
-{{- if (.Values.postgresCa | default dict).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
+{{- if (include "relay-control.postgresCa" . | fromJson).enabled }}{{ $managed = append $managed "NODE_EXTRA_CA_CERTS" }}{{ end -}}
 {{- if .Values.desktopFeed.signingKeys.existingSecret }}{{ $managed = concat $managed (list "SELFHOST_DESKTOP_FEED_SIGNER" "SELFHOST_DESKTOP_FEED_KEY_FILES") }}{{ end -}}
 {{- range $name := $managed }}{{ if hasSuffix "_FILE" $name }}{{ $managed = append $managed (trimSuffix "_FILE" $name) }}{{ end }}{{ end -}}
 {{- range $src := list (include "relay-control.runtimeEnv" .) (include "relay-control.secretEnv" .) -}}
@@ -432,7 +432,7 @@ spec:
           value: /var/run/agent-relay/secrets/{{ .Values.secretKeys.databaseMigrationsUrl }}
         - name: SELFHOST_RUNTIME_DATABASE_ROLE
           value: {{ .Values.database.runtimeRole | quote }}
-        {{- if (.Values.postgresCa | default dict).enabled }}
+        {{- if (include "relay-control.postgresCa" . | fromJson).enabled }}
         - { name: NODE_EXTRA_CA_CERTS, value: /etc/postgres-ca/ca.crt }
         {{- end }}
         {{- with .Values.extraEnv }}
@@ -441,7 +441,7 @@ spec:
       volumeMounts:
         - { name: database, mountPath: /var/run/agent-relay/secrets, readOnly: true }
         - { name: tmp, mountPath: /tmp }
-        {{- if (.Values.postgresCa | default dict).enabled }}
+        {{- if (include "relay-control.postgresCa" . | fromJson).enabled }}
         - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
         {{- end }}
       resources: {{ toYaml .Values.resources | nindent 8 }}
@@ -455,7 +455,7 @@ spec:
             path: {{ .Values.secretKeys.databaseMigrationsUrl | quote }}
     - name: tmp
       emptyDir: { sizeLimit: 64Mi }
-    {{- if (.Values.postgresCa | default dict).enabled }}
+    {{- if (include "relay-control.postgresCa" . | fromJson).enabled }}
     {{- include "relay-control.postgresCaVolume" . | nindent 4 }}
     {{- end }}
 {{- end -}}
@@ -659,10 +659,19 @@ mounted file (_CLIENT_SECRET_FILE), optional _SCOPES. */ -}}
 {{- end }}
 {{- end -}}
 
+{{- /* postgresCa as the chart uses it: the values, or the agent-relay chart-managed
+RDS CA (global.rdsCa.bundle) when postgresCa names no CA source of its own
+(_rds-ca.tpl). */ -}}
+{{- define "relay-control.postgresCa" -}}
+{{- $ca := deepCopy (.Values.postgresCa | default dict) -}}
+{{- $ca = mergeOverwrite $ca (include "relay-control.rdsCa.apply" (dict "root" . "ca" $ca "path" "postgresCa" "fields" (dict "configMap" "configMap" "key" "key" "sha256" "sha256" "secret" "secret" "enabled" "enabled")) | fromJson) -}}
+{{- toJson $ca -}}
+{{- end -}}
+
 {{- /* Optional Postgres server CA bundle (postgresCa.*). NODE_EXTRA_CA_CERTS adds the
 mounted PEM to the roots node-pg verifies against for sslmode=verify-full. */ -}}
 {{- define "relay-control.postgresCaVolume" -}}
-{{- $ca := .Values.postgresCa -}}
+{{- $ca := include "relay-control.postgresCa" . | fromJson -}}
 - name: postgres-ca
 {{- if $ca.configMap }}
   configMap:
@@ -680,9 +689,9 @@ mounted PEM to the roots node-pg verifies against for sslmode=verify-full. */ -}
 {{- /* Fail closed on a half-configured bundle: a name without enabled=true would
 leave the certificate unverified while looking configured. */ -}}
 {{- define "relay-control.validatePostgresCa" -}}
-{{- $ca := .Values.postgresCa | default dict -}}
+{{- if not (kindIs "bool" (dig "enabled" false (.Values.postgresCa | default dict))) }}{{ fail "postgresCa.enabled must be a boolean" }}{{ end -}}
+{{- $ca := include "relay-control.postgresCa" . | fromJson -}}
 {{- $enabled := dig "enabled" false $ca -}}
-{{- if not (kindIs "bool" $enabled) }}{{ fail "postgresCa.enabled must be a boolean" }}{{ end -}}
 {{- $configMap := get $ca "configMap" | default "" | toString -}}
 {{- $secret := get $ca "secret" | default "" | toString -}}
 {{- if not $enabled -}}

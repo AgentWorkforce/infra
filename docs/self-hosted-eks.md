@@ -232,6 +232,13 @@ was removed in agent-relay 0.7.0; a current install uses `values-eks.yaml`
 (native History) or `values-eks-rds-native.yaml` with your own Secrets and
 `eks-alb-ingress.sh`.
 
+On RDS, set `global.rdsCa.bundle` to the RDS region (or `global`) in your
+values, as [`examples/aws/values.yaml`](../examples/aws/values.yaml) does. The
+chart ships AWS's public RDS CA bundles, renders the `rds-ca` ConfigMap and
+pins its SHA-256 in every Postgres client, so there is no bundle to download,
+ConfigMap to create or hash to paste. To bring your own CA instead, see
+[RDS CA bundle](self-hosted-rds-manual-setup.md#12-rds-ca-bundle).
+
 ```sh
 export EKS_PROOF_API_CIDR=<operator egress>/32
 export EKS_PROOF_CHART_VERSION=0.3.11

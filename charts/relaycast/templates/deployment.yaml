@@ -18,7 +18,7 @@ spec:
       {{- include "relaycast.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
+      {{- with merge (dict) (include "relaycast.rdsCa.podAnnotations" (dict "root" . "ca" (include "relaycast.postgresCa" . | fromJson)) | fromJson) (.Values.podAnnotations | default dict) }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}

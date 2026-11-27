@@ -278,6 +278,33 @@ fi
 # 3. pre ----------------------------------------------------------------------
 log "3/8 Creating databases, service logins and credential files (rds-setup.sh pre)"
 NAMESPACE="$NAMESPACE" "$RDS_SETUP" pre
+# With global.rdsCa.bundle the chart renders rds-ca and pins its hash, and
+# refuses an rds-ca it does not own. pre (re)creates rds-ca for its own Jobs, so
+# step 5 deletes that copy just before helm upgrade creates the chart's
+# (running pods keep their mounted copy). Whether the values turn it on is
+# decided there, from the rendered chart with every values file.
+release_rds_ca() { # $@: helm template args; prints the bundle the chart would render, or nothing
+  # The full render, errors shown: a values mistake stops here with the chart's message.
+  local out
+  out="$(helm template "$RELEASE" "$@")" || die "helm template failed with these values (see above); nothing was upgraded"
+  sed -n 's/^[[:space:]]*agentworkforce.dev\/rds-ca-bundle:[[:space:]]*"\{0,1\}\([a-z0-9-]*\)"\{0,1\}.*/\1/p' <<<"$out" | head -n1
+}
+# Clears the way for the chart's rds-ca: deletes the copy rds-setup.sh pre made,
+# keeps this release's own (unless pre rewrote its bytes), refuses another release's.
+clear_rds_ca() {
+  local live owner pinned actual
+  live="$(k get configmap rds-ca -o json --ignore-not-found)"
+  [[ -n "$live" ]] || return 0
+  owner="$(jq -r '.metadata.annotations["meta.helm.sh/release-name"] // empty' <<<"$live")"
+  pinned="$(jq -r '.metadata.annotations["agentworkforce.dev/rds-ca-sha256"] // empty' <<<"$live")"
+  if [[ -n "$pinned" ]]; then
+    [[ "$owner" == "$RELEASE" ]] || die "rds-ca in $NAMESPACE belongs to Helm release '$owner', not $RELEASE"
+    actual="$(sha256 <(jq -j '.data["ca.crt"] // empty' <<<"$live"))"
+    if [[ "$actual" == "$pinned" ]]; then info "rds-ca: already managed by this release; kept"; return 0; fi
+  fi
+  k delete configmap rds-ca >/dev/null
+  info "rds-ca: removed the copy rds-setup.sh pre wrote, so helm creates the chart's (running pods keep theirs)"
+}
 FILES="$STATE_DIR/secret-files"
 [[ -d "$FILES" ]] || die "rds-setup.sh pre wrote no credential files under $FILES"
 
@@ -299,7 +326,8 @@ for dir in "$FILES"/*/; do
     info "created $secret"
   fi
 done
-info "rds-ca hash for values.yaml (every caSha256/sha256 under rds-ca): $(cat "$STATE_DIR/rds-ca.sha256" 2>/dev/null || echo unknown)"
+info "rds-ca hash, only for values without global.rdsCa.bundle (every caSha256/sha256 under rds-ca): $(cat "$STATE_DIR/rds-ca.sha256" 2>/dev/null || echo unknown)"
+info "  simpler: set global.rdsCa.bundle: $AWS_REGION and drop those hashes; the chart then manages rds-ca"
 
 # 5. helm upgrade -------------------------------------------------------------
 # rds-setup.sh pre writes the HoopDb layout overlay (which Secret holds the
@@ -329,6 +357,12 @@ if [[ -n "${HELM_CHART:-}" ]]; then
     done < <(sed -nE 's/^[[:space:]]*repository:[[:space:]]*"?(file:\/\/[^"[:space:]]+)"?.*/\1/p' "$HELM_CHART/Chart.yaml")
     helm dependency build "$HELM_CHART" >/dev/null
   fi
+  bundle="$(release_rds_ca "$HELM_CHART" -n "$NAMESPACE" ${extra[@]+"${extra[@]}"} -f "$VALUES" -f "$LAYOUT_VALUES" \
+    --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL")"
+  if [[ -n "$bundle" ]]; then
+    info "rds-ca: managed by the chart (global.rdsCa.bundle=$bundle)"
+    clear_rds_ca
+  fi
   helm --kube-context "$KUBE_CONTEXT" upgrade --install "$RELEASE" "$HELM_CHART" -n "$NAMESPACE" \
     ${extra[@]+"${extra[@]}"} -f "$VALUES" -f "$LAYOUT_VALUES" --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
 else
@@ -342,6 +376,8 @@ else
   info "   helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay)"
   info "  helm upgrade $RELEASE <chart> -n $NAMESPACE <your -f files> -f $VALUES -f $LAYOUT_VALUES \\"
   info "    --set-string relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
+  info "If your values set global.rdsCa.bundle and the install stops on rds-ca, run the"
+  info "kubectl delete configmap rds-ca it prints, then helm upgrade again (the chart creates its own)."
   read -r -p "    Press Enter once helm upgrade has finished... " _
 fi
 

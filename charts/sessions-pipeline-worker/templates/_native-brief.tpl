@@ -65,9 +65,9 @@
 {{- if or (not (kindIs "string" $value)) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$" (toString $value))) }}{{ fail "nativeBrief.openaiSecret must name an existing Secret and key" }}{{ end -}}
 {{- end -}}
 {{- if or (gt (len $n.openaiSecret.name) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $n.openaiSecret.name)) }}{{ fail "nativeBrief.openaiSecret.name must be a Kubernetes Secret name" }}{{ end -}}
-{{- $ca := .Values.postgresCa -}}
-{{- if or (not $ca.enabled) (not $ca.configMap) $ca.secret }}{{ fail "nativeBrief requires postgresCa.enabled and an existing public CA ConfigMap (not a Secret)" }}{{ end -}}
-{{- if not (regexMatch "^[a-f0-9]{64}$" ($ca.sha256 | default "")) }}{{ fail "nativeBrief requires postgresCa.sha256 (64 lowercase hex)" }}{{ end -}}
+{{- $ca := include "sessions-pipeline-worker.postgresCa" . | fromJson -}}
+{{- if or (not $ca.enabled) (not $ca.configMap) $ca.secret }}{{ fail "nativeBrief requires postgresCa.enabled and an existing public CA ConfigMap (not a Secret) (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
+{{- if not (regexMatch "^[a-f0-9]{64}$" ($ca.sha256 | default "")) }}{{ fail "nativeBrief requires postgresCa.sha256 (64 lowercase hex) (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
 {{- if not .Values.workerHealth.enabled }}{{ fail "nativeBrief requires workerHealth.enabled" }}{{ end -}}
 {{- $reserved := list "SERVICE" "READER_MAX_RULESET" "OTEL_SERVICE_NAME" "HOOPDB_URL" "LOCKER_ENDPOINT" "LOCKER_BUCKET" "LOCKER_REGION" "LOCKER_ACCESS_KEY_ID" "LOCKER_SECRET_ACCESS_KEY" "NODE_EXTRA_CA_CERTS" "SSL_CERT_FILE" "SSL_CERT_DIR" "NODE_OPTIONS" "PGOPTIONS" "PGSSLCERT" "PGSSLKEY" "WORKER_HEALTH_PORT" "WORKER_UNHEALTHY_AFTER_FAILURES" "WORKER_MAX_TICK_AGE_MS" "SESSION_BRIEF_ENABLED" "SESSION_BRIEF_CANONICAL_INPUT" "SESSION_BRIEF_WORKSPACE_IDS" "SESSION_BRIEF_MODEL" "SESSION_BRIEF_SWEEP_SECONDS" "SESSION_BRIEF_BATCH" "SESSION_BRIEF_GLOBAL_DAILY_CAP" "SESSION_BRIEF_SESSION_DAILY_CAP" "PIPELINE_ORG_FROM_PREFIX" "PIPELINE_KEY_PREFIX" "OPENAI_API_KEY" "OPENAI_BASE_URL" "NATIVE_BRIEF_CA_FILE" "NATIVE_BRIEF_CA_SOURCE" "NATIVE_BRIEF_CA_SHA256" "PGSSLMODE" "PGSSLROOTCERT" "NODE_TLS_REJECT_UNAUTHORIZED" -}}
 {{- range $entry := concat (.Values.extraEnv | default list) ($c.env | default list) -}}
@@ -115,7 +115,7 @@
 - { name: PIPELINE_KEY_PREFIX, value: {{ .Values.nativeBrief.keyPrefix | quote }} }
 - { name: NATIVE_BRIEF_CA_FILE, value: /etc/postgres-ca/ca.crt }
 - { name: NATIVE_BRIEF_CA_SOURCE, value: /etc/postgres-ca/ca.crt }
-- { name: NATIVE_BRIEF_CA_SHA256, value: {{ .Values.postgresCa.sha256 | quote }} }
+- { name: NATIVE_BRIEF_CA_SHA256, value: {{ (include "sessions-pipeline-worker.postgresCa" . | fromJson).sha256 | quote }} }
 {{- with .Values.nativeBrief.baseUrl }}
 - { name: OPENAI_BASE_URL, value: {{ . | quote }} }
 {{- end }}

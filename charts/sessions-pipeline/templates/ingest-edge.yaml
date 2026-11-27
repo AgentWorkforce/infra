@@ -1,5 +1,5 @@
 {{- include "sessions-pipeline.analytics.validate" .Values.ingestEdge.analytics -}}
-{{- $c := .Values.ingestEdge -}}
+{{- $c := mergeOverwrite (deepCopy .Values.ingestEdge) (include "sessions-pipeline.rdsCa.block" (dict "root" . "block" "ingestEdge") | fromJson) -}}
 {{- if not (kindIs "bool" $c.enabled) }}{{ fail "ingestEdge.enabled must be a boolean" }}{{ end -}}
 {{- if and (not (kindIs "invalid" $c.readerMaxRuleset)) (not (has (toString $c.readerMaxRuleset) (list "8" "9" "10"))) }}{{ fail "ingestEdge.readerMaxRuleset must be one of 8, 9, or 10" }}{{ end -}}
 {{- $ledger := include "sessions-pipeline.ingestEdge.ledger" . -}}
@@ -123,9 +123,9 @@
 {{- $caMap := "" -}}
 {{- $caHash := "" -}}
 {{- if eq $tls "custom-ca" -}}
-{{- $caMap = required "ingestEdge.postgres.caConfigMap is required" $c.postgres.caConfigMap -}}
-{{- $caHash = required "ingestEdge.postgres.caSha256 is required" $c.postgres.caSha256 -}}
-{{- if not (regexMatch "^[a-f0-9]{64}$" $caHash) }}{{ fail "ingestEdge.postgres.caSha256 must be 64 lowercase hex characters" }}{{ end -}}
+{{- $caMap = required "ingestEdge.postgres.caConfigMap is required (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" $c.postgres.caConfigMap -}}
+{{- $caHash = required "ingestEdge.postgres.caSha256 is required (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" $c.postgres.caSha256 -}}
+{{- if not (regexMatch "^[a-f0-9]{64}$" $caHash) }}{{ fail "ingestEdge.postgres.caSha256 must be 64 lowercase hex characters (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
 {{- else if or $c.postgres.caConfigMap $c.postgres.caSha256 -}}
 {{- fail "ingestEdge.postgres.tlsProfile=supabase pins the built-in Supabase CA; leave caConfigMap and caSha256 empty" -}}
 {{- end -}}

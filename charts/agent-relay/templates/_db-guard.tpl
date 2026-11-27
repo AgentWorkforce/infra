@@ -25,6 +25,24 @@ in-cluster HoopDb (sessions-pipeline.hoopdb.enabled) is chart-managed and skippe
 {{- if and (hasKey $c "enabled") (not $c.enabled) }}{}{{ else if $c.configMap }}{{ dict "kind" "configMap" "name" $c.configMap "key" ($c.key | default "ca.crt") | toJson }}{{ else if $c.secret }}{{ dict "kind" "secret" "name" $c.secret "key" ($c.key | default "ca.crt") | toJson }}{{ else }}{}{{ end -}}
 {{- end }}
 
+{{- /* With global.rdsCa.bundle a component may name no CA at all and still
+verify against the chart-managed rds-ca: the guard checks with the CA each
+component actually uses (_rds-ca.tpl, the same rules as the subcharts).
+pgCa: root, ca (a postgresCa block), path, want (default true) -> the block.
+tlsCa: root, pg (a postgres TLS block), path, want -> {configMap, key}. */ -}}
+{{- define "agent-relay.dbGuard.pgCa" -}}
+{{- $ca := deepCopy (.ca | default dict) -}}
+{{- if or (not (hasKey . "want")) .want -}}
+{{- $ca = mergeOverwrite $ca (include "agent-relay.rdsCa.apply" (dict "root" .root "ca" $ca "path" .path "fields" (dict "configMap" "configMap" "key" "key" "sha256" "sha256" "secret" "secret" "enabled" "enabled")) | fromJson) -}}
+{{- end -}}
+{{- toJson $ca -}}
+{{- end }}
+{{- define "agent-relay.dbGuard.tlsCa" -}}
+{{- $pg := deepCopy (.pg | default dict) -}}
+{{- if .want }}{{ $pg = mergeOverwrite $pg (include "agent-relay.rdsCa.apply" (dict "root" .root "ca" $pg "path" .path "fields" (dict "configMap" "caConfigMap" "key" "caKey" "sha256" "caSha256")) | fromJson) }}{{ end -}}
+{{- dict "configMap" (get $pg "caConfigMap" | default "") "key" (get $pg "caKey" | default "ca.crt") | toJson -}}
+{{- end }}
+
 {{- define "agent-relay.dbGuard.targets" -}}
 {{- $v := .Values -}}
 {{- $components := $v.components | default dict -}}
@@ -35,7 +53,7 @@ in-cluster HoopDb (sessions-pipeline.hoopdb.enabled) is chart-managed and skippe
 {{- if dig "control" true $components -}}
 {{- $c := index $v "relay-control" | default dict -}}
 {{- $secret := toString ($c.existingSecret | default "") -}}
-{{- $ca := include "agent-relay.dbGuard.caRef" (get $c "postgresCa") | fromJson -}}
+{{- $ca := include "agent-relay.dbGuard.caRef" (include "agent-relay.dbGuard.pgCa" (dict "root" $ "ca" (get $c "postgresCa") "path" "relay-control.postgresCa") | fromJson) | fromJson -}}
 {{- if $secret -}}
 {{- $out = append $out (dict "secret" $secret "key" (dig "secretKeys" "databaseUrl" "database-url" $c) "format" "url" "role" "relay-control runtime" "ca" $ca) -}}
 {{- /* With migrations off the owner credential lives outside this release. */ -}}
@@ -48,7 +66,7 @@ in-cluster HoopDb (sessions-pipeline.hoopdb.enabled) is chart-managed and skippe
 {{- if and (dig "relaycast" true $components) (eq (dig "runtime" "backend" "" $rc | toString) "postgres") -}}
 {{- $secret := toString ($rc.existingSecret | default "") -}}
 {{- if $secret -}}
-{{- $ca := include "agent-relay.dbGuard.caRef" (get $rc "postgresCa") | fromJson -}}
+{{- $ca := include "agent-relay.dbGuard.caRef" (include "agent-relay.dbGuard.pgCa" (dict "root" $ "ca" (get $rc "postgresCa") "path" "relaycast.postgresCa") | fromJson) | fromJson -}}
 {{- $out = append $out (dict "secret" $secret "key" (dig "secretKeys" "databaseOwnerUrl" "database-owner-url" $rc) "format" "url" "role" "relaycast owner" "relaycast" "owner" "ca" $ca) -}}
 {{- $out = append $out (dict "secret" $secret "key" (dig "secretKeys" "databaseRuntimeUrl" "database-runtime-url" $rc) "format" "url" "role" "relaycast runtime" "relaycast" "runtime" "ca" $ca) -}}
 {{- end -}}
@@ -56,7 +74,7 @@ in-cluster HoopDb (sessions-pipeline.hoopdb.enabled) is chart-managed and skippe
 {{- $sp := index $v "sessions-pipeline" | default dict -}}
 {{- if and (dig "sessionsPipeline" true $components) (not (dig "hoopdb" "enabled" true $sp)) -}}
 {{- $legacy := eq (dig "worker" "migrations" "rdsLayout" "" $sp | toString) "master-owner" -}}
-{{- $workerCa := include "agent-relay.dbGuard.caRef" (dig "worker" "postgresCa" dict $sp) | fromJson -}}
+{{- $workerCa := include "agent-relay.dbGuard.caRef" (include "agent-relay.dbGuard.pgCa" (dict "root" $ "ca" (dig "worker" "postgresCa" dict $sp) "path" "worker.postgresCa") | fromJson) | fromJson -}}
 {{- $runtime := dig "worker" "hoopdb" dict $sp | default dict -}}
 {{- if $runtime.existingSecret -}}
 {{- $out = append $out (dict "secret" $runtime.existingSecret "key" ($runtime.key | default "HOOPDB_URL") "format" "url" "role" "HoopDb runtime" "ca" $workerCa) -}}
@@ -67,14 +85,14 @@ in-cluster HoopDb (sessions-pipeline.hoopdb.enabled) is chart-managed and skippe
 {{- end -}}
 {{- $read := $sp.sessionReadApi | default dict -}}
 {{- if and $read.enabled (dig "config" "existingSecret" "" $read) -}}
-{{- $out = append $out (dict "secret" $read.config.existingSecret "key" ($read.config.key | default "RELAYHISTORY_READ_API_SECRET") "format" "json" "field" "supabase_url" "role" "read API" "ca" (include "agent-relay.dbGuard.caRef" (get $read "postgresCa") | fromJson)) -}}
+{{- $out = append $out (dict "secret" $read.config.existingSecret "key" ($read.config.key | default "RELAYHISTORY_READ_API_SECRET") "format" "json" "field" "supabase_url" "role" "read API" "ca" (include "agent-relay.dbGuard.caRef" (include "agent-relay.dbGuard.pgCa" (dict "root" $ "ca" (get $read "postgresCa") "path" "sessionReadApi.postgresCa" "want" (eq (dig "postgres" "tlsProfile" "" $read | toString) "custom-ca")) | fromJson) | fromJson)) -}}
 {{- end -}}
 {{- $ingest := $sp.ingestEdge | default dict -}}
 {{- if and $ingest.enabled (dig "config" "existingSecret" "" $ingest) -}}
-{{- $out = append $out (dict "secret" $ingest.config.existingSecret "key" ($ingest.config.databaseUrlKey | default "database-url") "format" "url" "role" "ingest edge" "ca" (include "agent-relay.dbGuard.caRef" (dict "configMap" (dig "postgres" "caConfigMap" "" $ingest) "key" (dig "postgres" "caKey" "ca.crt" $ingest)) | fromJson)) -}}
+{{- $out = append $out (dict "secret" $ingest.config.existingSecret "key" ($ingest.config.databaseUrlKey | default "database-url") "format" "url" "role" "ingest edge" "ca" (include "agent-relay.dbGuard.caRef" (include "agent-relay.dbGuard.tlsCa" (dict "root" $ "pg" (dig "postgres" dict $ingest) "path" "ingestEdge.postgres" "want" (eq (dig "postgres" "tlsProfile" "custom-ca" $ingest | default "custom-ca" | toString) "custom-ca")) | fromJson) | fromJson)) -}}
 {{- end -}}
 {{- $search := $sp.searchIndexer | default dict -}}
-{{- $searchCa := include "agent-relay.dbGuard.caRef" (dict "configMap" (dig "postgres" "caConfigMap" "" $search) "key" (dig "postgres" "caKey" "ca.crt" $search)) | fromJson -}}
+{{- $searchCa := include "agent-relay.dbGuard.caRef" (include "agent-relay.dbGuard.tlsCa" (dict "root" $ "pg" (dig "postgres" dict $search) "path" "searchIndexer.postgres" "want" (and $search.enabled (eq (dig "postgres" "tlsProfile" "custom-ca" $search | toString) "custom-ca"))) | fromJson) | fromJson -}}
 {{- if $search.enabled -}}
 {{- if dig "config" "existingSecret" "" $search -}}
 {{- $out = append $out (dict "secret" $search.config.existingSecret "key" ($search.config.key | default "RELAYHISTORY_PIPELINE_CONSUMER_SECRET") "format" "json" "field" "hoopdb_url" "role" "search indexer runtime" "ca" $searchCa) -}}
@@ -86,7 +104,7 @@ in-cluster HoopDb (sessions-pipeline.hoopdb.enabled) is chart-managed and skippe
 {{- end -}}
 {{- /* One entry per Secret key and role: a key read by two different roles
 (a shared owner/runtime URL) stays twice so the shared-login check sees it. */ -}}
-{{- $fallbackCa := include "agent-relay.dbGuard.caRef" (dig "postgresCa" dict $rc) | fromJson -}}
+{{- $fallbackCa := include "agent-relay.dbGuard.caRef" (include "agent-relay.dbGuard.pgCa" (dict "root" $ "ca" (dig "postgresCa" dict $rc) "path" "relaycast.postgresCa" "want" (eq (dig "runtime" "backend" "" $rc | toString) "postgres")) | fromJson) | fromJson -}}
 {{- $seen := dict -}}
 {{- $uniq := list -}}
 {{- range $t := $out -}}
@@ -211,7 +229,7 @@ is at least one target. */ -}}
 {{- define "agent-relay.dbGuard.hookEnabled" -}}
 {{- $g := .Values.databaseGuard | default dict -}}
 {{- $rc := index .Values "relaycast" | default dict -}}
-{{- if and (include "agent-relay.dbGuard.enabled" .) (dig "privilegeCheck" "enabled" true $g) (dig "relaycast" true (.Values.components | default dict)) (eq (dig "runtime" "backend" "" $rc | toString) "postgres") (dig "postgresCa" "enabled" false $rc) (include "agent-relay.dbGuard.targets" . | fromJsonArray) }}true{{ end -}}
+{{- if and (include "agent-relay.dbGuard.enabled" .) (dig "privilegeCheck" "enabled" true $g) (dig "relaycast" true (.Values.components | default dict)) (eq (dig "runtime" "backend" "" $rc | toString) "postgres") (include "agent-relay.dbGuard.pgCa" (dict "root" . "ca" (dig "postgresCa" dict $rc) "path" "relaycast.postgresCa") | fromJson).enabled (include "agent-relay.dbGuard.targets" . | fromJsonArray) }}true{{ end -}}
 {{- end }}
 
 {{- /* Image for the guard hook and the status test: databaseGuard.privilegeCheck.image,
@@ -253,9 +271,16 @@ else relaycast.runtime.postgres.image. */ -}}
 {{- $secrets := include "agent-relay.dbGuard.secretKeys" .root | fromJson -}}
 - name: script
   configMap: { name: {{ .configMap }} }
+{{- $managed := include "agent-relay.rdsCa" .root -}}
 {{- range $dir, $ca := include "agent-relay.dbGuard.caSources" .root | fromJson }}
 - name: {{ printf "ca-%s" $dir }}
-  {{- if eq $ca.kind "configMap" }}
+  {{- if and $managed (eq $ca.kind "configMap") (eq $ca.name (fromJson $managed).configMap) }}
+  # The chart-managed RDS CA: rds-ca itself is created after this pre-install
+  # hook, so the hook carries the same bundle in its own ConfigMap.
+  configMap:
+    name: {{ $.configMap }}
+    items: [{ key: rds-ca.crt, path: ca.crt }]
+  {{- else if eq $ca.kind "configMap" }}
   configMap:
     name: {{ $ca.name | quote }}
     optional: true
@@ -289,6 +314,9 @@ else relaycast.runtime.postgres.image. */ -}}
   {{- $.Files.Get $path | nindent 2 }}
 {{- end }}
 targets.json: {{ include "agent-relay.dbGuard.targets" . | quote }}
+{{- with include "agent-relay.rdsCa" . }}
+rds-ca.crt: {{ $.Files.Get (printf "files/rds-ca/%s-bundle.pem" (fromJson .).bundle) | toJson }}
+{{- end }}
 {{- end }}
 
 {{- define "agent-relay.dbGuard.podSecurity" -}}

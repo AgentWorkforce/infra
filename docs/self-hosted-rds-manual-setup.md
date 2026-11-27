@@ -34,8 +34,8 @@ There are three phases:
   under `x-pins` in your `values.yaml`, for example
   `ghcr.io/agentworkforce/sessions-pipeline@sha256:...`. The HoopDb SQL files
   ship inside it.
-- `kubectl` access to the install namespace (`agent-relay`) for the CA
-  ConfigMap.
+- `kubectl` access to the install namespace (`agent-relay`).
+- An infra checkout at your release tag (for the RDS CA bundle in 1.2).
 
 ## Phase 1: before the Helm install
 
@@ -56,18 +56,52 @@ export PGSSLROOTCERT="$PWD/rds-ca.pem"
 export HOOPDB_DATABASE=<your HoopDb database name>
 ```
 
-### 1.2 RDS CA bundle and the `rds-ca` ConfigMap
+### 1.2 RDS CA bundle
+
+The chart ships AWS's public RDS CA bundles. With `global.rdsCa.bundle` set to
+your RDS region in `values.yaml` (the EKS example sets it), Helm creates the
+`rds-ca` ConfigMap and pins its SHA-256 in every service. There is nothing to
+download, no ConfigMap to create and no hash to copy into `values.yaml`.
+
+```yaml
+global:
+  rdsCa:
+    bundle: us-east-1   # your RDS region, or global (every region)
+```
+
+The `psql` commands in this guide verify the server with the same bundle. Take
+it from your infra checkout at the release tag:
 
 ```bash
-curl -fsS -o rds-ca.pem "https://truststore.pki.rds.amazonaws.com/$AWS_REGION/$AWS_REGION-bundle.pem"
+cp "charts/agent-relay/files/rds-ca/$AWS_REGION-bundle.pem" rds-ca.pem
 grep -c 'BEGIN CERTIFICATE' rds-ca.pem                      # must be more than 0
 kubectl create namespace agent-relay --dry-run=client -o yaml | kubectl apply -f -
+```
+
+`charts/agent-relay/files/rds-ca/manifest.yaml` records where each bundle came
+from (URL, fetch date, SHA-256).
+
+If an `rds-ca` ConfigMap already exists in the namespace (created by hand, by
+`rds-setup.sh pre`, or by an install from before `global.rdsCa`), the install
+stops and says to delete it. Delete it and install again; the chart creates its
+own. Running pods keep their mounted copy, and pods that start in between wait
+until the chart has created it:
+
+```bash
+kubectl -n agent-relay delete configmap rds-ca
+```
+
+**Bring your own CA** (a private CA, a proxy in front of RDS, or a database
+that is not RDS): leave `global.rdsCa` unset, create the ConfigMap yourself and
+set its SHA-256 on every component that pins it (`postgresCa.sha256` and
+`postgres.caSha256`). A component that names its own ConfigMap or Secret keeps
+it even with `global.rdsCa.bundle` set.
+
+```bash
 kubectl -n agent-relay create configmap rds-ca --from-file=ca.crt=rds-ca.pem \
   --dry-run=client -o yaml | kubectl apply -f -
 sha256sum rds-ca.pem | cut -d' ' -f1                        # macOS: shasum -a 256
 ```
-
-The printed hash is the value for `__RDS_CA_SHA256__` in `values.yaml`.
 
 ### 1.3 Passwords
 

@@ -336,9 +336,15 @@ compatibility:
       status: shipped
       charts: { telemetry-collector: 0.1.0 }
       notes: 'Default-off umbrella analytics file collector. Requires accepted immutable collector and TLS-proxy images, producer and TLS Secrets and an exclusive persistent volume. Source rendering does not prove image entrypoint, TLS, durable acknowledgement, power-loss recovery or whole-application analytics coverage. The currently reviewed collector CLI registers relaycontrol events only.'
-    - id: session-read-api-0.2.17
+    - id: session-read-api-0.2.18
       status: unreleased
       current: true
+      charts: { session-read-api: 0.2.18 }
+      images:
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      notes: 'Carries 0.2.17. Adds the chart-managed RDS CA consumer side: with global.rdsCa.bundle set in the agent-relay umbrella, postgresCa (postgres.tlsProfile custom-ca), SESSION_POSTGRES_CA_SHA256 included, uses the rds-ca ConfigMap the umbrella renders and its sha256 (global.rdsCa.bundleSha256) when it names no CA source of its own, or names that ConfigMap; a key other than ca.crt or a hand-set hash that differs fails the render. Without global.rdsCa renders are unchanged apart from the chart version.'
+    - id: session-read-api-0.2.17
+      status: planned
       charts: { session-read-api: 0.2.17 }
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
@@ -437,9 +443,37 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.60
+    - id: sessions-pipeline-0.8.61
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.61, sessions-pipeline-worker: 0.7.16, session-ingest-api: 0.4.6, session-read-api: 0.2.18 }
+      depends:
+        sessions-pipeline: { worker: 0.7.16, alleyoop: 0.4.6, sessionReadApi: 0.2.18, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: fresh PG16+ installs use the membership-free separate-database owner graph; legacy and PG15 installs remain master-owner }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: the administrator runs the one-time bootstrap and the migration Job uses hoopdb_owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline-worker/templates/session-analysis.yaml:1"
+        - "ci/sessions-pipeline-worker-advisor-analysis/test_chart.py:1"
+      notes: 'Carries 0.8.60, sessions-pipeline-worker 0.7.16, session-ingest-api 0.4.6 and session-read-api 0.2.18. Adds the chart-managed RDS CA consumer side: with global.rdsCa.bundle set in the agent-relay umbrella, each Postgres client (worker and alleyoop postgresCa, nativeBrief, sessionAnalysis.postgresTls custom-ca, the read API, and the ingest edge, search indexer and native consumer postgres blocks with custom-ca) uses the rds-ca ConfigMap the umbrella renders and its sha256 (global.rdsCa.bundleSha256) when it names no CA source of its own, or names that ConfigMap; a key other than ca.crt or a hand-set hash that differs fails the render. Without global.rdsCa renders are unchanged apart from the chart version. The native consumer cross-checks compare the CA each subchart actually uses. Missing-hash errors name global.rdsCa.bundle.'
+    - id: sessions-pipeline-0.8.60
+      status: planned
       charts: { sessions-pipeline: 0.8.60, sessions-pipeline-worker: 0.7.15, session-ingest-api: 0.4.5, session-read-api: 0.2.17 }
       depends:
         sessions-pipeline: { worker: 0.7.15, alleyoop: 0.4.5, sessionReadApi: 0.2.17, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -2116,9 +2150,16 @@ compatibility:
       images_note: not built for the charts yet
       notes: 'Follow-up re-pin to sessions-pipeline main after #127 (session briefs, generation 5ed11913...). Needs new GHCR/ECR digests, ci/sessions-pipeline-search-worker-role/services-commit and services-generation, and the session-brief entries below shipped.'
       db_combos: []
-    - id: relaycast-0.3.17
+    - id: relaycast-0.3.18
       status: unreleased
       current: true
+      charts: { relaycast: 0.3.18 }
+      app_versions: { relaycast: 12.10.0 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+      notes: 'Carries 0.3.17. Adds the chart-managed RDS CA consumer side: with global.rdsCa.bundle set in the agent-relay umbrella, postgresCa (PostgreSQL backend only) uses the rds-ca ConfigMap the umbrella renders and its sha256 (global.rdsCa.bundleSha256) when it names no CA source of its own, or names that ConfigMap; a key other than ca.crt or a hand-set hash that differs fails the render. Without global.rdsCa renders are unchanged apart from the chart version.'
+    - id: relaycast-0.3.17
+      status: planned
       charts: { relaycast: 0.3.17 }
       app_versions: { relaycast: 12.10.0 }
       images:
@@ -2301,9 +2342,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.84
+    - id: agent-relay-0.7.85
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.85, relay-control: 0.4.27, relay-webapp: 0.2.8 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.18, relayauth: 0.1.5, sessions-pipeline: 0.8.61, relay-control: 0.4.27, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.12, relaygate: 0.1.13 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.84. Chart-managed RDS CA (global.rdsCa, off by default): the chart ships the public AWS RDS CA bundles (34 commercial regions and global, files/rds-ca with manifest.yaml provenance; scripts/selfhost/refresh-rds-ca-bundles.sh refreshes them). global.rdsCa.bundle=<region>|global renders the rds-ca ConfigMap (key ca.crt) and every Postgres client pins its computed sha256 (relaycast 0.3.18, relay-control 0.4.27, sessions-pipeline 0.8.61): no download, kubectl create configmap or hash to paste. An existing rds-ca the release does not own fails the install with the command that clears it. Under global.rdsCa the all-zero placeholder hashes in values-eks-rds-native.yaml count as unset, so that profile needs no hash override. Without global.rdsCa renders are unchanged apart from chart versions.'
+    - id: agent-relay-0.7.84
+      status: planned
       charts: { agent-relay: 0.7.84, relay-control: 0.4.26, relay-webapp: 0.2.8 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -4876,7 +4930,8 @@ entries:
       and sets them; the ingest edge takes
       ingestEdge.postgres.caConfigMap, caKey and caSha256.
       When postgresCa is on, wait-for-role (psql) gets PGSSLROOTCERT. psql run by an operator
-      needs sslrootcert=<bundle> with verify-full.
+      needs sslrootcert=<bundle> with verify-full. On Amazon RDS under the agent-relay
+      umbrella, opt.rds-ca-managed (global.rdsCa.bundle) fills all of these in.
     chart: [sessions-pipeline, relay-control, relaychief-control, relayfile-control]
     values: [worker.postgresCa.*, alleyoop.postgresCa.*, "relay-control:postgresCa.*", "relaychief-control:postgresCa.*", "relayfile-control:postgresCa.*"]
     env: [NODE_EXTRA_CA_CERTS, PGSSLROOTCERT]
@@ -4893,6 +4948,49 @@ entries:
       - "charts/sessions-pipeline/profiles/external-rds.yaml:19"
       - "charts/sessions-pipeline-worker/templates/_env.tpl"
       - "charts/session-ingest-api/templates/deployment.yaml"
+
+  - id: opt.rds-ca-managed
+    kind: option
+    title: Chart-managed Amazon RDS CA (global.rdsCa)
+    description: |
+      The agent-relay chart ships AWS's public RDS CA bundles (every commercial region
+      plus global, from truststore.pki.rds.amazonaws.com; provenance with URL, fetch
+      date and sha256 in charts/agent-relay/files/rds-ca/manifest.yaml, refreshed by
+      scripts/selfhost/refresh-rds-ca-bundles.sh). global.rdsCa.bundle set to the
+      database's AWS region, or to global, renders the ConfigMap rds-ca (key ca.crt)
+      and computes its sha256;
+      every Postgres client then uses that ConfigMap and pins that hash: relaycast
+      (PostgreSQL backend) and relay-control postgresCa, and in sessions-pipeline the
+      worker (nativeBrief included) and alleyoop postgresCa, the read API (tlsProfile
+      custom-ca), the ingest edge, search indexer and native consumer postgres blocks
+      and sessionAnalysis.postgresTls (custom-ca). A component that names another
+      ConfigMap or a Secret keeps its own CA (a private CA, or a database that is not
+      RDS); one that names the managed ConfigMap or nothing gets the managed CA, and a
+      key other than ca.crt or a hand-set hash that differs fails the render. The
+      render also fails when global.rdsCa.bundleSha256 does not match the shipped
+      bundle, and on install when an rds-ca the release does not own exists (the
+      error says to delete it; configure-rds.sh does so when the values set
+      global.rdsCa.bundle, and rds-setup.sh pre leaves a chart-managed rds-ca as it
+      is). The ConfigMap keeps helm.sh/resource-policy keep. Off by default: renders
+      without it are unchanged. A rotated AWS bundle reaches the pods with the chart
+      upgrade that ships it.
+    chart: [agent-relay]
+    values: [global.rdsCa.bundle, global.rdsCa.bundleSha256]
+    profiles: [agent-relay]
+    status: shipped
+    provided_by: operator
+    default: ""
+    choices:
+      - { value: "", note: "off: each component names its own CA (postgresCa, caConfigMap and the hashes)" }
+      - { value: "<aws-region>", note: "the RDS region's bundle, e.g. us-east-1 (about 4.6 KB)" }
+      - { value: global, note: "every commercial region (about 175 KB)" }
+    verify: helm template with --set global.rdsCa.bundle=us-east-1 renders ConfigMap rds-ca whose ca.crt sha256 equals the agent-relay rds-ca-sha256 annotation, SESSION_POSTGRES_CA_SHA256 in the read API, ingest edge and search indexer, and the postgres-ca volumes of relaycast, relay-control, worker and alleyoop pointing at rds-ca; a mismatched hand-set hash fails (ci/rds-ca/test.sh)
+    sources:
+      - "charts/agent-relay/templates/rds-ca.yaml"
+      - "charts/agent-relay/files/rds-ca/manifest.yaml"
+      - "ci/rds-ca/_rds-ca.tpl"
+      - "ci/rds-ca/test.sh"
+      - "scripts/selfhost/refresh-rds-ca-bundles.sh"
       - "charts/relay-control/templates/deployment.yaml"
       - "charts/relaychief-control/templates/deployment.yaml"
       - "charts/relayfile-control/templates/deployment.yaml"

@@ -1,8 +1,7 @@
 # EXAMPLE values.yaml for agent-relay-2026.11.18 (chart 0.7.63), filled in.
 # Every site value is an example: domain ar.selfhost-example.agentrelay.com, orgId, org name, admin
-# email, region, bucket, OpenSearch URL, RDS CA sha256 (keep it quoted; from
-# ~/.agent-relay-install/rds-ca.sha256), ALB
-# subnet CIDRs, and the nativeBrief model (disabled until after-install).
+# email, region (also global.rdsCa.bundle), bucket, OpenSearch URL, ALB subnet
+# CIDRs, and the nativeBrief model (disabled until after-install).
 # The unfilled template is https://agentrelay.com/self-hosting/files/eks/values.yaml.
 
 # Agent Relay on your own EKS cluster: site values.
@@ -53,6 +52,11 @@ global:
     # Stable organization ID that partitions session data. Never change it after
     # the first upload.
     orgId: org_example
+  # The RDS CA: the chart ships AWS's public RDS CA bundles, renders the rds-ca
+  # ConfigMap for this region and pins its sha256 in every Postgres client. Set
+  # it to the RDS instance's region, or to global. Nothing to download or hash.
+  rdsCa:
+    bundle: us-east-1
 
 relaycast:
   # PostgreSQL backend. The chart allows exactly one replica on this backend:
@@ -63,10 +67,6 @@ relaycast:
       image:
         repository: ghcr.io/agentworkforce/relaycast-self-host
         digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
-  postgresCa:
-    enabled: true
-    configMap: rds-ca
-    key: ca.crt
   # A SQLite-only setting that this backend refuses.
   retention:
     messageTtlDays: null
@@ -105,12 +105,8 @@ sessions-pipeline:
     config:
       existingSecret: agent-relay-read-api
       key: RELAYHISTORY_READ_API_SECRET
+    # Verified against the chart-managed RDS CA (global.rdsCa).
     postgres: { tlsProfile: custom-ca }
-    postgresCa:
-      enabled: true
-      configMap: rds-ca
-      key: ca.crt
-      sha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     search:
       backend: opensearch
       backendId: opensearch-main
@@ -167,9 +163,6 @@ sessions-pipeline:
       existingSecret: agent-relay-ingest-edge-runtime
       databaseUrlKey: database-url
       introspectSecretKey: introspect-secret
-    postgres:
-      caConfigMap: rds-ca
-      caSha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     serviceAccountName: agent-relay-session-ingest-api
     locker:
       bucket: example-agent-relay-sessions
@@ -192,10 +185,7 @@ sessions-pipeline:
     locker:
       bucket: example-agent-relay-sessions
       region: us-east-1
-    postgres:
-      tlsProfile: custom-ca
-      caConfigMap: rds-ca
-      caSha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
+    postgres: { tlsProfile: custom-ca }
     bootstrap:
       enabled: true
       existingSecret: search-indexer-owner
@@ -217,11 +207,6 @@ sessions-pipeline:
     existingSecret: agent-relay-secrets
     summaryEncryption:
       existingSecret: agent-relay-secrets
-    postgresCa:
-      enabled: true
-      configMap: rds-ca
-      key: ca.crt
-      sha256: "9f2c4e1ab7d03586e2f1c9a47b0d6e3851fa2c94d7e60b13a8c5f27e4d91b06a"
     hoopdb:
       existingSecret: agent-relay-secrets
       key: HOOPDB_URL
@@ -267,10 +252,6 @@ sessions-pipeline:
   alleyoop:
     deployment:
       enabled: false
-    postgresCa:
-      enabled: true
-      configMap: rds-ca
-      key: ca.crt
     image: *services_image
     hoopdb:
       existingSecret: agent-relay-secrets
@@ -336,10 +317,6 @@ relay-control:
     audiences:
       - https://history.ar.selfhost-example.agentrelay.com
       - https://api.ar.selfhost-example.agentrelay.com
-  postgresCa:
-    enabled: true
-    configMap: rds-ca
-    key: ca.crt
   networkPolicy:
     ingressFrom:
       - podSelector: {}

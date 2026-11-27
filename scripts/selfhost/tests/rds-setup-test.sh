@@ -77,6 +77,11 @@ for argument in "$@"; do
   esac
 done
 case " $* " in
+  *" get configmap rds-ca --ignore-not-found -o json "*)
+    if [[ "${MOCK_RDS_CA_MANAGED:-0}" == 1 ]]; then
+      printf '%s\n' '{"metadata":{"name":"rds-ca","annotations":{"agentworkforce.dev/rds-ca-bundle":"global"}},"data":{"ca.crt":"-----BEGIN CERTIFICATE-----\nmanaged\n-----END CERTIFICATE-----\n"}}'
+    fi
+    exit 0 ;;
   *" apply -f - "*) cat >/dev/null; exit 0 ;;
   *" create secret generic search-indexer-owner "*)
     touch "$MOCK_CAPTURE_DIR/search-secret-created"
@@ -186,6 +191,11 @@ grep -q 'rdsLayout: separate-database' "${STATE_DIR}/hoopdb-layout-values.yaml" 
 [[ "$(stat -c '%a' "${STATE_DIR}/secret-files/agent-relay-secrets")" == 700 ]] || fail "secret directory mode is not 0700"
 pass "pre mode creates private credential files without leaking secrets"
 
+grep -q ' create configmap rds-ca --from-file=ca.crt=' "${COMMAND_LOG}" || fail "pre did not create rds-ca"
+cmp -s "${STATE_DIR}/rds-ca.pem" "${TEST_DIR}/../../../charts/agent-relay/files/rds-ca/us-west-2-bundle.pem" || fail "pre did not use the bundle the chart ships"
+! grep -q '^curl .*truststore' "${COMMAND_LOG}" || fail "pre downloaded a bundle the checkout ships"
+pass "pre creates rds-ca from the bundle the chart ships"
+
 # The shipped separate-database preflight requires every role to exist without
 # a creator edge before the first migration.
 grep -q 'CREATE ROLE agent_relay_hoopdb_role_creator' "${MOCK_CAPTURE_DIR}/run.sh" || fail "pre omitted disposable role creator"
@@ -198,6 +208,13 @@ diff -u \
   >/dev/null || fail "inline activation SQL drifted from rds-hoopdb-activate.sql"
 grep -q 'protected role membership edges:' "${MOCK_CAPTURE_DIR}/run.sh" || fail "pre omitted the protected-role membership census"
 pass "pre mode submits the membership-free dedicated-owner role graph"
+
+: >"${COMMAND_LOG}"
+MOCK_RDS_CA_MANAGED=1 MOCK_LAYOUT=dedicated-owner bash "${RDS_SETUP}" pre >"${TEST_ROOT}/managed-ca.log" 2>&1 || fail "pre failed with a chart-managed rds-ca"
+grep -q 'managed by the agent-relay chart (global.rdsCa.bundle=global)' "${TEST_ROOT}/managed-ca.log" || fail "pre did not report the chart-managed rds-ca"
+! grep -q 'configmap rds-ca --from-file' "${COMMAND_LOG}" || fail "pre rewrote a chart-managed rds-ca"
+grep -q managed "${STATE_DIR}/rds-ca.pem" || fail "pre did not keep the chart-managed bundle locally"
+pass "pre leaves a chart-managed rds-ca as it is"
 
 # These are exact upstream b96e1e1e inputs. Indented role DDL lives inside a
 # guarded DO block and is safe after the explicit existence check; only
