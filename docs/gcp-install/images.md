@@ -12,11 +12,11 @@ digest.
 |---|---|---|
 | relay-control | `ghcr.io/agentworkforce/relay-control@sha256:0e50e62e64880c0798411f792003568be17407959403d9a07f055bf96790b260` | yes |
 | relay-webapp | `ghcr.io/agentworkforce/relay-webapp@sha256:da0cc80476eac734299c0c6ceb94e2bca7dae7913cce56a8ca8592cf086dd02e` | yes |
-| relaycast-eks-collector | `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc` | no (Relaycast with the collector adapter, for other profiles) |
+| relaycast-eks-collector | `ghcr.io/agentworkforce/relaycast-self-host@sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d` | no (Relaycast with the collector adapter, for other profiles) |
 | sessions-pipeline | `ghcr.io/agentworkforce/sessions-pipeline@sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f` | yes (worker, read API, ingest edge, search indexer, and `cloud-sql-setup.sh`) |
 | sessions-migration-postgresql | `ghcr.io/cloudnative-pg/postgresql@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3` | yes (`cloud-sql-setup.sh` PostgreSQL client) |
-| relaycast | `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc` | no |
-| relaycast-postgres | `ghcr.io/agentworkforce/relaycast-self-host@sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc` | yes (Relaycast 12.10.0 on the PostgreSQL backend, Cloud SQL here) |
+| relaycast | `ghcr.io/agentworkforce/relaycast-self-host@sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d` | no |
+| relaycast-postgres | `ghcr.io/agentworkforce/relaycast-self-host@sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d` | yes (Relaycast 12.15.0-selfhost.1 on the PostgreSQL backend, Cloud SQL here) |
 | relayauth | `ghcr.io/agentworkforce/relayauth@sha256:c23c92d25fdffef3b5838a1eef4c226925f859706365d9ccece229795b877288` | no |
 
 Copy each image by digest and keep the whole multi-architecture index, so the
