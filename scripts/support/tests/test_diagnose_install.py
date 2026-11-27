@@ -1037,6 +1037,8 @@ class SearchReadinessTests(unittest.TestCase):
         self.assertIn('PUT _plugins/_security/api/rolesmapping/relayhistory_indexer {"backend_roles":'
                       '["arn:aws:iam::123456789012:role/search/agent-relay-indexer", "arn:aws:iam::123456789012:role/agent-relay-indexer"]}', action)
         self.assertIn('PUT _plugins/_security/api/roles/relayhistory_indexer {"cluster_permissions":["cluster_monitor"', action)
+        # _bulk and _mget are authorized at cluster level, not by the index pattern.
+        self.assertIn('"cluster_permissions":["cluster_monitor","indices:data/write/bulk","indices:data/read/mget"]', action)
         self.assertIn('"index_patterns":["relayhistory-*"]', action)
 
     def test_fgac_403_without_an_association_uses_the_assumed_role(self):
