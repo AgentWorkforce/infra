@@ -146,6 +146,20 @@ spec:
                 capabilities: { drop: [ALL] }
               env:
                 - { name: INGEST_REARM_SWEEPER_ENABLED, value: "true" }
+                # Pass-receipt provenance (relayhistory-pipeline src/session-ingest/rearm-sweeper-receipt.ts): the CronJob name is a
+                # literal (the downward API has no owner refs); the Job UID (controller-uid) is the workload identity.
+                - { name: INGEST_REARM_CRONJOB_NAME, value: {{ $name | quote }} }
+                - { name: INGEST_REARM_IMAGE_DIGEST, value: {{ $digest | quote }} }
+                - name: INGEST_REARM_JOB_NAME
+                  valueFrom: { fieldRef: { fieldPath: "metadata.labels['batch.kubernetes.io/job-name']" } }
+                - name: INGEST_REARM_JOB_UID
+                  valueFrom: { fieldRef: { fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" } }
+                - name: INGEST_REARM_POD_NAME
+                  valueFrom: { fieldRef: { fieldPath: metadata.name } }
+                - name: INGEST_REARM_POD_UID
+                  valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+                - name: INGEST_REARM_POD_NAMESPACE
+                  valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
                 - { name: INGEST_REARM_BUCKET, value: {{ $bucket | quote }} }
                 - { name: INGEST_REARM_REGION, value: {{ $region | quote }} }
                 {{- with ($c.ledgerBucket | default dict).bucket }}
