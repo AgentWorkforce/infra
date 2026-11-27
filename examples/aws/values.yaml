@@ -81,7 +81,7 @@ relaycast:
     postgres:
       image:
         repository: ghcr.io/agentworkforce/relaycast-self-host
-        digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc
+        digest: sha256:33ada5ffc7984c5d3d145d8b8758f91ef8e126fe76f33d89de21c11775a9bd4d
   # A SQLite-only setting that this backend refuses.
   retention:
     messageTtlDays: null

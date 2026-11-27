@@ -156,7 +156,8 @@ relaycast:
       # (relaycast 997dbb28) predates delivery confirmation (SQLite 0081,
       # PostgreSQL 0005, relaycast#625): it imports 12.8.0-pg.3 (810f48ce, the
       # same schema) but not 12.10.0 (fd10195, four more columns on deliveries
-      # and messages). Extend this list only with an actors build whose source
+      # and messages) or the pinned 12.15.0-selfhost.1 (6682436, PostgreSQL
+      # 0006-0010 on top). Extend this list only with an actors build whose source
       # carries the same engine migrations as the image it imports from.
       migration:
         compatibleEngineDigests:

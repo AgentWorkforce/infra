@@ -137,6 +137,26 @@ metadata:
 automountServiceAccountToken: false
 ---
 {{- end }}
+{{- $wait := dig "bootstrap" "waitBeforeStart" true $c -}}
+{{- $waitScript := .Files.Get "files/search-indexer-bootstrap-wait.mjs" -}}
+{{- $waitName := printf "%s-bootstrap-wait-%s" ($name | trunc 36 | trimSuffix "-") ($waitScript | sha256sum | trunc 8) -}}
+{{- if $wait }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $waitName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: session-search-indexer
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: search-indexer
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
+immutable: true
+data:
+  bootstrap-wait.mjs: |
+    {{- $waitScript | nindent 4 }}
+---
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -164,7 +184,37 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      {{- include "sessions-pipeline.searchIndexer.pod" . | nindent 6 }}
+      {{- include "sessions-pipeline.searchIndexer.pod" (dict "root" . "bootstrapGuard" (ternary $waitName "" $wait)) | nindent 6 }}
+      {{- if $wait }}
+      # Wait for the search bootstrap instead of crash-looping on "permission
+      # denied for schema sessions" while its Job runs (bootstrap.waitBeforeStart).
+      initContainers:
+        - name: wait-for-search-bootstrap
+          image: {{ printf "%s@%s" $repository $digest | quote }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args: ["exec bun run /app/bootstrap-guard/bootstrap-wait.mjs"]
+          terminationMessagePolicy: FallbackToLogsOnError
+          # Only the indexer login and its Postgres TLS settings: it reads the catalog, nothing else.
+          env:
+            - name: RELAYHISTORY_PIPELINE_CONSUMER_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ $secret | quote }}, key: {{ $c.config.key | quote }} }
+            - { name: SESSION_POSTGRES_TLS_PROFILE, value: {{ $c.postgres.tlsProfile | quote }} }
+            {{- if eq $c.postgres.tlsProfile "custom-ca" }}
+            - { name: SESSION_POSTGRES_CA_FILE, value: /etc/search-indexer-postgres/ca.crt }
+            - { name: SESSION_POSTGRES_CA_SHA256, value: {{ $c.postgres.caSha256 | quote }} }
+            {{- end }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
+            - { name: SEARCH_BOOTSTRAP_WAIT_SECONDS, value: {{ dig "bootstrap" "waitSeconds" 1800 $c | int64 | toString | quote }} }
+            - { name: SEARCH_BOOTSTRAP_WAIT_POLL_SECONDS, value: "5" }
+          {{- include "sessions-pipeline.searchIndexer.container" (dict "root" . "bootstrapGuard" $waitName) | nindent 10 }}
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 256Mi }
+      {{- end }}
       containers:
         - name: search-indexer
           image: {{ printf "%s@%s" $repository $digest | quote }}
