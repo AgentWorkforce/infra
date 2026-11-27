@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "version": "2026.11.24",
+  "pins": {
+    "relay-control": {
+      "repository": "ghcr.io/agentworkforce/relay-control",
+      "digest": "sha256:44d3249a1f22db5411e3d32c50af2425794bb051ee9a737d8468334e0929f09e",
+      "sourceRepository": "AgentWorkforce/relay-control",
+      "sourceRevision": "86e32015fc01b95c6e5ae74f46afa9d684b3404c"
+    },
+    "sessions-pipeline": {
+      "repository": "ghcr.io/agentworkforce/sessions-pipeline",
+      "digest": "sha256:84495b4d90c6b0a605ba545a7f4b01b42cb6f1cbd2db21a535ab05b21f49b57f",
+      "sourceRepository": "AgentWorkforce/relayhistory-pipeline",
+      "sourceRevision": "fefbc87c98d12c359d7a2f73f2eab383498ebd31",
+      "publishRunId": 45668679256
+    }
+  }
+}
