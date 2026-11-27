@@ -58,6 +58,7 @@ case "$*" in
   "config current-context") echo test-ctx ;;
   *"get namespace"*) [[ "${MOCK_NS_OK:-0}" == 1 ]] || { echo "Error from server (Forbidden)" >&2; exit 1; } ;;
   *"get secret "*) exit 1 ;;
+  *"get job "*"-o json"*) echo '{"status":{"conditions":[{"type":"Complete","status":"True"}]}}' ;;
   *"get jobs "*) echo '{"items":[{"metadata":{"name":"agent-relay-worker-migrate-1","creationTimestamp":"2026-11-26T00:00:00Z"}}]}' ;;
 esac
 MOCK
@@ -68,12 +69,17 @@ cat >"$tmp/rds-setup-stub.sh" <<'STUB'
 if [[ "$1" == pre ]]; then
   mkdir -p "$STATE_DIR/secret-files/agent-relay-secrets"
   printf 'postgresql://u:p@db/x?sslmode=verify-full' >"$STATE_DIR/secret-files/agent-relay-secrets/database-url"
-  printf 'sessions-pipeline: {}\n' >"$STATE_DIR/hoopdb-layout-values.yaml"
+  # The layout overlay exactly as rds-setup.sh pre writes it.
+  printf '%s\n' 'sessions-pipeline:' '  worker:' '    migrations:' '      hoopdb:' '        existingSecret: agent-relay-secrets' \
+    '        key: HOOPDB_MIGRATION_URL' '      rdsLayout: separate-database' '  searchIndexer:' '    bootstrap:' \
+    '      existingSecret: search-indexer-owner' '      key: RELAYHISTORY_PIPELINE_CONSUMER_SECRET' >"$STATE_DIR/hoopdb-layout-values.yaml"
 fi
 STUB
 # sha256sum: report the pinned checksum, so the stub passes as the pinned script.
 printf '#!/usr/bin/env bash\nprintf "%%s  %%s\\n" %s "$1"\n' "$(sed -n 's/^RDS_SETUP_SHA256=\([0-9a-f]*\).*/\1/p' "$SCRIPT")" >"$bin/sha256sum"
-for t in aws openssl; do printf '#!/usr/bin/env bash\nexit 0\n' >"$bin/$t"; done
+printf '#!/usr/bin/env bash\nexit 0\n' >"$bin/aws"
+# configure-rds.sh generates the application keys with openssl rand -hex 32.
+printf '#!/usr/bin/env bash\n[[ "$1 $2" == "rand -hex" ]] && { printf %%0*d "$(( $3 * 2 ))" 0; echo; }\nexit 0\n' >"$bin/openssl"
 chmod +x "$bin"/*
 reset_values() { cp "$tmp/values.orig" "$tmp/work/values.yaml"; rm -f "$tmp/work"/values.yaml.bak-*; }
 cat >"$tmp/values.orig" <<'EOF'
@@ -158,16 +164,21 @@ grep -q '^set -euo' "$tmp/out" && fail "help: printed code"
 pass "--help prints the full header"
 
 # 9. Through step 5: helm upgrade gets the pulled chart, the bundled values files
-#    in order, then values.yaml and the layout overlay; no dependency build.
+#    in order, then values.yaml, which now holds the HoopDb layout and first admin
+#    (no hidden overlay a later plain upgrade would drop); no dependency build.
 reset_values
 run RELEASE_VERSION=2026.11.19 HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay MOCK_NS_OK=1 \
     RDS_ADMIN_SECRET_ARN=arn:aws:secretsmanager:us-west-2:111122223333:secret:x \
     HELM_EXTRA_VALUES="values-eks.yaml charts/agent-relay/values-eks-native.yaml" || { cat "$tmp/out" >&2; fail "step 5: run failed"; }
 upgrade="$(grep '^helm .*upgrade --install' "$log")" || { cat "$tmp/out" >&2; fail "step 5: no helm upgrade"; }
 chart="$(sed -nE 's/^helm pull .* --untardir ([^ ]+).*/\1/p' "$log")/agent-relay"
-want="upgrade --install agent-relay $chart -n agent-relay -f $chart/values-eks.yaml -f $chart/values-eks-native.yaml -f values.yaml -f $tmp/state/hoopdb-layout-values.yaml --set-string relay-control.bootstrap.adminEmail=owner@corp.test"
+want="upgrade --install agent-relay $chart -n agent-relay -f $chart/values-eks.yaml -f $chart/values-eks-native.yaml -f values.yaml"
 [[ "$upgrade" == *"$want" ]] || fail "step 5: helm got: $upgrade"
+[[ "$upgrade" != *hoopdb-layout-values* && "$upgrade" != *--set* ]] || fail "step 5: a hidden overlay is still passed: $upgrade"
+for want_line in '      rdsLayout: separate-database' '        key: HOOPDB_MIGRATION_URL' '      existingSecret: search-indexer-owner' 'adminEmail: "owner@corp.test"'; do
+  grep -qF -- "$want_line" "$tmp/work/values.yaml" || { cat "$tmp/work/values.yaml" >&2; fail "step 5: values.yaml lacks: $want_line"; }
+done
 grep -q '^helm dependency' "$log" && fail "step 5: ran helm dependency build"
 grep -q 'sha256:1111111111111111111111111111111111111111111111111111111111111111' "$tmp/work/values.yaml" || fail "step 5: pins not applied"
 [[ ! -e "$chart" ]] || fail "step 5: the pulled chart was not cleaned up"
-pass "helm upgrade installs the pulled chart with its bundled values files in order, no dependency build"
+pass "helm upgrade installs the pulled chart with its bundled values files in order, the layout written into values.yaml, no dependency build"

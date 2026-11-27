@@ -1,5 +1,39 @@
 # Agent Relay self-host safety checks
 
+## Installing on EKS + RDS: configure-rds.sh
+
+`configure-rds.sh` is the primary install path for EKS with RDS. From the folder
+that holds your filled-in `values.yaml`, with the RDS master password at hand:
+
+```sh
+RDS_HOST=<endpoint> HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay \
+  HELM_EXTRA_VALUES="values-eks.yaml values-eks-native.yaml" \
+  bash configure-rds.sh
+```
+
+The published chart is pulled at the release's chart version (see "Installing
+from the published chart" below), so no checkout is needed. From an infra
+checkout of the release tag, `HELM_CHART=charts/agent-relay` works too.
+
+It uses the master login only for setup. It creates one owner and one runtime
+login per service, writes the five install Secrets in the shapes the chart
+checks (`examples/aws/secrets/01-05`), and generates the application keys.
+Keys that already exist are never replaced. It also pins the RDS CA and image
+digests in `values.yaml`, runs `helm upgrade`, waits for the migrations,
+activates the search logins (`rds-setup.sh post`) and re-runs a search
+bootstrap that ran too early. It finishes with `helm test`, mints the first
+sign-in key, and ends with a plain HEALTHY, UNHEALTHY or INCOMPLETE line and
+what to do next. It writes the HoopDb layout and first-admin settings into
+`values.yaml`, so a later plain `helm upgrade` with the same `-f` files keeps
+them. `--help` lists every setting.
+`RELEASE_VERSION=checkout` runs this checkout's scripts and chart as they are
+(the default pins a release).
+
+Hand-written Secrets are the bring-your-own option (SOPS, SSM, a DBA who
+creates the logins: docs/self-hosted-rds-manual-setup.md). They must pass the
+chart's `databaseGuard`, which refuses an install whose URLs log in as the RDS
+master, share a login between roles, or have the wrong shape (§1.13 there).
+
 `prepare-gcp-edge.py` prepares non-secret external-GKE edge and Desktop feed
 configuration locally. See [the configuration guide](../../docs/gcp-install/EDGE-DESKTOP-CONFIG.md).
 

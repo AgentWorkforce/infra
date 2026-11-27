@@ -1,0 +1,114 @@
+{{- /*
+Install status: helm test <release> -n <namespace> --logs
+One table of healthy/unhealthy rows (files/db-guard/status.mjs): migration
+Jobs, Deployments, database logins (the databaseGuard check), the CA, Pod
+Identity injection, S3 and OpenSearch reachability. Test hooks run only on
+`helm test`. Its ServiceAccount and script ConfigMap are ordinary release
+objects, so the test Pod is the only test suite. With
+databaseGuard.statusTest.rbac.create, a read-only Role lets it list the
+release's Jobs, Deployments and Pods (never Secrets: the URLs arrive as
+volumes, only their keys); off by default, because creating a Role needs RBAC
+rights the documented namespace-scoped operator Role does not have.
+*/ -}}
+{{- if include "agent-relay.statusTest.enabled" . }}
+{{- $name := printf "%s-status" .Release.Name | trunc 52 | trimSuffix "-" -}}
+{{- $sp := index .Values "sessions-pipeline" | default dict -}}
+{{- /* "<kind>/<name>/<key>" -> the sha256 values components pin for that CA. */ -}}
+{{- $sha := dict -}}
+{{- $rd := dig "sessionReadApi" "postgresCa" dict $sp -}}
+{{- /* Only components that run contribute pins: a disabled one's stale hash must not fail a valid bundle. */ -}}
+{{- $pins := list (list "configMap" (dig "worker" "postgresCa" "configMap" "" $sp) (dig "worker" "postgresCa" "key" "ca.crt" $sp) (dig "worker" "postgresCa" "sha256" "" $sp)) -}}
+{{- if dig "sessionReadApi" "enabled" false $sp }}{{ $pins = append $pins (list (ternary "secret" "configMap" (not (empty (get $rd "secret")))) (default (get $rd "secret") (get $rd "configMap")) (get $rd "key" | default "ca.crt") (get $rd "sha256")) }}{{ end -}}
+{{- if dig "ingestEdge" "enabled" false $sp }}{{ $pins = append $pins (list "configMap" (dig "ingestEdge" "postgres" "caConfigMap" "" $sp) (dig "ingestEdge" "postgres" "caKey" "ca.crt" $sp) (dig "ingestEdge" "postgres" "caSha256" "" $sp)) }}{{ end -}}
+{{- if dig "searchIndexer" "enabled" false $sp }}{{ $pins = append $pins (list "configMap" (dig "searchIndexer" "postgres" "caConfigMap" "" $sp) (dig "searchIndexer" "postgres" "caKey" "ca.crt" $sp) (dig "searchIndexer" "postgres" "caSha256" "" $sp)) }}{{ end -}}
+{{- range $p := $pins }}
+{{- if and (index $p 1) (index $p 3) }}{{ $id := printf "%s/%s/%s" (index $p 0) (index $p 1) (index $p 2) }}{{ $_ := set $sha $id (append (get $sha $id | default list) (toString (index $p 3)) | uniq) }}{{ end }}
+{{- end -}}
+{{- $search := list -}}
+{{- range $c := list (dig "sessionReadApi" dict $sp) (dig "searchIndexer" dict $sp) }}{{ if and (dig "enabled" false $c) (eq (dig "search" "backend" "" $c | toString) "opensearch") (dig "search" "opensearch" "url" "" $c) }}{{ $search = append $search (dig "search" "opensearch" "url" "" $c) }}{{ end }}{{ end -}}
+{{- $s3 := dict -}}
+{{- /* The S3 settings of a component that runs: a disabled ingest edge's stale locker values must not drive the rows. */ -}}
+{{- $lockers := list -}}
+{{- if dig "ingestEdge" "enabled" false $sp }}{{ $lockers = append $lockers (dig "ingestEdge" dict $sp) }}{{ end -}}
+{{- $lockers = append $lockers (dig "worker" dict $sp) -}}
+{{- range $c := $lockers }}{{ if and (not $s3) (dig "locker" "bucket" "" $c) }}{{ $s3 = dict "bucket" (dig "locker" "bucket" "" $c) "region" (dig "locker" "region" "us-east-1" $c) "provider" (dig "locker" "provider" "s3" $c | toString) "endpoint" (dig "locker" "endpoint" "" $c | toString) }}{{ end }}{{ end -}}
+{{- $config := dict "release" .Release.Name "namespace" .Release.Namespace "caSha256" $sha "search" ($search | uniq) "s3" $s3 -}}
+{{- $labels := dict "app.kubernetes.io/name" "agent-relay-status" "app.kubernetes.io/managed-by" .Release.Service "helm.sh/chart" (printf "%s-%s" .Chart.Name .Chart.Version) -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- toYaml $labels | nindent 4 }}
+{{- if dig "statusTest" "rbac" "create" false (.Values.databaseGuard | default dict) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- toYaml $labels | nindent 4 }}
+rules:
+  - { apiGroups: [batch], resources: [jobs], verbs: [list] }
+  - { apiGroups: [apps], resources: [deployments], verbs: [list] }
+  - { apiGroups: [""], resources: [pods], verbs: [list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- toYaml $labels | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $name }} }
+subjects:
+  - { kind: ServiceAccount, name: {{ $name }}, namespace: {{ .Release.Namespace | quote }} }
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- toYaml $labels | nindent 4 }}
+data:
+  {{- include "agent-relay.dbGuard.scriptData" . | nindent 2 }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- toYaml $labels | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    # Kept after the run so `kubectl logs <release>-status` shows the table again.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ $name }}
+  automountServiceAccountToken: {{ dig "statusTest" "rbac" "create" false (.Values.databaseGuard | default dict) }}
+  {{- include "agent-relay.dbGuard.podSecurity" . | nindent 2 }}
+  containers:
+    - name: status
+      image: {{ include "agent-relay.dbGuard.image" . | quote }}
+      imagePullPolicy: IfNotPresent
+      command: [node, /opt/relaycast/db-guard/status.mjs]
+      env:
+        - name: DB_GUARD_TARGETS
+          value: /opt/relaycast/db-guard/targets.json
+        - name: DB_GUARD_MASTER_LOGINS
+          value: {{ toJson (dig "masterLogins" list (.Values.databaseGuard | default dict)) | quote }}
+        - name: STATUS_CONFIG
+          value: {{ toJson $config | quote }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: { drop: [ALL] }
+      resources:
+        requests: { cpu: 50m, memory: 128Mi }
+        limits: { memory: 256Mi }
+      volumeMounts:
+        {{- include "agent-relay.dbGuard.volumeMounts" . | nindent 8 }}
+  volumes:
+    {{- include "agent-relay.dbGuard.volumes" (dict "root" . "configMap" $name) | nindent 4 }}
+{{- end }}

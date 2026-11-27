@@ -443,9 +443,37 @@ compatibility:
       images:
         session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
       notes: 'Defaults READ_API_COMPLETE_SINCE to epoch for a new self-host store populated only by its own ingest. Partial legacy imports must retain an explicit real coverage floor matching the indexer. Image, auth, routing and enabled defaults are unchanged; this does not assert coverage for an imported store or qualify a runtime.'
-    - id: sessions-pipeline-0.8.61
+    - id: sessions-pipeline-0.8.62
       status: unreleased
       current: true
+      charts: { sessions-pipeline: 0.8.62, sessions-pipeline-worker: 0.7.16, session-ingest-api: 0.4.6, session-read-api: 0.2.18 }
+      depends:
+        sessions-pipeline: { worker: 0.7.16, alleyoop: 0.4.6, sessionReadApi: 0.2.18, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
+      images:
+        sessions-pipeline-worker: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-ingest-api: { repository: agentworkforce/96bulls-services, digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2 }
+        session-read-api: { repository: ghcr.io/agentworkforce/96bulls-services, digest_required: true }
+      images_note: "Operator session erase values remain default-off and do not pin the 2026.11.2 candidate image. Runtime qualification is separate. Existing chart/profile image pins remain unchanged."
+      services:
+        source_commit: 7d7229bb31c121ecb98cd4e35c248fc2cf5669ad
+        migration_generation: eff8b3be46565b57ad8fa5e4a066dbb6d1fe608313d9c1680bfbcd484add259b
+      db_combos:
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: cnpg, status: shipped, profiles: [selfhost-postgres, migration, aws-cnpg], notes: chart Jobs install the runtime role and the function default }
+        - { db_mode: selfhosted, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-selfhosted], notes: operator runs the bootstrap files as a superuser }
+        - { db_mode: rds, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [external-rds, aws-rds-native], notes: fresh PG16+ installs use the membership-free separate-database owner graph; legacy and PG15 installs remain master-owner }
+        - { db_mode: cloudsql, boundary: global-default-revoke, hoopdb: external, status: shipped, profiles: [gcp-cloudsql], notes: the administrator runs the one-time bootstrap and the migration Job uses hoopdb_owner; roleBootstrap false }
+        - { db_mode: supabase, boundary: event-trigger, hoopdb: external, status: held, profiles: [external-supabase], notes: supabaseActivation.hold; migrate refuses until the reviewed event trigger is installed and --activation-check passes }
+        - { db_mode: supabase, boundary: null, hoopdb: external, status: fails closed, profiles: [aws-supabase], notes: renders; migrate refuses with function_boundary_unproven }
+        - { db_mode: local, boundary: null, hoopdb: any, status: dev only, profiles: [], notes: local stack only; never a self-host install }
+      sources:
+        - "charts/sessions-pipeline/Chart.yaml:4"
+        - "charts/sessions-pipeline/profiles/aws-rds-native.yaml"
+        - "ci/sessions-pipeline-profiles/matrix.sh"
+        - "charts/sessions-pipeline-worker/templates/session-analysis.yaml:1"
+        - "ci/sessions-pipeline-worker-advisor-analysis/test_chart.py:1"
+      notes: 'Carries 0.8.61. The search-indexer bootstrap guard says what failed and how to fix it: a timeout waiting for search_consumer_runtime (run rds-setup.sh post, then delete the failed Job and helm upgrade again), an unactivated search login, or any SearchIndexError kind (OpenSearch unreachable, no AWS credentials, a 403 role mapping). The cause is logged and kept as the container termination message (FallbackToLogsOnError). The search indexer gets POD_NAMESPACE for its startup hint.'
+    - id: sessions-pipeline-0.8.61
+      status: planned
       charts: { sessions-pipeline: 0.8.61, sessions-pipeline-worker: 0.7.16, session-ingest-api: 0.4.6, session-read-api: 0.2.18 }
       depends:
         sessions-pipeline: { worker: 0.7.16, alleyoop: 0.4.6, sessionReadApi: 0.2.18, hoopdb: 0.9.0, session-object-storage: 5.4.0, otel: 0.178.0 }
@@ -2342,9 +2370,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.86
+    - id: agent-relay-0.7.87
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.87, relay-control: 0.4.27, relay-webapp: 0.2.8 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.18, relayauth: 0.1.5, sessions-pipeline: 0.8.62, relay-control: 0.4.27, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.12, relaygate: 0.1.13 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.86. helm test <release> --logs runs a status Pod (relaycast image) that prints one healthy/unhealthy table: database logins (the databaseGuard check, plus sessions USAGE for the HoopDb runtime, read API, ingest and search logins), each CA and its pins, S3 and OpenSearch reachability, and, with databaseGuard.statusTest.rbac.create (off by default; it adds a Role), migration Jobs (with a failed search bootstrap cause), Deployments fully on the current revision and per-pod Pod Identity. databaseGuard also refuses an unset sessions-pipeline.worker.migrations.rdsLayout with a dedicated HoopDb owner. configure-rds.sh is the guided install path (keys, Secrets, the HoopDb layout written into values.yaml, Job waits, verdict). Also sessions-pipeline 0.8.62.'
+    - id: agent-relay-0.7.86
+      status: planned
       charts: { agent-relay: 0.7.86, relay-control: 0.4.27, relay-webapp: 0.2.8 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -4539,6 +4580,8 @@ internal_env:
   - { name: ADMIN_PORT, chart: relaychief-control, why: reserved from extraEnv so the admin listener stays on its documented port; no chart value offers it }
   - { name: ROLE, chart: slack-relay, why: selects the router or host entry point of the one slack-relay image; fixed per workload }
   - { name: DB_GUARD_TARGETS, chart: agent-relay, why: "Fixed path of the databaseGuard hook's target list (rendered from the Secret references); never a credential." }
+  - { name: POD_NAMESPACE, chart: sessions-pipeline, why: "Downward API metadata.namespace for the search indexer's startup hint (kubectl -n <namespace> ...); never a credential." }
+  - { name: STATUS_CONFIG, chart: agent-relay, why: "Non-secret JSON for the helm test status Pod (release, namespace, CA sha256 pins, S3 bucket/region, OpenSearch URLs) derived from values." }
   - { name: DB_GUARD_MASTER_LOGINS, chart: agent-relay, why: "Derived from databaseGuard.masterLogins: login names the hook refuses; never a credential." }
   - { name: LEDGER_PATH, chart: slack-relay, why: fixed /data/ledger.sqlite on the router's ledger PVC }
   - { name: DATA_DIR, chart: slack-relay, why: fixed /data on the agent host's sessions volume }
@@ -6553,6 +6596,45 @@ entries:
       - "charts/relay-control/values.yaml"
       - "charts/relay-control/templates/_helpers.tpl"
       - "charts/relay-control/templates/networkpolicy.yaml"
+
+  - id: opt.agent-relay.database-guard
+    kind: option
+    title: Database credential guard, install status test and the guided installer
+    description: |
+      databaseGuard (on by default) stops helm install/upgrade before anything is
+      applied when a Secret's database URL is wrong: a render-time lookup refuses a
+      master login (masterLogins), two roles sharing a login, a missing Secret or
+      key, and wrong shapes; a pre-install/pre-upgrade hook Job (<release>-db-guard,
+      relaycast image) checks each login's live privileges with relaycast's
+      verifyIdentity. statusTest adds `helm test <release> --logs`, one
+      healthy/unhealthy table; statusTest.rbac.create adds the read-only Role its
+      Kubernetes rows need. scripts/selfhost/configure-rds.sh is the primary EKS +
+      RDS install path: it creates the logins, writes Secrets 01-05 in the shapes
+      the guard checks, pins the CA and image digests, runs helm and helm test.
+      Hand-written Secrets (examples/aws/secrets) are the bring-your-own option
+      and must pass the guard.
+    chart: agent-relay
+    values:
+      - databaseGuard.enabled
+      - databaseGuard.masterLogins
+      - databaseGuard.privilegeCheck.enabled
+      - databaseGuard.privilegeCheck.image
+      - databaseGuard.statusTest.enabled
+      - databaseGuard.statusTest.rbac.create
+    profiles: [agent-relay]
+    status: shipped
+    provided_by: operator
+    default: enabled
+    choices:
+      - { value: enabled, note: "lookup check + privilege hook + helm test; statusTest.rbac.create false" }
+      - { value: enabled-with-status-rbac, note: "also statusTest.rbac.create=true (configure-rds.sh sets it): migrations, workloads and Pod Identity rows" }
+      - { value: disabled, note: "databaseGuard.enabled=false: an unusual setup the checks do not understand; wrong logins then fail only in the migrate Jobs" }
+    verify: helm install --dry-run=server with a Secret URL logging in as postgres fails with "AR_DB_LOGIN"; helm test <release> --logs prints the status table
+    sources:
+      - "charts/agent-relay/templates/_db-guard.tpl:1"
+      - "charts/agent-relay/templates/db-guard.yaml:1"
+      - "charts/agent-relay/templates/status-test.yaml:1"
+      - "scripts/selfhost/configure-rds.sh:1"
 
   - id: opt.agent-relay.single-host
     kind: option

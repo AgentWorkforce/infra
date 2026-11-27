@@ -68,6 +68,10 @@
   valueFrom:
     secretKeyRef: { name: {{ $c.locker.existingSecret | quote }}, key: {{ $c.locker.secretAccessKeyKey | default "secret-access-key" | quote }} }
 {{- end }}
+# Named in the indexer's startup hint when the search bootstrap hasn't completed.
+- name: POD_NAMESPACE
+  valueFrom:
+    fieldRef: { fieldPath: metadata.namespace }
 {{- with $c.extraEnv }}
 {{- toYaml . | nindent 0 }}
 {{- end }}

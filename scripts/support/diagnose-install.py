@@ -154,6 +154,12 @@ def ingest_checks(options, credential, report, query=None):
         latest.clear()
 
 
+# Cluster reachability probe: per-attempt timeouts (seconds) and the pause between.
+PROBE_TIMEOUTS = (8, 15, 30)
+PROBE_PAUSE = 5
+PROBE_SLEEP = __import__('time').sleep
+
+
 class DiagnosticError(Exception):
     """Only fixed category strings may be emitted from this exception."""
 
@@ -265,10 +271,10 @@ class Report:
                 'readOnly':True, 'summary':counts, 'checks':self.checks}
 
 
-def kube(options, resource, name=None, selector=False, probe=False):
+def kube(options, resource, name=None, selector=False, probe=False, probe_timeout=8):
     if not options.context:
         raise DiagnosticError('no-kube-context')
-    timeout = min(options.timeout, 8) if probe else options.timeout
+    timeout = probe_timeout if probe else options.timeout
     argv = ['kubectl','--context',options.context,'--namespace',options.namespace,
             '--request-timeout='+str(timeout)+'s','get',resource]
     if name:
@@ -1289,12 +1295,21 @@ def find_cluster(options, notes):
                                           '--name <cluster> --region <region>, or pass --context <name>. '
                                           'On the database VPN this is expected; use --scope database.')
             return False
-    try:
-        kube(options, 'secret', 'agent-relay-secrets', probe=True)
-        return True
-    except DiagnosticError as exc:
-        notes.append('cluster: not reachable ('+str(exc)+'); on a split VPN, rerun on the cluster VPN for workload checks')
-        return False
+    # Right after rollout restarts the API server can be slow to answer: a
+    # single short probe once declared a reachable cluster unreachable and
+    # skipped every workload check. Retry with growing timeouts first.
+    last = None
+    for attempt, wait in enumerate(PROBE_TIMEOUTS):
+        try:
+            kube(options, 'secret', 'agent-relay-secrets', probe=True, probe_timeout=wait)
+            return True
+        except DiagnosticError as exc:
+            last = exc
+            if attempt + 1 < len(PROBE_TIMEOUTS):
+                PROBE_SLEEP(PROBE_PAUSE)
+    notes.append('cluster: not reachable after '+str(len(PROBE_TIMEOUTS))+' attempts ('+str(last)+
+                 '); on a split VPN, rerun on the cluster VPN for workload checks')
+    return False
 
 
 def discover(options, notes):
@@ -1573,7 +1588,21 @@ def main(argv=None):
     print()
     print('Summary: '+json.dumps(result['summary'],sort_keys=True))
     print('Report written to '+str(options.output)+' (share this file, never the Secret YAMLs).')
-    return 1 if result['summary']['FAIL'] else 2 if result['summary']['UNKNOWN'] else 0
+    skipped = options.scope in ('cluster','all') and not getattr(options,'cluster_reachable',True)
+    if result['summary']['FAIL']:
+        print('RESULT: FAIL: '+str(result['summary']['FAIL'])+' check(s) failed; fix them top to bottom (see "Likely problems").')
+        return 1
+    if skipped:
+        # Never a clean result: the workload checks did not run.
+        print('RESULT: INCOMPLETE: workload checks skipped (the cluster did not answer). Nothing above covers Jobs, '
+              'Pods or Deployments. Rerun on the cluster VPN: python3 diagnose-install.py --scope cluster, '
+              'or run: helm test agent-relay -n agent-relay --logs')
+        return 3
+    if result['summary']['UNKNOWN']:
+        print('RESULT: PARTIAL: '+str(result['summary']['UNKNOWN'])+' check(s) could not run (UNKNOWN above).')
+        return 2
+    print('RESULT: PASS')
+    return 0
 
 
 if __name__=='__main__':

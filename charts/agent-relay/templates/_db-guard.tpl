@@ -205,12 +205,21 @@ Fails the render with every problem at once, before anything is applied.
 {{- $problems = append $problems (printf "%s logs in as %q (%s). Each service needs its own login." $label $user $what) -}}
 {{- continue -}}
 {{- end -}}
+{{- if and (eq $t.role "HoopDb owner") (not (hasKey $byLogin "__hoopOwner")) }}{{ $_ := set $byLogin "__hoopOwner" (dict "user" $user "label" $label "master" (has (lower $user) $masters)) }}{{ end -}}
 {{- $prev := get $byLogin $user -}}
 {{- if and $prev (ne $prev.role $t.role) -}}
 {{- $problems = append $problems (printf "%s: %s and %s both log in as %q; the %s and the %s need different logins." $prev.secret $prev.key $label $user $prev.role $t.role) -}}
 {{- else if not $prev -}}
 {{- $_ := set $byLogin $user (dict "secret" $t.secret "key" $t.key "role" $t.role) -}}
 {{- end -}}
+{{- end -}}
+{{- /* A later plain helm upgrade without configure-rds.sh's layout setting
+leaves rdsLayout unset (the legacy preflight), which refuses a dedicated
+owner: the migrate Job fails with rds_profile_unproven. */ -}}
+{{- $sp := index .Values "sessions-pipeline" | default dict -}}
+{{- $owner := get $byLogin "__hoopOwner" -}}
+{{- if and $owner (not $owner.master) (dig "worker" "migrations" "enabled" true $sp) (eq (dig "worker" "migrations" "databaseMode" "" $sp | toString) "rds") (not (dig "worker" "migrations" "rdsLayout" "" $sp)) -}}
+{{- $problems = append $problems (printf "sessions-pipeline.worker.migrations.rdsLayout is unset, but %s logs in as %q, a dedicated HoopDb owner: set rdsLayout: separate-database in your values file (scripts/selfhost/configure-rds.sh writes it there). Without it the HoopDb migrate Job fails with rds_profile_unproven." $owner.label $owner.user) -}}
 {{- end -}}
 {{- if $problems -}}
 {{- $header := "AR_DB_LOGIN: the database credentials in this release's Secrets are wrong; nothing was installed or changed:" -}}
@@ -339,4 +348,10 @@ nodeSelector:
 tolerations:
   {{- toYaml . | nindent 2 }}
 {{- end }}
+{{- end }}
+
+{{- /* The status test runs in the relaycast image: relaycast on PostgreSQL. */ -}}
+{{- define "agent-relay.statusTest.enabled" -}}
+{{- $rc := index .Values "relaycast" | default dict -}}
+{{- if and (dig "statusTest" "enabled" true (.Values.databaseGuard | default dict)) (dig "relaycast" true (.Values.components | default dict)) (eq (dig "runtime" "backend" "" $rc | toString) "postgres") }}true{{ end -}}
 {{- end }}

@@ -41,11 +41,18 @@ helm repo add minio https://charts.min.io/ >/dev/null 2>&1 || true
 helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts >/dev/null 2>&1 || true
 rm -rf charts/agent-relay/charts charts/sessions-pipeline/charts   # as a fresh clone, then examples/aws/README.md
 helm dependency build charts/sessions-pipeline >/dev/null && helm dependency build charts/agent-relay >/dev/null
-helm --kube-context "$KCTX" upgrade --install agent-relay charts/agent-relay -n agent-relay \
+# Since databaseGuard (chart 0.7.84) this install is refused before anything is
+# applied, with one message naming every Secret key that logs in as the master.
+if helm --kube-context "$KCTX" upgrade --install agent-relay charts/agent-relay -n agent-relay \
   -f charts/agent-relay/values-eks.yaml -f charts/agent-relay/values-eks-native.yaml -f "$W/customer/values-poc.yaml" \
-  --timeout 2m 2>&1 | tail -3 || true
-echo "waiting 4 minutes for Jobs and pods to settle..."
-sleep 240
+  --timeout 2m >"$W/before/helm.txt" 2>&1; then
+  echo "FAIL: helm installed the customer's master-login Secrets" >&2; exit 1
+fi
+sed -n '/AR_DB_LOGIN/,$p' "$W/before/helm.txt"
+grep -q 'logs in as "postgres" (the RDS master user)' "$W/before/helm.txt" || { cat "$W/before/helm.txt" >&2; echo "FAIL: no master-login refusal" >&2; exit 1; }
+grep -q 'search-indexer-runtime: RELAYHISTORY_PIPELINE_CONSUMER_SECRET holds a bare URL' "$W/before/helm.txt" || { echo "FAIL: bare URL in 04 not reported" >&2; exit 1; }
+[[ -z "$(k get deploy -o name 2>/dev/null)" ]] || { echo "FAIL: workloads exist after a refused install" >&2; exit 1; }
+echo "PASS databaseGuard refused the customer's install before anything was applied"
 k get jobs -o wide > "$W/before/jobs.txt" 2>&1 || true
 k get pods > "$W/before/pods.txt" 2>&1 || true
 k get deploy > "$W/before/deploy.txt" 2>&1 || true

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# One-command database setup for an Agent Relay install on an existing (shared)
-# RDS PostgreSQL 16+ instance (17 or 18 recommended), using the RDS master login.
+# The Agent Relay installer for EKS + RDS: the primary install path. One command
+# creates the database logins, writes every install Secret with the right
+# shapes, pins the CA and image digests in values, runs helm and checks the
+# result, on a new or existing (shared) RDS PostgreSQL 16+ instance (17 or 18
+# recommended), using the RDS master login.
 #
 # The master login (e.g. postgres) is the only credential you provide. It is
 # used only for setup: it creates a dedicated owner and runtime login per
@@ -11,12 +14,17 @@
 #   1. store the master login in AWS Secrets Manager (for rds-setup.sh)
 #   2. optional: drop and recreate relaycontrol, relaycast and hoopdb
 #      (--reset-databases; only for a failed install with no data)
-#   3. rds-setup.sh pre   (pinned, downloaded and checksum-verified)
-#   4. merge the generated database URLs into the existing Kubernetes Secrets
-#   5. helm upgrade with your values file
+#   3. rds-setup.sh pre: databases, one owner and runtime login per service,
+#      the rds-ca ConfigMap, every database URL in its Secret's shape
+#   4. generate the application keys (only those missing), then write the five
+#      install Secrets (examples/aws/secrets/01-05): database URLs replace
+#      what is there, existing keys are never overwritten; pin the CA sha256
+#   5. helm upgrade with your values file (the chart's databaseGuard checks
+#      every login before anything is applied)
 #   6. wait for the HoopDb migration Job
-#   7. rds-setup.sh post, then restart read API, ingest edge, search indexer
-#   8. run the install diagnostic (cluster scope)
+#   7. rds-setup.sh post, restart read API, ingest edge, search indexer, and
+#      rerun the search bootstrap Job
+#   8. helm test: one healthy/unhealthy table (and the support diagnostic)
 #
 # Run it on the network that reaches the EKS cluster; RDS is reached from
 # Jobs inside the cluster, so no database VPN is needed.
@@ -43,6 +51,10 @@
 #                      its image digests are updated to RELEASE_VERSION's pins (a .bak copy is kept)
 #   RELEASE_VERSION    default 2026.11.18 (agent-relay-2026.11.18). With a chart directory, check
 #                      out the matching tag: git checkout agent-relay-2026.11.18
+#                      "checkout": use this infra checkout as it is (its chart, its
+#                      rds-setup.sh and diagnose-install.py, the digests in VALUES)
+#   STATUS_RBAC        1 (default) lets helm test read Jobs/Deployments/Pods through a
+#                      read-only Role; 0 if you may not create Roles in the namespace
 #   AWS_REGION         default: taken from RDS_HOST
 #   RDS_ADMIN_USER     default: postgres
 #   RDS_ADMIN_PASSWORD read silently from the terminal when unset
@@ -79,6 +91,9 @@ info() { printf '    %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
 RELEASE_VERSION="${RELEASE_VERSION:-2026.11.18}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CHECKOUT=0; [[ "$RELEASE_VERSION" == checkout ]] && CHECKOUT=1
+STATUS_RBAC="${STATUS_RBAC:-1}"
 for tool in aws kubectl jq openssl curl python3; do
   command -v "$tool" >/dev/null || die "$tool is not installed"
 done
@@ -101,6 +116,19 @@ if [[ -z "${KUBE_CONTEXT:-}" ]]; then KUBE_CONTEXT="$(kubectl config current-con
 [[ -n "$KUBE_CONTEXT" ]] || die "no kubectl context; connect to the cluster VPN and set up kubeconfig first"
 export KUBE_CONTEXT
 k() { kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" "$@"; }
+# wait_job <job> <seconds>: 0 once the Job completes; 1 as soon as it fails or
+# the time is up. (kubectl wait --for=condition=complete keeps waiting on a
+# failed Job until its timeout, then says only "timed out waiting for the condition".)
+wait_job() {
+  local job="${1#job/}" deadline=$((SECONDS + $2)) state
+  while (( SECONDS < deadline )); do
+    state="$(k get job "$job" -o json 2>/dev/null | jq -r '[.status.conditions[]? | select(.status == "True") | .type] | map(select(. == "Complete" or . == "Failed")) | first // empty')"
+    [[ "$state" == Complete ]] && return 0
+    [[ "$state" == Failed ]] && return 1
+    sleep 5
+  done
+  return 1
+}
 
 # The chart. The published OCI chart is pulled once, at the release's chart version,
 # into a private folder, and installed from there: it already contains every
@@ -108,6 +136,7 @@ k() { kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" "$@"; }
 # be the release's own (its tag checked out).
 CHART_DIR="" CHART_PULLED=0
 if [[ "${HELM_CHART:-}" == oci://* ]]; then
+  [[ "$CHECKOUT" == 0 ]] || die "RELEASE_VERSION=checkout installs this checkout's chart directory; set HELM_CHART=<infra>/charts/agent-relay, not an OCI chart"
   command -v helm >/dev/null || die "helm is not installed"
   [[ "${HELM_CHART#oci://}" != *[:@]* ]] || die "set HELM_CHART without a tag or digest ($HELM_CHART); RELEASE_VERSION picks the chart version"
   MANIFEST_URL="https://github.com/AgentWorkforce/infra/releases/download/agent-relay-$RELEASE_VERSION/release-manifest.json"
@@ -124,7 +153,7 @@ if [[ "${HELM_CHART:-}" == oci://* ]]; then
   [[ "$have" == "$want" ]] || die "pulled chart is version ${have:-unknown}, expected $want"
   CHART_PULLED=1
   info "chart: ${HELM_CHART##*/} $want (release $RELEASE_VERSION), pulled from the OCI registry"
-elif [[ -n "${HELM_CHART:-}" && -f "${HELM_CHART}/Chart.yaml" ]]; then
+elif [[ "$CHECKOUT" == 0 && -n "${HELM_CHART:-}" && -f "${HELM_CHART}/Chart.yaml" ]]; then
   want="$(curl -fsSL "$RAW/agent-relay-$RELEASE_VERSION/charts/agent-relay/Chart.yaml" | sed -nE 's/^version: *//p' | head -n1)"
   have="$(sed -nE 's/^version: *//p' "$HELM_CHART/Chart.yaml" | head -n1)"
   [[ "$want" == "$have" ]] || die "chart $HELM_CHART is $have but release $RELEASE_VERSION is $want: install from oci://ghcr.io/agentworkforce/charts/agent-relay, or in your infra clone run  git fetch --tags && git checkout agent-relay-$RELEASE_VERSION"
@@ -140,9 +169,10 @@ for f in ${HELM_EXTRA_VALUES:-}; do
 done
 # Release pins: the values copied from examples/aws pin older image digests; mixing
 # them with this release's chart breaks the install. Update them in place (backup kept).
+cp "$VALUES" "$VALUES.bak-$(date +%Y%m%d%H%M%S)"
+if [[ "$CHECKOUT" == 0 ]]; then
 PINS_URL="$RAW/agent-relay-$RELEASE_VERSION/releases/agent-relay-$RELEASE_VERSION/pins.json"
 PINS_JSON="$(curl -fsSL "$PINS_URL")" || die "could not download the release pins for $RELEASE_VERSION"
-cp "$VALUES" "$VALUES.bak-$(date +%Y%m%d%H%M%S)"
 PINS_JSON="$PINS_JSON" python3 - "$VALUES" <<'PYPIN'
 import json, os, re, sys
 path = sys.argv[1]
@@ -162,6 +192,7 @@ for pin in pins.values():
 open(path, "w").write("\n".join(lines))
 print(f"    release pins applied: {changed} digest(s) updated")
 PYPIN
+fi
 SERVICES_IMAGE="$(sed -nE 's/.*services-image:.*repository: *([^ ,}]+).*digest: *"?(sha256:[0-9a-f]{64}).*/\1@\2/p' "$VALUES" | head -n1)"
 [[ "$SERVICES_IMAGE" == *@sha256:* ]] || die "could not find the services-image repository and digest in $VALUES"
 export SERVICES_IMAGE
@@ -213,11 +244,15 @@ else
 fi
 export RDS_ADMIN_SECRET_ARN
 
-# rds-setup.sh 2026.11.16, verified -------------------------------------------
+# rds-setup.sh: pinned and verified, or this checkout's own -----------------------
 mkdir -p "$WORK/selfhost"
+if [[ "$CHECKOUT" == 1 ]]; then
+  cp "$SCRIPT_DIR/rds-setup.sh" "$SCRIPT_DIR/rds-session-erase-search.sql" "$WORK/selfhost/"
+else
 curl -fsSL "$RAW/$RDS_SETUP_COMMIT/scripts/selfhost/rds-setup.sh" -o "$WORK/selfhost/rds-setup.sh"
 [[ "$(sha256 "$WORK/selfhost/rds-setup.sh")" == "$RDS_SETUP_SHA256" ]] || die "rds-setup.sh checksum mismatch; not running it"
 curl -fsSL "$RAW/$RDS_SETUP_COMMIT/$ERASE_SQL_PATH" -o "$WORK/selfhost/rds-session-erase-search.sql"
+fi
 chmod 700 "$WORK/selfhost/rds-setup.sh"
 RDS_SETUP="$WORK/selfhost/rds-setup.sh"
 
@@ -257,11 +292,14 @@ if [[ "$RESET" == 1 ]]; then
           envFrom: [ { secretRef: { name: "agent-relay-db-reset" } } ],
           env: [ { name: "PGHOST", value: $host }, { name: "PGPORT", value: "5432" }, { name: "PGDATABASE", value: "postgres" },
                  { name: "PGSSLMODE", value: "verify-full" }, { name: "PGSSLROOTCERT", value: "/ca/ca.crt" }, { name: "HOME", value: "/tmp" } ],
-          command: ["sh", "-c", "set -e; v=$(psql -XAtc \"select current_setting(\u0027server_version_num\u0027)\"); if [ \"$v\" -lt 160000 ]; then echo PG_TOO_OLD $((v/10000)); exit 3; fi; for db in relaycontrol relaycast hoopdb; do psql -X -v ON_ERROR_STOP=1 -c \"DROP DATABASE IF EXISTS $db WITH (FORCE)\"; echo dropped $db; done"] } ] } } } }' \
+          command: ["sh", "-c", "set -e; v=$(psql -XAtc \"select current_setting(\u0027server_version_num\u0027)\"); if [ \"$v\" -lt 160000 ]; then echo PG_TOO_OLD $((v/10000)); exit 3; fi; for db in relaycontrol relaycast hoopdb; do o=$(psql -XAtc \"select pg_has_role(current_user, datdba, \u0027MEMBER\u0027) from pg_database where datname = \u0027$db\u0027\"); if [ \"$o\" = f ]; then echo NOT_OWNER $db; exit 4; fi; done; for db in relaycontrol relaycast hoopdb; do psql -X -v ON_ERROR_STOP=1 -c \"DROP DATABASE IF EXISTS $db WITH (FORCE)\"; echo dropped $db; done"] } ] } } } }' \
     | k apply -f - >/dev/null
-  if ! k wait --for=condition=complete job/agent-relay-db-reset --timeout=300s >/dev/null; then
+  if ! wait_job agent-relay-db-reset 300; then
     out="$(k logs job/agent-relay-db-reset --tail=20 2>/dev/null | grep -v -i password || true)"
     k delete secret agent-relay-db-reset --ignore-not-found >/dev/null
+    if grep -q NOT_OWNER <<<"$out"; then
+      die "database $(sed -n 's/.*NOT_OWNER //p' <<<"$out" | head -n1) is owned by a login the RDS master cannot act as (the dedicated hoopdb_owner layout from an earlier run of this script). Nothing was dropped. --reset-databases only resets an install whose databases the master owns; rerun without it (existing logins and keys are kept), or use a fresh RDS instance."
+    fi
     if grep -q PG_TOO_OLD <<<"$out"; then
       die "the RDS instance runs PostgreSQL $(sed -n 's/.*PG_TOO_OLD //p' <<<"$out" | head -n1); Agent Relay needs PostgreSQL 16 or later. Nothing was dropped. Use a PostgreSQL 16+ RDS instance, 17 or 18 recommended (a small dedicated one is fine) and rerun with its RDS_HOST."
     fi
@@ -309,7 +347,36 @@ FILES="$STATE_DIR/secret-files"
 [[ -d "$FILES" ]] || die "rds-setup.sh pre wrote no credential files under $FILES"
 
 # 4. Secrets ------------------------------------------------------------------
-log "4/8 Merging the generated database URLs into the Kubernetes Secrets"
+log "4/8 Writing the install Secrets (examples/aws/secrets 01-05)"
+# Application keys (the install guide's step 10): generated only when neither
+# the cluster Secret nor the credential files hold one. An existing key is
+# never replaced: data encrypted under selfhost-encryption-key and
+# SUMMARY_MASTER_KEYS is unreadable without the original.
+APP_KEYS=(selfhost-bootstrap-token selfhost-setup-key selfhost-encryption-key relaycast-internal-secret
+  relaycast-workspace-bootstrap-secret relaycontrol-introspect-secret session-read-api-secret SUMMARY_MASTER_KEYS)
+secret_has() { # secret key
+  [[ -n "$(k get secret "$1" -o jsonpath="{.data.${2//./\\.}}" 2>/dev/null)" ]]
+}
+mkdir -p "$FILES/agent-relay-secrets" "$FILES/agent-relay-ingest-edge-runtime"
+generated=0
+for key in "${APP_KEYS[@]}"; do
+  f="$FILES/agent-relay-secrets/$key"
+  if secret_has agent-relay-secrets "$key"; then rm -f "$f"; continue; fi   # keep the cluster's value
+  if [[ ! -s "$f" ]]; then
+    if [[ "$key" == SUMMARY_MASTER_KEYS ]]; then printf 'k1:%s' "$(openssl rand -hex 32)" >"$f"; else openssl rand -hex 32 | tr -d '\n' >"$f"; fi
+    chmod 600 "$f"; generated=$((generated + 1))
+    [[ -s "$f" ]] || die "openssl rand produced no output for $key; nothing was written to the cluster"
+  fi
+done
+info "application keys: $generated generated, the rest kept"
+# The ingest edge's introspect-secret must equal relaycontrol-introspect-secret.
+if [[ -s "$FILES/agent-relay-secrets/relaycontrol-introspect-secret" ]]; then
+  cp "$FILES/agent-relay-secrets/relaycontrol-introspect-secret" "$FILES/agent-relay-ingest-edge-runtime/introspect-secret"
+elif ! k get secret agent-relay-secrets -o jsonpath='{.data.relaycontrol-introspect-secret}' 2>/dev/null | base64 -d >"$FILES/agent-relay-ingest-edge-runtime/introspect-secret" \
+     || [[ ! -s "$FILES/agent-relay-ingest-edge-runtime/introspect-secret" ]]; then
+  die "could not read relaycontrol-introspect-secret from Secret agent-relay-secrets (the ingest edge's introspect-secret must equal it)"
+fi
+chmod 600 "$FILES/agent-relay-ingest-edge-runtime/introspect-secret"
 for dir in "$FILES"/*/; do
   secret="$(basename "$dir")"
   [[ "$secret" == session-erase-search-runtime ]] && continue   # optional feature, not mounted
@@ -326,16 +393,117 @@ for dir in "$FILES"/*/; do
     info "created $secret"
   fi
 done
+for key in selfhost-encryption-key SUMMARY_MASTER_KEYS; do
+  [[ -s "$FILES/agent-relay-secrets/$key" ]] && info "BACK UP $FILES/agent-relay-secrets/$key: data encrypted with it is lost without it"
+done
+# Pin the CA: every caSha256/sha256 in VALUES that holds a 64-hex value takes
+# the rds-ca bundle's sha256 (a chart that computes it itself has none: no-op).
+CA_SHA="$(cat "$STATE_DIR/rds-ca.sha256" 2>/dev/null || true)"
+if [[ "$CA_SHA" =~ ^[0-9a-f]{64}$ ]]; then
+  n="$(CA_SHA="$CA_SHA" python3 - "$VALUES" <<'PYCA'
+import os, re, sys
+p = sys.argv[1]; sha = os.environ["CA_SHA"]
+s = open(p).read()
+s, n = re.subn(r'^(\s*(?:caSha256|sha256):\s*"?)[0-9a-f]{64}("?)', lambda m: m.group(1) + sha + m.group(2), s, flags=re.M)
+open(p, "w").write(s); print(n)
+PYCA
+)"
+  info "rds-ca sha256 pinned in $VALUES ($n value(s))"
+fi
 info "rds-ca hash, only for values without global.rdsCa.bundle (every caSha256/sha256 under rds-ca): $(cat "$STATE_DIR/rds-ca.sha256" 2>/dev/null || echo unknown)"
 info "  simpler: set global.rdsCa.bundle: $AWS_REGION and drop those hashes; the chart then manages rds-ca"
 
 # 5. helm upgrade -------------------------------------------------------------
-# rds-setup.sh pre writes the HoopDb layout overlay (which Secret holds the
-# migration owner, and rdsLayout). It must be the last -f.
+# rds-setup.sh pre writes the HoopDb layout (which Secret holds the migration
+# owner, and rdsLayout). Earlier versions passed it as an extra -f overlay plus
+# --set-string flags, which a later plain helm upgrade silently dropped (the
+# HoopDb migrate Job then fails with rds_profile_unproven). Write every setting
+# this install needs into VALUES instead (a .bak copy is kept), so the
+# documented -f files alone keep working.
 LAYOUT_VALUES="$STATE_DIR/hoopdb-layout-values.yaml"
 [[ -s "$LAYOUT_VALUES" ]] || die "rds-setup.sh pre did not write $LAYOUT_VALUES"
 log "5/8 Helm upgrade"
-info "add this overlay LAST in your -f list: $LAYOUT_VALUES"
+layout_get() { sed -nE "s/^ *$1: *\"?([^\" #]+)\"?.*/\1/p" "$LAYOUT_VALUES" | head -n"${2:-1}" | tail -n1; }
+OVERLAY_ARGS=()
+if LAYOUT_SETTINGS="$(jq -n \
+      --arg ms "$(layout_get existingSecret 1)" --arg mk "$(layout_get key 1)" --arg rl "$(layout_get rdsLayout)" \
+      --arg bs "$(layout_get existingSecret 2)" --arg bk "$(layout_get key 2)" --arg email "$ADMIN_EMAIL" \
+      --argjson rbac "$([[ "$STATUS_RBAC" == 1 ]] && echo true || echo false)" '
+      [ [["sessions-pipeline","worker","migrations","hoopdb","existingSecret"], $ms],
+        [["sessions-pipeline","worker","migrations","hoopdb","key"], $mk],
+        [["sessions-pipeline","worker","migrations","rdsLayout"], $rl],
+        [["sessions-pipeline","searchIndexer","bootstrap","existingSecret"], $bs],
+        [["sessions-pipeline","searchIndexer","bootstrap","key"], $bk],
+        [["relay-control","bootstrap","adminEmail"], $email],
+        [["databaseGuard","statusTest","rbac","create"], $rbac] ]
+      | map(select(.[1] != ""))')" \
+   && LAYOUT_SETTINGS="$LAYOUT_SETTINGS" python3 - "$VALUES" <<'PYSET'
+import json, os, re, sys
+path = sys.argv[1]
+lines = open(path).read().split("\n")
+KEY = lambda k: re.compile(r"^(\s*)" + re.escape(k) + r"\s*:(\s|$)")
+
+def scalar(v):
+    if isinstance(v, bool): return "true" if v else "false"
+    return json.dumps(v) if re.search(r"[:#{}\[\],&*!|>'\"%@`]|^\s|\s$", v) or v in ("", "true", "false", "null") else v
+
+def set_path(keys, value):
+    """Set keys (block-style YAML) to value; create missing keys. False if unsupported."""
+    start, end, parent_indent = 0, len(lines), -1
+    for depth, key in enumerate(keys):
+        child_indent, found, i = None, None, start
+        while i < end:
+            l = lines[i]; st = l.lstrip(" ")
+            if not st or st.startswith("#"): i += 1; continue
+            ind = len(l) - len(st)
+            if ind <= parent_indent: break
+            if child_indent is None: child_indent = ind
+            if ind == child_indent and KEY(key).match(l): found = i; break
+            i += 1
+        block_end = i if found is None else None
+        if found is None:
+            indent = child_indent if child_indent is not None else parent_indent + 2
+            ins = start if child_indent is None else block_end
+            # Insert after the parent block's last entry: before trailing blank
+            # lines and before comments that belong to the next key.
+            while ins > start and (not lines[ins - 1].strip() or lines[ins - 1].lstrip().startswith("#")): ins -= 1
+            new = []
+            for d, k in enumerate(keys[depth:]):
+                pad = " " * (indent + 2 * d)
+                new.append(pad + k + (": " + scalar(value) if d == len(keys) - depth - 1 else ":"))
+            lines[ins:ins] = new
+            return True
+        rest = lines[found].split(":", 1)[1].strip()
+        if depth == len(keys) - 1:
+            if rest.startswith(("{", "[", "&", "*", "|", ">")): return False
+            m = KEY(key).match(lines[found])
+            lines[found] = m.group(1) + key + ": " + scalar(value)
+            return True
+        if rest and not rest.startswith("#"): return False   # flow mapping or scalar where a block is needed
+        # The block of this key runs until the next line indented at or above it.
+        start, parent_indent = found + 1, child_indent
+        j = start
+        while j < len(lines):
+            l = lines[j]; st = l.lstrip(" ")
+            if st and not st.startswith("#") and len(l) - len(st) <= parent_indent: break
+            j += 1
+        end = j
+    return False
+
+ok = all(set_path(k, v) for k, v in json.loads(os.environ["LAYOUT_SETTINGS"]))
+if not ok: sys.exit(3)
+open(path, "w").write("\n".join(lines))
+PYSET
+then
+  info "wrote the HoopDb layout, first admin and status-test settings into $VALUES (backup kept):"
+  info "a plain helm upgrade with your documented -f files keeps this install's settings"
+else
+  OVERLAY_ARGS=(-f "$LAYOUT_VALUES" --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
+    --set "databaseGuard.statusTest.rbac.create=$([[ "$STATUS_RBAC" == 1 ]] && echo true || echo false)")
+  info "WARNING: could not write the layout settings into $VALUES (it uses a YAML shape this script does not edit)."
+  info "Every later helm upgrade MUST end with: -f $LAYOUT_VALUES --set-string relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
+  info "or the HoopDb migrate Job fails with rds_profile_unproven. Better: copy those settings into $VALUES yourself."
+fi
 if [[ -n "${HELM_CHART:-}" ]]; then
   command -v helm >/dev/null || die "helm is not installed"
   if [[ -d "$HELM_CHART" && "$CHART_PULLED" == 0 ]]; then
@@ -357,25 +525,32 @@ if [[ -n "${HELM_CHART:-}" ]]; then
     done < <(sed -nE 's/^[[:space:]]*repository:[[:space:]]*"?(file:\/\/[^"[:space:]]+)"?.*/\1/p' "$HELM_CHART/Chart.yaml")
     helm dependency build "$HELM_CHART" >/dev/null
   fi
-  bundle="$(release_rds_ca "$HELM_CHART" -n "$NAMESPACE" ${extra[@]+"${extra[@]}"} -f "$VALUES" -f "$LAYOUT_VALUES" \
-    --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL")"
+  bundle="$(release_rds_ca "$HELM_CHART" -n "$NAMESPACE" ${extra[@]+"${extra[@]}"} -f "$VALUES" ${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"})"
   if [[ -n "$bundle" ]]; then
     info "rds-ca: managed by the chart (global.rdsCa.bundle=$bundle)"
     clear_rds_ca
   fi
-  helm --kube-context "$KUBE_CONTEXT" upgrade --install "$RELEASE" "$HELM_CHART" -n "$NAMESPACE" \
-    ${extra[@]+"${extra[@]}"} -f "$VALUES" -f "$LAYOUT_VALUES" --set-string "relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
+  helm_upgrade() {
+    helm --kube-context "$KUBE_CONTEXT" upgrade --install "$RELEASE" "$HELM_CHART" -n "$NAMESPACE" \
+      ${extra[@]+"${extra[@]}"} -f "$VALUES" ${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}
+  }
+  if ! helm_upgrade; then
+    log "helm refused or failed"
+    info "An AR_DB_LOGIN message above names each Secret key whose login is wrong. If it says"
+    info "a pre-install/pre-upgrade hook failed, read why with:"
+    info "  kubectl --context $KUBE_CONTEXT -n $NAMESPACE logs job/$RELEASE-db-guard"
+    die "helm upgrade did not complete; nothing after it ran"
+  fi
 else
-  info "HELM_CHART is not set. In another terminal, run the same helm upgrade you used for the install"
-  info "with the overlay added at the end. Next time, set HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay"
-  info "and this step runs it for you. From an infra clone, first refresh the chart dependencies, e.g.:"
+  info "HELM_CHART is not set. In another terminal, run the same helm upgrade you used for the install."
+  info "Next time, set HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay and this step runs it for you."
+  info "From an infra clone, first refresh the chart dependencies, e.g.:"
   info "  scripts/selfhost/helm-deps.sh   # builds charts/sessions-pipeline then charts/agent-relay; no helm repo add"
   info "  (a release without scripts/selfhost/helm-deps.sh, such as agent-relay-2026.11.18 and earlier, needs instead:"
   info "   helm repo add cnpg https://cloudnative-pg.github.io/charts; helm repo add minio https://charts.min.io/"
   info "   helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts"
   info "   helm dependency build charts/sessions-pipeline && helm dependency build charts/agent-relay)"
-  info "  helm upgrade $RELEASE <chart> -n $NAMESPACE <your -f files> -f $VALUES -f $LAYOUT_VALUES \\"
-  info "    --set-string relay-control.bootstrap.adminEmail=$ADMIN_EMAIL"
+  info "  helm upgrade $RELEASE <chart> -n $NAMESPACE <your -f files> -f $VALUES ${OVERLAY_ARGS[*]}"
   info "If your values set global.rdsCa.bundle and the install stops on rds-ca, run the"
   info "kubectl delete configmap rds-ca it prints, then helm upgrade again (the chart creates its own)."
   read -r -p "    Press Enter once helm upgrade has finished... " _
@@ -392,7 +567,7 @@ for _ in $(seq 1 60); do
 done
 [[ -n "$MIGRATION_JOB" ]] || die "no worker-migrate Job appeared for release $RELEASE"
 info "job: $MIGRATION_JOB"
-if ! k wait --for=condition=complete "job/$MIGRATION_JOB" --timeout=1200s >/dev/null; then
+if ! wait_job "$MIGRATION_JOB" 1200; then
   k logs "job/$MIGRATION_JOB" --tail=30 2>/dev/null | grep -v -i -E 'password|postgres(ql)?://' || true
   die "HoopDb migration Job $MIGRATION_JOB did not complete; the diagnostic below explains why: python3 diagnose-install.py --scope cluster"
 fi
@@ -404,16 +579,56 @@ NAMESPACE="$NAMESPACE" RELEASE="$RELEASE" MIGRATION_JOB="$MIGRATION_JOB" "$RDS_S
 for d in read-api ingest-edge search-indexer; do
   k rollout restart "deployment/$RELEASE-$d" >/dev/null 2>&1 && info "restarted $RELEASE-$d" || info "no deployment $RELEASE-$d (skipped)"
 done
+# The search bootstrap Job ran before post activated its login, so it may have
+# failed; delete it and let helm recreate it (the install guide's step 13).
+failed_boot="$(k get jobs -o json | jq -r '.items[] | select(.metadata.name | test("search-indexer-bootstrap")) | select((.status.succeeded // 0) == 0) | .metadata.name')"
+if [[ -n "$failed_boot" && -n "${HELM_CHART:-}" ]]; then
+  for j in $failed_boot; do
+    # Keep its reason before the Job (and its Pod) is gone: the guard's one line
+    # in the termination message, else the log's last lines.
+    why="$(k get pods -l "job-name=$j" -o jsonpath='{range .items[*]}{.status.containerStatuses[*].state.terminated.message}{end}' 2>/dev/null | head -n1)"
+    [[ -n "$why" ]] || why="$(k logs "job/$j" --tail=3 2>/dev/null | grep -v -i -E 'password|postgres(ql)?://' | tail -n1 || true)"
+    [[ -n "$why" ]] && info "$j: ${why:0:300}"
+    k delete job "$j" >/dev/null && info "deleted $j to rerun it"
+  done
+  helm_upgrade >/dev/null || die "helm upgrade (search bootstrap rerun) failed"
+  boot="$(k get jobs -o name | grep search-indexer-bootstrap | head -n1)"
+  state=""
+  if [[ -n "$boot" ]]; then
+    if wait_job "$boot" 600; then state=Complete; else state="$(k get "$boot" -o jsonpath='{.status.failed}' 2>/dev/null | grep -q . && echo Failed || echo "still running")"; fi
+  fi
+  if [[ "$state" == Complete ]]; then
+    info "search bootstrap completed"
+  else
+    info "search bootstrap did not complete (${state:-still running}); its last lines:"
+    k logs "$boot" --tail=8 2>/dev/null | grep -v -i -E 'password|postgres(ql)?://' | cut -c1-240 | sed 's/^/      /' || true
+  fi
+elif [[ -n "$failed_boot" ]]; then
+  info "delete the search-indexer-bootstrap Job and run your helm upgrade again so it reruns"
+fi
 
 # 8. Diagnostic -----------------------------------------------------------------
-log "8/8 Install diagnostic (cluster scope)"
-if command -v python3 >/dev/null && curl -fsSL "$DIAG_URL" -o "$WORK/diagnose-install.py" \
-   && [[ "$(sha256 "$WORK/diagnose-install.py")" == "$DIAG_SHA256" ]]; then
-  info "waiting 60s for pods to restart..."; sleep 60
+log "8/8 Install status (helm test)"
+# Crash-looping Deployments never finish rolling out; helm test says why.
+k rollout status deployment -l "app.kubernetes.io/instance=$RELEASE" --timeout=300s >/dev/null 2>&1 || true
+STATUS_VERDICT=""
+helm --kube-context "$KUBE_CONTEXT" test "$RELEASE" -n "$NAMESPACE" --logs --timeout 5m >"$WORK/status.txt" 2>&1 || true
+sed -n '/^Agent Relay install status/,/^\(HEALTHY\|UNHEALTHY\)/p' "$WORK/status.txt"
+STATUS_VERDICT="$(grep -oE '^(HEALTHY|UNHEALTHY)' "$WORK/status.txt" | tail -n1 || true)"
+[[ -n "$STATUS_VERDICT" ]] || { info "helm test printed no status table:"; tail -n 5 "$WORK/status.txt" | sed 's/^/      /'; }
+# The diagnostic next to this script matches this checkout (a release tag);
+# the pinned download is only for a script copied on its own.
+if [[ -f "$SCRIPT_DIR/../support/diagnose-install.py" ]]; then
+  cp "$SCRIPT_DIR/../support/diagnose-install.py" "$WORK/diagnose-install.py"
+fi
+DIAG_RC=""
+if command -v python3 >/dev/null && { [[ -s "$WORK/diagnose-install.py" ]] || { curl -fsSL "$DIAG_URL" -o "$WORK/diagnose-install.py" \
+   && [[ "$(sha256 "$WORK/diagnose-install.py")" == "$DIAG_SHA256" ]]; }; }; then
+  DIAG_RC=0
   python3 "$WORK/diagnose-install.py" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" --release "$RELEASE" \
-    --scope cluster --values "$VALUES" || true
+    --scope cluster --values "$VALUES" || DIAG_RC=$?
 else
-  info "skipped (python3 or download unavailable); run diagnose-install.py --scope cluster yourself"
+  info "support diagnostic skipped (python3 or download unavailable)"
 fi
 
 # First sign-in ----------------------------------------------------------------
@@ -428,12 +643,25 @@ SVC="$(k get svc -l app.kubernetes.io/name=relay-control -o jsonpath='{.items[0]
 PORT="$(k get svc "$SVC" -o jsonpath='{.spec.ports[?(@.name=="http")].port}' 2>/dev/null || true)"
 TOKEN="$(k get secret agent-relay-secrets -o jsonpath='{.data.selfhost-bootstrap-token}' 2>/dev/null | base64 -d 2>/dev/null || true)"
 MINTED="" code=""
-if [[ -n "$SVC" && -n "$PORT" && -n "$TOKEN" ]] && k rollout status "deployment/$SVC" --timeout=300s >/dev/null 2>&1; then
-  k port-forward "svc/$SVC" 18787:"$PORT" >/dev/null 2>&1 & PF=$!
-  sleep 4
-  code="$(curl -sS -o "$WORK/setup-key.json" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" \
-    http://127.0.0.1:18787/api/v1/installation/setup-key || true)"
-  kill "$PF" 2>/dev/null || true
+# relay-control may still be rolling out (the rehearsal's port-forward to
+# 127.0.0.1:18787 failed): wait for the rollout, then retry the port-forward
+# and the request until the API answers.
+if [[ -n "$SVC" && -n "$PORT" && -n "$TOKEN" ]]; then
+  k rollout status "deployment/$SVC" --timeout=600s >/dev/null 2>&1 || info "relay-control is not rolled out yet; trying anyway"
+  for attempt in 1 2 3 4 5 6; do
+    k port-forward "svc/$SVC" 18787:"$PORT" >/dev/null 2>&1 & PF=$!
+    for _ in $(seq 1 20); do
+      curl -s -o /dev/null --max-time 2 http://127.0.0.1:18787/ 2>/dev/null && break
+      kill -0 "$PF" 2>/dev/null || break
+      sleep 1
+    done
+    code="$(curl -sS -o "$WORK/setup-key.json" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" \
+      http://127.0.0.1:18787/api/v1/installation/setup-key 2>/dev/null || true)"
+    kill "$PF" 2>/dev/null || true; wait "$PF" 2>/dev/null || true
+    [[ "$code" == 201 || "$code" == 409 ]] && break
+    info "relay-control did not answer yet (attempt $attempt/6, HTTP ${code:-none}); retrying in 15s"
+    sleep 15
+  done
   unset TOKEN
   if [[ "$code" == 201 ]]; then MINTED="$(jq -r .setupKey "$WORK/setup-key.json")"; EXP="$(jq -r .expiresAt "$WORK/setup-key.json")"
   elif [[ "$code" == 409 ]]; then info "the first admin has already signed in; use your password (or Okta)"; fi
@@ -450,6 +678,25 @@ if [[ -n "$MINTED" ]]; then
 elif [[ "$code" != 409 ]]; then
   info "Could not mint a setup key automatically. Read the configured one with:"
   info "  kubectl -n $NAMESPACE get secret agent-relay-secrets -o jsonpath='{.data.selfhost-setup-key}' | base64 -d"
+fi
+
+# Verdict --------------------------------------------------------------------
+# One plain line, never a clean result unless the checks actually ran and passed.
+log "Result"
+case "$STATUS_VERDICT:${DIAG_RC:-none}" in
+  HEALTHY:0|HEALTHY:none) info "HEALTHY: every install check passed." ;;
+  HEALTHY:3|*:3) info "INCOMPLETE: the support diagnostic could not reach the cluster, so its workload checks were skipped." ;;
+  UNHEALTHY:*) info "UNHEALTHY: the status table above lists each FAIL with its fix." ;;
+  *) info "INCOMPLETE: the status test did not report (see above)." ;;
+esac
+info "Next:"
+if [[ "$STATUS_VERDICT" == HEALTHY && ( "${DIAG_RC:-0}" == 0 ) ]]; then
+  info "  1. sign in with the setup key above; 2. create the load balancer (install guide step 14)."
+else
+  info "  1. fix each FAIL row above (S3, OpenSearch and Pod Identity rows are fixed in AWS, not by rerunning this script);"
+  info "  2. rerun this script without --reset-databases: it keeps existing keys and logins, reruns helm,"
+  info "     and deletes and reruns a failed search bootstrap itself (read a failed migration Job's log first);"
+  info "  3. check again: helm test $RELEASE -n $NAMESPACE --logs   (on the cluster VPN)."
 fi
 
 log "Done. Credential files are private under $FILES; keep them, never commit or share them."

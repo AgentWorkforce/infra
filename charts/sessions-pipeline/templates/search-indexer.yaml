@@ -248,6 +248,9 @@ spec:
           imagePullPolicy: {{ $c.image.pullPolicy }}
           command: ["/bin/sh", "-c"]
           args: ["exec bun run /app/bootstrap-guard/bootstrap-guard.mjs"]
+          # The guard writes its one-line cause here; it stays in the Pod status
+          # (kubectl describe, helm test) after the log is gone.
+          terminationMessagePolicy: FallbackToLogsOnError
           env:
             {{- include "sessions-pipeline.searchIndexer.env" (dict "root" . "c" $c "service" "session-pipeline-consumer-bootstrap" "secret" $bootstrapSecret "key" $c.bootstrap.key) | nindent 12 }}
             - { name: SEARCH_BOOTSTRAP_CATALOG_RETRY_MAX_ATTEMPTS, value: {{ $c.bootstrap.catalogRetry.maxAttempts | quote }} }

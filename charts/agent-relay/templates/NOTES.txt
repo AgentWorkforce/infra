@@ -2,6 +2,11 @@ Agent Relay messaging and sessions suite rendered.
 
 This proof is not HA. Wait for the migration Jobs to complete, then verify the
 API, Relaycast and Relay History health endpoints before onboarding clients.
+{{- if include "agent-relay.statusTest.enabled" . }}
+
+Check the install once the migration Jobs finish (one healthy/unhealthy table):
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }} --logs
+{{- end }}
 {{- $da := index .Values "durable-actors" | default dict }}
 {{- $pipeline := index .Values "sessions-pipeline" | default dict }}
 {{- $readApi := get $pipeline "sessionReadApi" | default dict }}
