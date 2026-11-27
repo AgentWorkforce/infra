@@ -275,6 +275,15 @@ pass "a fresh install creates the namespace instead of stopping"
 #     and the message says what changed.
 if pi_run MOCK_ASSOCIATIONS='[]' POD_IDENTITY_ROLES="agent-relay-search-indexer=arn:aws:iam::123456789012:role/indexer"; then fail "partial roles: went on"; fi
 grep -q 'rollout restart deployment/agent-relay-search-indexer' "$log" || { cat "$tmp/out" >&2; fail "partial roles: created association's pods not restarted"; }
-expect_out "Created in this run: agent-relay-search-indexer" "partial roles"
+expect_out "Only Pod Identity associations have been created so far: agent-relay-search-indexer." "partial roles"
+! grep -q "Nothing has been changed yet" "$tmp/out" || fail "partial roles: claims nothing changed after creating an association"
 pass "a partial POD_IDENTITY_ROLES restarts what it created, then stops naming it"
+
+# 18. A restart that failed is retried on the next run (kept in STATE_DIR) and
+#     fails the table until it succeeds.
+mkdir -p "$tmp/state"; printf ' agent-relay-worker-session-summary-worker\n' >"$tmp/state/pending-pod-identity-restarts"
+pi_run MOCK_ASSOCIATIONS='["agent-relay-worker","agent-relay-search-indexer"]' MOCK_OS_RESULT="$(b64 '{"kind":"http","status":200,"body":"{}"}')" || true
+grep -q 'rollout restart deployment/agent-relay-worker-session-summary-worker' "$log" || { cat "$tmp/out" >&2; fail "pending restart: not retried"; }
+[[ ! -e "$tmp/state/pending-pod-identity-restarts" ]] || fail "pending restart: not cleared after it succeeded"
+pass "a pending restart from an earlier run is retried and cleared once it succeeds"
 

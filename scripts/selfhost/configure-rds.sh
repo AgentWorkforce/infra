@@ -244,7 +244,11 @@ fi
 DIAG_SECTIONS=0
 if [[ -s "$DIAG" ]] && python3 "$DIAG" --help 2>/dev/null | grep -q -- '--only'; then DIAG_SECTIONS=1; fi
 diag() { python3 "$DIAG" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" --release "$RELEASE" "$@"; }
-RESTART_DEPLOYMENTS="" CREATED_ASSOCIATIONS=""
+CREATED_ASSOCIATIONS=""
+# Restarts still owed for associations created earlier (this run or a previous one,
+# whose rollout restart failed): kept in STATE_DIR until they succeed.
+PENDING_RESTARTS_FILE="$STATE_DIR/pending-pod-identity-restarts"
+RESTART_DEPLOYMENTS="$(cat "$PENDING_RESTARTS_FILE" 2>/dev/null || true)"
 # pod_identity <when>: check (and with POD_IDENTITY_ROLES create) the EKS Pod Identity
 # association of every ServiceAccount the release's workloads use for S3 or OpenSearch.
 pod_identity() {
@@ -266,8 +270,8 @@ pod_identity() {
     0) info "Pod Identity: every ServiceAccount that needs AWS has an association ($1)" ;;
     1) restart_created   # what was created is kept: restart its pods before stopping
        local done_note="Nothing has been changed yet."
-       [[ "$1" == "before any change" ]] || done_note="helm has already installed the release; the run stops before migrations wait."
-       [[ -z "$CREATED_ASSOCIATIONS" ]] || done_note="$done_note Created in this run:$CREATED_ASSOCIATIONS."
+       [[ -z "$CREATED_ASSOCIATIONS" ]] || done_note="Only Pod Identity associations have been created so far:$CREATED_ASSOCIATIONS."
+       [[ "$1" == "before any change" ]] || done_note="helm has already installed the release; the run stops before the migration wait.${CREATED_ASSOCIATIONS:+ Created in this run:$CREATED_ASSOCIATIONS.}"
        die "Pod Identity associations are missing ($1). $done_note Run each 'Next:' line above (the role needs the access listed), or rerun with POD_IDENTITY_ROLES=\"<sa>=<role ARN>,...\" to create them, then rerun this script." ;;
     *) if [[ "${POD_IDENTITY_STRICT:-0}" == 1 ]]; then die "Pod Identity could not be checked ($1) and POD_IDENTITY_STRICT=1"; fi
        info "Pod Identity: could not be checked ($1); the lines above say how to check by hand. Continuing (POD_IDENTITY_STRICT=1 to stop)." ;;
@@ -284,6 +288,7 @@ restart_created() {
     fi
   done
   RESTART_DEPLOYMENTS="$failed"   # still pending: the final table fails until they restart
+  if [[ -n "${failed// /}" ]]; then printf '%s\n' "$failed" >"$PENDING_RESTARTS_FILE"; else rm -f "$PENDING_RESTARTS_FILE"; fi
 }
 
 # 0. Pod Identity preflight: before anything destructive (including --reset-databases).
