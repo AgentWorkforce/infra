@@ -103,7 +103,8 @@ else try {
     const updated = st.updatedReplicas ?? 0;
     // Old pods stay ready during a stuck rollout: count only the current revision.
     const current = (st.observedGeneration ?? 0) >= (d.metadata.generation ?? 1);
-    const ok = current && updated >= want && ready >= want && (st.availableReplicas ?? 0) >= want;
+    // Old-revision pods still count as ready/available: require that none remain.
+    const ok = current && updated >= want && (st.replicas ?? updated) === updated && ready >= want && (st.availableReplicas ?? 0) >= want;
     add("workloads", d.metadata.name, ok ? "ok" : "FAIL",
       ok ? `${ready}/${want} ready` : `${ready}/${want} ready, ${updated}/${want} on the current revision${current ? "" : " (rollout not observed yet)"}`);
   }
@@ -170,7 +171,13 @@ if (cfg.s3?.bucket && cfg.s3.provider === "s3") {
 // --- Reachability (network only; any HTTP answer counts) -------------------------
 function reach(url) {
   return new Promise((resolve) => {
-    const req = https.request(url, { method: "HEAD", timeout: 8000 }, (res) => { res.resume(); resolve({ status: res.statusCode }); });
+    let req;
+    try {
+      req = https.request(url, { method: "HEAD", timeout: 8000 }, (res) => { res.resume(); resolve({ status: res.statusCode }); });
+    } catch (e) {
+      // e.g. an http:// URL: a FAIL row, not an aborted table.
+      return resolve({ error: e.code || e.message });
+    }
     req.on("timeout", () => req.destroy(new Error("timed out")));
     req.on("error", (e) => resolve({ error: e.code || e.message }));
     req.end();

@@ -16,11 +16,12 @@ rights the documented namespace-scoped operator Role does not have.
 {{- /* "<kind>/<name>/<key>" -> the sha256 values components pin for that CA. */ -}}
 {{- $sha := dict -}}
 {{- $rd := dig "sessionReadApi" "postgresCa" dict $sp -}}
-{{- range $p := list
-  (list (ternary "secret" "configMap" (not (empty (get $rd "secret")))) (default (get $rd "secret") (get $rd "configMap")) (get $rd "key" | default "ca.crt") (get $rd "sha256"))
-  (list "configMap" (dig "ingestEdge" "postgres" "caConfigMap" "" $sp) (dig "ingestEdge" "postgres" "caKey" "ca.crt" $sp) (dig "ingestEdge" "postgres" "caSha256" "" $sp))
-  (list "configMap" (dig "searchIndexer" "postgres" "caConfigMap" "" $sp) (dig "searchIndexer" "postgres" "caKey" "ca.crt" $sp) (dig "searchIndexer" "postgres" "caSha256" "" $sp))
-  (list "configMap" (dig "worker" "postgresCa" "configMap" "" $sp) (dig "worker" "postgresCa" "key" "ca.crt" $sp) (dig "worker" "postgresCa" "sha256" "" $sp)) }}
+{{- /* Only components that run contribute pins: a disabled one's stale hash must not fail a valid bundle. */ -}}
+{{- $pins := list (list "configMap" (dig "worker" "postgresCa" "configMap" "" $sp) (dig "worker" "postgresCa" "key" "ca.crt" $sp) (dig "worker" "postgresCa" "sha256" "" $sp)) -}}
+{{- if dig "sessionReadApi" "enabled" false $sp }}{{ $pins = append $pins (list (ternary "secret" "configMap" (not (empty (get $rd "secret")))) (default (get $rd "secret") (get $rd "configMap")) (get $rd "key" | default "ca.crt") (get $rd "sha256")) }}{{ end -}}
+{{- if dig "ingestEdge" "enabled" false $sp }}{{ $pins = append $pins (list "configMap" (dig "ingestEdge" "postgres" "caConfigMap" "" $sp) (dig "ingestEdge" "postgres" "caKey" "ca.crt" $sp) (dig "ingestEdge" "postgres" "caSha256" "" $sp)) }}{{ end -}}
+{{- if dig "searchIndexer" "enabled" false $sp }}{{ $pins = append $pins (list "configMap" (dig "searchIndexer" "postgres" "caConfigMap" "" $sp) (dig "searchIndexer" "postgres" "caKey" "ca.crt" $sp) (dig "searchIndexer" "postgres" "caSha256" "" $sp)) }}{{ end -}}
+{{- range $p := $pins }}
 {{- if and (index $p 1) (index $p 3) }}{{ $id := printf "%s/%s/%s" (index $p 0) (index $p 1) (index $p 2) }}{{ $_ := set $sha $id (append (get $sha $id | default list) (toString (index $p 3)) | uniq) }}{{ end }}
 {{- end -}}
 {{- $search := list -}}
