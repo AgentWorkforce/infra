@@ -220,8 +220,15 @@ case "$ADMIN_EMAIL" in
     printf '    That address becomes the owner. Set ADMIN_EMAIL=<real address> (or fix it in %s) and rerun.\n' "$VALUES"
     read -r -p "    Continue anyway? [y/N] " ok; [[ "$ok" == y || "$ok" == Y ]] || die "set ADMIN_EMAIL first";;
 esac
-k get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl --context "$KUBE_CONTEXT" get namespace "$NAMESPACE" >/dev/null \
-  || die "cannot reach namespace $NAMESPACE with context $KUBE_CONTEXT (cluster VPN on?)"
+if ! ns_err="$(kubectl --context "$KUBE_CONTEXT" get namespace "$NAMESPACE" -o name 2>&1)"; then
+  # A fresh install: the cluster answered and the namespace isn't there yet.
+  if grep -q '(NotFound)' <<<"$ns_err"; then
+    kubectl --context "$KUBE_CONTEXT" create namespace "$NAMESPACE" >/dev/null || die "could not create namespace $NAMESPACE"
+    info "created namespace $NAMESPACE"
+  else
+    die "cannot reach namespace $NAMESPACE with context $KUBE_CONTEXT (cluster VPN on?)"
+  fi
+fi
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK" ${CHART_DIR:+"$CHART_DIR"}' EXIT
 
@@ -237,32 +244,46 @@ fi
 DIAG_SECTIONS=0
 if [[ -s "$DIAG" ]] && python3 "$DIAG" --help 2>/dev/null | grep -q -- '--only'; then DIAG_SECTIONS=1; fi
 diag() { python3 "$DIAG" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" --release "$RELEASE" "$@"; }
-RESTART_DEPLOYMENTS=""
+RESTART_DEPLOYMENTS="" CREATED_ASSOCIATIONS=""
 # pod_identity <when>: check (and with POD_IDENTITY_ROLES create) the EKS Pod Identity
 # association of every ServiceAccount the release's workloads use for S3 or OpenSearch.
 pod_identity() {
   local rc=0 out
-  [[ "$DIAG_SECTIONS" == 1 ]] || { info "Pod Identity: not checked (this release's diagnostic has no --only)"; return 0; }
+  if [[ "$DIAG_SECTIONS" != 1 ]]; then
+    [[ "${POD_IDENTITY_STRICT:-0}" == 1 ]] && die "Pod Identity can't be checked ($1): this release's diagnostic has no --only, and POD_IDENTITY_STRICT=1"
+    info "Pod Identity: not checked ($1): this release's diagnostic has no --only"
+    return 0
+  fi
   # Associations only here; the final diagnostic also simulates each role's IAM policy.
   out="$(diag --only pod-identity --no-iam-simulate ${POD_IDENTITY_ROLES:+--create-pod-identity "$POD_IDENTITY_ROLES"} 2>&1)" || rc=$?
   { grep -vE '^(CREATED|RESULT)' <<<"$out" | sed 's/^/    /'; } || true
   while read -r _ sa role deps; do
     info "created the Pod Identity association for $sa ($role)"
+    CREATED_ASSOCIATIONS="$CREATED_ASSOCIATIONS $sa"
     RESTART_DEPLOYMENTS="$RESTART_DEPLOYMENTS ${deps//,/ }"
   done < <(grep '^CREATED ' <<<"$out" || true)
   case "$rc" in
     0) info "Pod Identity: every ServiceAccount that needs AWS has an association ($1)" ;;
-    1) die "Pod Identity associations are missing ($1). Nothing has been changed. Run each 'Next:' line above (the role needs the access listed), or rerun with POD_IDENTITY_ROLES=\"<sa>=<role ARN>,...\" to create them, then rerun this script." ;;
+    1) restart_created   # what was created is kept: restart its pods before stopping
+       local done_note="Nothing has been changed yet."
+       [[ "$1" == "before any change" ]] || done_note="helm has already installed the release; the run stops before migrations wait."
+       [[ -z "$CREATED_ASSOCIATIONS" ]] || done_note="$done_note Created in this run:$CREATED_ASSOCIATIONS."
+       die "Pod Identity associations are missing ($1). $done_note Run each 'Next:' line above (the role needs the access listed), or rerun with POD_IDENTITY_ROLES=\"<sa>=<role ARN>,...\" to create them, then rerun this script." ;;
     *) if [[ "${POD_IDENTITY_STRICT:-0}" == 1 ]]; then die "Pod Identity could not be checked ($1) and POD_IDENTITY_STRICT=1"; fi
        info "Pod Identity: could not be checked ($1); the lines above say how to check by hand. Continuing (POD_IDENTITY_STRICT=1 to stop)." ;;
   esac
 }
 restart_created() {
-  local d
+  local d failed=""
   for d in $RESTART_DEPLOYMENTS; do
-    k rollout restart "deployment/$d" >/dev/null 2>&1 && info "restarted $d (new Pod Identity association)"
+    if k rollout restart "deployment/$d" >/dev/null 2>&1; then
+      info "restarted $d (new Pod Identity association)"
+    else
+      info "could not restart $d: kubectl --context $KUBE_CONTEXT -n $NAMESPACE rollout restart deployment/$d"
+      failed="$failed $d"
+    fi
   done
-  RESTART_DEPLOYMENTS=""
+  RESTART_DEPLOYMENTS="$failed"   # still pending: the final table fails until they restart
 }
 
 # 0. Pod Identity preflight: before anything destructive (including --reset-databases).
@@ -592,9 +613,6 @@ if [[ -n "${HELM_CHART:-}" ]]; then
     info "  kubectl --context $KUBE_CONTEXT -n $NAMESPACE logs job/$RELEASE-db-guard"
     die "helm upgrade did not complete; nothing after it ran"
   fi
-  # A fresh install had no workloads to check before helm: check them now.
-  pod_identity "after helm"
-  restart_created
 else
   info "HELM_CHART is not set. In another terminal, run the same helm upgrade you used for the install."
   info "Next time, set HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay and this step runs it for you."
@@ -609,6 +627,11 @@ else
   info "kubectl delete configmap rds-ca it prints, then helm upgrade again (the chart creates its own)."
   read -r -p "    Press Enter once helm upgrade has finished... " _
 fi
+
+# A fresh install had no workloads to check before helm (automatic or manual
+# helm path): check them now, creating any POD_IDENTITY_ROLES names.
+pod_identity "after helm"
+restart_created
 
 # 6. Wait for the HoopDb migration -------------------------------------------
 log "6/8 Waiting for the HoopDb migration Job"
@@ -737,9 +760,10 @@ fi
 # every row is PASS: never a clean result unless the checks ran and passed.
 log "Result"
 FINAL_RC=0
-STATUS_VERDICT="$STATUS_VERDICT" DIAG_RC="${DIAG_RC:-none}" python3 - "$WORK/diagnostic.json" <<'PYTABLE' || FINAL_RC=$?
+STATUS_VERDICT="$STATUS_VERDICT" DIAG_RC="${DIAG_RC:-none}" PENDING_RESTARTS="$RESTART_DEPLOYMENTS" python3 - "$WORK/diagnostic.json" <<'PYTABLE' || FINAL_RC=$?
 import json, os, sys
-AREAS = [('migrations', ('jobs.',)), ('Secrets', ('credential',)), ('database logins + CA', ('database',)),
+AREAS = [('migrations', ('jobs.',)), ('Secrets', ('credential',)),
+         ('database logins + CA', ('database', 'cast.', 'control.', 'hoop.')),
          ('Pod Identity', ('podidentity',)), ('S3', ('ingest.',)), ('search bootstrap', ('search.bootstrap',)),
          ('OpenSearch auth', ('search.opensearch',)), ('workloads', ('deployments.', 'pods.', 'persistentvolumeclaims.')),
          ('values', ('values.',)), ('cluster', ('cluster',))]
@@ -756,11 +780,23 @@ for area, prefixes in AREAS:
     bad = [c for c in mine if c['status'] == status and status != 'PASS']
     detail = '; '.join((c.get('resource') + ': ' if c.get('resource') else '') + c['detail'] for c in bad[:3]) if bad else str(len(mine))+' check(s)'
     rows.append((area, status, detail[:220]))
+covered = {c['check'] for _, prefixes in AREAS for c in checks if c['check'].startswith(prefixes)}
+other = [c for c in checks if c['check'] not in covered]
+if other:
+    status = 'FAIL' if any(c['status'] == 'FAIL' for c in other) else 'UNKNOWN' if any(c['status'] == 'UNKNOWN' for c in other) else 'PASS'
+    bad = [c for c in other if c['status'] == status and status != 'PASS']
+    rows.append(('other checks', status, ('; '.join(c['check']+': '+c['detail'] for c in bad[:3]) if bad else str(len(other))+' check(s)')[:220]))
 verdict, diag_rc = os.environ.get('STATUS_VERDICT', ''), os.environ.get('DIAG_RC', 'none')
+pending = os.environ.get('PENDING_RESTARTS', '').split()
+if pending:
+    rows.append(('pod restarts', 'FAIL', 'not restarted after their Pod Identity association: ' + ', '.join(pending)))
 rows.append(('helm test', {'HEALTHY': 'PASS', 'UNHEALTHY': 'FAIL'}.get(verdict, 'UNKNOWN'),
              verdict or 'no status table (see above)'))
 if diag_rc in ('none', '3') or not checks:
     rows.append(('diagnostic', 'UNKNOWN', 'skipped or could not reach the cluster: workload checks did not run'))
+elif diag_rc not in ('0',) and all(r[1] == 'PASS' for r in rows):
+    # A failed or partial diagnostic never becomes a healthy result.
+    rows.append(('diagnostic', 'FAIL' if diag_rc == '1' else 'UNKNOWN', 'exited '+diag_rc+' (see its output above)'))
 w = max(len(r[0]) for r in rows)
 print('    %-*s  %-7s  %s' % (w, 'AREA', 'STATUS', 'DETAIL'))
 for r in rows:

@@ -56,7 +56,11 @@ cat >"$bin/kubectl" <<'MOCK'
 printf 'kubectl %s\n' "$*" >>"$MOCK_LOG"
 case "$*" in
   "config current-context") echo test-ctx ;;
-  *"get namespace"*) [[ "${MOCK_NS_OK:-0}" == 1 ]] || { echo "Error from server (Forbidden)" >&2; exit 1; } ;;
+  *"create namespace"*) exit 0 ;;
+  *"get namespace"*) [[ "${MOCK_NS_OK:-0}" == 1 ]] && exit 0
+    [[ "${MOCK_NS_MISSING:-0}" == 1 ]] && { echo 'Error from server (NotFound): namespaces "agent-relay" not found' >&2; exit 1; }
+    echo "Error from server (Forbidden)" >&2; exit 1 ;;
+  *"get serviceaccounts default"*) echo '{"kind":"ServiceAccount"}' ;;
   *"config view --minify"*) [[ "${MOCK_EKS:-0}" == 1 ]] && echo '{"clusters":[{"name":"arn:aws:eks:us-west-2:123456789012:cluster/demo"}],"users":[]}' ;;
   *"get secret agent-relay-secrets -o json") [[ "${MOCK_SECRET_OK:-0}" == 1 ]] && echo '{"kind":"Secret"}' || exit 1 ;;
   *"get secret "*) exit 1 ;;
@@ -219,7 +223,7 @@ pi_run() { reset_values; run RELEASE_VERSION=2026.11.19 HELM_CHART=oci://ghcr.io
 # 10. A missing association stops the run before anything changes (no Secrets
 #     Manager write, no rds-setup.sh, no helm), with the exact create line.
 if pi_run MOCK_ASSOCIATIONS='["agent-relay-search-indexer"]'; then fail "missing association: the run went on"; fi
-expect_out "Pod Identity associations are missing (before any change). Nothing has been changed." "missing association"
+expect_out "Pod Identity associations are missing (before any change). Nothing has been changed yet." "missing association"
 expect_out "aws eks create-pod-identity-association --cluster-name demo --region us-west-2 --namespace agent-relay --service-account agent-relay-worker" "missing association"
 ! grep -qE '^aws secretsmanager|^helm .*upgrade' "$log" || fail "missing association: something changed before the stop"
 ! grep -q '1/8' "$tmp/out" || fail "missing association: reached step 1"
@@ -258,4 +262,19 @@ pi_run MOCK_ASSOCIATIONS="$ALL" MOCK_OS_RESULT="$(b64 '{"kind":"http","status":2
 grep -E '^    OpenSearch auth +PASS ' "$tmp/out" >/dev/null || { cat "$tmp/out" >&2; fail "success: no PASS row"; }
 grep -E '^    Pod Identity +PASS ' "$tmp/out" >/dev/null || { cat "$tmp/out" >&2; fail "success: Pod Identity not PASS"; }
 pass "a signed request that OpenSearch accepts is a PASS row"
+
+# 16. A fresh install: the cluster answers but the namespace doesn't exist yet.
+reset_values
+run RELEASE_VERSION=2026.11.19 HELM_CHART=oci://ghcr.io/agentworkforce/charts/agent-relay MOCK_NS_MISSING=1 MOCK_SECRET_OK=1 \
+  RDS_ADMIN_SECRET_ARN=arn:aws:secretsmanager:us-west-2:111122223333:secret:x HELM_EXTRA_VALUES="values-eks.yaml values-eks-native.yaml" || true
+grep -q '^kubectl --context test-ctx create namespace agent-relay' "$log" || { cat "$tmp/out" >&2; fail "fresh namespace: not created"; }
+expect_out "created namespace agent-relay" "fresh namespace"
+pass "a fresh install creates the namespace instead of stopping"
+
+# 17. Partial POD_IDENTITY_ROLES: what was created is restarted before the stop,
+#     and the message says what changed.
+if pi_run MOCK_ASSOCIATIONS='[]' POD_IDENTITY_ROLES="agent-relay-search-indexer=arn:aws:iam::123456789012:role/indexer"; then fail "partial roles: went on"; fi
+grep -q 'rollout restart deployment/agent-relay-search-indexer' "$log" || { cat "$tmp/out" >&2; fail "partial roles: created association's pods not restarted"; }
+expect_out "Created in this run: agent-relay-search-indexer" "partial roles"
+pass "a partial POD_IDENTITY_ROLES restarts what it created, then stops naming it"
 

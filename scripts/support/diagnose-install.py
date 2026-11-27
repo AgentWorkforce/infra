@@ -179,6 +179,7 @@ ERROR_RULES = (
     ('dns', r'could not translate host|name or service not known'),
     ('network', r'connection refused|timeout expired|could not connect|no route to host|network is unreachable'),
     ('permissions', r'permission denied|forbidden'),
+    ('not-found', r'\(notfound\)'),
 )
 
 
@@ -1067,6 +1068,7 @@ def search_indexer(options):
             if (env.get('SEARCH_INDEX_OPENSEARCH_AUTH') or '').lower() == 'sigv4' and env.get('SEARCH_INDEX_OPENSEARCH_URL') \
                and (item.get('metadata') or {}).get('name', '').endswith('search-indexer'):
                 return {'sa': pod.get('serviceAccountName') or 'default', 'image': c.get('image', ''),
+                        'pullSecrets': [p for p in pod.get('imagePullSecrets') or [] if isinstance(p, dict) and p.get('name')],
                         'url': env['SEARCH_INDEX_OPENSEARCH_URL'], 'region': env.get('SEARCH_INDEX_OPENSEARCH_AWS_REGION', ''),
                         'prefix': env.get('SEARCH_INDEX_OPENSEARCH_INDEX_PREFIX') or 'relayhistory',
                         'deployment': (item.get('metadata') or {}).get('name', '')}
@@ -1083,6 +1085,8 @@ def search_probe_job(options, name, target=None):
                  'template': {'metadata': {'labels': labels}, 'spec': {
                      # The indexer's own ServiceAccount: its Pod Identity association, its credentials.
                      'serviceAccountName': target['sa'], 'restartPolicy': 'Never', 'enableServiceLinks': False,
+                     # The indexer's own pull credentials: its image may be private.
+                     'imagePullSecrets': target.get('pullSecrets') or [],
                      'securityContext': {'runAsNonRoot': True, 'runAsUser': 1000, 'runAsGroup': 1000,
                                          'seccompProfile': {'type': 'RuntimeDefault'}},
                      'volumes': [{'name': 'tmp', 'emptyDir': {'medium': 'Memory', 'sizeLimit': '16Mi'}}],
@@ -1517,7 +1521,7 @@ def can_create_jobs(options):
         return False
 
 
-def find_cluster(options, notes):
+def find_cluster(options, notes, probe=('secret', 'agent-relay-secrets'), answered=()):
     """Use --context or the current context; True when the release namespace answers."""
     if not options.context:
         try:
@@ -1536,25 +1540,29 @@ def find_cluster(options, notes):
             return False
     # Right after rollout restarts the API server, or slow exec-plugin credentials,
     # can delay an answer: never cap the probe below --timeout, and retry once.
+    # `answered` lists error categories that still prove the cluster answered.
     wait = max(options.timeout, PROBE_FLOOR)
-    last, took = None, 0.0
+    errors, took = [], 0.0
     for attempt in range(PROBE_ATTEMPTS):
         start = PROBE_CLOCK()
         try:
-            kube(options, 'secret', 'agent-relay-secrets', probe=True, probe_timeout=wait)
+            kube(options, probe[0], probe[1], probe=True, probe_timeout=wait)
             return True
         except DiagnosticError as exc:
-            last, took = exc, max(took, PROBE_CLOCK() - start)
+            if str(exc) in answered:
+                return True
+            errors.append(str(exc))
+            took = max(took, PROBE_CLOCK() - start)
             if attempt + 1 < PROBE_ATTEMPTS:
                 PROBE_SLEEP(PROBE_PAUSE)
     plugin = exec_plugin(options)
-    if str(last) == 'timeout' and plugin:
+    if all(e == 'timeout' for e in errors) and plugin:
         notes.append('cluster: no answer within '+str(wait)+'s on '+str(PROBE_ATTEMPTS)+' attempts. This kubeconfig '
-                     'authenticates through an exec plugin ('+plugin+'), so this is most likely slow credentials '
-                     '(e.g. aws eks get-token with a slow credential_process), not an unreachable cluster. '
-                     'Refresh the credentials or rerun with --timeout 90.')
+                     'authenticates through an exec plugin ('+plugin+'), which can take ~15s per call (e.g. aws eks get-token '
+                     'with a slow credential_process), so the cause is most likely slow credentials, or else a stalled '
+                     'connection to the API server (VPN). Rerun with --timeout 90; if it still times out, check the cluster VPN.')
     else:
-        notes.append('cluster: not reachable after '+str(PROBE_ATTEMPTS)+' attempts ('+str(last)+', '+
+        notes.append('cluster: not reachable after '+str(PROBE_ATTEMPTS)+' attempts ('+', '.join(dict.fromkeys(errors))+', '+
                      str(round(took))+'s); on a split VPN, rerun on the cluster VPN for workload checks')
     return False
 
@@ -1748,7 +1756,9 @@ def only_section(options):
     """--only: one cluster section, its rows and a RESULT line. Exit 0 PASS, 1 FAIL, 2 UNKNOWN, 3 cluster unreachable."""
     report, notes = Report(), []
     options.missing = {}
-    reachable = find_cluster(options, notes)
+    # These sections need no Secret: probe the namespace's default ServiceAccount,
+    # and count NotFound/Forbidden as an answer (a fresh install, a narrow Role).
+    reachable = find_cluster(options, notes, probe=('serviceaccounts', 'default'), answered=('not-found', 'permissions'))
     for note in notes:
         print('  '+note)
     if not reachable:

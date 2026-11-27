@@ -423,6 +423,33 @@ class ExecutionTests(unittest.TestCase):
         script.chmod(0o755)
         return str(bin_dir)
 
+    def test_a_mixed_failure_keeps_the_earlier_error_visible(self):
+        errors = iter([diag.DiagnosticError('permissions'), diag.DiagnosticError('timeout')])
+        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=30):
+            raise next(errors)
+        notes=[]
+        opts=diag.parse_args(['--scope','cluster','--context','test','--values'])
+        with mock.patch.object(diag,'kube',side_effect=kube), mock.patch.object(diag,'PROBE_SLEEP'), \
+             mock.patch.object(diag,'exec_plugin',return_value='aws'):
+            diag.discover(opts,notes)
+        note=[n for n in notes if n.startswith('cluster:')][0]
+        self.assertIn('permissions, timeout', note)
+        self.assertNotIn('slow credentials', note)
+
+    def test_only_sections_count_not_found_as_an_answer(self):
+        calls=[]
+        def kube(options,resource,name=None,selector=False,probe=False,probe_timeout=30):
+            calls.append((resource,name))
+            if probe: raise diag.DiagnosticError('not-found')
+            return {'items': []}
+        out=io.StringIO()
+        with mock.patch.object(diag,'kube',side_effect=kube), contextlib.redirect_stdout(out):
+            code=diag.main(['--only','pod-identity','--context','test'])
+        self.assertEqual(calls[0],('serviceaccounts','default'))
+        self.assertNotIn(('secret','agent-relay-secrets'),calls)
+        self.assertEqual(code,0)
+        self.assertIn('RESULT: PASS',out.getvalue())
+
     def test_slow_exec_credentials_12s_are_not_unreachable(self):
         """A real kubectl stand-in that takes 12s per call (slow aws eks get-token)."""
         with tempfile.TemporaryDirectory() as directory:
@@ -1020,7 +1047,8 @@ class SearchReadinessTests(unittest.TestCase):
         self.assertIn('OpenSearch x unreachable', checks['search.bootstrap']['detail'])
         self.assertIn('delete job agent-relay-search-indexer-bootstrap-1234abcd', checks['search.bootstrap']['action'])
         self.assertEqual(checks['search.opensearch']['status'], 'PASS')
-        manifest = diag.search_probe_job(options(), 'probe', self.TARGET)
+        manifest = diag.search_probe_job(options(), 'probe', dict(self.TARGET, pullSecrets=[{'name': 'ghcr'}]))
+        self.assertEqual(manifest['spec']['template']['spec']['imagePullSecrets'], [{'name': 'ghcr'}])
         spec = manifest['spec']['template']['spec']
         self.assertEqual(spec['serviceAccountName'], 'agent-relay-search-indexer')
         self.assertEqual(spec['containers'][0]['image'], self.TARGET['image'])
