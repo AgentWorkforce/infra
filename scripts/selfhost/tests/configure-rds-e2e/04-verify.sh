@@ -32,5 +32,15 @@ docker run --rm --network kind --add-host "$RDS_HOST:$PG_IP" -v "$INFRA/scripts/
 grep -E '^(FAIL|UNKNOWN)' diag-db.txt | cut -c1-200; tail -2 diag-db.txt
 check "diagnostic database scope exit 0 (logins, roles, grants)" '[[ $rc == 0 ]]'
 rm -rf dbsecrets
+grep -q '^Agent Relay install status' configure-rds.log 2>/dev/null || cp "$W/after/configure-rds.log" . 2>/dev/null
+check "helm test status table printed" 'grep -q "^Agent Relay install status" configure-rds.log'
+check "helm test: every database login ok" '! grep -E "^  database  " configure-rds.log | grep -qv " ok  "'
+check "helm test: every migration Job ok" '! grep -E "^  migrations  " configure-rds.log | grep -qv " ok  "'
+check "a plain verdict and Next steps end the run" 'grep -qE "^    (HEALTHY|UNHEALTHY|INCOMPLETE): " configure-rds.log && grep -q "^    Next:" configure-rds.log'
+layout="$(helm template agent-relay "$INFRA/charts/agent-relay" -n agent-relay -f "$INFRA/charts/agent-relay/values-eks.yaml" \
+  -f "$INFRA/charts/agent-relay/values-eks-native.yaml" -f "$W/customer/values-poc.yaml" 2>/dev/null \
+  | yq -N 'select(.kind == "Job" and (.metadata.name | test("worker-migrate"))) | .spec.template.spec.containers[0].env[] | select(.name == "HOOPDB_RDS_LAYOUT") | .value')"
+check "a plain helm upgrade (documented -f files only) keeps rdsLayout ($layout)" '[[ "$layout" == separate-database ]]'
+check "the guide generated the application keys" 'k get secret agent-relay-secrets -o jsonpath="{.data.selfhost-encryption-key}" | grep -q .'
 check "first sign-in: fresh setup key minted" 'grep -q "Setup key (single use" configure-rds.log'
 exit $fail

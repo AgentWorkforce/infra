@@ -1,8 +1,11 @@
 # RDS database setup by hand (without rds-setup.sh)
 
-`scripts/selfhost/rds-setup.sh` creates the Agent Relay databases and logins
-on Amazon RDS for PostgreSQL. This page is the same procedure as explicit
-commands, for operators who do not run the script. The fresh-install activation
+`scripts/selfhost/configure-rds.sh` is the primary install path: it runs
+`scripts/selfhost/rds-setup.sh`, which creates the Agent Relay databases and
+logins on Amazon RDS for PostgreSQL, writes the install Secrets and runs Helm.
+This page is the same database procedure as explicit commands, for operators
+who do not run the scripts (bring your own Secrets). Whatever you write is
+checked by the chart before it installs (§1.13). The fresh-install activation
 is deliberately one-shot and refuses an existing role graph. On later steps,
 use the passwords you generated the first time (step 1.3), or every connection
 string already deployed stops working. Pick one procedure per instance; to

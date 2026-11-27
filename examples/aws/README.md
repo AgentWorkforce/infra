@@ -30,9 +30,18 @@ scripts/selfhost/check-values.sh -f charts/agent-relay/values-eks.yaml \
   -f charts/agent-relay/values-eks-native.yaml -f values.yaml
 ```
 
-The secret values are fake. Don't hand-write real ones: `rds-setup.sh` and step 10
-generate them under `~/.agent-relay-install/secret-files/<Secret>/<key>` and create
-the Secrets from those files. If you can't run shell scripts, do the same
+The secret values are fake. **Don't hand-write real ones.** The primary path is
+`scripts/selfhost/configure-rds.sh` ([scripts/selfhost/README.md](../../scripts/selfhost/README.md)):
+it creates the database logins, generates every key and writes these five Secrets
+in exactly these shapes, under `~/.agent-relay-install/secret-files/<Secret>/<key>`.
+
+Writing them yourself is the advanced, bring-your-own option. The chart checks
+them before installing (`databaseGuard`): an install whose URLs log in as the RDS
+master (`postgres`), reuse one login for two roles (for example the owner and
+runtime of one database), miss a Secret or key, or put a bare URL where JSON is
+expected (`04` must be `{"hoopdb_url":"postgresql://..."}`) is refused with an
+`AR_DB_LOGIN` message, and nothing is applied. See
+[§1.13 of the manual setup](../../docs/self-hosted-rds-manual-setup.md). If you can't run shell scripts, do the same
 setup by hand with [RDS database setup without rds-setup.sh](../../docs/self-hosted-rds-manual-setup.md)
 (added in #470). Existing administrator-owned installs use the temporary
 `hoopdb-admin-jobs` Secret only while migration/bootstrap Jobs run; it is not

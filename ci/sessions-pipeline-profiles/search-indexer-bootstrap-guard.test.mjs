@@ -20,6 +20,50 @@ describe("search indexer bootstrap catalog retry", () => {
 });
 
 describe("bootstrap guard orchestration", () => {
+  test("a bootstrap that ran before rds-setup post says what to do", async () => {
+    const logs = [];
+    const client = { connect: async () => {}, query: async () => ({ rows: [] }), end: async () => {} };
+    const code = await executeBootstrapGuard(client, {
+      waitForRuntimeRole: false, roleWaitSeconds: 10, rolePollSeconds: 1, maxAttempts: 3, delaySeconds: 1,
+      runBootstrap: async () => ({ code: 1, output: "error: permission denied for schema sessions" }),
+      sleep: async () => {}, now: () => 0, log: message => logs.push(message),
+    });
+    assert.equal(code, 1);
+    assert.ok(logs.some(m => /rds-setup\.sh post/u.test(m) && /delete this search-indexer-bootstrap Job/u.test(m)), logs.join("\n"));
+  });
+
+  test("an unreachable OpenSearch is named, not blamed on the database", async () => {
+    const logs = [];
+    const causes = [];
+    const client = { connect: async () => {}, query: async () => ({ rows: [] }), end: async () => {} };
+    await executeBootstrapGuard(client, {
+      waitForRuntimeRole: false, roleWaitSeconds: 10, rolePollSeconds: 1, maxAttempts: 1, delaySeconds: 1,
+      runBootstrap: async () => ({ code: 1, output: "SearchIndexError: search index: unavailable (network)\n    at ensureSchema (opensearch.ts:516)" }),
+      sleep: async () => {}, now: () => 0, log: message => logs.push(message),
+      opensearchUrl: "https://vpc-search.us-east-1.es.amazonaws.com", recordCause: c => causes.push(c),
+    });
+    assert.match(causes[0], /OpenSearch vpc-search\.us-east-1\.es\.amazonaws\.com unreachable \(network\): check searchIndexer\.search\.opensearch\.url/u);
+    assert.ok(!/rds-setup\.sh post/u.test(causes[0]));
+  });
+
+  test("missing AWS credentials and the Bun banner", async () => {
+    const { failureCause } = await import("../../charts/sessions-pipeline/files/search-indexer-bootstrap-guard.mjs");
+    const out = 'SearchIndexError: search index: unavailable (credentials)\n retryable: true,\n      at request (opensearch.ts:498:15)\n\nBun v1.4.2 (Linux arm64)';
+    assert.match(failureCause(out, "https://vpc-x.es.amazonaws.com"), /no AWS credentials to sign OpenSearch vpc-x\.es\.amazonaws\.com requests.*Pod Identity association/u);
+    assert.equal(failureCause("boom: something broke\n    at x\nBun v1.4.2 (Linux arm64)"), "search bootstrap failed: boom: something broke");
+  });
+
+  test("an unrelated failure gets no activation hint", async () => {
+    const logs = [];
+    const client = { connect: async () => {}, query: async () => ({ rows: [] }), end: async () => {} };
+    await executeBootstrapGuard(client, {
+      waitForRuntimeRole: false, roleWaitSeconds: 10, rolePollSeconds: 1, maxAttempts: 1, delaySeconds: 1,
+      runBootstrap: async () => ({ code: 2, output: "opensearch: 403 Forbidden" }),
+      sleep: async () => {}, now: () => 0, log: message => logs.push(message),
+    });
+    assert.ok(!logs.some(m => /rds-setup\.sh post/u.test(m)));
+  });
+
   test("holds the migrator lock across an exact retry and always releases it", async () => {
     const calls = [];
     let locked = false;
@@ -115,6 +159,6 @@ describe("managed-RDS post ordering", () => {
       2,
       async milliseconds => { clock += milliseconds; },
       () => clock,
-    ), /did not become LOGIN before the deadline/u);
+    ), /timed out after \d+s waiting for search_consumer_runtime to become a LOGIN role.*did not become LOGIN before the deadline.*run rds-setup\.sh post.*helm upgrade again/u);
   });
 });
