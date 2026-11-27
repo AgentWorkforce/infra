@@ -419,6 +419,11 @@ fi
 # First sign-in ----------------------------------------------------------------
 log "First sign-in"
 DASHBOARD="$(sed -nE 's/^[[:space:]]+dashboardUrl:[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' "$VALUES" | head -n1)"
+# Short-form values have no dashboardUrl line: site.domain derives it.
+if [[ -z "$DASHBOARD" ]]; then
+  SITE_DOMAIN="$(sed -nE 's/^[[:space:]]+domain:[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' "$VALUES" | head -n1)"
+  [[ -z "$SITE_DOMAIN" ]] || DASHBOARD="https://$SITE_DOMAIN/"
+fi
 SVC="$(k get svc -l app.kubernetes.io/name=relay-control -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
 PORT="$(k get svc "$SVC" -o jsonpath='{.spec.ports[?(@.name=="http")].port}' 2>/dev/null || true)"
 TOKEN="$(k get secret agent-relay-secrets -o jsonpath='{.data.selfhost-bootstrap-token}' 2>/dev/null | base64 -d 2>/dev/null || true)"

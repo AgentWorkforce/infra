@@ -1,7 +1,7 @@
-# EXAMPLE values.yaml for agent-relay-2026.11.18 (chart 0.7.63), filled in.
-# Every site value is an example: domain ar.selfhost-example.agentrelay.com, orgId, org name, admin
-# email, region (also global.rdsCa.bundle), bucket, OpenSearch URL, ALB subnet
-# CIDRs, and the nativeBrief model (disabled until after-install).
+# EXAMPLE values.yaml, filled in. Every site value is an example: the site:
+# block (domain, region, bucket, OpenSearch URL, org ID, org name, admin email),
+# the ALB subnet CIDRs, and the nativeBrief model (disabled until after-install).
+# Check your copy with scripts/selfhost/check-values.sh before installing.
 # The unfilled template is https://agentrelay.com/self-hosting/files/eks/values.yaml.
 
 # Agent Relay on your own EKS cluster: site values.
@@ -21,6 +21,30 @@
 # tested. agentrelay.com/docs/self-hosting ("Scaling up") has the changes for a larger install.
 #
 # Single-replica components are listed at agentrelay.com/docs/self-hosting under "Availability".
+
+# Site values: each fact once. The chart fills every component value that
+# repeats it (chart README, "Site values"): the four hosts and every public URL
+# from domain; every bucket and bucket region; both OpenSearch URLs and
+# regions; global.tenant.orgId; the first organization and admin;
+# and, with rds: true, the RDS CA.
+site:
+  # Base domain: the dashboard is <domain>, plus api., cast. and history.<domain>.
+  domain: ar.selfhost-example.agentrelay.com
+  # Region of the sessions bucket and the OpenSearch domain (and, with
+  # rds: true, of the RDS instance).
+  region: us-east-1
+  sessionsBucket: example-agent-relay-sessions
+  opensearchUrl: https://vpc-agent-relay-example.us-east-1.es.amazonaws.com
+  # Stable organization ID that partitions session data. Never change it after
+  # the first upload.
+  orgId: org_example
+  # The first organization and its administrator (setup key sign-in).
+  orgName: Example Corp
+  adminEmail: admin@example.com
+  # The databases are on Amazon RDS in region: the chart renders the rds-ca
+  # ConfigMap from the AWS bundle it ships and pins its sha256 in every Postgres
+  # client. For another region, or global, set global.rdsCa.bundle instead.
+  rds: true
 
 # One line per image: each holds that image's repository and digest, and every
 # workload using it takes both from here. To move to a newer build or a new image
@@ -48,15 +72,6 @@ global:
     engine: wasm-bindgen
     required: wasm-bindgen
     readerMaxRuleset: "10"
-  tenant:
-    # Stable organization ID that partitions session data. Never change it after
-    # the first upload.
-    orgId: org_example
-  # The RDS CA: the chart ships AWS's public RDS CA bundles, renders the rds-ca
-  # ConfigMap for this region and pins its sha256 in every Postgres client. Set
-  # it to the RDS instance's region, or to global. Nothing to download or hash.
-  rdsCa:
-    bundle: us-east-1
 
 relaycast:
   # PostgreSQL backend. The chart allows exactly one replica on this backend:
@@ -70,7 +85,6 @@ relaycast:
   # A SQLite-only setting that this backend refuses.
   retention:
     messageTtlDays: null
-  baseUrl: https://cast.ar.selfhost-example.agentrelay.com
   existingSecret: agent-relay-secrets
   persistence:
     enabled: true
@@ -96,7 +110,6 @@ sessions-pipeline:
     output: { enabled: true }
     digest: { enabled: true }
     replicas: 1
-    origin: https://history.ar.selfhost-example.agentrelay.com
     completeSince: epoch
     directoryWorkspaces: "*"
     events: { messageIds: true }
@@ -111,8 +124,6 @@ sessions-pipeline:
       backend: opensearch
       backendId: opensearch-main
       opensearch:
-        url: https://vpc-agent-relay-example.us-east-1.es.amazonaws.com
-        region: us-east-1
         indexPrefix: relayhistory
     auth:
       mode: self_issued
@@ -121,9 +132,6 @@ sessions-pipeline:
         internalSecret:
           existingSecret: agent-relay-secrets
           key: session-read-api-secret
-    cors:
-      allowedOrigins:
-        - https://ar.selfhost-example.agentrelay.com
     networkPolicy:
       enabled: true
       controlFrom:
@@ -136,8 +144,6 @@ sessions-pipeline:
     serviceAccountName: agent-relay-session-read
     serviceAccountCreate: true
     extraEnv:
-      - { name: LOCKER_BUCKET, value: example-agent-relay-sessions }
-      - { name: LOCKER_REGION, value: us-east-1 }
       - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
       - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
       - { name: READ_API_BRIEF_TITLES_WORKSPACES, value: "*" }
@@ -153,7 +159,6 @@ sessions-pipeline:
   ingestEdge:
     enabled: true
     image: *services_image
-    origin: https://history.ar.selfhost-example.agentrelay.com
     allowInClusterHttp: true
     sessionSelection: true
     heartbeatAccept: true
@@ -165,8 +170,6 @@ sessions-pipeline:
       introspectSecretKey: introspect-secret
     serviceAccountName: agent-relay-session-ingest-api
     locker:
-      bucket: example-agent-relay-sessions
-      region: us-east-1
       credentials: { mode: podIdentity }
 
   # Writes transcript search into OpenSearch. The chart runs exactly one replica.
@@ -179,12 +182,7 @@ sessions-pipeline:
       backend: opensearch
       backendId: opensearch-main
       opensearch:
-        url: https://vpc-agent-relay-example.us-east-1.es.amazonaws.com
-        region: us-east-1
         indexPrefix: relayhistory
-    locker:
-      bucket: example-agent-relay-sessions
-      region: us-east-1
     postgres: { tlsProfile: custom-ca }
     bootstrap:
       enabled: true
@@ -221,9 +219,6 @@ sessions-pipeline:
       runtimeRoleLogin: true
       functionBoundaryMode: global-default-revoke
       waitForRole: { enabled: false, functionDefault: false }
-    locker:
-      bucket: example-agent-relay-sessions
-      region: us-east-1
     # Session titles and briefs. Needs a workspace ID, which exists only after
     # first sign-in, so agentrelay.com/docs/self-hosting/after-install turns this on.
     nativeBrief:
@@ -257,11 +252,7 @@ sessions-pipeline:
       existingSecret: agent-relay-secrets
       key: HOOPDB_URL
     existingSecret: agent-relay-secrets
-    locker:
-      bucket: example-agent-relay-sessions
-      region: us-east-1
     auth:
-      historyOrigin: https://history.ar.selfhost-example.agentrelay.com
       allowInterimRelayAuthBearer: false
     environment: production
 
@@ -282,8 +273,6 @@ relay-control:
     # Set to smtp-password, and fill in the smtp block below, only if you add SMTP.
     smtpPassword: ""
   bootstrap:
-    orgName: Example Corp
-    adminEmail: admin@example.com
     workspaceName: Default
   # Optional. Password sign-in, the setup key and temporary passwords work
   # without email. With SMTP, users can also self-register and reset passwords.
@@ -301,22 +290,14 @@ relay-control:
   # Owner-only Usage and qualified MCP agent launch. Flows, Chief and Relayfile
   # remain outside this install.
   selectedFeatures: [usage, launch]
-  publicUrl: https://api.ar.selfhost-example.agentrelay.com
-  dashboardUrl: https://ar.selfhost-example.agentrelay.com/
   services:
-    relaycastPublicUrl: https://cast.ar.selfhost-example.agentrelay.com
     relayauthEnabled: false
     relayauthUrl: ""
     relayhistoryUrl: ""
     relayhistoryPublicUrl: ""
     relayhistoryBackend: native
     sessionReadApiUrl: http://agent-relay-read-api.agent-relay.svc.cluster.local
-    sessionReadApiPublicUrl: https://history.ar.selfhost-example.agentrelay.com
     sessionReadApiMcpReads: true
-  introspection:
-    audiences:
-      - https://history.ar.selfhost-example.agentrelay.com
-      - https://api.ar.selfhost-example.agentrelay.com
   networkPolicy:
     ingressFrom:
       - podSelector: {}
@@ -328,7 +309,6 @@ relay-webapp:
   # The chart allows one replica.
   replicaCount: 1
   runtime:
-    publicUrl: https://ar.selfhost-example.agentrelay.com
     sessionReadApiEnabled: true
     # The backend endpoint is enabled; keep its web view explicitly default-off.
     coordinationOverlapsEnabled: false

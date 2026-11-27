@@ -124,7 +124,8 @@ expect_fail "key mismatch" "contradicts the chart-managed RDS CA" "${example[@]}
 expect_fail "tampered hash table" "does not match the us-east-1 bundle this chart ships" "${example[@]}" --set global.rdsCa.bundleSha256.us-east-1=$bad1
 expect_fail "unknown region" 'global.rdsCa.bundle="xx-nowhere-9"' "${example[@]}" --set global.rdsCa.bundle=xx-nowhere-9
 expect_fail "malformed bundle" 'global.rdsCa.bundle="../etc"' "${example[@]}" --set global.rdsCa.bundle=../etc
-expect_fail "BYO without a hash names global.rdsCa" "global.rdsCa.bundle" "${example[@]}" --set global.rdsCa.bundle=
+# site.rds would refill the bundle from site.region, so clear both.
+expect_fail "BYO without a hash names global.rdsCa" "global.rdsCa.bundle" "${example[@]}" --set site.rds=false --set global.rdsCa.bundle=
 # Without the umbrella the subcharts cannot resolve a bundle.
 if out=$(helm template t charts/sessions-pipeline -f charts/sessions-pipeline/ci/search-indexer-values.yaml --set global.rdsCa.bundle=us-east-1 2>&1); then
   err "standalone sessions-pipeline rendered global.rdsCa without the umbrella"

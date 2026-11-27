@@ -2342,9 +2342,22 @@ compatibility:
       images:
         relayauth: { repository: ghcr.io/agentworkforce/relayauth, digest: sha256:eb71daa28e30eb7305f666d0bccc5a4002e53e8a574e3c4c32163d907a1b71df }
       notes: superseded by 0.1.1.
-    - id: agent-relay-0.7.85
+    - id: agent-relay-0.7.86
       status: unreleased
       current: true
+      charts: { agent-relay: 0.7.86, relay-control: 0.4.27, relay-webapp: 0.2.8 }
+      app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
+      depends:
+        agent-relay: { relaycast: 0.3.18, relayauth: 0.1.5, sessions-pipeline: 0.8.61, relay-control: 0.4.27, relay-webapp: 0.2.8, relayflows: 0.2.5, durable-actors: 0.14.6-awf.4, relayfile: 0.2.2, telemetry-collector: 0.1.7, relay-chief: 0.1.0, slack-relay: 0.3.12, relaygate: 0.1.13 }
+      images:
+        relaycast: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        relaycast-postgres: { repository: ghcr.io/agentworkforce/relaycast-self-host, digest: sha256:ec062ef901af15cf575b53a71d7eb09f2e6ab6e7c0d5be2da35339a275a5c6cc }
+        sessions-pipeline-worker: { repository: ghcr.io/agentworkforce/sessions-pipeline, digest: sha256:459104bc432c96e475352e5147e0aaeabd53f51681d4ed8e05119e8406feda7f }
+        relay-control: { repository: ghcr.io/agentworkforce/relay-control, digest: sha256:1cb5bd714e7c9f326cfe107544b8b7125207c80a7e556ab8debf78a8b2167ad9 }
+        relay-webapp: { repository: ghcr.io/agentworkforce/relay-webapp, digest: sha256:bd295ccb7d1323965dce890f19d0b7f857d706c00d7756f719c713763fdb49f3 }
+      notes: 'Carries 0.7.85. Site values (opt.agent-relay.site-values): the top-level site block (domain or hosts, region, sessionsBucket, opensearchUrl, orgId, orgName, adminEmail, rds) sets each site fact once and the umbrella fills every component value that repeats it; a contradicting value fails the render. One template that renders before every subchart reports every values problem it can see in one failure; scripts/selfhost/check-values.sh lists them without a cluster. Empty site keys change nothing: the long form renders byte-identically. Subcharts and images unchanged.'
+    - id: agent-relay-0.7.85
+      status: planned
       charts: { agent-relay: 0.7.85, relay-control: 0.4.27, relay-webapp: 0.2.8 }
       app_versions: { agent-relay: 0.1.0, relay-control: 0.1.0, relay-webapp: 0.1.0 }
       depends:
@@ -6585,6 +6598,45 @@ entries:
       - "charts/relay-webapp/templates/ingress.yaml"
       - "ci/agent-relay/render.sh"
       - "ci/agent-relay/subdomain-golden.sh"
+
+  - id: opt.agent-relay.site-values
+    kind: option
+    title: Site values set once (site:) and one aggregated values report
+    description: |
+      The top-level site block (domain or hosts, region, sessionsBucket,
+      opensearchUrl, orgId, orgName, adminEmail, rds) holds each site fact
+      once; the umbrella fills every component value that repeats it: the
+      public origins and hosts of Relaycast, Control, the dashboard, the read
+      API, ingest edge and legacy ingest; every locker bucket and region and
+      the read API's LOCKER_BUCKET/LOCKER_REGION; both OpenSearch URLs and
+      regions; global.tenant.orgId in every chart; relay-control.bootstrap;
+      global.rdsCa.bundle with rds; and the enabled edge's hosts. Empty keys
+      fill nothing, so a file that spells every value out renders unchanged.
+      A component value that is empty or a profile example gets the site
+      value; one that must agree with it and differs fails the render. Before
+      any subchart renders, the chart collects every values problem it can see
+      (site values, contradictions, and the read API origin, OpenSearch URL,
+      shared bucket and origin checks the subcharts make one at a time) and
+      fails once with the list. scripts/selfhost/check-values.sh prints it
+      without a cluster, plus example values left in the operator's files.
+    chart: agent-relay
+    values:
+      - "site.*"
+    profiles: [agent-relay, agent-relay-aks-native]
+    status: shipped
+    provided_by: operator
+    default: unset (every value spelled out per component)
+    choices:
+      - { value: unset, note: "set each component value (the long form)" }
+      - { value: set, note: "site.domain (or site.hosts), region, sessionsBucket, opensearchUrl, orgId, orgName, adminEmail, rds" }
+    verify: scripts/selfhost/check-values.sh -f <the helm -f files> prints no problems; examples/aws/values.yaml renders byte-identically to ci/agent-relay/fixtures/aws-long-form-values.yaml
+    sources:
+      - "charts/agent-relay/templates/_site.tpl"
+      - "charts/agent-relay/templates/site/runs-before-subcharts/1/2/3/4/5/site.yaml"
+      - "charts/agent-relay/values.yaml"
+      - "examples/aws/values.yaml"
+      - "scripts/selfhost/check-values.sh"
+      - "ci/agent-relay/test_site_values.py"
 
   - id: opt.relay-webapp.ingress
     kind: option

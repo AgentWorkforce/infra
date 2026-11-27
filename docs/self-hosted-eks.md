@@ -33,7 +33,8 @@ Files:
 
 | File | What it is |
 | --- | --- |
-| [`charts/agent-relay/values-eks.yaml`](../charts/agent-relay/values-eks.yaml) | Customer-neutral EKS values. Replace every `REQUIRED OVERRIDE`. |
+| [`charts/agent-relay/values-eks.yaml`](../charts/agent-relay/values-eks.yaml) | Customer-neutral EKS values. Your `site:` block ([Site values](../charts/agent-relay/README.md#site-values)) fills the domain, bucket, region, OpenSearch and org copies; set any other `REQUIRED OVERRIDE` yourself. |
+| [`scripts/selfhost/check-values.sh`](../scripts/selfhost/check-values.sh) | Lists every values problem at once, with no cluster: example values left in, then the chart's own checks, each with the value's path and the fix. |
 | [`scripts/selfhost/eks-alb-ingress.sh`](../scripts/selfhost/eks-alb-ingress.sh) | Prints the ALB Ingress (one ALB, four hosts, ACM TLS, edge denials). The documented way; the chart's opt-in `eksIngress` renders the same Ingress from the release ([EKS ALB Ingress](../charts/agent-relay/README.md#eks-alb-ingress)). The script has no relaygate mode: with the built-in relaygate (`values-eks-relaygate.yaml`, [sessions-only](self-hosted-relaygate.md#built-in-sessions-only)) render the edge from the release. |
 | [`scripts/selfhost/eks-proof-dns.sh`](../scripts/selfhost/eks-proof-dns.sh) | ACM certificate (request, wait, delete) and the DNS records (validation CNAMEs, host CNAMEs to the ALB) in the parent Cloudflare zone, removed by recorded id. |
 | [`scripts/selfhost/eks-proof-sandbox.sh`](../scripts/selfhost/eks-proof-sandbox.sh) | The proof substrate: VPC, EKS Auto Mode cluster, IAM roles, S3 bucket, Pod Identity, StorageClass/IngressClass. Pippen conventions. |
@@ -232,8 +233,9 @@ was removed in agent-relay 0.7.0; a current install uses `values-eks.yaml`
 (native History) or `values-eks-rds-native.yaml` with your own Secrets and
 `eks-alb-ingress.sh`.
 
-On RDS, set `global.rdsCa.bundle` to the RDS region (or `global`) in your
-values, as [`examples/aws/values.yaml`](../examples/aws/values.yaml) does. The
+On RDS, set `site.rds: true` (with `site.region`) or `global.rdsCa.bundle` to
+the RDS region (or `global`) in your values;
+[`examples/aws/values.yaml`](../examples/aws/values.yaml) uses `site.rds`. The
 chart ships AWS's public RDS CA bundles, renders the `rds-ca` ConfigMap and
 pins its SHA-256 in every Postgres client, so there is no bundle to download,
 ConfigMap to create or hash to paste. To bring your own CA instead, see
