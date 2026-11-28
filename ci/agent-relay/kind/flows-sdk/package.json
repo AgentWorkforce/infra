@@ -4,5 +4,13 @@
   "version": "1.0.0",
   "dependencies": {
     "relayflows": "2.0.50"
+  },
+  "overrides": {
+    "@relayflows/sdk": {
+      "re2js": "2.8.7"
+    },
+    "@relayfile/adapter-core": {
+      "minimatch": "11.0.2"
+    }
   }
 }
