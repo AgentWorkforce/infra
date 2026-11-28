@@ -56,7 +56,7 @@ variable "package" {
   description = <<-EOT
     The pipeline code, exactly one of: image_uri (a container image in ECR, package_type Image), s3_bucket + s3_key
     (a zip in S3), or filename (a local zip). The hosted stack builds src/session-pipeline/lambda.ts from
-    AgentWorkforce/96BullSessions with export "handler".
+    AgentWorkforce/96BullSessions with export "handler". null only with existing_function_name (adopt mode).
   EOT
   type = object({
     image_uri         = optional(string)
@@ -66,9 +66,10 @@ variable "package" {
     filename          = optional(string)
     source_code_hash  = optional(string)
   })
+  default = null
 
   validation {
-    condition = length(compact([
+    condition = var.package == null ? true : length(compact([
       var.package.image_uri == null ? "" : "image",
       var.package.s3_bucket == null && var.package.s3_key == null ? "" : "s3",
       var.package.filename == null ? "" : "file",
@@ -77,12 +78,12 @@ variable "package" {
   }
 
   validation {
-    condition     = (var.package.s3_bucket == null) == (var.package.s3_key == null)
+    condition     = var.package == null ? true : (var.package.s3_bucket == null) == (var.package.s3_key == null)
     error_message = "package.s3_bucket and package.s3_key go together."
   }
 
   validation {
-    condition     = var.package.image_uri == null || can(regex("@sha256:[0-9a-f]{64}$", var.package.image_uri))
+    condition     = var.package == null ? true : (var.package.image_uri == null ? true : can(regex("@sha256:[0-9a-f]{64}$", var.package.image_uri)))
     error_message = "package.image_uri must be pinned by digest (<repository>@sha256:<64 hex>)."
   }
 }
@@ -117,7 +118,7 @@ variable "memory_size" {
 }
 
 variable "timeout_seconds" {
-  description = "Function timeout. The queue's visibility timeout is six times this (AWS guidance for SQS sources) plus maximum_batching_window_seconds."
+  description = "Function timeout. Unless visibility_timeout_seconds is set, the queue's visibility timeout is six times this (AWS guidance for SQS sources) plus maximum_batching_window_seconds."
   type        = number
   default     = 300
 
@@ -330,4 +331,58 @@ variable "tags" {
   description = "Tags applied to every resource."
   type        = map(string)
   default     = {}
+}
+
+# --- Adopting existing resources --------------------------------------------
+
+variable "existing_function_name" {
+  description = "Adopt an existing pipeline function instead of creating it. Its role, log group, secret and invoke config are owned elsewhere and not authored here; this state manages the queues, the event source mapping, the schedules and (with manage_schedule_permissions) their invoke permissions. Null creates the function."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.existing_function_name == null ? true : can(regex("^[a-zA-Z0-9-_]{1,64}$", var.existing_function_name))
+    error_message = "existing_function_name must be a Lambda function name (not an ARN)."
+  }
+}
+
+variable "visibility_timeout_seconds" {
+  description = "session-events VisibilityTimeout. Null: six times timeout_seconds plus maximum_batching_window_seconds. Set it when adopting a queue, to keep its live value."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.visibility_timeout_seconds == null ? true : (var.visibility_timeout_seconds >= 0 && var.visibility_timeout_seconds <= 43200 && floor(var.visibility_timeout_seconds) == var.visibility_timeout_seconds)
+    error_message = "visibility_timeout_seconds must be a whole number from 0 to 43200."
+  }
+}
+
+variable "schedule_description_prefix" {
+  description = "Prefix of the reconcile and brief rules' descriptions. Set it only to match an adopted stack's live rules."
+  type        = string
+  default     = "agent-relay session pipeline"
+}
+
+variable "brief_schedule_enabled" {
+  description = "The brief schedule's state. Null: enabled only when enabled and briefs_enabled are both true."
+  type        = bool
+  default     = null
+}
+
+variable "manage_queue_policies" {
+  description = "Author the session-events and DLQ access policies. false leaves an adopted queue's policy as it is."
+  type        = bool
+  default     = true
+}
+
+variable "manage_schedule_permissions" {
+  description = "Author the reconcile and brief invoke permissions (statement ids session-reconcile, session-brief). false leaves an adopted function's resource policy as it is."
+  type        = bool
+  default     = true
+}
+
+variable "create_alarms" {
+  description = "Create the DLQ, backlog-age and error alarms."
+  type        = bool
+  default     = true
 }

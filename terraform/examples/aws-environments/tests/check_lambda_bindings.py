@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-FUNCTION = "module.pipeline[0].aws_lambda_function.this"
+FUNCTION = "module.pipeline[0].aws_lambda_function.this[0]"
 DOMAIN = "module.search.aws_opensearch_domain.this[0]"
 RUN = "actual_lambda_environment"
 

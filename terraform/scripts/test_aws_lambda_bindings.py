@@ -35,7 +35,7 @@ BINDINGS = {
     "SESSION_POSTGRES_CA_FILE": "/var/task/assets/postgres-ca.pem",
     "SESSION_POSTGRES_CA_SHA256": "a" * 64,
 }
-FUNCTION = "module.pipeline[0].aws_lambda_function.this"
+FUNCTION = "module.pipeline[0].aws_lambda_function.this[0]"
 DOMAIN = "module.search.aws_opensearch_domain.this[0]"
 RUN = "actual_lambda_environment"
 MAPPING = "module.pipeline[0].aws_lambda_event_source_mapping.events"

@@ -32,7 +32,15 @@ require = golden.require
 # Each is compared against its pre-change golden address, so its planned values
 # must still match byte-for-byte. Search's `enabled` gave the (previously
 # unindexed) domain policy a count; modules/aws/search moves this -> this[0].
-MOVED = {"module.search.aws_opensearch_domain_policy.this[0]": "module.search.aws_opensearch_domain_policy.this"}
+PIPELINE = "module.pipeline[0]."
+# modules/aws/functions counted these for adopt mode; its moved blocks rename each X -> X[0] in state.
+PIPELINE_COUNTED = [
+    "aws_cloudwatch_log_group.this", "aws_cloudwatch_metric_alarm.backlog_age", "aws_cloudwatch_metric_alarm.dlq_not_empty",
+    "aws_cloudwatch_metric_alarm.errors", "aws_lambda_function.this", "aws_lambda_function_event_invoke_config.this",
+    "aws_lambda_permission.brief", "aws_lambda_permission.reconcile", "aws_sqs_queue_policy.dlq", "aws_sqs_queue_policy.events",
+]
+MOVED = {"module.search.aws_opensearch_domain_policy.this[0]": "module.search.aws_opensearch_domain_policy.this",
+         **{PIPELINE + r + "[0]": PIPELINE + r for r in PIPELINE_COUNTED}}
 
 # enable_database = enable_search = false: the sessions bucket and its storage
 # bindings, plus three state-only objects (no AWS API object): the root

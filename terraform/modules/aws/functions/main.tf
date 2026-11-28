@@ -2,22 +2,34 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 data "aws_partition" "current" {}
 
+# existing_function_name: the function, its role, log group, secret and invoke config already exist and are
+# owned elsewhere; this state manages only the queues, the mapping, the schedules and their permissions.
+data "aws_lambda_function" "existing" {
+  count         = var.existing_function_name != null ? 1 : 0
+  function_name = var.existing_function_name
+}
+
 locals {
   account_id = data.aws_caller_identity.current.account_id
   region     = data.aws_region.current.region
   partition  = data.aws_partition.current.partition
   dns_suffix = data.aws_partition.current.dns_suffix
 
-  function_name      = "${var.name}-session-pipeline"
+  function_name      = local.adopt ? var.existing_function_name : "${var.name}-session-pipeline"
   queue_name         = "${var.name}-session-events"
   dlq_name           = "${var.name}-session-events-dlq"
   function_arn       = "arn:${local.partition}:lambda:${local.region}:${local.account_id}:function:${local.function_name}"
   bucket_arn         = "arn:${local.partition}:s3:::${var.bucket_name}"
   key_prefix         = trim(var.key_prefix, "/")
-  secret_arn         = var.create_secret ? aws_secretsmanager_secret.pipeline[0].arn : var.secret_arn
+  adopt              = var.existing_function_name != null
+  secret_arn         = local.adopt ? null : (var.create_secret ? aws_secretsmanager_secret.pipeline[0].arn : var.secret_arn)
   in_vpc             = length(var.vpc_subnet_ids) > 0
-  is_image           = var.package.image_uri != null
-  execution_role_arn = var.existing_execution_role_arn != null ? var.existing_execution_role_arn : aws_iam_role.this[0].arn
+  is_image           = var.package == null ? false : var.package.image_uri != null
+  execution_role_arn = local.adopt ? data.aws_lambda_function.existing[0].role : (var.existing_execution_role_arn != null ? var.existing_execution_role_arn : aws_iam_role.this[0].arn)
+  # The function every queue mapping, schedule target and permission points at.
+  pipeline_function_arn = local.adopt ? data.aws_lambda_function.existing[0].arn : aws_lambda_function.this[0].arn
+  visibility_timeout    = var.visibility_timeout_seconds != null ? var.visibility_timeout_seconds : 6 * var.timeout_seconds + var.maximum_batching_window_seconds
+  brief_enabled         = var.brief_schedule_enabled != null ? var.brief_schedule_enabled : (var.enabled && var.briefs_enabled)
 
   environment = merge({
     PIPELINE_RAW_S3_BUCKET              = var.bucket_name
@@ -53,7 +65,8 @@ resource "aws_sqs_queue" "events" {
   delay_seconds = var.delivery_delay_seconds
   # Six times the timeout (AWS guidance for SQS sources) plus the batching
   # window, so no message reappears while its invocation still runs.
-  visibility_timeout_seconds        = 6 * var.timeout_seconds + var.maximum_batching_window_seconds
+  # visibility_timeout_seconds overrides it (an adopted queue keeps its live value).
+  visibility_timeout_seconds        = local.visibility_timeout
   message_retention_seconds         = var.queue_retention_seconds
   receive_wait_time_seconds         = 20
   sqs_managed_sse_enabled           = var.queue_kms_key_arn == null ? true : null
@@ -64,9 +77,18 @@ resource "aws_sqs_queue" "events" {
     maxReceiveCount     = var.max_receive_count
   })
   tags = var.tags
+
+  lifecycle {
+    # Cross-variable check here, not in the variable, so Terraform 1.6-1.8 still work.
+    precondition {
+      condition     = var.visibility_timeout_seconds == null ? true : var.visibility_timeout_seconds >= var.timeout_seconds
+      error_message = "visibility_timeout_seconds must be at least timeout_seconds, or a message reappears while its invocation still runs."
+    }
+  }
 }
 
 resource "aws_sqs_queue_policy" "dlq" {
+  count     = var.manage_queue_policies ? 1 : 0
   queue_url = aws_sqs_queue.dlq.id
   policy = jsonencode({
     Version = "2012-10-17"
@@ -82,6 +104,7 @@ resource "aws_sqs_queue_policy" "dlq" {
 }
 
 resource "aws_sqs_queue_policy" "events" {
+  count     = var.manage_queue_policies ? 1 : 0
   queue_url = aws_sqs_queue.events.id
   policy = jsonencode({
     Version = "2012-10-17"
@@ -131,7 +154,7 @@ resource "aws_s3_bucket_notification" "manifests" {
 
 resource "aws_secretsmanager_secret" "pipeline" {
   #checkov:skip=CKV2_AWS_57:A container whose value (HoopDb URL, search credentials) is set and rotated by its owner out of band.
-  count = var.create_secret ? 1 : 0
+  count = var.create_secret && !local.adopt ? 1 : 0
 
   name                    = "${var.name}/session-pipeline"
   description             = "agent-relay session pipeline: HoopDb URL and search backend credentials (JSON)"
@@ -156,7 +179,7 @@ moved {
 }
 
 resource "aws_iam_role" "this" {
-  count                = var.existing_execution_role_arn == null ? 1 : 0
+  count                = var.existing_execution_role_arn == null && !local.adopt ? 1 : 0
   name                 = local.function_name
   path                 = var.role_path
   permissions_boundary = var.permissions_boundary_arn
@@ -179,7 +202,7 @@ locals {
         Sid      = "Logs"
         Effect   = "Allow"
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = ["${aws_cloudwatch_log_group.this.arn}:*"]
+        Resource = ["${try(aws_cloudwatch_log_group.this[0].arn, "")}:*"]
       },
       {
         # Unconditional ListBucket: S3 answers 404 (not 403) for a missing
@@ -256,7 +279,7 @@ locals {
 }
 
 resource "aws_iam_role_policy" "this" {
-  count  = var.existing_execution_role_arn == null ? 1 : 0
+  count  = var.existing_execution_role_arn == null && !local.adopt ? 1 : 0
   name   = "session-pipeline"
   role   = aws_iam_role.this[0].id
   policy = jsonencode({ Version = "2012-10-17", Statement = local.role_statements })
@@ -268,6 +291,7 @@ resource "aws_iam_role_policy" "this" {
 
 resource "aws_cloudwatch_log_group" "this" {
   #checkov:skip=CKV_AWS_338:Retention is the customer's choice (log_retention_days, default 30).
+  count             = local.adopt ? 0 : 1
   name              = "/aws/lambda/${local.function_name}"
   retention_in_days = var.log_retention_days
   kms_key_id        = var.log_kms_key_arn
@@ -278,17 +302,18 @@ resource "aws_lambda_function" "this" {
   #checkov:skip=CKV_AWS_116:SQS-sourced: failed messages go to the session-events DLQ through the queue redrive policy.
   #checkov:skip=CKV_AWS_272:Code signing is opt-in (code_signing_config_arn); container images must be pinned by digest (validated).
   #checkov:skip=CKV_AWS_117:VPC placement is opt-in (vpc_subnet_ids); needed only to reach a private HoopDb.
+  count         = local.adopt ? 0 : 1
   function_name = local.function_name
   role          = local.execution_role_arn
   description   = "agent-relay session pipeline (event-driven mode): manifest events to HoopDb pointers and search index"
 
   package_type      = local.is_image ? "Image" : "Zip"
-  image_uri         = var.package.image_uri
-  s3_bucket         = var.package.s3_bucket
-  s3_key            = var.package.s3_key
-  s3_object_version = var.package.s3_object_version
-  filename          = var.package.filename
-  source_code_hash  = var.package.source_code_hash
+  image_uri         = try(var.package.image_uri, null)
+  s3_bucket         = try(var.package.s3_bucket, null)
+  s3_key            = try(var.package.s3_key, null)
+  s3_object_version = try(var.package.s3_object_version, null)
+  filename          = try(var.package.filename, null)
+  source_code_hash  = try(var.package.source_code_hash, null)
   handler           = local.is_image ? null : var.handler
   runtime           = local.is_image ? null : var.runtime
   architectures     = [var.architecture]
@@ -305,7 +330,7 @@ resource "aws_lambda_function" "this" {
 
   logging_config {
     log_format = "JSON"
-    log_group  = aws_cloudwatch_log_group.this.name
+    log_group  = aws_cloudwatch_log_group.this[0].name
   }
 
   tracing_config {
@@ -335,19 +360,24 @@ resource "aws_lambda_function" "this" {
       condition     = var.create_secret || var.secret_arn != null
       error_message = "Set secret_arn when create_secret is false."
     }
+    precondition {
+      condition     = var.package != null
+      error_message = "package is required unless existing_function_name adopts a function."
+    }
   }
 
   depends_on = [aws_iam_role_policy.this]
 }
 
 resource "aws_lambda_function_event_invoke_config" "this" {
-  function_name                = aws_lambda_function.this.function_name
+  count                        = local.adopt ? 0 : 1
+  function_name                = aws_lambda_function.this[0].function_name
   maximum_retry_attempts       = 2
   maximum_event_age_in_seconds = 3600
 }
 
 resource "aws_lambda_event_source_mapping" "events" {
-  function_name                      = aws_lambda_function.this.arn
+  function_name                      = local.pipeline_function_arn
   event_source_arn                   = aws_sqs_queue.events.arn
   batch_size                         = var.batch_size
   maximum_batching_window_in_seconds = var.maximum_batching_window_seconds
@@ -367,7 +397,7 @@ resource "aws_lambda_event_source_mapping" "events" {
 
 resource "aws_cloudwatch_event_rule" "reconcile" {
   name                = "${var.name}-session-reconcile"
-  description         = "agent-relay session pipeline: reconcile recent manifests (lost notifications)"
+  description         = "${var.schedule_description_prefix}: reconcile recent manifests (lost notifications)"
   schedule_expression = "rate(${var.reconcile_minutes} minutes)"
   state               = var.enabled ? "ENABLED" : "DISABLED"
   tags                = var.tags
@@ -376,14 +406,15 @@ resource "aws_cloudwatch_event_rule" "reconcile" {
 resource "aws_cloudwatch_event_target" "reconcile" {
   rule      = aws_cloudwatch_event_rule.reconcile.name
   target_id = "session-pipeline"
-  arn       = aws_lambda_function.this.arn
+  arn       = local.pipeline_function_arn
   input     = jsonencode({ reconcile = true })
 }
 
 resource "aws_lambda_permission" "reconcile" {
+  count          = var.manage_schedule_permissions ? 1 : 0
   statement_id   = "session-reconcile"
   action         = "lambda:InvokeFunction"
-  function_name  = aws_lambda_function.this.function_name
+  function_name  = local.function_name
   principal      = "events.amazonaws.com"
   source_arn     = aws_cloudwatch_event_rule.reconcile.arn
   source_account = local.account_id
@@ -393,23 +424,24 @@ resource "aws_lambda_permission" "reconcile" {
 # briefs are off (the function also returns early without SESSION_BRIEF_ENABLED).
 resource "aws_cloudwatch_event_rule" "brief" {
   name                = "${var.name}-session-brief"
-  description         = "agent-relay session pipeline: one session-brief tick (due wakeups)"
+  description         = "${var.schedule_description_prefix}: one session-brief tick (due wakeups)"
   schedule_expression = var.brief_schedule_expression
-  state               = var.enabled && var.briefs_enabled ? "ENABLED" : "DISABLED"
+  state               = local.brief_enabled ? "ENABLED" : "DISABLED"
   tags                = var.tags
 }
 
 resource "aws_cloudwatch_event_target" "brief" {
   rule      = aws_cloudwatch_event_rule.brief.name
   target_id = "session-pipeline"
-  arn       = aws_lambda_function.this.arn
+  arn       = local.pipeline_function_arn
   input     = jsonencode({ brief = true })
 }
 
 resource "aws_lambda_permission" "brief" {
+  count          = var.manage_schedule_permissions ? 1 : 0
   statement_id   = "session-brief"
   action         = "lambda:InvokeFunction"
-  function_name  = aws_lambda_function.this.function_name
+  function_name  = local.function_name
   principal      = "events.amazonaws.com"
   source_arn     = aws_cloudwatch_event_rule.brief.arn
   source_account = local.account_id
@@ -420,6 +452,7 @@ resource "aws_lambda_permission" "brief" {
 # ---------------------------------------------------------------------------
 
 resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
+  count               = var.create_alarms ? 1 : 0
   alarm_name          = "${local.dlq_name}-not-empty"
   alarm_description   = "Session pipeline messages exhausted their retries; inspect and redrive the DLQ."
   namespace           = "AWS/SQS"
@@ -438,6 +471,7 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "backlog_age" {
+  count               = var.create_alarms ? 1 : 0
   alarm_name          = "${local.queue_name}-backlog-age"
   alarm_description   = "Oldest session event is older than 15 minutes: the pipeline is behind or failing."
   namespace           = "AWS/SQS"
@@ -456,11 +490,12 @@ resource "aws_cloudwatch_metric_alarm" "backlog_age" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "errors" {
+  count               = var.create_alarms ? 1 : 0
   alarm_name          = "${local.function_name}-errors"
   alarm_description   = "Session pipeline invocations are failing (init, timeouts, crashes)."
   namespace           = "AWS/Lambda"
   metric_name         = "Errors"
-  dimensions          = { FunctionName = aws_lambda_function.this.function_name }
+  dimensions          = { FunctionName = local.function_name }
   statistic           = "Sum"
   period              = 300
   evaluation_periods  = 3
@@ -471,4 +506,56 @@ resource "aws_cloudwatch_metric_alarm" "errors" {
   alarm_actions       = var.alarm_actions
   ok_actions          = var.alarm_actions
   tags                = var.tags
+}
+
+# count was introduced for existing_function_name, manage_queue_policies, manage_schedule_permissions and
+# create_alarms; existing states keep their objects.
+moved {
+  from = aws_cloudwatch_log_group.this
+  to   = aws_cloudwatch_log_group.this[0]
+}
+
+moved {
+  from = aws_lambda_function.this
+  to   = aws_lambda_function.this[0]
+}
+
+moved {
+  from = aws_lambda_function_event_invoke_config.this
+  to   = aws_lambda_function_event_invoke_config.this[0]
+}
+
+moved {
+  from = aws_sqs_queue_policy.dlq
+  to   = aws_sqs_queue_policy.dlq[0]
+}
+
+moved {
+  from = aws_sqs_queue_policy.events
+  to   = aws_sqs_queue_policy.events[0]
+}
+
+moved {
+  from = aws_lambda_permission.reconcile
+  to   = aws_lambda_permission.reconcile[0]
+}
+
+moved {
+  from = aws_lambda_permission.brief
+  to   = aws_lambda_permission.brief[0]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.dlq_not_empty
+  to   = aws_cloudwatch_metric_alarm.dlq_not_empty[0]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.backlog_age
+  to   = aws_cloudwatch_metric_alarm.backlog_age[0]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.errors
+  to   = aws_cloudwatch_metric_alarm.errors[0]
 }
