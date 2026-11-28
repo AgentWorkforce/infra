@@ -1,5 +1,5 @@
-# Push-based session summaries (T130, code only; production enablement is held). PROVISIONAL names until
-# relayhistory-pipeline confirms the contract. Off by default: with briefs_queue.create = false nothing here is
+# Push-based session summaries (T130 producer contract v1, sha256 f01914a6...; code only, production enablement
+# held). Off by default: with briefs_queue.create = false nothing here is
 # planned, so the adoption plan is unchanged.
 #
 #   producer : the session-pipeline function, right after it commits a manifest append or session end (and the
@@ -111,6 +111,6 @@ resource "aws_cloudwatch_metric_alarm" "briefs_dlq" {
 }
 
 output "briefs_queue_url" {
-  description = "Push-summary queue URL (SESSION_BRIEF_QUEUE_URL, provisional), or null."
+  description = "Push-summary queue URL (SESSION_BRIEF_QUEUE_URL), or null."
   value       = var.briefs_queue.create ? aws_sqs_queue.briefs["briefs"].id : null
 }

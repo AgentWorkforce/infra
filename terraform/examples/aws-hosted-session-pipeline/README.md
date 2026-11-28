@@ -153,7 +153,7 @@ exactly that plan, once. The repository is public, so the log shows addresses, a
 
 | Name | Description |
 | ---- | ----------- |
-| briefs\_queue\_url | Push-summary queue URL (SESSION\_BRIEF\_QUEUE\_URL, provisional), or null. |
+| briefs\_queue\_url | Push-summary queue URL (SESSION\_BRIEF\_QUEUE\_URL), or null. |
 | event\_source\_mapping\_max\_concurrency | The mapping's MaximumConcurrency as planned. |
 | optional\_schedules | Optional schedule rule names and states (reconcile and brief live in the module). |
 | queue\_url | session-events queue URL. |
