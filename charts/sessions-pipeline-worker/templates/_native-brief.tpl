@@ -55,6 +55,10 @@
 {{- end -}}
 {{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" ($n.keyPrefix | default "")) }}{{ fail "nativeBrief.keyPrefix must be a bare writer root, not an org-suffixed path" }}{{ end -}}
 {{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$" ($n.model | default "")) }}{{ fail "nativeBrief.model is invalid" }}{{ end -}}
+{{- $push := $n.push -}}
+{{- if not (kindIs "bool" $push.enabled) }}{{ fail "nativeBrief.push.enabled must be a boolean" }}{{ end -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $push.maxDelaySeconds))) (lt (int $push.maxDelaySeconds) 1) (gt (int $push.maxDelaySeconds) 60) }}{{ fail "nativeBrief.push.maxDelaySeconds must be an integer 1..60" }}{{ end -}}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $push.idleSeconds))) (lt (int $push.idleSeconds) 1) (gt (int $push.idleSeconds) 86400) }}{{ fail "nativeBrief.push.idleSeconds must be an integer 1..86400" }}{{ end -}}
 {{- if or (not (regexMatch "^[0-9]+$" (toString $n.sweepSeconds))) (lt (int $n.sweepSeconds) 1) (gt (int $n.sweepSeconds) 86400) }}{{ fail "nativeBrief.sweepSeconds must be an integer 1..86400" }}{{ end -}}
 {{- range $field, $max := dict "batch" 100 "globalDailyCap" 10000000 "sessionDailyCap" 10000 -}}
 {{- $value := index $n $field -}}
@@ -69,7 +73,7 @@
 {{- if or (not $ca.enabled) (not $ca.configMap) $ca.secret }}{{ fail "nativeBrief requires postgresCa.enabled and an existing public CA ConfigMap (not a Secret) (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
 {{- if not (regexMatch "^[a-f0-9]{64}$" ($ca.sha256 | default "")) }}{{ fail "nativeBrief requires postgresCa.sha256 (64 lowercase hex) (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
 {{- if not .Values.workerHealth.enabled }}{{ fail "nativeBrief requires workerHealth.enabled" }}{{ end -}}
-{{- $reserved := list "SERVICE" "READER_MAX_RULESET" "OTEL_SERVICE_NAME" "HOOPDB_URL" "LOCKER_ENDPOINT" "LOCKER_BUCKET" "LOCKER_REGION" "LOCKER_ACCESS_KEY_ID" "LOCKER_SECRET_ACCESS_KEY" "NODE_EXTRA_CA_CERTS" "SSL_CERT_FILE" "SSL_CERT_DIR" "NODE_OPTIONS" "PGOPTIONS" "PGSSLCERT" "PGSSLKEY" "WORKER_HEALTH_PORT" "WORKER_UNHEALTHY_AFTER_FAILURES" "WORKER_MAX_TICK_AGE_MS" "SESSION_BRIEF_ENABLED" "SESSION_BRIEF_CANONICAL_INPUT" "SESSION_BRIEF_WORKSPACE_IDS" "SESSION_BRIEF_MODEL" "SESSION_BRIEF_SWEEP_SECONDS" "SESSION_BRIEF_BATCH" "SESSION_BRIEF_GLOBAL_DAILY_CAP" "SESSION_BRIEF_SESSION_DAILY_CAP" "PIPELINE_ORG_FROM_PREFIX" "PIPELINE_KEY_PREFIX" "OPENAI_API_KEY" "OPENAI_BASE_URL" "NATIVE_BRIEF_CA_FILE" "NATIVE_BRIEF_CA_SOURCE" "NATIVE_BRIEF_CA_SHA256" "PGSSLMODE" "PGSSLROOTCERT" "NODE_TLS_REJECT_UNAUTHORIZED" -}}
+{{- $reserved := list "SERVICE" "READER_MAX_RULESET" "OTEL_SERVICE_NAME" "HOOPDB_URL" "LOCKER_ENDPOINT" "LOCKER_BUCKET" "LOCKER_REGION" "LOCKER_ACCESS_KEY_ID" "LOCKER_SECRET_ACCESS_KEY" "NODE_EXTRA_CA_CERTS" "SSL_CERT_FILE" "SSL_CERT_DIR" "NODE_OPTIONS" "PGOPTIONS" "PGSSLCERT" "PGSSLKEY" "WORKER_HEALTH_PORT" "WORKER_UNHEALTHY_AFTER_FAILURES" "WORKER_MAX_TICK_AGE_MS" "SESSION_BRIEF_ENABLED" "SESSION_BRIEF_CANONICAL_INPUT" "SESSION_BRIEF_WORKSPACE_IDS" "SESSION_BRIEF_MODEL" "SESSION_BRIEF_SWEEP_SECONDS" "SESSION_BRIEF_BATCH" "SESSION_BRIEF_GLOBAL_DAILY_CAP" "SESSION_BRIEF_SESSION_DAILY_CAP" "SESSION_BRIEF_MAX_DELAY_SECONDS" "SESSION_BRIEF_IDLE_SECONDS" "PIPELINE_ORG_FROM_PREFIX" "PIPELINE_KEY_PREFIX" "OPENAI_API_KEY" "OPENAI_BASE_URL" "NATIVE_BRIEF_CA_FILE" "NATIVE_BRIEF_CA_SOURCE" "NATIVE_BRIEF_CA_SHA256" "PGSSLMODE" "PGSSLROOTCERT" "NODE_TLS_REJECT_UNAUTHORIZED" -}}
 {{- range $entry := concat (.Values.extraEnv | default list) ($c.env | default list) -}}
 {{- if has ($entry.name | default "") $reserved }}{{ fail (printf "nativeBrief manages %s; remove it from extraEnv/components.session-brief.env" $entry.name) }}{{ end -}}
 {{- end -}}
@@ -111,6 +115,10 @@
 - { name: SESSION_BRIEF_BATCH, value: {{ .Values.nativeBrief.batch | quote }} }
 - { name: SESSION_BRIEF_GLOBAL_DAILY_CAP, value: {{ .Values.nativeBrief.globalDailyCap | quote }} }
 - { name: SESSION_BRIEF_SESSION_DAILY_CAP, value: {{ .Values.nativeBrief.sessionDailyCap | quote }} }
+{{- with .Values.nativeBrief.push }}{{ if .enabled }}
+- { name: SESSION_BRIEF_MAX_DELAY_SECONDS, value: {{ .maxDelaySeconds | quote }} }
+- { name: SESSION_BRIEF_IDLE_SECONDS, value: {{ .idleSeconds | quote }} }
+{{- end }}{{ end }}
 - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
 - { name: PIPELINE_KEY_PREFIX, value: {{ .Values.nativeBrief.keyPrefix | quote }} }
 - { name: NATIVE_BRIEF_CA_FILE, value: /etc/postgres-ca/ca.crt }
