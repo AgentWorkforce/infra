@@ -147,3 +147,47 @@ run "missing_statement_id_refused" {
   }
   expect_failures = [aws_lambda_permission.pipeline]
 }
+
+run "briefs_off_by_default" {
+  command = plan
+  assert {
+    condition     = length(aws_sqs_queue.briefs) == 0 && length(aws_lambda_event_source_mapping.briefs) == 0
+    error_message = "Nothing push-summary is planned unless briefs_queue.create."
+  }
+}
+
+run "briefs_created_disabled_same_target" {
+  command = apply
+  variables {
+    briefs_queue = { create = true }
+  }
+  assert {
+    condition     = !aws_lambda_event_source_mapping.briefs["briefs"].enabled && aws_sqs_queue.briefs["briefs"].delay_seconds == 0 && one(aws_lambda_event_source_mapping.briefs["briefs"].scaling_config).maximum_concurrency == 2
+    error_message = "The briefs mapping is created disabled, with no queue delay."
+  }
+  assert {
+    condition     = aws_lambda_event_source_mapping.briefs["briefs"].function_name == module.pipeline.function_arn
+    error_message = "Every mapping on the pipeline function targets the same function value as session-events."
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_sqs_queue_policy.briefs["briefs"].policy).Statement : s.Sid] == ["DenyInsecureTransport", "SessionPipelineProducesAndConsumes"]
+    error_message = "TLS only; the pipeline role produces and consumes through the queue policy (no IAM change)."
+  }
+}
+
+run "briefs_enable_needs_create" {
+  command         = plan
+  variables { briefs_queue = { esm_enabled = true } }
+  expect_failures = [var.briefs_queue]
+}
+
+run "briefs_ingest_writer_send_only" {
+  command = apply
+  variables {
+    briefs_queue = { create = true, producer_principal_arns = ["arn:aws:iam::111111111111:user/srv-writer"] }
+  }
+  assert {
+    condition     = one([for st in jsondecode(aws_sqs_queue_policy.briefs["briefs"].policy).Statement : st.Action if st.Sid == "IngestWriterSendsHints"]) == "sqs:SendMessage"
+    error_message = "The ingest writer may only send hints."
+  }
+}

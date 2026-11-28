@@ -94,17 +94,23 @@ exactly that plan, once. The repository is public, so the log shows addresses, a
 | [aws_cloudwatch_event_target.schedule](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_target) | resource |
 | [aws_cloudwatch_log_group.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_cloudwatch_metric_alarm.backlog_age](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
+| [aws_cloudwatch_metric_alarm.briefs_dlq](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.dlq_not_empty](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.errors](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_iam_role.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy_attachment.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_kms_key_policy.transcripts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key_policy) | resource |
+| [aws_lambda_event_source_mapping.briefs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_event_source_mapping) | resource |
 | [aws_lambda_permission.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_s3_bucket_notification.transcripts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_notification) | resource |
 | [aws_s3_bucket_policy.transcripts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_policy) | resource |
 | [aws_secretsmanager_secret.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
 | [aws_secretsmanager_secret_policy.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_policy) | resource |
+| [aws_sqs_queue.briefs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue) | resource |
+| [aws_sqs_queue.briefs_dlq](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue) | resource |
+| [aws_sqs_queue_policy.briefs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue_policy) | resource |
+| [aws_sqs_queue_policy.briefs_dlq](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue_policy) | resource |
 | [aws_sqs_queue_policy.dlq](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue_policy) | resource |
 | [aws_sqs_queue_policy.events](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue_policy) | resource |
 | [aws_lambda_function.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/lambda_function) | data source |
@@ -127,6 +133,7 @@ exactly that plan, once. The repository is public, so the log shows addresses, a
 | secret\_name | The pipeline secret container's name. Its value is set out of band and never managed here. | `string` | n/a | yes |
 | analysis\_results | Analysis jobs (lane F1): the role may write, version-list and erase analysis results, and get data keys for them. | `bool` | `false` | no |
 | briefs\_enabled | The brief schedule's state. Enabling briefs in production needs its own go from Khaliq. | `bool` | `false` | no |
+| briefs\_queue | Push-summary queue. create plans the queue, DLQ, policy, alarm and a DISABLED mapping; esm\_enabled turns consumption on (production enablement, held). | ```object({ create = optional(bool, false) esm_enabled = optional(bool, false) max_concurrency = optional(number, 2) batch_size = optional(number, 10) max_receive_count = optional(number, 8) # The contract's producer is the ingest writer: it sends the hint right after the authoritative manifest CAS. # Its sending identities (for example the srv-writer IAM principal) come from the private tfvars. Empty: only the # pipeline role (recovery sweep) can send. Send-only, TLS-only. producer_principal_arns = optional(list(string), []) })``` | `{}` | no |
 | bucket\_policy\_id | The bucket policy's Id field, if live has one. | `string` | `null` | no |
 | function\_timeout\_seconds | The function's live timeout. The queue's visibility timeout must be at least this. | `number` | `300` | no |
 | import\_existing | Plan the first-run imports. true for every real plan; false only for offline rendering tests (mock providers cannot import). | `bool` | `true` | no |
@@ -146,6 +153,7 @@ exactly that plan, once. The repository is public, so the log shows addresses, a
 
 | Name | Description |
 | ---- | ----------- |
+| briefs\_queue\_url | Push-summary queue URL (SESSION\_BRIEF\_QUEUE\_URL), or null. |
 | event\_source\_mapping\_max\_concurrency | The mapping's MaximumConcurrency as planned. |
 | optional\_schedules | Optional schedule rule names and states (reconcile and brief live in the module). |
 | queue\_url | session-events queue URL. |
