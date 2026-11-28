@@ -215,3 +215,25 @@ run "existing_role_must_be_exact_role_arn" {
   variables { existing_execution_role_arn = "arn:aws:iam::111111111111:role/*" }
   expect_failures = [var.existing_execution_role_arn]
 }
+
+run "visibility_timeout_override" {
+  command = plan
+  variables { visibility_timeout_seconds = 1800 }
+
+  assert {
+    condition     = aws_sqs_queue.events.visibility_timeout_seconds == 1800
+    error_message = "An explicit visibility_timeout_seconds replaces the computed default."
+  }
+}
+
+run "visibility_timeout_below_function_timeout_refused" {
+  command = plan
+  variables { visibility_timeout_seconds = 299 }
+  expect_failures = [aws_sqs_queue.events]
+}
+
+run "visibility_timeout_above_sqs_maximum_refused" {
+  command = plan
+  variables { visibility_timeout_seconds = 43201 }
+  expect_failures = [var.visibility_timeout_seconds]
+}

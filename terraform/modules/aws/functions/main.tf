@@ -51,9 +51,11 @@ resource "aws_sqs_queue" "dlq" {
 resource "aws_sqs_queue" "events" {
   name          = local.queue_name
   delay_seconds = var.delivery_delay_seconds
-  # Six times the timeout (AWS guidance for SQS sources) plus the batching
-  # window, so no message reappears while its invocation still runs.
-  visibility_timeout_seconds        = 6 * var.timeout_seconds + var.maximum_batching_window_seconds
+  # Default: six times the timeout (AWS guidance for SQS sources) plus the
+  # batching window, so no message reappears while its invocation still runs.
+  # visibility_timeout_seconds overrides it (for example to match an existing
+  # queue on import).
+  visibility_timeout_seconds        = coalesce(var.visibility_timeout_seconds, 6 * var.timeout_seconds + var.maximum_batching_window_seconds)
   message_retention_seconds         = var.queue_retention_seconds
   receive_wait_time_seconds         = 20
   sqs_managed_sse_enabled           = var.queue_kms_key_arn == null ? true : null
@@ -64,6 +66,14 @@ resource "aws_sqs_queue" "events" {
     maxReceiveCount     = var.max_receive_count
   })
   tags = var.tags
+
+  lifecycle {
+    # Cross-variable check here, not in the variable, so Terraform 1.6-1.8 still work.
+    precondition {
+      condition     = var.visibility_timeout_seconds == null || var.visibility_timeout_seconds >= var.timeout_seconds
+      error_message = "visibility_timeout_seconds must be at least timeout_seconds, or a message reappears while its invocation still runs."
+    }
+  }
 }
 
 resource "aws_sqs_queue_policy" "dlq" {

@@ -117,13 +117,24 @@ variable "memory_size" {
 }
 
 variable "timeout_seconds" {
-  description = "Function timeout. The queue's visibility timeout is six times this (AWS guidance for SQS sources) plus maximum_batching_window_seconds."
+  description = "Function timeout. Unless visibility_timeout_seconds is set, the queue's visibility timeout is six times this (AWS guidance for SQS sources) plus maximum_batching_window_seconds."
   type        = number
   default     = 300
 
   validation {
     condition     = var.timeout_seconds >= 30 && var.timeout_seconds <= 900
     error_message = "timeout_seconds must be 30-900."
+  }
+}
+
+variable "visibility_timeout_seconds" {
+  description = "session-events visibility timeout. null (the default) keeps six times timeout_seconds plus maximum_batching_window_seconds. Set it only to match an existing queue, for example on import; it must be at least timeout_seconds and at most 43200 (the SQS maximum)."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.visibility_timeout_seconds == null || (var.visibility_timeout_seconds >= 30 && var.visibility_timeout_seconds <= 43200)
+    error_message = "visibility_timeout_seconds must be null or 30-43200 (and at least timeout_seconds; the queue checks that)."
   }
 }
 

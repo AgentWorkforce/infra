@@ -24,6 +24,7 @@ worker stages.
 - **Execution role:** logs to its own log group, unconditional `s3:ListBucket`, and `s3:GetObject` on `<bucket>/<key_prefix>/*/<layout_version>/*` only. It may consume and re-enqueue its queue, read its one secret, invoke itself, and decrypt through S3 for the bucket key. It gets ENI permissions only in a VPC.
 - **Secret:** an empty Secrets Manager container (`SESSION_PIPELINE_SECRET_ARN`). Set its JSON value out of band: the HoopDb URL and, with `search_index_enabled`, the search backend credentials.
 - **Environment:** `PIPELINE_RAW_S3_BUCKET`, `PIPELINE_KEY_PREFIX`, `PIPELINE_ORG_FROM_PREFIX=true`, `SESSION_PIPELINE_SECRET_ARN`, `SESSION_PIPELINE_QUEUE_URL`, `SEARCH_INDEX_ENABLED`, `PIPELINE_FANOUT=off`, `PIPELINE_RECONCILE_LOOKBACK_MINUTES` (twice `reconcile_minutes`), `HOOPDB_POOL_MAX=4`, `OTEL_SERVICE_NAME`, `NODE_OPTIONS=--enable-source-maps` and `SESSION_BRIEF_ENABLED`, as in the hosted `sessionPipelineEnv`. `environment` merges over them.
+- **Visibility timeout:** six times `timeout_seconds` plus the batching window, unless `visibility_timeout_seconds` is set (at least `timeout_seconds`, at most 43200). Set it only to match an existing queue, for example on import.
 - **Alarms:** DLQ not empty, oldest message older than 15 minutes, and function errors. Actions are enabled when `alarm_actions` is set.
 - **VPC:** set `vpc_subnet_ids` and `vpc_security_group_ids` to reach a private HoopDb. The subnets need NAT or VPC endpoints for S3, SQS, Secrets Manager and CloudWatch Logs.
 - **Bucket notifications:** `aws_s3_bucket_notification` owns the bucket's whole notification configuration. If anything else notifies from the bucket, set `manage_bucket_notification = false` and add `bucket_notification_queue_configuration` there.
@@ -141,8 +142,9 @@ does not adopt, detach or forget existing IAM resources automatically.
 | secret\_kms\_key\_arn | KMS key for the created secret. null uses aws/secretsmanager. | `string` | `null` | no |
 | secret\_recovery\_window\_days | Recovery window when the secret is deleted. | `number` | `7` | no |
 | tags | Tags applied to every resource. | `map(string)` | `{}` | no |
-| timeout\_seconds | Function timeout. The queue's visibility timeout is six times this (AWS guidance for SQS sources) plus maximum\_batching\_window\_seconds. | `number` | `300` | no |
+| timeout\_seconds | Function timeout. Unless visibility\_timeout\_seconds is set, the queue's visibility timeout is six times this (AWS guidance for SQS sources) plus maximum\_batching\_window\_seconds. | `number` | `300` | no |
 | tracing\_mode | X-Ray tracing (PassThrough or Active). | `string` | `"PassThrough"` | no |
+| visibility\_timeout\_seconds | session-events visibility timeout. null (the default) keeps six times timeout\_seconds plus maximum\_batching\_window\_seconds. Set it only to match an existing queue, for example on import; it must be at least timeout\_seconds and at most 43200 (the SQS maximum). | `number` | `null` | no |
 | vpc\_security\_group\_ids | Security groups for the function ENIs (egress to Postgres 5432 and HTTPS). | `list(string)` | `[]` | no |
 | vpc\_subnet\_ids | Private subnets for the function ENIs. Needed to reach a private HoopDb (RDS/Aurora); the subnets need a route to S3, SQS, Secrets Manager and CloudWatch (NAT or VPC endpoints). Empty runs outside a VPC. | `list(string)` | `[]` | no |
 
