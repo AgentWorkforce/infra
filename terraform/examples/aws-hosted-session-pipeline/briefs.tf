@@ -2,8 +2,9 @@
 # held). Off by default: with briefs_queue.create = false nothing here is
 # planned, so the adoption plan is unchanged.
 #
-#   producer : the session-pipeline function, right after it commits a manifest append or session end (and the
-#              recovery sweep), sends {kind, org, workspace, session, revision, digest, first_uncovered_at}.
+#   producer : the ingest writer, right after the authoritative manifest CAS commits an append or end
+#              (briefs_queue.producer_principal_arns), and the pipeline function's recovery sweep. Payload v1:
+#              {v, kind, org, workspace, session, revision, digest, first_uncovered_at, trigger_id}.
 #   consumer : the same function through its own event source mapping, created DISABLED.
 #   grants   : resource policy on the queue naming the pipeline role (the role is imported as-is; no IAM change).
 
@@ -15,6 +16,10 @@ variable "briefs_queue" {
     max_concurrency   = optional(number, 2)
     batch_size        = optional(number, 10)
     max_receive_count = optional(number, 8)
+    # The contract's producer is the ingest writer: it sends the hint right after the authoritative manifest CAS.
+    # Its sending identities (for example the srv-writer IAM principal) come from the private tfvars. Empty: only the
+    # pipeline role (recovery sweep) can send. Send-only, TLS-only.
+    producer_principal_arns = optional(list(string), [])
   })
   default = {}
   validation {
@@ -62,10 +67,13 @@ resource "aws_sqs_queue_policy" "briefs" {
   queue_url = aws_sqs_queue.briefs["briefs"].id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       { Sid = "DenyInsecureTransport", Effect = "Deny", Principal = "*", Action = "sqs:*", Resource = aws_sqs_queue.briefs["briefs"].arn, Condition = { Bool = { "aws:SecureTransport" = "false" } } },
       { Sid = "SessionPipelineProducesAndConsumes", Effect = "Allow", Principal = { AWS = local.role_arn }, Action = ["sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes"], Resource = aws_sqs_queue.briefs["briefs"].arn },
-    ]
+      ],
+      length(var.briefs_queue.producer_principal_arns) == 0 ? [] : [
+        { Sid = "IngestWriterSendsHints", Effect = "Allow", Principal = { AWS = var.briefs_queue.producer_principal_arns }, Action = "sqs:SendMessage", Resource = aws_sqs_queue.briefs["briefs"].arn },
+    ])
   })
 }
 

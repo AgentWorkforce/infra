@@ -180,3 +180,14 @@ run "briefs_enable_needs_create" {
   variables { briefs_queue = { esm_enabled = true } }
   expect_failures = [var.briefs_queue]
 }
+
+run "briefs_ingest_writer_send_only" {
+  command = apply
+  variables {
+    briefs_queue = { create = true, producer_principal_arns = ["arn:aws:iam::111111111111:user/srv-writer"] }
+  }
+  assert {
+    condition     = one([for st in jsondecode(aws_sqs_queue_policy.briefs["briefs"].policy).Statement : st.Action if st.Sid == "IngestWriterSendsHints"]) == "sqs:SendMessage"
+    error_message = "The ingest writer may only send hints."
+  }
+}
