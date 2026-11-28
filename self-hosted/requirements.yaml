@@ -5857,6 +5857,9 @@ entries:
       (worker.secretKeys.lockerAzureAccountKey), with no S3 keys. It requires
       locker.credentials.mode=secret, locker.bucket as an Azure container name, an
       endpoint that is empty, https or loopback http, and worker.lockerInit.enabled=false.
+      The services admit azure only in session-analysis and coordination-advisor
+      (vendorBindings ownLocker, sessions-pipeline fefbc87c), so the worker components
+      bob-costas, referee, hoopdb-indexer and session-brief must be disabled.
     chart: sessions-pipeline
     values: [worker.locker.provider, worker.locker.azure.account, worker.secretKeys.lockerAzureAccountKey, alleyoop.locker.provider, worker.extraEnv, alleyoop.extraEnv]
     env: [LOCKER_PROVIDER, PIPELINE_RAW_PROVIDER, LOCKER_AZURE_ACCOUNT, LOCKER_AZURE_ACCOUNT_KEY, CLOUD_SQL_CONNECTION_NAME, REDIS_HOST, REDIS_PORT, REDIS_AUTH_ENABLED, REDIS_TRANSIT_ENCRYPTION, REDIS_TLS_CA_PEM, PUBSUB_TOPIC, PUBSUB_SUBSCRIPTION]

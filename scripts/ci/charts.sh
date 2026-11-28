@@ -190,7 +190,10 @@ for chart in "${charts[@]}"; do
         if [ "$chart" = "sessions-pipeline-worker" ]; then
           summary_file_refs=$(grep -Ec '^[[:space:]]*- name: SUMMARY_MASTER_KEYS_FILE[[:space:]]*$' <<<"$out" || true)
           summary_value_refs=$(grep -Ec '^[[:space:]]*- name: SUMMARY_MASTER_KEYS[[:space:]]*$' <<<"$out" || true)
-          [ "$summary_file_refs" -eq 1 ] || err "$label: SUMMARY_MASTER_KEYS_FILE must be injected exactly once (Bob Costas only), found $summary_file_refs"
+          # Exactly once when Bob Costas renders (the Azure Locker values disable it: the services refuse Azure there).
+          bob_rendered=$(grep -Ec '^[[:space:]]*value: "?bob-costas"?[[:space:]]*$' <<<"$out" || true)
+          summary_want=$(( bob_rendered > 0 ? 1 : 0 ))
+          [ "$summary_file_refs" -eq "$summary_want" ] || err "$label: SUMMARY_MASTER_KEYS_FILE must be injected exactly $summary_want time(s) (Bob Costas only), found $summary_file_refs"
           [ "$summary_value_refs" -eq 0 ] || err "$label: SUMMARY_MASTER_KEYS must never be injected as an environment variable, found $summary_value_refs"
         fi
         # --no-hooks drops hooked objects, so ban hooks on a full render.

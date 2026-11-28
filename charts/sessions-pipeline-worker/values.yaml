@@ -86,6 +86,10 @@ locker:
   # endpoint is optional (empty: https://<account>.blob.core.windows.net), and
   # credentials.mode must be secret. lockerInit must be off: create the
   # container and turn on blob versioning on the account outside the chart.
+  # The services admit azure only in session-analysis and coordination-advisor:
+  # components bob-costas, referee, hoopdb-indexer and session-brief must be
+  # disabled (they refuse LOCKER_PROVIDER=azure at startup, sessions-pipeline
+  # src/shared/env.ts as of fefbc87c).
   # Needs a services image with the Azure Locker and analysis runner
   # (sessions-pipeline 10d27ff4 or later; agent-relay-2026.11.24 has it).
   provider: s3
@@ -535,8 +539,9 @@ sessionAnalysis:
   # proves blob versioning at startup with a probe write and erase, so the
   # account needs versioning on and the key needs write and delete rights.
   # Needs sessions-pipeline 10d27ff4 or later in the shared worker image
-  # (agent-relay-2026.11.24's image has it): locker.provider=azure switches
-  # every worker, so pinning sessionAnalysis.image alone is not enough. This
+  # (agent-relay-2026.11.24's image has it): locker.provider=azure also switches
+  # coordination-advisor and migrate, so pinning sessionAnalysis.image alone is
+  # not enough. This
   # chart's standalone default image predates it.
   azure:
     accountKeySecret:

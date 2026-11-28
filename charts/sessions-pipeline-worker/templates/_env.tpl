@@ -90,6 +90,14 @@ LOCKER_AZURE_ACCOUNT_KEY; it refuses S3 keys and an endpoint that is not https
 {{- end }}
 {{- if not (.Values.secretKeys.lockerAzureAccountKey | default "") }}{{ fail "sessions-pipeline-worker: secretKeys.lockerAzureAccountKey is required with locker.provider=azure" }}{{ end -}}
 {{- if .Values.lockerInit.enabled }}{{ fail "sessions-pipeline-worker: lockerInit.enabled must be false with locker.provider=azure: create the container (with blob versioning on the account) outside the chart" }}{{ end -}}
+{{- /* The services admit LOCKER_PROVIDER=azure only in a process that reads the Locker through
+its own store and claims no pipeline stage (src/shared/env.ts vendorBindings `ownLocker`, as of
+sessions-pipeline fefbc87c, the agent-relay-2026.11.24 image, and 155f7ba6): coordination-advisor
+and session-analysis. The stage workers (bob-costas, referee, hoopdb-indexer) and session-brief
+throw at startup ("not available to the vendored pipeline routes"), so refuse them here. */ -}}
+{{- range $name := list "bob-costas" "referee" "hoopdb-indexer" "session-brief" }}
+{{- if (index $.Values.components $name).enabled }}{{ fail (printf "sessions-pipeline-worker: locker.provider=azure requires components.%s.enabled=false: the services refuse LOCKER_PROVIDER=azure in that worker (only coordination-advisor and session-analysis read Azure Blob)" $name) }}{{ end -}}
+{{- end }}
 {{- range $name := list "LOCKER_AZURE_ACCOUNT" "LOCKER_AZURE_ACCOUNT_KEY" "LOCKER_ACCESS_KEY_ID" "LOCKER_SECRET_ACCESS_KEY" }}{{ if has $name $extraEnvNames }}{{ fail (printf "sessions-pipeline-worker: extraEnv must not set %s with locker.provider=azure: use locker.azure and secretKeys" $name) }}{{ end }}{{ end -}}
 {{- end }}
 {{- range $name := list "LOCKER_PROVIDER" "PIPELINE_RAW_PROVIDER" }}{{ if has $name $extraEnvNames }}{{ fail (printf "sessions-pipeline-worker: extraEnv must not set %s: use locker.provider" $name) }}{{ end }}{{ end -}}

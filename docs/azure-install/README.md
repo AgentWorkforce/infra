@@ -521,10 +521,18 @@ ingest side moves to Blob.
 
 Before you start:
 
+- **Workers.** The services read Azure Blob only in session analysis and
+  coordination-advisor. The summary (`bob-costas`), status (`referee`) and
+  metadata index (`hoopdb-indexer`) workers and `session-brief` refuse
+  `LOCKER_PROVIDER=azure` at startup ("not available to the vendored pipeline
+  routes", sessions-pipeline `src/shared/env.ts`, as of `fefbc87c` and
+  `155f7ba6`). The chart therefore requires them off with `locker.provider:
+  azure`, so this install has no session summaries, status or metadata index
+  until the services support Azure there.
 - **Image.** The Azure Locker and the Azure runner need sessions-pipeline
-  `10d27ff4` or later in every worker, not only in session analysis:
-  `locker.provider: azure` switches the summary, status and index workers and
-  the `migrate` Job too, and they all run the shared worker image.
+  `10d27ff4` or later in every worker the chart still runs, not only in
+  session analysis: `locker.provider: azure` switches coordination-advisor and
+  the `migrate` Job too, and they run the shared worker image.
   agent-relay-2026.11.24 pins a services image built from `fefbc87c`, which
   has them. On an older release, pinning `sessionAnalysis.image` alone is not
   enough: the other workers keep an image without the Azure Locker. Use
@@ -558,6 +566,11 @@ locker:
   credentials: { mode: secret }
 lockerInit:
   enabled: false
+components:                               # the services refuse Azure in these workers (see above)
+  bob-costas: { enabled: false }
+  referee: { enabled: false }
+  hoopdb-indexer: { enabled: false }
+  session-brief: { enabled: false }
 sessionAnalysis:
   enabled: true
   run: false

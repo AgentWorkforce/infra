@@ -296,7 +296,9 @@ class AdvisorAnalysis(unittest.TestCase):
 
     # locker.provider=azure: native Azure Blob (runner.ts LOCKER_PROVIDER=azure, Shared Key from a file).
     AZURE_VALUES = CHART / "ci/session-analysis-azure-blob-values.yaml"
-    AZ_LOCKER = {"existingSecret": "sessions-pipeline", "locker": {"provider": "azure", "endpoint": "", "bucket": "sessions-ci", "azure": {"account": "exampleciacct"}}, "lockerInit": {"enabled": False}}
+    AZ_LOCKER = {"existingSecret": "sessions-pipeline", "locker": {"provider": "azure", "endpoint": "", "bucket": "sessions-ci", "azure": {"account": "exampleciacct"}}, "lockerInit": {"enabled": False},
+                 # Only coordination-advisor and session-analysis admit LOCKER_PROVIDER=azure (vendorBindings ownLocker, fefbc87c).
+                 "components": {n: {"enabled": False} for n in ("bob-costas", "referee", "hoopdb-indexer", "session-brief")}}
     AZ_ANALYSIS = {"enabled": True, "keyPrefix": "96bulls",
                    "modelKeySecret": {"name": "analysis-model", "key": "OPENAI_API_KEY"},
                    "databaseSecret": {"name": "analysis-db", "key": "SESSION_ANALYSIS_DATABASE_URL"}}
@@ -343,8 +345,10 @@ class AdvisorAnalysis(unittest.TestCase):
                 self.assertEqual(e["SESSION_ANALYSIS_AZURE_ENDPOINT"], endpoint)
 
     def test_azure_locker_env_for_every_worker(self):
-        docs = self.azure()
-        seen = 0
+        # coordination-advisor is the one sibling worker the services run on Azure (ownLocker); the migrate Job
+        # gets the Locker env too but never reads the Locker.
+        docs = self.azure(top={"components": {"coordination-advisor": {"enabled": True}}})
+        seen = set()
         for d in docs:
             if d["kind"] not in ("Deployment", "Job"):
                 continue
@@ -354,15 +358,41 @@ class AdvisorAnalysis(unittest.TestCase):
                 e = {x["name"]: x.get("value", x.get("valueFrom")) for x in c.get("env", [])}
                 if "LOCKER_BUCKET" not in e:
                     continue
-                seen += 1
+                seen.add(e["SERVICE"])
                 self.assertEqual(e["LOCKER_PROVIDER"], "azure", c["name"])
+                self.assertEqual(e["LOCKER_BUCKET"], "sessions-ci")
                 self.assertEqual(e["LOCKER_AZURE_ACCOUNT"], "exampleciacct")
                 self.assertEqual(e["LOCKER_AZURE_ACCOUNT_KEY"], {"secretKeyRef": {"name": "sessions-pipeline", "key": "LOCKER_AZURE_ACCOUNT_KEY"}})
                 for k in ("LOCKER_ACCESS_KEY_ID", "LOCKER_SECRET_ACCESS_KEY", "PIPELINE_RAW_PROVIDER"):
                     self.assertNotIn(k, e, c["name"])
-        self.assertGreater(seen, 0)
+        self.assertEqual(seen, {"coordination-advisor", "hoopdb-migrate"})
         # Analysis off: the Locker on Azure renders on its own.
         self.render(dict(self.AZ_LOCKER))
+
+    def test_azure_refuses_workers_the_services_refuse(self):
+        # src/shared/env.ts vendorBindings throws for LOCKER_PROVIDER=azure without ownLocker (fefbc87c, 155f7ba6).
+        for name in ("bob-costas", "referee", "hoopdb-indexer", "session-brief"):
+            with self.subTest(component=name):
+                if name != "session-brief":
+                    self.azure(top={"components": {name: {"enabled": True}}}, fail=f"locker.provider=azure requires components.{name}.enabled=false")
+                    continue
+                # session-brief renders only with a full native-brief selection (ci/sessions-pipeline-native-brief).
+                peer = [{"ipBlock": {"cidr": "10.0.0.0/8"}}]
+                brief = {"migrations": {"enabled": False}, "postgresCa": {"enabled": True, "configMap": "public-pg-ca", "sha256": "a" * 64}, "components": {"session-brief": {"enabled": True}},
+                         "nativeBrief": {"enabled": True, "image": {"repository": "agentworkforce/native-services", "digest": "sha256:" + "b" * 64},
+                                         "workspaceIds": ["default-workspace"], "openaiSecret": {"name": "brief-model-key"},
+                                         "openaiEgress": {"enabled": True, "to": peer}},
+                         "networkPolicy": {"enabled": True, "dns": {"to": peer}, "database": {"to": peer}, "objectStorage": {"to": peer}}}
+                self.render(merge(yaml.safe_load(yaml.safe_dump(self.AZ_LOCKER)), brief), fail=f"locker.provider=azure requires components.{name}.enabled=false")
+
+    def test_azure_fixture_pins_the_release_image(self):
+        # The agent-relay-2026.11.24 sessions-pipeline pin (source fefbc87c), as the runner image.
+        pins = __import__("json").loads((ROOT / "releases/agent-relay-2026.11.24/pins.json").read_text())["pins"]["sessions-pipeline"]
+        self.assertEqual(pins["sourceRevision"][:8], "fefbc87c")
+        r = subprocess.run(["helm", "template", "ci", str(CHART), "-n", "ci", "-f", str(self.AZURE_VALUES)], text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        image = self.analysis([d for d in yaml.safe_load_all(r.stdout) if d])["spec"]["template"]["spec"]["containers"][0]["image"]
+        self.assertEqual(image, f'{pins["repository"]}@{pins["digest"]}')
 
     def test_s3_still_renders(self):
         for f in ("session-analysis-static-minio-values.yaml", "default-values.yaml"):
@@ -403,10 +433,10 @@ class AdvisorAnalysis(unittest.TestCase):
 
     def test_azure_analysis_key_follows_locker_key_mapping(self):
         # Renaming only the Locker key moves the analysis mount with it (one Secret entry for both).
-        docs = self.azure(top={"secretKeys": {"lockerAzureAccountKey": "blob-key"}})
+        docs = self.azure(top={"secretKeys": {"lockerAzureAccountKey": "blob-key"}, "components": {"coordination-advisor": {"enabled": True}}})
         vol = next(v for v in self.analysis(docs)["spec"]["template"]["spec"]["volumes"] if v["name"] == "azure-account-key")
         self.assertEqual(vol["secret"]["items"], [{"key": "blob-key", "path": "account-key"}])
-        e = self.env(docs, "session-summary-worker")
+        e = self.env(docs, "coordination-advisor")
         self.assertEqual(e["LOCKER_AZURE_ACCOUNT_KEY"]["secretKeyRef"]["key"], "blob-key")
         # External Secrets must map every key the target Secret is read for, the analysis key included.
         es = {"externalSecrets": {"enabled": True, "secretStoreRef": {"kind": "ClusterSecretStore", "name": "store"},

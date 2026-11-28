@@ -3020,6 +3020,9 @@ LOCKER_AZURE_ACCOUNT_KEY from worker.existingSecret
 (worker.secretKeys.lockerAzureAccountKey), with no S3 keys. It requires
 locker.credentials.mode=secret, locker.bucket as an Azure container name, an
 endpoint that is empty, https or loopback http, and worker.lockerInit.enabled=false.
+The services admit azure only in session-analysis and coordination-advisor
+(vendorBindings ownLocker, sessions-pipeline fefbc87c), so the worker components
+bob-costas, referee, hoopdb-indexer and session-brief must be disabled.
 
 - Default: `s3` (by profile: default `s3`, gcp-cloudsql `gcs`)
 - Choices: `s3`; `gcs`: GKE Workload Identity; Cloud SQL; `azure`: Worker chart only (preview): Shared Key from worker.existingSecret, container created and blob versioning enabled outside the chart. Needs sessions-pipeline 10d27ff4 or later.
