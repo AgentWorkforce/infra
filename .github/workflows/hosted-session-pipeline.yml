@@ -1,0 +1,101 @@
+# Hosted session-pipeline Terraform: plan, then apply the exact saved plan (scripts/hosted/session-pipeline-ci.sh).
+#
+# PUBLIC repository: the log and summary show addresses, actions, digests and the gate verdict only. Every hosted
+# value lives in GitHub environment variables and the SSM tfvars parameter, never in the repository.
+#
+# Environments (set up once by the account owner):
+#   hosted-session-pipeline-plan : PLAN_ROLE_ARN plus the shared variables; deployment branch main.
+#   hosted-session-pipeline      : APPLY_ROLE_ARN plus the shared variables; deployment branch main, required reviewers.
+# Shared variables: AWS_REGION, STATE_BUCKET, STATE_KEY, STATE_KMS_KEY_ARN, TFVARS_PARAMETER, GATE_ALLOW.
+name: hosted-session-pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [plan, apply]
+        default: plan
+      plan_run_id:
+        description: "apply: the plan run id from the plan summary (<run>-<attempt>)"
+        type: string
+        default: ""
+      plan_sha256:
+        description: "apply: the plan SHA-256 from the plan summary"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-session-pipeline-state
+  cancel-in-progress: false
+
+env:
+  TERRAFORM_VERSION: 1.16.7
+
+jobs:
+  plan:
+    if: inputs.mode == 'plan' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: hosted-session-pipeline-plan
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      STATE_BUCKET: ${{ vars.STATE_BUCKET }}
+      STATE_KEY: ${{ vars.STATE_KEY }}
+      STATE_KMS_KEY_ARN: ${{ vars.STATE_KMS_KEY_ARN }}
+      TFVARS_PARAMETER: ${{ vars.TFVARS_PARAMETER }}
+      GATE_ALLOW: ${{ vars.GATE_ALLOW }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+        with:
+          role-to-assume: ${{ vars.PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          mask-aws-account-id: true
+      - name: Plan and gate
+        run: scripts/hosted/session-pipeline-ci.sh plan "$RUNNER_TEMP/hosted" "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Summary
+        if: always()
+        run: test -f "$RUNNER_TEMP/hosted/summary.md" && cat "$RUNNER_TEMP/hosted/summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+
+  apply:
+    if: inputs.mode == 'apply' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: hosted-session-pipeline
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      STATE_BUCKET: ${{ vars.STATE_BUCKET }}
+      STATE_KEY: ${{ vars.STATE_KEY }}
+      STATE_KMS_KEY_ARN: ${{ vars.STATE_KMS_KEY_ARN }}
+      TFVARS_PARAMETER: ${{ vars.TFVARS_PARAMETER }}
+      GATE_ALLOW: ${{ vars.GATE_ALLOW }}
+      PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+      PLAN_SHA256: ${{ inputs.plan_sha256 }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+        with:
+          role-to-assume: ${{ vars.APPLY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          mask-aws-account-id: true
+      - name: Apply the approved plan
+        run: scripts/hosted/session-pipeline-ci.sh apply "$RUNNER_TEMP/hosted" "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$PLAN_RUN_ID" "$PLAN_SHA256"
+      - name: Summary
+        if: always()
+        run: test -f "$RUNNER_TEMP/hosted/summary.md" && cat "$RUNNER_TEMP/hosted/summary.md" >> "$GITHUB_STEP_SUMMARY" || true

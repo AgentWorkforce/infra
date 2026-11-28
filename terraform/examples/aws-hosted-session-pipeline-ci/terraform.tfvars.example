@@ -1,0 +1,11 @@
+# Shape only; the real file stays with the account administrator.
+account_id = "111111111111"
+region     = "us-east-1"
+pipeline = {
+  name_prefix   = "96bulls-<stage>"
+  function_name = "96bulls-<stage>-session-pipeline"
+  role_name     = "<live pipeline role name>"
+  bucket_name   = "<transcripts bucket>"
+  kms_key_arn   = "<transcripts key ARN>"
+  secret_name   = "96bulls/<stage>/session-pipeline"
+}
