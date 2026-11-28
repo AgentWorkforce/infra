@@ -412,7 +412,8 @@ class AdvisorAnalysis(unittest.TestCase):
         for k, v in {"__SESSIONS_CONTAINER__": "sessions-ci", "__STORAGE_ACCOUNT__": "exampleciacct", "__POSTGRES_CA_SHA256__": "\"" + "1" * 64 + "\""}.items():
             block = block.replace(k, v)
         self.assertNotIn("__", block)
-        overlay = {"sessions-pipeline": {"worker": yaml.safe_load(block)}}
+        overlay = yaml.safe_load(block)
+        self.assertEqual(list(overlay), ["sessions-pipeline"])
         with tempfile.TemporaryDirectory() as folder:
             site = Path(folder) / "site.yaml"
             subprocess.run([str(ROOT / "ci/agent-relay/aks-native-site-values.sh"), str(site)], check=True)
@@ -425,10 +426,30 @@ class AdvisorAnalysis(unittest.TestCase):
             self.assertNotIn("SESSION_ANALYSIS_AZURE", s3.stdout)
             r = subprocess.run(base + ["-f", str(az)], text=True, capture_output=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        e = self.env([d for d in yaml.safe_load_all(r.stdout) if d], "session-analysis")
+        docs = [d for d in yaml.safe_load_all(r.stdout) if d]
+        e = self.env(docs, "session-analysis")
         self.assertEqual(e["LOCKER_PROVIDER"], "azure")
         self.assertEqual(e["SESSION_ANALYSIS_AZURE_ACCOUNT"], "exampleciacct")
         self.assertFalse([k for k in e if k.startswith("SESSION_ANALYSIS_S3_")])
+        # Every Locker reader and writer on the one Azure container; none keeps S3 keys or the MinIO endpoint.
+        services = {}
+        for d in docs:
+            if d["kind"] not in ("Deployment", "Job"):
+                continue
+            for c in d["spec"]["template"]["spec"]["containers"]:
+                env = {x["name"]: x.get("value", x.get("valueFrom")) for x in c.get("env", [])}
+                if "LOCKER_BUCKET" in env:
+                    services[env.get("SERVICE")] = env
+        for name in ("session-ingest", "session-pipeline-consumer", "session-read-api", "hoopdb-migrate"):
+            env = services[name]
+            self.assertEqual(env.get("LOCKER_PROVIDER"), "azure", name)
+            self.assertEqual(env["LOCKER_BUCKET"], "sessions-ci", name)
+            self.assertEqual(env["LOCKER_AZURE_ACCOUNT"], "exampleciacct", name)
+            self.assertEqual(env["LOCKER_AZURE_ACCOUNT_KEY"]["secretKeyRef"], {"name": "sessions-pipeline-locker", "key": "azure-account-key"}, name)
+            self.assertFalse({"LOCKER_ACCESS_KEY_ID", "LOCKER_SECRET_ACCESS_KEY"} & set(env), name)
+            self.assertNotIn("session-object-storage", str(env.get("LOCKER_ENDPOINT", "")), name)
+        for refused in ("bob-costas", "referee", "hoopdb-indexer", "session-brief"):
+            self.assertNotIn(refused, services)
 
 
     def test_azure_analysis_key_follows_locker_key_mapping(self):

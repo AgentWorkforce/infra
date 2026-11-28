@@ -1,0 +1,110 @@
+# RENDER ONLY, synthetic; never deploy this fixture. The Locker on native Azure
+# Blob (provider azure) for the ingest edge, the search indexer
+# (session-pipeline-consumer) and the worker: ingest-edge-values.yaml and
+# search-indexer-values.yaml merged, then the Azure settings. Account,
+# container and Secret names are placeholders; the chart takes Secret names
+# only. Shared Key. The runtime support is per sessions-pipeline fefbc87c (the
+# agent-relay-2026.11.24 image): alleyoop and the stage workers refuse
+# LOCKER_PROVIDER=azure, so they are off. Regenerate by merging those two
+# files with the Azure keys below if either changes.
+global:
+  tenant:
+    orgId: org_ci
+alleyoop:
+  auth:
+    jwksUrl: https://relayauth.example.com/.well-known/jwks.json
+  deployment:
+    enabled: false
+worker:
+  migrations:
+    databaseMode: selfhosted
+    supabaseShim: true
+    runtimeRole: sessions_pipeline_runtime
+    runtimeRoleLogin: true
+    functionBoundaryMode: global-default-revoke
+    waitForRole:
+      enabled: true
+      functionDefault: true
+  existingSecret: sessions-pipeline
+  lockerInit:
+    enabled: false
+  locker:
+    provider: azure
+    bucket: sessions-ci
+    endpoint: ''
+    azure:
+      account: exampleciacct
+  components:
+    bob-costas:
+      enabled: false
+    referee:
+      enabled: false
+    hoopdb-indexer:
+      enabled: false
+    session-brief:
+      enabled: false
+runtimeRole:
+  bootstrapJob:
+    enabled: true
+functionDefaultRevoke:
+  bootstrapJob:
+    enabled: true
+privilegedSql:
+  sqlImage:
+    digest: sha256:6f22ea17dff336e1431664542759fd27958649388b90a0b2f0881883caa7c6b2
+sessionReadApi:
+  enabled: false
+ingestEdge:
+  enabled: true
+  image:
+    repository: example.invalid/session-ingest
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  origin: https://history.kind.agentrelay.com:8443
+  allowInClusterHttp: true
+  relaycontrol:
+    url: http://relay-control.ci.svc.cluster.local
+  config:
+    existingSecret: ingest-runtime
+  postgres:
+    caConfigMap: postgres-ca
+    caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  locker:
+    bucket: sessions-ci
+    endpoint: ''
+    existingSecret: ingest-store
+    provider: azure
+    azure:
+      account: exampleciacct
+    accountKeyKey: account-key
+searchIndexer:
+  enabled: true
+  image:
+    repository: example.invalid/session-search-indexer
+    digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  completeSince: epoch
+  config:
+    existingSecret: search-indexer-config
+  search:
+    backendId: ci-opensearch
+    opensearch:
+      url: https://search.ci.example.com
+      region: us-west-2
+  locker:
+    bucket: sessions-ci
+    region: us-west-2
+    provider: azure
+    credentials:
+      mode: secret
+    existingSecret: search-indexer-store
+    azure:
+      account: exampleciacct
+    accountKeyKey: account-key
+  postgres:
+    caConfigMap: rds-ca
+    caSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  bootstrap:
+    enabled: true
+    existingSecret: search-indexer-owner
+# Nothing reads the bundled MinIO here.
+session-object-storage:
+  enabled: false

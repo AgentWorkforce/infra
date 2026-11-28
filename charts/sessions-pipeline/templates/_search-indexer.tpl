@@ -60,7 +60,12 @@
 {{- with $c.locker.endpoint }}
 - { name: LOCKER_ENDPOINT, value: {{ . | quote }} }
 {{- end }}
-{{- if eq (dig "credentials" "mode" "podIdentity" $c.locker) "secret" }}
+{{- if eq $c.locker.provider "azure" }}
+- { name: LOCKER_AZURE_ACCOUNT, value: {{ $c.locker.azure.account | quote }} }
+- name: LOCKER_AZURE_ACCOUNT_KEY
+  valueFrom:
+    secretKeyRef: { name: {{ $c.locker.existingSecret | quote }}, key: {{ $c.locker.accountKeyKey | quote }} }
+{{- else if eq (dig "credentials" "mode" "podIdentity" $c.locker) "secret" }}
 - name: LOCKER_ACCESS_KEY_ID
   valueFrom:
     secretKeyRef: { name: {{ $c.locker.existingSecret | quote }}, key: {{ $c.locker.accessKeyIdKey | default "access-key-id" | quote }} }

@@ -23,6 +23,8 @@
 {{- if not (kindIs "bool" $flag) }}{{ fail (printf "operatorSessionErase.%s must be a boolean" $name) }}{{ end -}}
 {{- end -}}
 {{- $selected := or $erase.api.enabled $erase.bytes.enabled -}}
+{{- /* The services erase Azure Blob through their own SESSION_ERASE_AZURE_* runtime, which this chart does not wire yet. */ -}}
+{{- if and (or $selected $global.fenceEnforced) (eq .Values.ingestEdge.locker.provider "azure") }}{{ fail "ingestEdge.locker.provider=azure does not support the operator session erase in this chart yet" }}{{ end -}}
 {{- if and $selected (not $global.fenceEnforced) }}{{ fail "operatorSessionErase API or bytes requires global.operatorSessionErase.fenceEnforced=true" }}{{ end -}}
 
 {{- if $global.fenceEnforced -}}

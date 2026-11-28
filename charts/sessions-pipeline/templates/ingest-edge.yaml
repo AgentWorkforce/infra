@@ -91,7 +91,8 @@
 {{- if not (kindIs "bool" $c.sessionSelection) }}{{ fail "ingestEdge.sessionSelection must be a boolean" }}{{ end -}}
 {{- if not (kindIs "bool" $c.heartbeatAccept) }}{{ fail "ingestEdge.heartbeatAccept must be a boolean" }}{{ end -}}
 {{- $provider := $c.locker.provider -}}
-{{- if not (has $provider (list "s3" "gcs")) }}{{ fail "ingestEdge.locker.provider must be s3 or gcs" }}{{ end -}}
+{{- if not (has $provider (list "s3" "gcs" "azure")) }}{{ fail "ingestEdge.locker.provider must be s3, gcs or azure" }}{{ end -}}
+{{- $azure := eq $provider "azure" -}}
 {{- $credentialMode := $c.locker.credentials.mode -}}
 {{- if not (has $credentialMode (list "secret" "podIdentity")) }}{{ fail "ingestEdge.locker.credentials.mode must be secret or podIdentity" }}{{ end -}}
 {{- $podIdentity := eq $credentialMode "podIdentity" -}}
@@ -99,9 +100,46 @@
 {{- if and $podIdentity $c.locker.existingSecret }}{{ fail "ingestEdge.locker.existingSecret must be empty with credentials.mode=podIdentity" }}{{ end -}}
 {{- if and (eq $provider "gcs") (not $podIdentity) }}{{ fail "ingestEdge.locker.provider=gcs requires credentials.mode=podIdentity" }}{{ end -}}
 {{- if and (eq $provider "gcs") $c.locker.endpoint }}{{ fail "ingestEdge.locker.endpoint must be empty for gcs" }}{{ end -}}
+{{- /* Azure Blob (SERVICE=session-ingest reads the Locker through buildLockerStore and probes
+conditional writes, both provider-neutral, as of sessions-pipeline fefbc87c): Shared Key from
+locker.existingSecret, no S3 keys. The S3 ledger, S3 tenant limit, multi-replica ingest, direct
+upload, the re-arm sweeper and the operator session erase use S3-only code there and stay refused. */ -}}
+{{- if $azure -}}
+{{- if $podIdentity }}{{ fail "ingestEdge.locker.provider=azure requires locker.credentials.mode=secret (Shared Key from locker.existingSecret; Entra workload identity is not supported by the services yet)" }}{{ end -}}
+{{- if not (regexMatch "^[a-z0-9]{3,24}$" (dig "azure" "account" "" $c.locker)) }}{{ fail "ingestEdge.locker.provider=azure requires ingestEdge.locker.azure.account (the storage account: 3-24 lowercase letters or digits)" }}{{ end -}}
+{{- if or (not (regexMatch "^[a-z0-9]+(-[a-z0-9]+)*$" ($c.locker.bucket | default ""))) (lt (len ($c.locker.bucket | default "")) 3) (gt (len ($c.locker.bucket | default "")) 63) }}{{ fail "ingestEdge.locker.provider=azure requires ingestEdge.locker.bucket to be an Azure container name (3-63 lowercase letters, digits and single hyphens)" }}{{ end -}}
+{{- with $c.locker.endpoint }}{{ $_ := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" . "allowHttp" false) }}{{ end -}}
+{{- if eq $ledger "s3" }}{{ fail "ingestEdge.locker.provider=azure requires ingestEdge.ledger=sql (the S3 ledger store is S3-only in the services)" }}{{ end -}}
+{{- if or .Values.global.operatorSessionErase.fenceEnforced .Values.operatorSessionErase.api.enabled .Values.operatorSessionErase.bytes.enabled }}{{ fail "ingestEdge.locker.provider=azure does not support the operator session erase in this chart yet" }}{{ end -}}
+{{- /* One store for every Locker reader and writer. Alleyoop (session-ingest-api) refuses
+LOCKER_PROVIDER=azure at startup (vendorBindings without ownLocker, fefbc87c), so it must be off. */ -}}
+{{- if and .Values.alleyoop.deployment.enabled (gt (int .Values.alleyoop.ingest.replicas) 0) }}{{ fail "ingestEdge.locker.provider=azure requires alleyoop.deployment.enabled=false (session-ingest-api refuses LOCKER_PROVIDER=azure in the services)" }}{{ end -}}
+{{- /* Effective endpoint: empty is the account's public endpoint; a trailing slash is ignored. */ -}}
+{{- $account := $c.locker.azure.account -}}
+{{- $publicEp := printf "https://%s.blob.core.windows.net" $account -}}
+{{- $ingestEp := trimSuffix "/" ($c.locker.endpoint | default $publicEp) -}}
+{{- if .Values.searchIndexer.enabled -}}
+{{- $si := .Values.searchIndexer.locker -}}
+{{- if or (ne $si.provider "azure") (ne $si.bucket $c.locker.bucket) (ne (dig "azure" "account" "" $si) $account) (ne (trimSuffix "/" ($si.endpoint | default $publicEp)) $ingestEp) }}{{ fail "ingestEdge.locker.provider=azure requires searchIndexer.locker on the same Azure account, container and endpoint (provider azure, same bucket, azure.account and effective endpoint)" }}{{ end -}}
+{{- end -}}
+{{- $wl := .Values.worker.locker -}}
+{{- if or (ne ($wl.provider | default "s3") "azure") (ne $wl.bucket $c.locker.bucket) (ne (dig "azure" "account" "" $wl) $account) (ne (trimSuffix "/" ($wl.endpoint | default $publicEp)) $ingestEp) }}{{ fail "ingestEdge.locker.provider=azure requires worker.locker on the same Azure account, container and endpoint (provider azure, same bucket, azure.account and effective endpoint)" }}{{ end -}}
+{{- if .Values.sessionReadApi.enabled -}}
+{{- $re := dict -}}
+{{- range $e := .Values.sessionReadApi.extraEnv }}{{ $_ := set $re ($e.name | default "") $e }}{{ end -}}
+{{- $rv := dict -}}
+{{- range $k := list "LOCKER_PROVIDER" "LOCKER_AZURE_ACCOUNT" "LOCKER_ENDPOINT" }}{{ $_ := set $rv $k (toString (dig "value" "" (get $re $k | default dict))) }}{{ end -}}
+{{- $readKeyRef := dig "valueFrom" "secretKeyRef" "name" "" (get $re "LOCKER_AZURE_ACCOUNT_KEY" | default dict) -}}
+{{- if or (ne (get $rv "LOCKER_PROVIDER") "azure") (ne (get $rv "LOCKER_AZURE_ACCOUNT") $account) (not $readKeyRef) (ne (trimSuffix "/" ((get $rv "LOCKER_ENDPOINT") | default $publicEp)) $ingestEp) }}{{ fail "ingestEdge.locker.provider=azure requires sessionReadApi.extraEnv on the same store: LOCKER_PROVIDER=azure, LOCKER_AZURE_ACCOUNT equal to ingestEdge.locker.azure.account, LOCKER_AZURE_ACCOUNT_KEY from a secretKeyRef, and the same effective LOCKER_ENDPOINT" }}{{ end -}}
+{{- range $k := list "LOCKER_ACCESS_KEY_ID" "LOCKER_SECRET_ACCESS_KEY" }}{{ if hasKey $re $k }}{{ fail (printf "ingestEdge.locker.provider=azure requires sessionReadApi.extraEnv without %s (the services refuse S3 keys on Azure)" $k) }}{{ end }}{{ end -}}
+{{- end -}}
+{{- /* The native consumer's Locker slot is S3/MinIO only. */ -}}
+{{- if .Values.nativeConsumer.enabled }}{{ fail "ingestEdge.locker.provider=azure does not support nativeConsumer.enabled=true (its Locker settings are S3/MinIO only); use searchIndexer" }}{{ end -}}
+{{- end -}}
 {{- $endpoint := "" -}}
-{{- if or (not $podIdentity) $c.locker.endpoint -}}
-{{- $endpoint = include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" $c.locker.endpoint "allowHttp" $c.allowInClusterHttp) -}}
+{{- if or (and (not $podIdentity) (not $azure)) $c.locker.endpoint -}}
+{{- /* Azure: the services' Locker refuses plain http outside loopback, so no in-cluster http here. */ -}}
+{{- $endpoint = include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" $c.locker.endpoint "allowHttp" (and (not $azure) $c.allowInClusterHttp)) -}}
 {{- end -}}
 {{- $bucket := required "ingestEdge.locker.bucket is required" $c.locker.bucket -}}
 {{- if not (kindIs "string" $bucket) }}{{ fail "ingestEdge.locker.bucket must be a nonempty literal string without surrounding whitespace" }}{{ end -}}
@@ -133,7 +171,7 @@
 {{- if or (gt (len $ref) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$" $ref)) }}{{ fail "ingestEdge Secret and ConfigMap names must be Kubernetes DNS subdomains" }}{{ end -}}
 {{- end -}}
 {{- $secretKeys := list $c.config.databaseUrlKey $c.config.introspectSecretKey $c.postgres.caKey -}}
-{{- if not $podIdentity }}{{ $secretKeys = concat $secretKeys (list $c.locker.accessKeyIdKey $c.locker.secretAccessKeyKey) }}{{ end -}}
+{{- if $azure }}{{ $secretKeys = append $secretKeys ($c.locker.accountKeyKey | default "") }}{{ else if not $podIdentity }}{{ $secretKeys = concat $secretKeys (list $c.locker.accessKeyIdKey $c.locker.secretAccessKeyKey) }}{{ end -}}
 {{- range $key := $secretKeys -}}
 {{- if or (not $key) (not (regexMatch "^[A-Za-z0-9._-]+$" $key)) }}{{ fail "ingestEdge Secret/CA keys must be nonempty Kubernetes key names" }}{{ end -}}
 {{- end -}}
@@ -262,7 +300,12 @@ spec:
             - { name: LOCKER_ENDPOINT, value: {{ . | quote }} }
             {{- end }}
             - { name: LOCKER_REGION, value: {{ $region | quote }} }
-            {{- if not $podIdentity }}
+            {{- if $azure }}
+            - { name: LOCKER_AZURE_ACCOUNT, value: {{ $c.locker.azure.account | quote }} }
+            - name: LOCKER_AZURE_ACCOUNT_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ $storeSecret | quote }}, key: {{ $c.locker.accountKeyKey | quote }} }
+            {{- else if not $podIdentity }}
             - name: LOCKER_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef: { name: {{ $storeSecret | quote }}, key: {{ $c.locker.accessKeyIdKey | quote }} }

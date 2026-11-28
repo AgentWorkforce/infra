@@ -1,4 +1,6 @@
 {{- include "sessions-pipeline.analytics.validate" .Values.nativeConsumer.analytics -}}
+{{- /* The native consumer's Locker slot is S3/MinIO only; it cannot read an Azure ingest edge. */ -}}
+{{- if and .Values.nativeConsumer.enabled (eq .Values.ingestEdge.locker.provider "azure") }}{{ fail "ingestEdge.locker.provider=azure does not support nativeConsumer.enabled=true (its Locker settings are S3/MinIO only); use searchIndexer" }}{{ end -}}
 {{- include "sessions-pipeline.nativeConsumer.validate" . -}}
 {{- $c := mergeOverwrite (deepCopy .Values.nativeConsumer) (include "sessions-pipeline.rdsCa.block" (dict "root" . "block" "nativeConsumer") | fromJson) -}}
 {{- if $c.enabled -}}

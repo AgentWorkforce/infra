@@ -15,12 +15,24 @@
 {{- if not (has $backend (list "postgres" "opensearch")) }}{{ fail "searchIndexer.search.backend must be postgres or opensearch" }}{{ end -}}
 {{- $backendId := required "searchIndexer.search.backendId requires the projection-state id shared with the read API" $c.search.backendId -}}
 {{- $provider := $c.locker.provider -}}
-{{- if not (has $provider (list "s3" "gcs")) }}{{ fail "searchIndexer.locker.provider must be s3 or gcs" }}{{ end -}}
+{{- if not (has $provider (list "s3" "gcs" "azure")) }}{{ fail "searchIndexer.locker.provider must be s3, gcs or azure" }}{{ end -}}
 {{- $_ := required "searchIndexer.locker.bucket is required" $c.locker.bucket -}}
 {{- if and (eq $provider "gcs") $c.locker.endpoint }}{{ fail "searchIndexer.locker.endpoint must be empty for gcs" }}{{ end -}}
 {{- $lockerCredentials := dig "credentials" "mode" "podIdentity" $c.locker -}}
 {{- if not (has $lockerCredentials (list "secret" "podIdentity")) }}{{ fail "searchIndexer.locker.credentials.mode must be secret or podIdentity" }}{{ end -}}
-{{- if eq $lockerCredentials "secret" -}}
+{{- /* Azure Blob: SERVICE=session-pipeline-consumer is an ownLocker worker (consumer-service.ts
+CONSUMER_WORKER, sessions-pipeline fefbc87c), so it reads the container through buildLockerStore
+with the Shared Key from locker.existingSecret. */ -}}
+{{- if eq $provider "azure" -}}
+{{- if ne $lockerCredentials "secret" }}{{ fail "searchIndexer.locker.provider=azure requires locker.credentials.mode=secret (Shared Key from locker.existingSecret)" }}{{ end -}}
+{{- if not (regexMatch "^[a-z0-9]{3,24}$" (dig "azure" "account" "" $c.locker)) }}{{ fail "searchIndexer.locker.provider=azure requires searchIndexer.locker.azure.account (the storage account: 3-24 lowercase letters or digits)" }}{{ end -}}
+{{- if or (not (regexMatch "^[a-z0-9]+(-[a-z0-9]+)*$" $c.locker.bucket)) (lt (len $c.locker.bucket) 3) (gt (len $c.locker.bucket) 63) }}{{ fail "searchIndexer.locker.provider=azure requires searchIndexer.locker.bucket to be an Azure container name" }}{{ end -}}
+{{- with $c.locker.endpoint }}{{ if not (regexMatch "^https://[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*(:[0-9]{1,5})?/?$" .) }}{{ fail "searchIndexer.locker.endpoint with locker.provider=azure must be empty or a bare https origin" }}{{ end }}{{ end -}}
+{{- $_ := required "searchIndexer.locker.existingSecret is required for the Azure account key" $c.locker.existingSecret -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" ($c.locker.accountKeyKey | default "")) }}{{ fail "searchIndexer.locker.accountKeyKey must be a Secret data key with locker.provider=azure" }}{{ end -}}
+{{- if and .Values.ingestEdge.enabled (ne .Values.ingestEdge.locker.provider "azure") }}{{ fail "searchIndexer.locker.provider=azure requires ingestEdge.locker.provider=azure (the indexer reads what the ingest edge writes)" }}{{ end -}}
+{{- range $e := $c.extraEnv }}{{ if has ($e.name | default "") (list "LOCKER_AZURE_ACCOUNT" "LOCKER_AZURE_ACCOUNT_KEY") }}{{ fail (printf "searchIndexer.extraEnv must not set %s: use searchIndexer.locker" $e.name) }}{{ end }}{{ end -}}
+{{- else if eq $lockerCredentials "secret" -}}
 {{- if ne $provider "s3" }}{{ fail "searchIndexer.locker.credentials.mode=secret is only supported with locker.provider=s3" }}{{ end -}}
 {{- $_ := required "searchIndexer.locker.endpoint is required for static S3/MinIO credentials" $c.locker.endpoint -}}
 {{- $_ := required "searchIndexer.locker.existingSecret is required for static S3/MinIO credentials" $c.locker.existingSecret -}}
