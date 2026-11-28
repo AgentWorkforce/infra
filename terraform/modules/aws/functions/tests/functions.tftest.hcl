@@ -26,6 +26,12 @@ mock_provider "aws" {
   mock_resource "aws_lambda_function" {
     defaults = { arn = "arn:aws:lambda:us-west-2:111111111111:function:relay-session-pipeline" }
   }
+  mock_data "aws_lambda_function" {
+    defaults = {
+      arn  = "arn:aws:lambda:us-west-2:111111111111:function:96bulls-test-session-pipeline"
+      role = "arn:aws:iam::111111111111:role/96bulls-test-session-pipeline"
+    }
+  }
   mock_resource "aws_cloudwatch_event_rule" {
     defaults = { arn = "arn:aws:events:us-west-2:111111111111:rule/relay-session-reconcile" }
   }
@@ -41,7 +47,7 @@ run "hosted_pattern_defaults" {
   command = apply
 
   assert {
-    condition     = length(aws_iam_role.this) == 1 && length(aws_iam_role_policy.this) == 1 && aws_lambda_function.this.role == aws_iam_role.this[0].arn && output.execution_role_arn == aws_lambda_function.this.role
+    condition     = length(aws_iam_role.this) == 1 && length(aws_iam_role_policy.this) == 1 && aws_lambda_function.this[0].role == aws_iam_role.this[0].arn && output.execution_role_arn == aws_lambda_function.this[0].role
     error_message = "The default must still author one role/policy and bind Lambda and its output to it."
   }
 
@@ -55,7 +61,7 @@ run "hosted_pattern_defaults" {
   }
 
   assert {
-    condition     = aws_sqs_queue.events.visibility_timeout_seconds == 6 * aws_lambda_function.this.timeout + aws_lambda_event_source_mapping.events.maximum_batching_window_in_seconds
+    condition     = aws_sqs_queue.events.visibility_timeout_seconds == 6 * aws_lambda_function.this[0].timeout + aws_lambda_event_source_mapping.events.maximum_batching_window_in_seconds
     error_message = "Visibility timeout is six times the function timeout plus the batching window."
   }
   assert {
@@ -83,11 +89,11 @@ run "hosted_pattern_defaults" {
     error_message = "Reconcile on, briefs off by default."
   }
   assert {
-    condition     = aws_lambda_function.this.environment[0].variables.PIPELINE_RECONCILE_LOOKBACK_MINUTES == "60" && aws_lambda_function.this.environment[0].variables.SEARCH_INDEX_ENABLED == "0"
+    condition     = aws_lambda_function.this[0].environment[0].variables.PIPELINE_RECONCILE_LOOKBACK_MINUTES == "60" && aws_lambda_function.this[0].environment[0].variables.SEARCH_INDEX_ENABLED == "0"
     error_message = "Lookback is twice the reconcile cadence; search index off by default."
   }
   assert {
-    condition     = alltrue([for p in [aws_lambda_permission.reconcile, aws_lambda_permission.brief] : p.principal == "events.amazonaws.com" && p.source_arn != null])
+    condition     = alltrue([for p in [aws_lambda_permission.reconcile[0], aws_lambda_permission.brief[0]] : p.principal == "events.amazonaws.com" && p.source_arn != null])
     error_message = "Only EventBridge rules (by ARN) may invoke the function; there is no Function URL."
   }
   assert {
@@ -103,7 +109,7 @@ run "hosted_pattern_defaults" {
     error_message = "No ENI permissions outside a VPC."
   }
   assert {
-    condition     = alltrue([for a in [aws_cloudwatch_metric_alarm.dlq_not_empty, aws_cloudwatch_metric_alarm.backlog_age, aws_cloudwatch_metric_alarm.errors] : a.actions_enabled == false])
+    condition     = alltrue([for a in [aws_cloudwatch_metric_alarm.dlq_not_empty[0], aws_cloudwatch_metric_alarm.backlog_age[0], aws_cloudwatch_metric_alarm.errors[0]] : a.actions_enabled == false])
     error_message = "Alarms exist with actions disabled when no alarm_actions are given."
   }
 }
@@ -189,7 +195,7 @@ run "existing_role_authors_no_iam_and_binds_lambda" {
     error_message = "Existing-role mode must not author any IAM role or inline policy."
   }
   assert {
-    condition     = aws_lambda_function.this.role == var.existing_execution_role_arn && output.execution_role_arn == aws_lambda_function.this.role
+    condition     = aws_lambda_function.this[0].role == var.existing_execution_role_arn && output.execution_role_arn == aws_lambda_function.this[0].role
     error_message = "The actual Lambda role and exported role must both be the supplied identity."
   }
   assert {
@@ -214,4 +220,68 @@ run "existing_role_must_be_exact_role_arn" {
   command = plan
   variables { existing_execution_role_arn = "arn:aws:iam::111111111111:role/*" }
   expect_failures = [var.existing_execution_role_arn]
+}
+
+# Adopting an existing runtime (an import): only the queues, mapping and schedules are authored here.
+run "adopt_existing_function" {
+  command = plan
+  variables {
+    name                        = "96bulls-test"
+    existing_function_name      = "96bulls-test-session-pipeline"
+    visibility_timeout_seconds  = 1800
+    max_concurrency             = 25
+    brief_schedule_enabled      = true
+    briefs_enabled              = false
+    manage_queue_policies       = false
+    manage_schedule_permissions = false
+    create_alarms               = false
+  }
+  assert {
+    condition     = length(aws_lambda_function.this) == 0 && length(aws_iam_role.this) == 0 && length(aws_iam_role_policy.this) == 0 && length(aws_cloudwatch_log_group.this) == 0 && length(aws_secretsmanager_secret.pipeline) == 0 && length(aws_lambda_function_event_invoke_config.this) == 0
+    error_message = "An adopted function's role, log group, secret and invoke config are not authored here."
+  }
+  assert {
+    condition     = length(aws_sqs_queue_policy.events) == 0 && length(aws_sqs_queue_policy.dlq) == 0 && length(aws_lambda_permission.brief) == 0 && length(aws_lambda_permission.reconcile) == 0 && length(aws_cloudwatch_metric_alarm.errors) == 0
+    error_message = "Queue policies, permissions and alarms are off when not managed."
+  }
+  assert {
+    condition     = aws_lambda_event_source_mapping.events.function_name == "arn:aws:lambda:us-west-2:111111111111:function:96bulls-test-session-pipeline" && one(aws_lambda_event_source_mapping.events.scaling_config).maximum_concurrency == 25
+    error_message = "The mapping targets the adopted function at the input concurrency."
+  }
+  assert {
+    condition     = aws_cloudwatch_event_target.brief.arn == "arn:aws:lambda:us-west-2:111111111111:function:96bulls-test-session-pipeline" && aws_cloudwatch_event_rule.brief.name == "96bulls-test-session-brief"
+    error_message = "The brief schedule keeps the 96bulls-<stage> name and targets the adopted function."
+  }
+  assert {
+    condition     = aws_sqs_queue.events.visibility_timeout_seconds == 1800 && aws_sqs_queue.events.name == "96bulls-test-session-events"
+    error_message = "visibility_timeout_seconds overrides the computed value."
+  }
+  assert {
+    condition     = aws_cloudwatch_event_rule.brief.state == "ENABLED"
+    error_message = "brief_schedule_enabled sets the state regardless of briefs_enabled."
+  }
+  assert {
+    condition     = output.function_arn == "arn:aws:lambda:us-west-2:111111111111:function:96bulls-test-session-pipeline" && output.execution_role_arn == "arn:aws:iam::111111111111:role/96bulls-test-session-pipeline"
+    error_message = "Outputs report the adopted function and its own role."
+  }
+}
+
+run "explicit_brief_disabled" {
+  command = plan
+  variables {
+    briefs_enabled         = true
+    brief_schedule_enabled = false
+  }
+  assert {
+    condition     = aws_cloudwatch_event_rule.brief.state == "DISABLED"
+    error_message = "brief_schedule_enabled = false disables the schedule."
+  }
+}
+
+run "visibility_timeout_bounds" {
+  command = plan
+  variables {
+    visibility_timeout_seconds = 43201
+  }
+  expect_failures = [var.visibility_timeout_seconds]
 }
