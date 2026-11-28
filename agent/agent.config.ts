@@ -62,7 +62,9 @@ export default defineLayeredAgent({
   relayDescription: "infra-ops layered lead: AWS, Cloudflare, GCP, PostHog and Azure operator for AgentWorkforce/infra",
   // Codex until the Anthropic credit is topped up (Khaliq, 2026-11-24). Must match
   // layered-agents infra/agents.ts (#69), which lets the host read this key.
-  lead: { harness: "codex", model: "gpt-6.2-astra", openaiKeyParam: `/relaycast-agent-host/${stage}/openai-api-key-infra-ops` },
+  // Low effort on the fast tier (kit 0.1.44): its turns are mostly approvals,
+  // routing and webhook triage (Khaliq, 2026-11-27).
+  lead: { harness: "codex", model: "gpt-6.2-astra", openaiKeyParam: `/relaycast-agent-host/${stage}/openai-api-key-infra-ops`, reasoningEffort: "low", serviceTier: "fast" },
   names: { platformPrefix: `/relaycast-agent-host/${stage}` },
   // The A2A card the lead publishes on the relay (set_relay_agent_card), so a
   // peer can see what to hand it before delegating. Delivered by hot update.
