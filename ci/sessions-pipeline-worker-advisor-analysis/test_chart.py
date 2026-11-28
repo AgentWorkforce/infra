@@ -375,10 +375,14 @@ class AdvisorAnalysis(unittest.TestCase):
     def test_aks_umbrella_renders_with_azure_blob_and_with_minio(self):
         """The AKS guide's own values (ci/agent-relay/aks-native-site-values.sh), through the agent-relay chart."""
         umbrella = ROOT / "charts/agent-relay"
-        overlay = {"sessions-pipeline": {"worker": {
-            "lockerInit": {"enabled": False},
-            "locker": {"provider": "azure", "bucket": "sessions-ci", "endpoint": "", "azure": {"account": "exampleciacct"}},
-            "sessionAnalysis": dict(yaml.safe_load(yaml.safe_dump(self.AZ_ANALYSIS)), run=False)}}}
+        # The step 13b example from the AKS guide itself, placeholders filled, under sessions-pipeline.worker.
+        readme = (ROOT / "docs/azure-install/README.md").read_text()
+        section = readme[readme.index("### 13b."):]
+        block = section[section.index("```yaml\n") + len("```yaml\n"):section.index("\n```", section.index("```yaml\n"))]
+        for k, v in {"__SESSIONS_CONTAINER__": "sessions-ci", "__STORAGE_ACCOUNT__": "exampleciacct", "__POSTGRES_CA_SHA256__": "\"" + "1" * 64 + "\""}.items():
+            block = block.replace(k, v)
+        self.assertNotIn("__", block)
+        overlay = {"sessions-pipeline": {"worker": yaml.safe_load(block)}}
         with tempfile.TemporaryDirectory() as folder:
             site = Path(folder) / "site.yaml"
             subprocess.run([str(ROOT / "ci/agent-relay/aks-native-site-values.sh"), str(site)], check=True)

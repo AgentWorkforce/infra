@@ -534,9 +534,10 @@ sessionAnalysis:
   # decisionRecords cannot be "true" (the runner refuses both). The runner
   # proves blob versioning at startup with a probe write and erase, so the
   # account needs versioning on and the key needs write and delete rights.
-  # Needs sessions-pipeline 10d27ff4 or later (agent-relay-2026.11.24's
-  # image has it). This chart's standalone default image predates it, so pin
-  # sessionAnalysis.image when the umbrella release does not.
+  # Needs sessions-pipeline 10d27ff4 or later in the shared worker image
+  # (agent-relay-2026.11.24's image has it): locker.provider=azure switches
+  # every worker, so pinning sessionAnalysis.image alone is not enough. This
+  # chart's standalone default image predates it.
   azure:
     accountKeySecret:
       name: ""

@@ -6293,7 +6293,7 @@ entries:
     default: false
     choices:
       - { value: false }
-      - { value: true, note: "S3 or S3-compatible only. Needs a services image with SERVICE=session-analysis, the analysis migrations (046000) and either the Pod Identity role with the documented S3/KMS grants or, with static keys, an image with relayhistory-pipeline 9b29a3dd or later and a versioned bucket." }
+      - { value: true, note: "S3, S3-compatible or (worker.locker.provider=azure) native Azure Blob; not GCS. Needs a services image with SERVICE=session-analysis and the analysis migrations (046000). On S3: the Pod Identity role with the documented S3/KMS grants or, with static keys, an image with relayhistory-pipeline 9b29a3dd or later and a versioned bucket. On Azure Blob: sessions-pipeline 10d27ff4 or later in the shared worker image, blob versioning on the account and the account key in the worker Secret." }
     secrets:
       - name: "<session-analysis model key Secret>"
         name_paths: [worker.sessionAnalysis.modelKeySecret.name]

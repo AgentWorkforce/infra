@@ -522,10 +522,14 @@ ingest side moves to Blob.
 Before you start:
 
 - **Image.** The Azure Locker and the Azure runner need sessions-pipeline
-  `10d27ff4` or later. agent-relay-2026.11.24 pins a services image built from
-  `fefbc87c`, which has them. The worker chart's standalone default image does
-  not, so pin `sessionAnalysis.image` (repository plus a reviewed digest) on
-  older releases.
+  `10d27ff4` or later in every worker, not only in session analysis:
+  `locker.provider: azure` switches the summary, status and index workers and
+  the `migrate` Job too, and they all run the shared worker image.
+  agent-relay-2026.11.24 pins a services image built from `fefbc87c`, which
+  has them. On an older release, pinning `sessionAnalysis.image` alone is not
+  enough: the other workers keep an image without the Azure Locker. Use
+  agent-relay-2026.11.24 or later, or pin the shared worker image
+  (`worker.image`) to a reviewed digest of such a build.
 - **Storage account.** Turn on blob versioning on the account, and create the
   container outside the chart (`lockerInit.enabled: false`). Before it claims
   any job, the runner proves versioning at startup by writing a probe blob,
@@ -550,7 +554,7 @@ locker:
   bucket: __SESSIONS_CONTAINER__        # the container (3-63 lowercase letters, digits, single hyphens)
   azure:
     account: __STORAGE_ACCOUNT__         # 3-24 lowercase letters or digits
-  # endpoint: ""                         # empty: https://<account>.blob.core.windows.net
+  endpoint: ""                           # required: clears the guide's MinIO endpoint; empty is https://<account>.blob.core.windows.net
   credentials: { mode: secret }
 lockerInit:
   enabled: false
