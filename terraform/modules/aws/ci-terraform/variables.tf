@@ -126,3 +126,13 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "adoption_mapping_id" {
+  description = "For hosted adoption, replace stack write policies with UpdateEventSourceMapping on this single mapping. Attribute changes are checked by the saved-plan gate."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.adoption_mapping_id == null ? true : can(regex("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$", var.adoption_mapping_id))
+    error_message = "Provide an event source mapping UUID."
+  }
+}

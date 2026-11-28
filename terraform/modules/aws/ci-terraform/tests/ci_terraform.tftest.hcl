@@ -182,3 +182,17 @@ run "bad_state_key" {
   }
   expect_failures = [var.state]
 }
+
+run "hosted_adoption" {
+  command = plan
+  variables {
+    adoption_mapping_id = "00000000-0000-4000-8000-000000000001"
+    lambda_pipeline     = true
+  }
+  assert {
+    condition = toset(keys(output.policies)) == toset(["read", "plan", "apply-state", "apply-mapping"]) && (
+      jsondecode(output.policies["apply-mapping"]).Statement[0].Resource == "arn:aws:lambda:us-west-2:111111111111:event-source-mapping:00000000-0000-4000-8000-000000000001"
+    ) && jsondecode(output.policies["apply-mapping"]).Statement[0].Action == "lambda:UpdateEventSourceMapping"
+    error_message = "Only the named mapping may receive a workload update."
+  }
+}

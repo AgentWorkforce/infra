@@ -68,6 +68,7 @@ workflow) and that workflow, which applies only an exact reviewed saved plan.
 | state | S3 backend of the Terraform state this CI plans and applies: bucket, key and the KMS key that encrypts it. | ```object({ bucket = string key = string kms_key_arn = string })``` | n/a | yes |
 | tfvars\_parameter\_name | SSM SecureString parameter holding the stack's .tfvars.json (non-secret, kept out of git). Both roles read it; neither writes it. | `string` | n/a | yes |
 | workflow | Caller workflow file, owner/repo/.github/workflows/<file>.yml. Both roles trust only its jobs on branch (job\_workflow\_ref, with pin\_github\_claims). | `string` | n/a | yes |
+| adoption\_mapping\_id | For hosted adoption, replace stack write policies with UpdateEventSourceMapping on this single mapping. Attribute changes are checked by the saved-plan gate. | `string` | `null` | no |
 | branch | The only branch whose runs may plan or apply. | `string` | `"main"` | no |
 | lambda\_pipeline | Also allow the Lambda/SQS/EventBridge pipeline (aws-environments pipeline\_runtime = lambda). | `bool` | `false` | no |
 | max\_session\_duration | Seconds a GitHub job may hold either role. | `number` | `3600` | no |

@@ -376,7 +376,7 @@ locals {
     ]
   }
 
-  policies = merge(
+  standard_policies = merge(
     {
       read           = { roles = ["plan", "apply"], document = local.read_policy }
       plan           = { roles = ["plan"], document = local.plan_policy }
@@ -385,6 +385,24 @@ locals {
       apply-data     = { roles = ["apply"], document = local.apply_data_policy }
     },
     var.lambda_pipeline ? { apply-pipeline = { roles = ["apply"], document = local.apply_pipeline_policy } } : {},
+  )
+  policies = merge(
+    { for name, policy in local.standard_policies : name => policy
+      if var.adoption_mapping_id == null || contains(["read", "plan", "apply-state"], name)
+    },
+    var.adoption_mapping_id == null ? {} : {
+      apply-mapping = {
+        roles = ["apply"]
+        document = {
+          Version = "2012-10-17"
+          Statement = [{
+            Effect   = "Allow"
+            Action   = "lambda:UpdateEventSourceMapping"
+            Resource = "${local.arn}:lambda:${local.region}:${local.account}:event-source-mapping:${var.adoption_mapping_id}"
+          }]
+        }
+      }
+    }
   )
   attachments = merge([for p, v in local.policies : { for r in v.roles : "${r}/${p}" => { role = r, policy = p } }]...)
 }
