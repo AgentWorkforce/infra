@@ -57,6 +57,7 @@ MATRIX=(
   "ci/ingest-edge-s3-ledger-values.yaml|yes|yes|selfhosted|fresh"
   "ci/native-consumer-values.yaml|no|yes|selfhosted|native"
   "ci/search-indexer-values.yaml|yes|yes|selfhosted|fresh"
+  "ci/azure-blob-values.yaml|yes|no|selfhosted|fresh"
   "ci/kind-values.yaml|yes|yes|selfhosted|fresh"
   "ci/search-worker-bootstrap-values.yaml|yes|yes|selfhosted|existing"
   "ci/aws-cnpg-values.yaml|yes|no|selfhosted|fresh"
@@ -174,6 +175,12 @@ for row in "${MATRIX[@]}"; do
   deployments="ci-worker-session-status-worker ci-worker-session-summary-worker ci-session-ingest-api"
   if [ "$shape" = rds-native ]; then
     deployments="ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-read-api ci-ingest-edge ci-search-indexer"
+  elif [ "$rel" = ci/azure-blob-values.yaml ]; then
+    # Native Azure Blob: the services refuse LOCKER_PROVIDER=azure in alleyoop and the stage workers.
+    deployments="ci-ingest-edge ci-search-indexer"
+    for d in ci-worker-session-status-worker ci-worker-session-summary-worker ci-worker-session-metadata-indexer ci-session-ingest-api; do
+      none ".kind == \"Deployment\" and .metadata.name == \"$d\"" || err "$label: $d must not render on Azure Blob"
+    done
   elif [ "$rel" = ci/native-consumer-values.yaml ]; then
     deployments="$deployments ci-native-consumer"
     none '.kind == "Deployment" and .metadata.name == "ci-worker-session-metadata-indexer"' || err "$label: old indexer overlaps native consumer"

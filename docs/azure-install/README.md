@@ -40,7 +40,7 @@ software or AKS resources and does not extend this guide's qualification.
 | AWS (EKS guide) | Azure (this guide) | Why |
 |---|---|---|
 | RDS + `rds-setup.sh` (`databaseMode: rds`) | In-cluster CloudNativePG, the pinned `deps/cnpg-cluster-values.yaml`, + `postgres-setup.sh` (`databaseMode: selfhosted`) | The services image has `rds`, `cloudsql` and `selfhosted` database modes. Azure Database for PostgreSQL fits none: its admin role is neither `rds_superuser` nor `cloudsqlsuperuser`, and it is not a superuser. |
-| S3 through EKS Pod Identity | The chart's bundled MinIO (`session-object-storage`) on an Azure disk, static keys from a Secret | The ingest charts (`alleyoop`, `ingestEdge`, `searchIndexer`) take S3 or GCS only. The worker chart also takes native Azure Blob (`locker.provider: azure`, [step 13b](#13b-session-analysis-on-native-azure-blob-preview)), but the whole pipeline cannot run on Blob until the ingest charts do. |
+| S3 through EKS Pod Identity | The chart's bundled MinIO (`session-object-storage`) on an Azure disk, static keys from a Secret | Fully supported today. Native Azure Blob (Shared Key) is a preview in [step 13b](#13b-native-azure-blob-for-session-objects-preview): the services refuse Azure in the summary, status and metadata-index workers, so that install runs without them. |
 | OpenSearch (SigV4) | PostgreSQL search (`search.backend: postgres`), as on GKE | The OpenSearch writer signs with AWS credentials. |
 | ALB + ACM | Traefik + cert-manager (Let's Encrypt HTTP-01) | Same hosts, paths and edge denials. |
 | Route 53 or your DNS | Optional: an Azure public IP DNS label per host (`<label>.<region>.cloudapp.azure.com`) | No DNS zone is needed. |
@@ -507,88 +507,122 @@ identity rule is needed.
 
 **Done when:** the rollout finishes with `run: true` and the pod stays Ready.
 
-### 13b. Session analysis on native Azure Blob (preview)
+### 13b. Native Azure Blob for session objects (preview)
 
-The worker chart (`sessions-pipeline-worker`) also takes native Azure Blob
-Storage: `locker.provider: azure`. The workers and the session-analysis
-runner then read and write the container directly with the storage account's
-Shared Key, with no S3 settings and no MinIO. Use this only when every Locker
-writer is on the same container. On this release the ingest charts
-(`alleyoop`, `ingestEdge`, `searchIndexer`) still take S3 or GCS only, so a
-default install keeps MinIO and runs session analysis as in step 13. This step
-documents the worker values so the chart renders and they are ready when the
-ingest side moves to Blob.
+The charts can put the Locker (session objects) on native Azure Blob Storage
+instead of the bundled MinIO. The ingest edge, the search indexer, the read
+API, the worker's session analysis and coordination-advisor then read and
+write one container with the storage account's Shared Key, with no S3
+settings. This is preview: no live Blob write and read has been run from this
+guide yet, and the services do not support every component on Azure (below).
+
+What the services support on Azure, checked against sessions-pipeline
+`fefbc87c` (the agent-relay-2026.11.24 image):
+
+| Component | On Azure Blob |
+|---|---|
+| ingest edge (`SERVICE=session-ingest`) | yes, with `ledger: sql` and one replica. The S3 ledger, the S3 tenant limit, `uploadDirect`, the re-arm sweeper and the operator session erase are S3-only, so the chart refuses them |
+| search indexer (`session-pipeline-consumer`) | yes |
+| read API | yes, configured through `extraEnv`, as today |
+| worker: session analysis, coordination-advisor | yes |
+| worker: summary (`bob-costas`), status (`referee`), metadata index (`hoopdb-indexer`), `session-brief` | **no**: they refuse `LOCKER_PROVIDER=azure` at startup (`src/shared/env.ts` vendorBindings). The chart requires them off, so this install has no session summaries, status or metadata index |
+| `alleyoop` (session-ingest-api) | **no**, for the same reason. This guide already turns it off |
+
+The chart rejects these values at render time, before anything reaches the
+cluster: a component the services refuse, an S3-only option, or a reader on a
+different account or container than the ingest edge.
 
 Before you start:
 
-- **Workers.** The services read Azure Blob only in session analysis and
-  coordination-advisor. The summary (`bob-costas`), status (`referee`) and
-  metadata index (`hoopdb-indexer`) workers and `session-brief` refuse
-  `LOCKER_PROVIDER=azure` at startup ("not available to the vendored pipeline
-  routes", sessions-pipeline `src/shared/env.ts`, as of `fefbc87c` and
-  `155f7ba6`). The chart therefore requires them off with `locker.provider:
-  azure`, so this install has no session summaries, status or metadata index
-  until the services support Azure there.
 - **Image.** The Azure Locker and the Azure runner need sessions-pipeline
-  `10d27ff4` or later in every worker the chart still runs, not only in
-  session analysis: `locker.provider: azure` switches coordination-advisor and
-  the `migrate` Job too, and they run the shared worker image.
-  agent-relay-2026.11.24 pins a services image built from `fefbc87c`, which
-  has them. On an older release, pinning `sessionAnalysis.image` alone is not
-  enough: the other workers keep an image without the Azure Locker. Use
-  agent-relay-2026.11.24 or later, or pin the shared worker image
-  (`worker.image`) to a reviewed digest of such a build.
+  `10d27ff4` or later in every component above. agent-relay-2026.11.24 pins a
+  services image built from `fefbc87c`, which has them. On an older release,
+  pin every one of those images, not only `sessionAnalysis.image`.
 - **Storage account.** Turn on blob versioning on the account, and create the
-  container outside the chart (`lockerInit.enabled: false`). Before it claims
-  any job, the runner proves versioning at startup by writing a probe blob,
-  erasing it and checking that it is gone. A
-  missing container refuses as `blob_container_missing`, versioning off as
-  `blob_not_versioned`, a wrong key as `blob_auth_refused`. The sweeper's strict
-  erase also needs permanent delete if soft delete is on.
-- **Key.** Put the account key in the shared worker Secret (`existingSecret`)
-  under `LOCKER_AZURE_ACCOUNT_KEY`. If you only have a connection string, the
-  key is its `AccountKey=` part. The chart takes the Secret name only. The
-  workers read the key as `LOCKER_AZURE_ACCOUNT_KEY`, and the runner reads it as a
-  read-only file. To give the runner its own Secret instead, set
-  `sessionAnalysis.azure.accountKeySecret`. Entra workload identity and SAS are
-  not supported yet.
+  container outside the chart (`lockerInit.enabled: false`). The session
+  analysis runner proves versioning at startup with a probe write and erase
+  (`blob_container_missing`, `blob_not_versioned`, `blob_auth_refused`). The
+  sweeper's strict erase also needs permanent delete if soft delete is on.
+- **Key.** Add the account key to the existing `sessions-pipeline-locker`
+  Secret under `azure-account-key`. If you only have a connection string, the
+  key is its `AccountKey=` part. The charts take the Secret name and key only.
+  Entra workload identity and SAS are not supported yet.
 
-Values under `sessions-pipeline.worker` (placeholders):
+Values under `sessions-pipeline` (placeholders). Lists such as
+`sessionReadApi.extraEnv` replace the whole list, so this block repeats the
+read API's other settings from `values.yaml`:
 
 ```yaml
-existingSecret: sessions-pipeline
-locker:
-  provider: azure
-  bucket: __SESSIONS_CONTAINER__        # the container (3-63 lowercase letters, digits, single hyphens)
-  azure:
-    account: __STORAGE_ACCOUNT__         # 3-24 lowercase letters or digits
-  endpoint: ""                           # required: clears the guide's MinIO endpoint; empty is https://<account>.blob.core.windows.net
-  credentials: { mode: secret }
-lockerInit:
-  enabled: false
-components:                               # the services refuse Azure in these workers (see above)
-  bob-costas: { enabled: false }
-  referee: { enabled: false }
-  hoopdb-indexer: { enabled: false }
-  session-brief: { enabled: false }
-sessionAnalysis:
-  enabled: true
-  run: false
-  keyPrefix: 96bulls
-  # bucket, bucketRegion, s3Credentials, s3KeysSecret, s3Endpoint,
-  # allowInClusterHttp and s3VersioningCheck stay unset on Azure (the runner
-  # refuses S3 settings there); decisionRecords cannot be "true".
-  modelKeySecret: { name: agent-relay-llm, key: OPENAI_API_KEY }
-  databaseSecret: { name: session-analysis-db, key: url }
-  postgresTls: { profile: custom-ca, caConfigMap: postgres-ca, caKey: ca.crt, sha256: __POSTGRES_CA_SHA256__ }
+sessions-pipeline:
+  alleyoop:
+    deployment: { enabled: false }
+  ingestEdge:
+    ledger: sql
+    locker:
+      provider: azure
+      bucket: __SESSIONS_CONTAINER__     # the container (3-63 lowercase letters, digits, single hyphens)
+      endpoint: ""                       # required: clears the guide's MinIO endpoint; empty is https://<account>.blob.core.windows.net
+      azure: { account: __STORAGE_ACCOUNT__ }
+      credentials: { mode: secret }
+      existingSecret: sessions-pipeline-locker
+      accountKeyKey: azure-account-key
+  searchIndexer:
+    locker:
+      provider: azure
+      bucket: __SESSIONS_CONTAINER__
+      endpoint: ""
+      azure: { account: __STORAGE_ACCOUNT__ }
+      credentials: { mode: secret }
+      existingSecret: sessions-pipeline-locker
+      accountKeyKey: azure-account-key
+  sessionReadApi:
+    extraEnv:
+      - { name: LOCKER_PROVIDER, value: azure }
+      - { name: LOCKER_BUCKET, value: __SESSIONS_CONTAINER__ }
+      - { name: LOCKER_AZURE_ACCOUNT, value: __STORAGE_ACCOUNT__ }
+      - name: LOCKER_AZURE_ACCOUNT_KEY
+        valueFrom: { secretKeyRef: { name: sessions-pipeline-locker, key: azure-account-key } }
+      - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
+      - { name: PIPELINE_KEY_PREFIX, value: 96bulls }
+      - { name: READ_API_CANONICAL_PIN_LAGGING_POINTER, value: "true" }
+      - { name: READ_API_TIMING_ASSUME_NO_TURNS, value: "true" }
+      - { name: READ_API_BRIEF_TITLES_WORKSPACES, value: "*" }
+      - { name: READ_API_SESSION_QUERY, value: "true" }
+      - { name: READ_API_CANONICAL_SCOPE_BYTES, value: "64MiB" }
+  worker:
+    lockerInit: { enabled: false }
+    locker:
+      provider: azure
+      bucket: __SESSIONS_CONTAINER__
+      endpoint: ""
+      azure: { account: __STORAGE_ACCOUNT__ }
+      credentials: { mode: secret }
+    secretKeys:
+      lockerAzureAccountKey: azure-account-key
+    components:                          # the services refuse Azure in these workers
+      bob-costas: { enabled: false }
+      referee: { enabled: false }
+      hoopdb-indexer: { enabled: false }
+      session-brief: { enabled: false }
+    sessionAnalysis:                     # optional; as step 13, without the S3 settings
+      enabled: true
+      run: false
+      keyPrefix: 96bulls
+      # bucket, bucketRegion, s3Credentials, s3KeysSecret, s3Endpoint,
+      # allowInClusterHttp and s3VersioningCheck stay unset on Azure;
+      # decisionRecords cannot be "true".
+      modelKeySecret: { name: agent-relay-llm, key: OPENAI_API_KEY }
+      databaseSecret: { name: session-analysis-db, key: url }
+      postgresTls: { profile: custom-ca, caConfigMap: postgres-ca, caKey: ca.crt, sha256: __POSTGRES_CA_SHA256__ }
 ```
 
-Roll it out as in step 13: dormant first, then `run: true`. With the worker
-NetworkPolicy on, `objectStorage.to` must reach the account's blob endpoint
-on 443. No workload identity rule is needed. The chart rejects these values
-at render time instead of letting the pod crash-loop, and
-`ci/sessions-pipeline-worker-advisor-analysis/test_chart.py` covers that.
-Nothing here has run against a real Azure account from this guide.
+The bundled MinIO can stay installed (nothing reads it), or be turned off
+once nothing on the install still uses it. Roll out session analysis as in
+step 13: dormant first, then `run: true`. With the worker NetworkPolicy on,
+`objectStorage.to` must reach the account's blob endpoint on 443. No
+workload identity rule is needed.
+`ci/sessions-pipeline-worker-advisor-analysis/test_chart.py` renders this
+block through the agent-relay chart on top of this guide's values.
 
 ## Upgrades: dedicated owner and legacy temporary credentials
 
