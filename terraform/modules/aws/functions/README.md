@@ -95,6 +95,7 @@ does not adopt, detach or forget existing IAM resources automatically.
 | [aws_sqs_queue_policy.dlq](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue_policy) | resource |
 | [aws_sqs_queue_policy.events](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue_policy) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
+| [aws_lambda_function.existing](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/lambda_function) | data source |
 | [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 
@@ -109,16 +110,19 @@ does not adopt, detach or forget existing IAM resources automatically.
 | alarm\_actions | SNS topic ARNs for the DLQ, backlog-age and error alarms. Empty creates the alarms with actions disabled. | `list(string)` | `[]` | no |
 | architecture | arm64 or x86\_64 (must match the package). | `string` | `"arm64"` | no |
 | batch\_size | SQS messages per invocation. | `number` | `10` | no |
+| brief\_schedule\_enabled | The brief schedule's state. Null: enabled only when enabled and briefs\_enabled are both true. | `bool` | `null` | no |
 | brief\_schedule\_expression | Brief tick schedule. | `string` | `"rate(1 minute)"` | no |
 | briefs\_enabled | Session briefs: enables the brief schedule and sets SESSION\_BRIEF\_ENABLED. Model calls also need openai\_api\_key in the pipeline secret. | `bool` | `false` | no |
 | bucket\_kms\_key\_arn | The bucket's customer managed KMS key, if any. The role may decrypt with it only through S3. With S3 Bucket Keys the encryption context is the bucket ARN, so the grant covers the bucket; object reads stay limited to key\_prefix by s3:GetObject. | `string` | `null` | no |
 | code\_signing\_config\_arn | Lambda code signing configuration for zip packages (null: no signature check). | `string` | `null` | no |
+| create\_alarms | Create the DLQ, backlog-age and error alarms. | `bool` | `true` | no |
 | create\_secret | Create an empty Secrets Manager secret (a container; set its JSON value out of band: HoopDb URL and, with search on, the search backend credentials). Only the pipeline role may read it. | `bool` | `true` | no |
 | delivery\_delay\_seconds | Queue delivery delay, so a burst of manifest writes coalesces. | `number` | `30` | no |
 | dlq\_retention\_seconds | DLQ retention (14 days, the SQS maximum). | `number` | `1209600` | no |
 | enabled | Enable queue consumption and schedules. Set false while provisioning the function, secret and database bootstrap; direct authorized invocations remain possible. | `bool` | `true` | no |
 | environment | Extra (non-secret) environment variables, merged over the module's defaults (see the README). Secrets go in the pipeline secret, never here. | `map(string)` | `{}` | no |
 | existing\_execution\_role\_arn | Existing same-account Lambda execution role. Null creates the role and inline policy; otherwise this module authors neither. The operator must verify trust, permissions, boundary and guards separately. | `string` | `null` | no |
+| existing\_function\_name | Adopt an existing pipeline function instead of creating it. Its role, log group, secret and invoke config are owned elsewhere and not authored here; this state manages the queues, the event source mapping, the schedules and (with manage\_schedule\_permissions) their invoke permissions. Null creates the function. | `string` | `null` | no |
 | handler | Handler for zip packages (ignored for images). | `string` | `"index.handler"` | no |
 | key\_prefix | Tenant key base the services write under (the services' TENANT\_KEY\_BASE, "96bulls"). | `string` | `"96bulls"` | no |
 | lambda\_kms\_key\_arn | KMS key for the function's environment variables. null uses the AWS managed key. | `string` | `null` | no |
@@ -126,6 +130,8 @@ does not adopt, detach or forget existing IAM resources automatically.
 | log\_kms\_key\_arn | KMS key for the function log group (its key policy must allow CloudWatch Logs). | `string` | `null` | no |
 | log\_retention\_days | Function log group retention. | `number` | `30` | no |
 | manage\_bucket\_notification | Create the bucket's S3 event notification (manifest.json puts and deletes to the queue). aws\_s3\_bucket\_notification owns the bucket's whole notification configuration, so turn this off when anything else notifies from the bucket and add the queue configuration there (see the bucket\_notification\_queue\_configuration output). | `bool` | `true` | no |
+| manage\_queue\_policies | Author the session-events and DLQ access policies. false leaves an adopted queue's policy as it is. | `bool` | `true` | no |
+| manage\_schedule\_permissions | Author the reconcile and brief invoke permissions (statement ids session-reconcile, session-brief). false leaves an adopted function's resource policy as it is. | `bool` | `true` | no |
 | max\_concurrency | Maximum concurrent Lambda invocations from the queue (event source mapping scaling). | `number` | `4` | no |
 | max\_receive\_count | Receives before a message moves to the DLQ. | `number` | `8` | no |
 | maximum\_batching\_window\_seconds | How long the mapping waits to fill a batch. | `number` | `20` | no |
@@ -144,7 +150,7 @@ does not adopt, detach or forget existing IAM resources automatically.
 | tags | Tags applied to every resource. | `map(string)` | `{}` | no |
 | timeout\_seconds | Function timeout. Unless visibility\_timeout\_seconds is set, the queue's visibility timeout is six times this (AWS guidance for SQS sources) plus maximum\_batching\_window\_seconds. | `number` | `300` | no |
 | tracing\_mode | X-Ray tracing (PassThrough or Active). | `string` | `"PassThrough"` | no |
-| visibility\_timeout\_seconds | session-events visibility timeout. null (the default) keeps six times timeout\_seconds plus maximum\_batching\_window\_seconds. Set it only to match an existing queue, for example on import; it must be at least timeout\_seconds and at most 43200 (the SQS maximum). | `number` | `null` | no |
+| visibility\_timeout\_seconds | session-events VisibilityTimeout. Null: six times timeout\_seconds plus maximum\_batching\_window\_seconds. Set it when adopting a queue, to keep its live value. | `number` | `null` | no |
 | vpc\_security\_group\_ids | Security groups for the function ENIs (egress to Postgres 5432 and HTTPS). | `list(string)` | `[]` | no |
 | vpc\_subnet\_ids | Private subnets for the function ENIs. Needed to reach a private HoopDb (RDS/Aurora); the subnets need a route to S3, SQS, Secrets Manager and CloudWatch (NAT or VPC endpoints). Empty runs outside a VPC. | `list(string)` | `[]` | no |
 

@@ -5,12 +5,12 @@ output "activation_enabled" {
 
 output "function_name" {
   description = "Pipeline function name."
-  value       = aws_lambda_function.this.function_name
+  value       = local.function_name
 }
 
 output "function_arn" {
   description = "Pipeline function ARN."
-  value       = aws_lambda_function.this.arn
+  value       = local.pipeline_function_arn
 }
 
 output "execution_role_arn" {

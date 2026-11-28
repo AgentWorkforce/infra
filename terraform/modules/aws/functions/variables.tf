@@ -127,17 +127,6 @@ variable "timeout_seconds" {
   }
 }
 
-variable "visibility_timeout_seconds" {
-  description = "session-events visibility timeout. null (the default) keeps six times timeout_seconds plus maximum_batching_window_seconds. Set it only to match an existing queue, for example on import; it must be at least timeout_seconds and at most 43200 (the SQS maximum)."
-  type        = number
-  default     = null
-
-  validation {
-    condition     = var.visibility_timeout_seconds == null || (var.visibility_timeout_seconds >= 30 && var.visibility_timeout_seconds <= 43200)
-    error_message = "visibility_timeout_seconds must be null or 30-43200 (and at least timeout_seconds; the queue checks that)."
-  }
-}
-
 variable "environment" {
   description = "Extra (non-secret) environment variables, merged over the module's defaults (see the README). Secrets go in the pipeline secret, never here."
   type        = map(string)
@@ -341,4 +330,52 @@ variable "tags" {
   description = "Tags applied to every resource."
   type        = map(string)
   default     = {}
+}
+
+# --- Adopting existing resources --------------------------------------------
+
+variable "existing_function_name" {
+  description = "Adopt an existing pipeline function instead of creating it. Its role, log group, secret and invoke config are owned elsewhere and not authored here; this state manages the queues, the event source mapping, the schedules and (with manage_schedule_permissions) their invoke permissions. Null creates the function."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.existing_function_name == null ? true : can(regex("^[a-zA-Z0-9-_]{1,64}$", var.existing_function_name))
+    error_message = "existing_function_name must be a Lambda function name (not an ARN)."
+  }
+}
+
+variable "visibility_timeout_seconds" {
+  description = "session-events VisibilityTimeout. Null: six times timeout_seconds plus maximum_batching_window_seconds. Set it when adopting a queue, to keep its live value."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.visibility_timeout_seconds == null ? true : (var.visibility_timeout_seconds >= 0 && var.visibility_timeout_seconds <= 43200 && floor(var.visibility_timeout_seconds) == var.visibility_timeout_seconds)
+    error_message = "visibility_timeout_seconds must be a whole number from 0 to 43200."
+  }
+}
+
+variable "brief_schedule_enabled" {
+  description = "The brief schedule's state. Null: enabled only when enabled and briefs_enabled are both true."
+  type        = bool
+  default     = null
+}
+
+variable "manage_queue_policies" {
+  description = "Author the session-events and DLQ access policies. false leaves an adopted queue's policy as it is."
+  type        = bool
+  default     = true
+}
+
+variable "manage_schedule_permissions" {
+  description = "Author the reconcile and brief invoke permissions (statement ids session-reconcile, session-brief). false leaves an adopted function's resource policy as it is."
+  type        = bool
+  default     = true
+}
+
+variable "create_alarms" {
+  description = "Create the DLQ, backlog-age and error alarms."
+  type        = bool
+  default     = true
 }
