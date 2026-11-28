@@ -16,8 +16,8 @@ database and Relaycast's SQLite volume around it, were qualified separately on
 agent-relay-2026.11.8: see
 [AKS receipts upgrade qualification](#aks-receipts-upgrade-qualification).
 
-This guide installs release **agent-relay-2026.11.19** (chart agent-relay 0.7.81,
-sessions-pipeline 0.8.58). `searchIndexer.locker.credentials` first shipped
+This guide installs release **agent-relay-2026.11.21** (chart agent-relay 0.7.85,
+sessions-pipeline 0.8.61). `searchIndexer.locker.credentials` first shipped
 in agent-relay-2026.11.2. Earlier releases do not render the
 indexer's MinIO keys, so its uploads are never indexed.
 
@@ -40,7 +40,7 @@ software or AKS resources and does not extend this guide's qualification.
 | AWS (EKS guide) | Azure (this guide) | Why |
 |---|---|---|
 | RDS + `rds-setup.sh` (`databaseMode: rds`) | In-cluster CloudNativePG, the pinned `deps/cnpg-cluster-values.yaml`, + `postgres-setup.sh` (`databaseMode: selfhosted`) | The services image has `rds`, `cloudsql` and `selfhosted` database modes. Azure Database for PostgreSQL fits none: its admin role is neither `rds_superuser` nor `cloudsqlsuperuser`, and it is not a superuser. |
-| S3 through EKS Pod Identity | The chart's bundled MinIO (`session-object-storage`) on an Azure disk, static keys from a Secret | The services speak S3 or GCS. There is no Azure Blob Locker provider. |
+| S3 through EKS Pod Identity | The chart's bundled MinIO (`session-object-storage`) on an Azure disk, static keys from a Secret | The guide configures MinIO for Locker. The optional Azure Blob analysis paths have separate qualification requirements (step 13). |
 | OpenSearch (SigV4) | PostgreSQL search (`search.backend: postgres`), as on GKE | The OpenSearch writer signs with AWS credentials. |
 | ALB + ACM | Traefik + cert-manager (Let's Encrypt HTTP-01) | Same hosts, paths and edge denials. |
 | Route 53 or your DNS | Optional: an Azure public IP DNS label per host (`<label>.<region>.cloudapp.azure.com`) | No DNS zone is needed. |
@@ -61,12 +61,12 @@ from a checkout. The repository supplies only this directory's files and the
 pinned `deps/` values. Every later command runs in `docs/azure-install`:
 
 ```sh
-git clone https://github.com/AgentWorkforce/infra.git && cd infra/docs/azure-install
-mkdir release && gh release download agent-relay-2026.11.19 -R AgentWorkforce/infra -D release
-(cd release && shasum -a 256 -c SHA256SUMS && tar -xzf agent-relay-0.7.81.tgz) | tail -1
+git clone --branch agent-relay-2026.11.21 https://github.com/AgentWorkforce/infra.git && cd infra/docs/azure-install
+mkdir release && gh release download agent-relay-2026.11.21 -R AgentWorkforce/infra -D release
+(cd release && shasum -a 256 -c SHA256SUMS && tar -xzf agent-relay-0.7.85.tgz) | tail -1
 # Public GHCR images: no mirror root.
 sed 's#__IMAGE_MIRROR_ROOT__/##' release/release-images.values.yaml > release-images.values.yaml
-CHART=release/agent-relay-0.7.81.tgz
+CHART=release/agent-relay-0.7.85.tgz
 ```
 
 **Done when:** every checksum line ends in `OK` (the last is
@@ -391,7 +391,7 @@ By default the search indexer indexes a session whole only up to 64 MiB and
 100,000 events. A larger session is recorded as partial. A workspace search that
 would include it then answers 501 `session_partial`, unless the read API is set
 to skip partial sessions. These settings need **agent-relay-2026.11.11 or
-later** (chart 0.7.25+). This guide installs 2026.11.19, which supports them.
+later** (chart 0.7.25+). This guide installs 2026.11.21, which supports them.
 If you run an older release, upgrade first.
 
 All are unset by default. When it renders, the chart checks only the format of
@@ -447,12 +447,18 @@ workspace search that answered 501 `session_partial` answers 200.
 ### 13. Session analysis (optional)
 
 The session-analysis worker (`SERVICE=session-analysis`) can run against the
-bundled MinIO with static keys. It is off by default. Before you start:
+bundled MinIO with static keys. It is off by default. The pinned Sessions image
+also includes Azure Blob analysis storage, integrity-checked reads of current
+result bytes, and operator erase. Real-account qualification for those paths
+is pending. Azure decision-record writing remains disabled. See the
+[Azure proof checklist at the pinned source](https://github.com/AgentWorkforce/relayhistory-pipeline/blob/fefbc87c98d12c359d7a2f73f2eab383498ebd31/docs/azure-real-account-proof.md).
+
+Before starting the MinIO-backed worker:
 
 - **Image.** Static keys and the MinIO endpoint need a services image with the
   runner's S3-compatible store support (relayhistory-pipeline 9b29a3dd or
-  later). The services image agent-relay-2026.11.19 pins is built from
-  relayhistory-pipeline `abd4e8a8`, which is after it, so with this release the
+  later). The services image agent-relay-2026.11.21 pins is built from
+  relayhistory-pipeline `fefbc87c`, which is after it, so with this release the
   worker uses the shared image and needs no `sessionAnalysis.image`. An older
   release's image predates it: the pod exits 2 at startup with
   `credentials_mode_invalid`, so there pin a newer, reviewed repository plus
@@ -737,7 +743,7 @@ afterwards). Times are UTC.
 ## What was not proven
 
 - Any release other than agent-relay-2026.11.0 (patched); `values.yaml` renders
-  against agent-relay-2026.11.19 but was not installed from it.
+  against agent-relay-2026.11.21 but was not installed from it.
 - The output facts bootstrap (step 10).
 - Azure Database for PostgreSQL, Azure Blob Storage, Application Gateway.
 - NetworkPolicy enforcement beyond a default install, private clusters,

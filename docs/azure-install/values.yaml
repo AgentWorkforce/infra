@@ -268,11 +268,11 @@ sessions-pipeline:
           - { name: BOB_COSTAS_MODEL, value: "off" }
     # Session analysis (optional, off): README step 13. Static keys against the
     # bundled MinIO; needs a services image that carries the runner's
-    # S3-compatible store support (agent-relay-2026.11.19's image has it; an
+    # S3-compatible store support (agent-relay-2026.11.21's image has it; an
     # older release's does not, so set `image` below for those).
     # sessionAnalysis:
     #   enabled: true
-    #   # Optional with agent-relay-2026.11.19 (falls back to worker.image). For an
+    #   # Optional with agent-relay-2026.11.21 (falls back to worker.image). For an
     #   # older release, uncomment: this Deployment only; siblings keep worker.image.
     #   # image:
     #   #   repository: ghcr.io/agentworkforce/96bulls-services
