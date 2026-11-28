@@ -42,7 +42,7 @@ enforces it on `terraform show -json`:
 
 ```sh
 python3 gate/zero_diff_gate.py plan.json \
-  --allow 'aws_lambda_event_source_mapping.events:scaling_config.0.maximum_concurrency=20->25'
+  --allow 'module.pipeline.aws_lambda_event_source_mapping.events:scaling_config.0.maximum_concurrency=20->25'
 ```
 
 Any other create, replace, delete or attribute change refuses the plan. The fix is in the private tfvars (make
@@ -51,10 +51,20 @@ them equal live) or a separately approved change. Never edit the live resource.
 The relayhistory-pipeline stack must stop managing these resources (Alchemy retirement, its own approval) before
 the first apply, so the two reconcilers never fight.
 
+## CI
+
+`.github/workflows/hosted-session-pipeline.yml` runs `scripts/hosted/session-pipeline-ci.sh`. A **plan** dispatch reads
+the tfvars from SSM (by version), plans, runs the gate, and writes the saved plan, its text, the gate report and a
+manifest to the state bucket once. An **apply** dispatch (protected environment) takes the plan run id and SHA-256,
+refuses unless that plan passed the gate, re-reads the tfvars at the planned version, re-runs the gate and applies
+exactly that plan, once. The repository is public, so the log shows addresses, actions, digests and the verdict only.
+`GATE_ALLOW` (environment variable) holds the approved changes, today
+`module.pipeline.aws_lambda_event_source_mapping.events:scaling_config.0.maximum_concurrency=20->25`.
+
 ## Tests
 
 `terraform test` (mocked provider, `import_existing = false`) checks rendering. `python3 -m unittest discover
--s gate` checks the gate. Only a CI plan against the live account proves zero changes.
+-s gate` checks the gate, and `scripts/hosted/tests/smoke.sh` checks the CI script with stub binaries. Only a CI plan against the live account proves zero changes.
 
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
