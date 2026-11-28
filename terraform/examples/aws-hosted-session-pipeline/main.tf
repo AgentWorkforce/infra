@@ -166,6 +166,7 @@ resource "aws_lambda_permission" "pipeline" {
 # --- Alarms (actions disabled, as live) ---
 
 resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
+  #checkov:skip=CKV_AWS_319:Imported as-is: the live alarm has actions disabled and enabling them would be a non-zero diff on the import plan; wiring alarm actions is a separate reviewed change.
   alarm_name          = "${local.dlq_name}-not-empty"
   alarm_description   = "Session pipeline messages exhausted their retries (runbooks/sessions-prod-session-pipeline.md, DLQ)."
   namespace           = "AWS/SQS"
@@ -182,6 +183,7 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "backlog_age" {
+  #checkov:skip=CKV_AWS_319:Imported as-is: the live alarm has actions disabled and enabling them would be a non-zero diff on the import plan; wiring alarm actions is a separate reviewed change.
   alarm_name          = "${local.queue_name}-backlog-age"
   alarm_description   = "Oldest session event is older than 15 minutes: the pipeline is behind or failing."
   namespace           = "AWS/SQS"
@@ -198,6 +200,7 @@ resource "aws_cloudwatch_metric_alarm" "backlog_age" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "errors" {
+  #checkov:skip=CKV_AWS_319:Imported as-is: the live alarm has actions disabled and enabling them would be a non-zero diff on the import plan; wiring alarm actions is a separate reviewed change.
   alarm_name          = "${var.function_name}-errors"
   alarm_description   = "Session pipeline invocations are failing (init, timeouts, crashes)."
   namespace           = "AWS/Lambda"
@@ -216,6 +219,8 @@ resource "aws_cloudwatch_metric_alarm" "errors" {
 # --- Secret container (value set out of band, never read here) ---
 
 resource "aws_secretsmanager_secret" "pipeline" {
+  #checkov:skip=CKV_AWS_149:Imported as-is with the live encryption (AWS managed key); a CMK is a separate reviewed change, not part of the zero-diff import.
+  #checkov:skip=CKV2_AWS_57:Holds an externally issued database URL and search credentials set out of band; rotation belongs to their issuers, not a Lambda here.
   name        = var.secret_name
   description = var.secret_description
   tags        = var.tags
@@ -255,6 +260,7 @@ resource "aws_iam_role_policy_attachment" "pipeline" {
 }
 
 resource "aws_cloudwatch_log_group" "pipeline" {
+  #checkov:skip=CKV_AWS_158:Imported as-is; the live log group has no CMK and adding one would be a non-zero diff on the import plan.
   count             = var.log_group == null ? 0 : 1
   name              = "/aws/lambda/${var.function_name}"
   retention_in_days = var.log_group.retention_in_days

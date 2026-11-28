@@ -65,7 +65,18 @@ data "aws_iam_policy_document" "trust" {
 resource "aws_kms_key" "state" {
   description         = "${var.name}: hosted session-pipeline state, saved plans and tfvars"
   enable_key_rotation = true
-  tags                = var.tags
+  # Account administration only; the CI roles get kms use through their own identity policies.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AccountAdministers"
+      Effect    = "Allow"
+      Principal = { AWS = "arn:${local.p}:iam::${local.acct}:root" }
+      Action    = "kms:*"
+      Resource  = "*"
+    }]
+  })
+  tags = var.tags
 }
 
 resource "aws_kms_alias" "state" {
@@ -74,6 +85,9 @@ resource "aws_kms_alias" "state" {
 }
 
 resource "aws_s3_bucket" "state" {
+  #checkov:skip=CKV_AWS_18:Terraform state and saved plans only; every read and write is already in CloudTrail, and a separate log bucket adds no audit the trail lacks.
+  #checkov:skip=CKV_AWS_144:State is single-region by design (one account, one region); versioning keeps every prior state for recovery.
+  #checkov:skip=CKV2_AWS_62:No consumer for state-bucket events; the CI script is the only writer.
   bucket = "${var.name}-${local.acct}-${local.region}"
   tags   = var.tags
 }
@@ -91,6 +105,17 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
       kms_master_key_id = aws_kms_key.state.arn
     }
     bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "state" {
+  bucket = aws_s3_bucket.state.id
+  rule {
+    id     = "expire-noncurrent"
+    status = "Enabled"
+    filter {}
+    noncurrent_version_expiration { noncurrent_days = 90 }
+    abort_incomplete_multipart_upload { days_after_initiation = 7 }
   }
 }
 
