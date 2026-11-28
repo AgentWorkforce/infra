@@ -97,6 +97,20 @@ class NativeBrief(unittest.TestCase):
         values['extraEnv'] = [{'name': 'ANALYTICS_SINK', 'value': 'posthog'}]
         self.render(values, 'managed brief analytics')
 
+    def test_push_briefs_are_off_by_default_and_render_when_enabled(self):
+        env=lambda docs:{e['name']:e.get('value') for e in self.brief(docs)['containers'][0]['env']}
+        off=env(self.render(self.selected()))
+        self.assertNotIn('SESSION_BRIEF_IDLE_SECONDS',off);self.assertNotIn('SESSION_BRIEF_MAX_DELAY_SECONDS',off)
+        v=self.selected();v['nativeBrief']['push']={'enabled':True,'maxDelaySeconds':8,'idleSeconds':600}
+        on=env(self.render(v))
+        self.assertEqual((on['SESSION_BRIEF_MAX_DELAY_SECONDS'],on['SESSION_BRIEF_IDLE_SECONDS']),('8','600'))
+        self.assertEqual(on['SESSION_BRIEF_SWEEP_SECONDS'],'60')
+        for field,value in [('maxDelaySeconds',0),('maxDelaySeconds',61),('idleSeconds',0),('enabled','yes')]:
+            bad=self.selected();bad['nativeBrief']['push']={'enabled':True,'maxDelaySeconds':8,'idleSeconds':600};bad['nativeBrief']['push'][field]=value
+            self.render(bad,refuses='nativeBrief.push.'+field)
+        unmanaged=self.selected();unmanaged['components']['session-brief']['env']=[{'name':'SESSION_BRIEF_MAX_DELAY_SECONDS','value':'1'}]
+        self.render(unmanaged,refuses='SESSION_BRIEF_MAX_DELAY_SECONDS')
+
     def test_default_has_no_brief_resources_or_model_secret(self):
         docs=self.render({});s=json.dumps(docs)
         self.assertNotIn('SESSION_BRIEF_CANONICAL_INPUT',s);self.assertNotIn('OPENAI_API_KEY',s)

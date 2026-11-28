@@ -286,6 +286,14 @@ nativeBrief:
   model: gpt-5.6-luna
   sweepSeconds: 60
   batch: 1
+  # Push-based briefs (T130 producer contract v1, sha256 f01914a6...). SESSION_BRIEF_ENABLED stays the activation control. A committed
+  # manifest append and the session end both trigger a brief, coalesced so no append waits more than
+  # maxDelaySeconds from the oldest uncovered one, even under continuous writes. idleSeconds keeps the idle
+  # trigger; sweepSeconds above stays as recovery on its own clock, outside the 60 s target. Off: today's sweep-only behaviour.
+  push:
+    enabled: false
+    maxDelaySeconds: 8
+    idleSeconds: 600
   # Daily model-call caps per UTC day. They bound model spend: each brief is
   # one model call billed to openaiSecret's key. globalDailyCap counts every
   # brief across the whole install; sessionDailyCap counts re-briefs of one
