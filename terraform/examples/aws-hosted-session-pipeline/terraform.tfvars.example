@@ -1,0 +1,30 @@
+# Shape only. The real values live in the private SSM SecureString CI reads; never commit them.
+account_id    = "111111111111"
+region        = "us-east-1"
+name_prefix   = "96bulls-<stage>"
+function_name = "96bulls-<stage>-session-pipeline"
+bucket_name   = "<transcripts bucket>"
+kms_key_id    = "<transcripts key id>"
+secret_name   = "96bulls/<stage>/session-pipeline"
+tags          = { "96bulls:stack" = "<stage>", "96bulls:component" = "session-pipeline", "96bulls:repo" = "<repo>" }
+
+# Live: whatever the event source mapping reads at plan time, or an approved change.
+max_concurrency            = 4
+visibility_timeout_seconds = 1800
+
+role = {
+  name               = "<live role name>"
+  assume_role_policy = "<live trust policy JSON>"
+  inline_policies    = { "<live policy name>" = "<live policy JSON>" }
+  tags               = {}
+}
+
+# Every statement this root does not render, exactly as live (JSON arrays).
+bucket_policy_other_statements = "[]"
+kms_policy_other_statements    = "[]"
+
+import_ids = {
+  event_source_mapping_uuid = "<live mapping uuid>"
+  secret_arn                = "<live secret ARN>"
+  permission_statement_ids  = { reconcile = "<sid>", reconcile_continue = "<sid>", brief = "<sid>" }
+}
