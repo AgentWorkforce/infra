@@ -105,7 +105,6 @@ does not adopt, detach or forget existing IAM resources automatically.
 | ---- | ----------- | ---- | ------- | :------: |
 | bucket\_name | The sessions (Locker) bucket that receives manifests: the same bucket as sessions-pipeline worker.locker.bucket. | `string` | n/a | yes |
 | name | Prefix for the function, queues, rules, alarms and role (<name>-session-pipeline, <name>-session-events, ...). | `string` | n/a | yes |
-| package | The pipeline code, exactly one of: image\_uri (a container image in ECR, package\_type Image), s3\_bucket + s3\_key (a zip in S3), or filename (a local zip). The hosted stack builds src/session-pipeline/lambda.ts from AgentWorkforce/96BullSessions with export "handler". | ```object({ image_uri = optional(string) s3_bucket = optional(string) s3_key = optional(string) s3_object_version = optional(string) filename = optional(string) source_code_hash = optional(string) })``` | n/a | yes |
 | additional\_policy\_statements | Extra statements in execution\_role\_policy\_json, attached only for a managed role (for example es:ESHttpPost/Put on an OpenSearch domain once the services have that backend). | `any` | `[]` | no |
 | alarm\_actions | SNS topic ARNs for the DLQ, backlog-age and error alarms. Empty creates the alarms with actions disabled. | `list(string)` | `[]` | no |
 | architecture | arm64 or x86\_64 (must match the package). | `string` | `"arm64"` | no |
@@ -136,6 +135,7 @@ does not adopt, detach or forget existing IAM resources automatically.
 | max\_receive\_count | Receives before a message moves to the DLQ. | `number` | `8` | no |
 | maximum\_batching\_window\_seconds | How long the mapping waits to fill a batch. | `number` | `20` | no |
 | memory\_size | Function memory in MB. | `number` | `3008` | no |
+| package | The pipeline code, exactly one of: image\_uri (a container image in ECR, package\_type Image), s3\_bucket + s3\_key (a zip in S3), or filename (a local zip). The hosted stack builds src/session-pipeline/lambda.ts from AgentWorkforce/96BullSessions with export "handler". null only with existing\_function\_name (adopt mode). | ```object({ image_uri = optional(string) s3_bucket = optional(string) s3_key = optional(string) s3_object_version = optional(string) filename = optional(string) source_code_hash = optional(string) })``` | `null` | no |
 | permissions\_boundary\_arn | Permissions boundary for the managed execution role; unused with existing\_execution\_role\_arn. | `string` | `null` | no |
 | queue\_kms\_key\_arn | Customer managed KMS key for both queues. null uses SQS-managed SSE. A CMK's key policy must let s3.amazonaws.com use it (kms:GenerateDataKey, kms:Decrypt) for the bucket notification. | `string` | `null` | no |
 | queue\_retention\_seconds | session-events retention. | `number` | `345600` | no |

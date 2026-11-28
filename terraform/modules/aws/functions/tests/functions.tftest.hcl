@@ -282,6 +282,26 @@ run "adopt_existing_function" {
   }
 }
 
+run "adopt_without_package" {
+  command = plan
+  variables {
+    package                     = null
+    existing_function_name      = "relay-session-pipeline"
+    manage_schedule_permissions = false
+    create_alarms               = false
+  }
+  assert {
+    condition     = length(aws_lambda_function.this) == 0
+    error_message = "Adopt mode needs no package."
+  }
+}
+
+run "package_required_without_adopt" {
+  command         = plan
+  variables { package = null }
+  expect_failures = [aws_lambda_function.this]
+}
+
 run "schedule_description_prefix" {
   command = plan
   variables { schedule_description_prefix = "96bulls session pipeline" }

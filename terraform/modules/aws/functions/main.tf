@@ -24,7 +24,7 @@ locals {
   adopt              = var.existing_function_name != null
   secret_arn         = local.adopt ? null : (var.create_secret ? aws_secretsmanager_secret.pipeline[0].arn : var.secret_arn)
   in_vpc             = length(var.vpc_subnet_ids) > 0
-  is_image           = var.package.image_uri != null
+  is_image           = var.package == null ? false : var.package.image_uri != null
   execution_role_arn = local.adopt ? data.aws_lambda_function.existing[0].role : (var.existing_execution_role_arn != null ? var.existing_execution_role_arn : aws_iam_role.this[0].arn)
   # The function every queue mapping, schedule target and permission points at.
   pipeline_function_arn = local.adopt ? data.aws_lambda_function.existing[0].arn : aws_lambda_function.this[0].arn
@@ -359,6 +359,10 @@ resource "aws_lambda_function" "this" {
     precondition {
       condition     = var.create_secret || var.secret_arn != null
       error_message = "Set secret_arn when create_secret is false."
+    }
+    precondition {
+      condition     = var.package != null
+      error_message = "package is required unless existing_function_name adopts a function."
     }
   }
 

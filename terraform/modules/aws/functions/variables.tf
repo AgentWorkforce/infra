@@ -56,7 +56,7 @@ variable "package" {
   description = <<-EOT
     The pipeline code, exactly one of: image_uri (a container image in ECR, package_type Image), s3_bucket + s3_key
     (a zip in S3), or filename (a local zip). The hosted stack builds src/session-pipeline/lambda.ts from
-    AgentWorkforce/96BullSessions with export "handler".
+    AgentWorkforce/96BullSessions with export "handler". null only with existing_function_name (adopt mode).
   EOT
   type = object({
     image_uri         = optional(string)
@@ -66,9 +66,10 @@ variable "package" {
     filename          = optional(string)
     source_code_hash  = optional(string)
   })
+  default = null
 
   validation {
-    condition = length(compact([
+    condition = var.package == null ? true : length(compact([
       var.package.image_uri == null ? "" : "image",
       var.package.s3_bucket == null && var.package.s3_key == null ? "" : "s3",
       var.package.filename == null ? "" : "file",
@@ -77,12 +78,12 @@ variable "package" {
   }
 
   validation {
-    condition     = (var.package.s3_bucket == null) == (var.package.s3_key == null)
+    condition     = var.package == null ? true : (var.package.s3_bucket == null) == (var.package.s3_key == null)
     error_message = "package.s3_bucket and package.s3_key go together."
   }
 
   validation {
-    condition     = var.package.image_uri == null || can(regex("@sha256:[0-9a-f]{64}$", var.package.image_uri))
+    condition     = var.package == null ? true : (var.package.image_uri == null ? true : can(regex("@sha256:[0-9a-f]{64}$", var.package.image_uri)))
     error_message = "package.image_uri must be pinned by digest (<repository>@sha256:<64 hex>)."
   }
 }
