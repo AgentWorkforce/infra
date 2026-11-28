@@ -297,7 +297,7 @@ run "adopt_without_package" {
 }
 
 run "package_required_without_adopt" {
-  command         = plan
+  command = plan
   variables { package = null }
   expect_failures = [aws_lambda_function.this]
 }
