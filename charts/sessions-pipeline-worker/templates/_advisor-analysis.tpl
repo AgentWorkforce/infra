@@ -66,9 +66,24 @@
 {{- if and $image.repository (not (or $image.tag $image.digest)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.image.repository needs image.tag or image.digest (pin the dedicated runner image)" }}{{ end -}}
 {{- if and (not $image.repository) (or $image.tag $image.digest) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.image.tag or image.digest needs image.repository" }}{{ end -}}
 {{- if and $image.pullPolicy (not (has $image.pullPolicy (list "Always" "IfNotPresent" "Never"))) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.image.pullPolicy must be Always, IfNotPresent, Never or empty" }}{{ end -}}
-{{- range $k := list "bucket" "bucketRegion" "keyPrefix" }}{{ if not (get $s $k) }}{{ fail (printf "sessions-pipeline-worker: sessionAnalysis.%s is required when sessionAnalysis.enabled=true" $k) }}{{ end }}{{ end -}}
+{{- $provider := .Values.locker.provider | default "s3" -}}
+{{- if not (has $provider (list "s3" "azure")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis reads canonical evidence from S3 or Azure Blob; it requires locker.provider=s3 or azure" }}{{ end -}}
+{{- $azure := eq $provider "azure" -}}
+{{- range $k := ternary (list "keyPrefix") (list "bucket" "bucketRegion" "keyPrefix") $azure }}{{ if not (get $s $k) }}{{ fail (printf "sessions-pipeline-worker: sessionAnalysis.%s is required when sessionAnalysis.enabled=true" $k) }}{{ end }}{{ end -}}
 {{- if not $s.modelKeySecret.name }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelKeySecret.name is required when sessionAnalysis.enabled=true" }}{{ end -}}
 {{- if not $s.databaseSecret.name }}{{ fail "sessions-pipeline-worker: sessionAnalysis.databaseSecret.name is required when sessionAnalysis.enabled=true (the runtime role's own login)" }}{{ end -}}
+{{- if $azure -}}
+{{- /* Azure Blob (runner LOCKER_PROVIDER=azure): the Locker's account, container and
+endpoint, Shared Key from a mounted file. The runner refuses every SESSION_ANALYSIS_S3_*
+setting on this path (azure_s3_settings_conflict), so the S3 values must stay unset. */ -}}
+{{- range $k := list "bucket" "bucketRegion" "s3Endpoint" "s3VersioningCheck" }}{{ if get $s $k }}{{ fail (printf "sessions-pipeline-worker: sessionAnalysis.%s must be empty with locker.provider=azure (the runner refuses S3 settings on Azure: azure_s3_settings_conflict); the container is locker.bucket" $k) }}{{ end }}{{ end -}}
+{{- if dig "s3KeysSecret" "name" "" $s }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3KeysSecret.name must be empty with locker.provider=azure; the account key comes from sessionAnalysis.azure.accountKeySecret" }}{{ end -}}
+{{- if $s.allowInClusterHttp }}{{ fail "sessions-pipeline-worker: sessionAnalysis.allowInClusterHttp must be false with locker.provider=azure (the Azure Locker endpoint is https or loopback only)" }}{{ end -}}
+{{- if eq (toString ($s.decisionRecords | default "")) "true" }}{{ fail "sessions-pipeline-worker: sessionAnalysis.decisionRecords=true is not supported with locker.provider=azure (the runner refuses it: azure_decision_records_unsupported)" }}{{ end -}}
+{{- $ks := include "sessions-pipeline-worker.analysisAzureKeySecret" . | fromJson -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" $ks.name) }}{{ fail "sessions-pipeline-worker: sessionAnalysis on Azure needs the account key Secret: set sessionAnalysis.azure.accountKeySecret.name (or existingSecret)" }}{{ end -}}
+{{- if not (regexMatch "^[-._a-zA-Z0-9]{1,253}$" $ks.key) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.azure.accountKeySecret.key must be a Secret data key ([-._a-zA-Z0-9])" }}{{ end -}}
+{{- else -}}
 {{- $creds := $s.s3Credentials | default "podIdentity" -}}
 {{- if not (has $creds (list "podIdentity" "static")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3Credentials must be podIdentity or static (IRSA is not supported; role is for local tests only)" }}{{ end -}}
 {{- $keys := $s.s3KeysSecret | default dict -}}
@@ -100,7 +115,7 @@
 {{- end -}}
 {{- $check := $s.s3VersioningCheck -}}
 {{- if not (or (kindIs "invalid" $check) (eq (toString $check) "") (eq (toString $check) "true")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.s3VersioningCheck must be \"\" (the runner decides: on with s3Endpoint or static keys) or \"true\"; the check cannot be turned off" }}{{ end -}}
-{{- if ne (.Values.locker.provider | default "s3") "s3" }}{{ fail "sessions-pipeline-worker: sessionAnalysis reads canonical evidence from S3 only; it requires locker.provider=s3" }}{{ end -}}
+{{- end -}}
 {{- $t := include "sessions-pipeline-worker.sessionAnalysisTls" . | fromJson -}}
 {{- if not (has ($t.profile | default "") (list "" "supabase" "custom-ca")) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.postgresTls.profile must be empty, supabase or custom-ca" }}{{ end -}}
 {{- if and (eq $t.profile "custom-ca") (or (not $t.caConfigMap) (not (regexMatch "^[a-f0-9]{64}$" ($t.sha256 | default "")))) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.postgresTls.profile=custom-ca needs caConfigMap and a 64-hex sha256 (or let the agent-relay chart manage the RDS CA: global.rdsCa.bundle)" }}{{ end -}}
@@ -113,10 +128,18 @@
 {{- if and $s.modelEgress.enabled (empty $s.modelEgress.to) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelEgress.to must list destinations when modelEgress.enabled=true (an empty to would allow every destination)" }}{{ end -}}
 {{- if and $s.modelEgress.enabled (not .Values.networkPolicy.enabled) }}{{ fail "sessions-pipeline-worker: sessionAnalysis.modelEgress requires networkPolicy.enabled (alone it would isolate the pod from DNS, the database, object storage and, with podIdentity, the Pod Identity agent)" }}{{ end -}}
 {{- if and .Values.networkPolicy.enabled $s.run (not $s.modelEgress.enabled) }}{{ fail "sessions-pipeline-worker: with networkPolicy.enabled, sessionAnalysis.run=true needs sessionAnalysis.modelEgress for the model API" }}{{ end -}}
-{{- if and .Values.networkPolicy.enabled (eq $creds "podIdentity") (empty (dig "workloadIdentity" "to" (list) .Values.networkPolicy)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis with s3Credentials=podIdentity uses EKS Pod Identity; with networkPolicy.enabled, networkPolicy.workloadIdentity.to must list the Pod Identity agent" }}{{ end -}}
+{{- if and .Values.networkPolicy.enabled (not $azure) (eq ($s.s3Credentials | default "podIdentity") "podIdentity") (empty (dig "workloadIdentity" "to" (list) .Values.networkPolicy)) }}{{ fail "sessions-pipeline-worker: sessionAnalysis with s3Credentials=podIdentity uses EKS Pod Identity; with networkPolicy.enabled, networkPolicy.workloadIdentity.to must list the Pod Identity agent" }}{{ end -}}
 {{- end -}}
 {{- end }}
 
 {{- define "sessions-pipeline-worker.analysisServiceAccountName" -}}
 {{- .Values.sessionAnalysis.serviceAccount.name | default (include "sessions-pipeline-worker.componentName" (dict "context" . "component" "session-analysis")) -}}
+{{- end }}
+
+{{- /* The Secret holding the Azure Shared Key the runner reads as a file:
+sessionAnalysis.azure.accountKeySecret, defaulting to the Locker's own
+existingSecret and secretKeys.lockerAzureAccountKey. JSON {name, key}. */ -}}
+{{- define "sessions-pipeline-worker.analysisAzureKeySecret" -}}
+{{- $ks := dig "azure" "accountKeySecret" dict (.Values.sessionAnalysis | default dict) | default dict -}}
+{{- dict "name" ($ks.name | default .Values.existingSecret | default "") "key" ($ks.key | default .Values.secretKeys.lockerAzureAccountKey | default "LOCKER_AZURE_ACCOUNT_KEY") | toJson -}}
 {{- end }}

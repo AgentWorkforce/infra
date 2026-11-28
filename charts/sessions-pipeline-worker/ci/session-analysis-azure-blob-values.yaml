@@ -1,0 +1,34 @@
+# session-analysis on native Azure Blob Storage (locker.provider=azure), as on
+# an AKS self-host install. Synthetic values only: the account, container and
+# Secret names are placeholders and the chart never takes the account key; it
+# is read from the existing Secret by name. The runner image must carry the
+# Azure runner (sessions-pipeline 10d27ff4 or later), so it is pinned here.
+existingSecret: sessions-pipeline
+locker:
+  provider: azure
+  bucket: sessions-ci
+  azure:
+    account: exampleciacct
+tenant:
+  orgId: org_ci
+migrations:
+  databaseMode: selfhosted
+  supabaseShim: true
+  runtimeRole: sessions_pipeline_runtime
+  runtimeRoleLogin: true
+  functionBoundaryMode: global-default-revoke
+lockerInit:
+  enabled: false
+sessionAnalysis:
+  enabled: true
+  run: false
+  keyPrefix: 96bulls
+  image:
+    repository: ghcr.io/agentworkforce/96bulls-services
+    tag: "ci-azure-runner"
+  modelKeySecret:
+    name: agent-relay-llm
+    key: OPENAI_API_KEY
+  databaseSecret:
+    name: session-analysis-db
+    key: url

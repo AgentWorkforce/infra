@@ -40,7 +40,7 @@ software or AKS resources and does not extend this guide's qualification.
 | AWS (EKS guide) | Azure (this guide) | Why |
 |---|---|---|
 | RDS + `rds-setup.sh` (`databaseMode: rds`) | In-cluster CloudNativePG, the pinned `deps/cnpg-cluster-values.yaml`, + `postgres-setup.sh` (`databaseMode: selfhosted`) | The services image has `rds`, `cloudsql` and `selfhosted` database modes. Azure Database for PostgreSQL fits none: its admin role is neither `rds_superuser` nor `cloudsqlsuperuser`, and it is not a superuser. |
-| S3 through EKS Pod Identity | The chart's bundled MinIO (`session-object-storage`) on an Azure disk, static keys from a Secret | The services speak S3 or GCS. There is no Azure Blob Locker provider. |
+| S3 through EKS Pod Identity | The chart's bundled MinIO (`session-object-storage`) on an Azure disk, static keys from a Secret | The ingest charts (`alleyoop`, `ingestEdge`, `searchIndexer`) take S3 or GCS only. The worker chart also takes native Azure Blob (`locker.provider: azure`, [step 13b](#13b-session-analysis-on-native-azure-blob-preview)), but the whole pipeline cannot run on Blob until the ingest charts do. |
 | OpenSearch (SigV4) | PostgreSQL search (`search.backend: postgres`), as on GKE | The OpenSearch writer signs with AWS credentials. |
 | ALB + ACM | Traefik + cert-manager (Let's Encrypt HTTP-01) | Same hosts, paths and edge denials. |
 | Route 53 or your DNS | Optional: an Azure public IP DNS label per host (`<label>.<region>.cloudapp.azure.com`) | No DNS zone is needed. |
@@ -506,6 +506,72 @@ the model API in `sessionAnalysis.modelEgress`. With static keys no workload
 identity rule is needed.
 
 **Done when:** the rollout finishes with `run: true` and the pod stays Ready.
+
+### 13b. Session analysis on native Azure Blob (preview)
+
+The worker chart (`sessions-pipeline-worker`) also takes native Azure Blob
+Storage: `locker.provider: azure`. The workers and the session-analysis
+runner then read and write the container directly with the storage account's
+Shared Key, with no S3 settings and no MinIO. Use this only when every Locker
+writer is on the same container. On this release the ingest charts
+(`alleyoop`, `ingestEdge`, `searchIndexer`) still take S3 or GCS only, so a
+default install keeps MinIO and runs session analysis as in step 13. This step
+documents the worker values so the chart renders and they are ready when the
+ingest side moves to Blob.
+
+Before you start:
+
+- **Image.** The Azure Locker and the Azure runner need sessions-pipeline
+  `10d27ff4` or later. agent-relay-2026.11.24 pins a services image built from
+  `fefbc87c`, which has them. The worker chart's standalone default image does
+  not, so pin `sessionAnalysis.image` (repository plus a reviewed digest) on
+  older releases.
+- **Storage account.** Turn on blob versioning on the account, and create the
+  container outside the chart (`lockerInit.enabled: false`). Before it claims
+  any job, the runner proves versioning at startup by writing a probe blob,
+  erasing it and checking that it is gone. A
+  missing container refuses as `blob_container_missing`, versioning off as
+  `blob_not_versioned`, a wrong key as `blob_auth_refused`. The sweeper's strict
+  erase also needs permanent delete if soft delete is on.
+- **Key.** Put the account key in the shared worker Secret (`existingSecret`)
+  under `LOCKER_AZURE_ACCOUNT_KEY`. If you only have a connection string, the
+  key is its `AccountKey=` part. The chart takes the Secret name only. The
+  workers read the key as `LOCKER_AZURE_ACCOUNT_KEY`, and the runner reads it as a
+  read-only file. To give the runner its own Secret instead, set
+  `sessionAnalysis.azure.accountKeySecret`. Entra workload identity and SAS are
+  not supported yet.
+
+Values under `sessions-pipeline.worker` (placeholders):
+
+```yaml
+existingSecret: sessions-pipeline
+locker:
+  provider: azure
+  bucket: __SESSIONS_CONTAINER__        # the container (3-63 lowercase letters, digits, single hyphens)
+  azure:
+    account: __STORAGE_ACCOUNT__         # 3-24 lowercase letters or digits
+  # endpoint: ""                         # empty: https://<account>.blob.core.windows.net
+  credentials: { mode: secret }
+lockerInit:
+  enabled: false
+sessionAnalysis:
+  enabled: true
+  run: false
+  keyPrefix: 96bulls
+  # bucket, bucketRegion, s3Credentials, s3KeysSecret, s3Endpoint,
+  # allowInClusterHttp and s3VersioningCheck stay unset on Azure (the runner
+  # refuses S3 settings there); decisionRecords cannot be "true".
+  modelKeySecret: { name: agent-relay-llm, key: OPENAI_API_KEY }
+  databaseSecret: { name: session-analysis-db, key: url }
+  postgresTls: { profile: custom-ca, caConfigMap: postgres-ca, caKey: ca.crt, sha256: __POSTGRES_CA_SHA256__ }
+```
+
+Roll it out as in step 13: dormant first, then `run: true`. With the worker
+NetworkPolicy on, `objectStorage.to` must reach the account's blob endpoint
+on 443. No workload identity rule is needed. The chart rejects these values
+at render time instead of letting the pod crash-loop, and
+`ci/sessions-pipeline-worker-advisor-analysis/test_chart.py` covers that.
+Nothing here has run against a real Azure account from this guide.
 
 ## Upgrades: dedicated owner and legacy temporary credentials
 
