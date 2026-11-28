@@ -38,34 +38,50 @@ locals {
     bufferedErasureDelete = [{ key = "buffered_erasure_delete", name = "${var.name_prefix}-session-buffered-erasure-delete", description = "96bulls bounded buffered-row later-erasure delete", rate = "rate(1 minute)", input = jsonencode({ bufferedErasureDelete = true }) }]
   }
 
-  schedules = merge(
-    {
-      reconcile = { name = "${var.name_prefix}-session-reconcile", description = "96bulls session pipeline: reconcile recent manifests (lost notifications)", rate = "rate(${var.reconcile_minutes} minutes)", input = jsonencode({ reconcile = true }), enabled = true }
-      brief     = { name = "${var.name_prefix}-session-brief", description = "96bulls session pipeline: one session-brief tick (due wakeups)", rate = "rate(1 minute)", input = jsonencode({ brief = true }), enabled = var.briefs_enabled }
-    },
-    merge([for group, on in var.optional_schedules : {
-      for s in local.schedule_catalog[group] : s.key => merge(s, { enabled = on })
-    }]...)
-  )
+  # The reconcile and brief rules belong to the module; the root adds only the declared optional groups.
+  schedules = merge([for group, on in var.optional_schedules : {
+    for s in local.schedule_catalog[group] : s.key => merge(s, { enabled = on })
+  }]...)
 
   # Every resource-policy grant on the function: one per schedule, plus the reconcile chain's self-invoke.
   permissions = merge(
-    { for k, s in local.schedules : k => { principal = "events.amazonaws.com", source_arn = aws_cloudwatch_event_rule.schedule[k].arn, source_account = local.account_id } },
-    { reconcile_continue = { principal = local.role_arn, source_arn = null, source_account = null } }
+    {
+      reconcile          = { principal = "events.amazonaws.com", source_arn = module.pipeline.reconcile_rule_arn, source_account = local.account_id }
+      brief              = { principal = "events.amazonaws.com", source_arn = module.pipeline.brief_rule_arn, source_account = local.account_id }
+      reconcile_continue = { principal = local.role_arn, source_arn = null, source_account = null }
+    },
+    { for k, s in local.schedules : k => { principal = "events.amazonaws.com", source_arn = aws_cloudwatch_event_rule.schedule[k].arn, source_account = local.account_id } }
   )
 }
 
-# --- Queues ---
+# --- Queues, mapping, reconcile and brief schedules: the shared module, adopting the live function ---
 
-resource "aws_sqs_queue" "dlq" {
-  name                      = local.dlq_name
-  message_retention_seconds = 1209600
-  sqs_managed_sse_enabled   = true
-  tags                      = var.tags
+module "pipeline" {
+  source = "../../modules/aws/functions"
+
+  name                   = var.name_prefix
+  bucket_name            = var.bucket_name
+  key_prefix             = local.key_prefix
+  layout_version         = var.layout_version
+  existing_function_name = var.function_name
+  timeout_seconds        = var.function_timeout_seconds
+  tags                   = var.tags
+
+  visibility_timeout_seconds  = var.visibility_timeout_seconds
+  max_concurrency             = var.max_concurrency
+  reconcile_minutes           = var.reconcile_minutes
+  brief_schedule_enabled      = var.briefs_enabled
+  schedule_description_prefix = "96bulls session pipeline"
+
+  # Live texts and statement ids differ from the module's, so this root owns these (below).
+  manage_queue_policies       = false
+  manage_schedule_permissions = false
+  create_alarms               = false
+  manage_bucket_notification  = false
 }
 
 resource "aws_sqs_queue_policy" "dlq" {
-  queue_url = aws_sqs_queue.dlq.id
+  queue_url = module.pipeline.dlq_url
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -79,29 +95,8 @@ resource "aws_sqs_queue_policy" "dlq" {
   })
 }
 
-resource "aws_sqs_queue" "events" {
-  name                       = local.queue_name
-  delay_seconds              = 30
-  visibility_timeout_seconds = var.visibility_timeout_seconds
-  message_retention_seconds  = 345600
-  receive_wait_time_seconds  = 20
-  sqs_managed_sse_enabled    = true
-  redrive_policy = jsonencode({
-    deadLetterTargetArn = aws_sqs_queue.dlq.arn
-    maxReceiveCount     = 8
-  })
-  tags = var.tags
-
-  lifecycle {
-    precondition {
-      condition     = var.visibility_timeout_seconds >= var.function_timeout_seconds
-      error_message = "visibility_timeout_seconds must be at least the function timeout."
-    }
-  }
-}
-
 resource "aws_sqs_queue_policy" "events" {
-  queue_url = aws_sqs_queue.events.id
+  queue_url = module.pipeline.queue_url
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -130,19 +125,6 @@ resource "aws_sqs_queue_policy" "events" {
       },
     ]
   })
-}
-
-resource "aws_lambda_event_source_mapping" "events" {
-  function_name                      = local.function_arn
-  event_source_arn                   = aws_sqs_queue.events.arn
-  batch_size                         = 10
-  maximum_batching_window_in_seconds = 20
-  function_response_types            = ["ReportBatchItemFailures"]
-  enabled                            = true
-  scaling_config {
-    maximum_concurrency = var.max_concurrency
-  }
-  tags = var.tags
 }
 
 # --- Schedules and invoke permissions ---
@@ -286,7 +268,7 @@ resource "aws_s3_bucket_notification" "transcripts" {
 
   queue {
     id            = "96bulls-session-pipeline-manifests"
-    queue_arn     = aws_sqs_queue.events.arn
+    queue_arn     = module.pipeline.queue_arn
     events        = ["s3:ObjectCreated:*", "s3:ObjectRemoved:*"]
     filter_prefix = "${local.key_prefix}/"
     filter_suffix = "/manifest.json"

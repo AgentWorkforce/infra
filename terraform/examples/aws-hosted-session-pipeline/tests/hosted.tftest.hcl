@@ -3,16 +3,28 @@
 
 mock_provider "aws" {
   mock_data "aws_partition" {
-    defaults = { partition = "aws" }
+    defaults = { partition = "aws", dns_suffix = "amazonaws.com" }
   }
   mock_data "aws_lambda_function" {
-    defaults = { arn = "arn:aws:lambda:us-east-1:111111111111:function:96bulls-test-session-pipeline" }
+    defaults = {
+      arn  = "arn:aws:lambda:us-east-1:111111111111:function:96bulls-test-session-pipeline"
+      role = "arn:aws:iam::111111111111:role/96bulls-test-session-pipeline"
+    }
   }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::111111111111:role/96bulls-test-session-pipeline" }
   }
   mock_resource "aws_sqs_queue" {
-    defaults = { arn = "arn:aws:sqs:us-east-1:111111111111:96bulls-test-session-events-dlq" }
+    defaults = {
+      arn = "arn:aws:sqs:us-east-1:111111111111:96bulls-test-session-events"
+      url = "https://sqs.us-east-1.amazonaws.com/111111111111/96bulls-test-session-events"
+    }
+  }
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "111111111111" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "us-east-1" }
   }
   mock_resource "aws_secretsmanager_secret" {
     defaults = { arn = "arn:aws:secretsmanager:us-east-1:111111111111:secret:96bulls/test/session-pipeline-abcdef" }
@@ -52,25 +64,18 @@ variables {
 run "mirrors_the_old_stack" {
   command = apply
 
+  # Queues, mapping, reconcile and brief come from modules/aws/functions in adopt mode; its own tests cover them.
   assert {
-    condition     = aws_sqs_queue.events.name == "96bulls-test-session-events" && aws_sqs_queue.events.visibility_timeout_seconds == 1800 && aws_sqs_queue.events.delay_seconds == 30 && aws_sqs_queue.events.receive_wait_time_seconds == 20 && aws_sqs_queue.events.message_retention_seconds == 345600
-    error_message = "session-events keeps the old stack's settings (VT 1800, delay 30, wait 20, 4 days)."
-  }
-  assert {
-    condition     = one(aws_lambda_event_source_mapping.events.scaling_config).maximum_concurrency == 25 && aws_lambda_event_source_mapping.events.batch_size == 10 && aws_lambda_event_source_mapping.events.maximum_batching_window_in_seconds == 20
-    error_message = "The mapping takes the hosted concurrency and keeps batch 10 / 20 s."
-  }
-  assert {
-    condition     = toset(keys(aws_cloudwatch_event_rule.schedule)) == toset(["reconcile", "brief"]) && aws_cloudwatch_event_rule.schedule["brief"].state == "DISABLED" && aws_cloudwatch_event_rule.schedule["reconcile"].state == "ENABLED"
-    error_message = "Only the two live rules; briefs stay disabled by default."
-  }
-  assert {
-    condition     = aws_cloudwatch_event_rule.schedule["reconcile"].description == "96bulls session pipeline: reconcile recent manifests (lost notifications)" && aws_cloudwatch_event_target.schedule["reconcile"].input == "{\"reconcile\":true}"
-    error_message = "Rule descriptions and tick bodies equal the old stack's."
+    condition     = length(aws_cloudwatch_event_rule.schedule) == 0
+    error_message = "No optional schedule group is declared by default: only the module's two live rules."
   }
   assert {
     condition     = toset(keys(aws_lambda_permission.pipeline)) == toset(["reconcile", "brief", "reconcile_continue"]) && aws_lambda_permission.pipeline["reconcile_continue"].principal == "arn:aws:iam::111111111111:role/96bulls-test-session-pipeline"
     error_message = "Three grants, as live: two schedules and the role's self-invoke."
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_sqs_queue_policy.events.policy).Statement : s.Sid] == ["DenyInsecureTransport", "TranscriptBucketEvents", "SessionPipelineConsumes"]
+    error_message = "The events queue policy carries the old stack's three statements."
   }
   assert {
     condition     = length(jsondecode(aws_s3_bucket_policy.transcripts.policy).Statement) == 4 && contains([for s in jsondecode(aws_s3_bucket_policy.transcripts.policy).Statement : s.Sid], "IngestEdgeWrites")
@@ -87,6 +92,10 @@ run "mirrors_the_old_stack" {
   assert {
     condition     = aws_cloudwatch_metric_alarm.errors.alarm_name == "96bulls-test-session-pipeline-errors" && !aws_cloudwatch_metric_alarm.errors.actions_enabled
     error_message = "Alarms keep their live names, actions disabled."
+  }
+  assert {
+    condition     = output.event_source_mapping_max_concurrency == 25
+    error_message = "The hosted concurrency reaches the module."
   }
 }
 

@@ -10,21 +10,21 @@ Helm chart, or optionally on `modules/aws/functions` or `modules/gcp/functions`.
 
 | Piece | Notes |
 |---|---|
-| SQS `session-events` and its DLQ, with both queue policies | Old stack values: delay 30 s, visibility 1800 s (an input), wait 20 s, 4 days, 8 receives, DLQ 14 days, SSE |
-| Event source mapping | batch 10, window 20 s, partial batch failures; `max_concurrency` from tfvars |
-| EventBridge rules and targets | reconcile and brief always; the optional groups (`optional_schedules`) only where declared |
+| SQS `session-events` and its DLQ (module), with both queue policies (here) | Old stack values: delay 30 s, visibility 1800 s (an input), wait 20 s, 4 days, 8 receives, DLQ 14 days, SSE |
+| Event source mapping (module) | batch 10, window 20 s, partial batch failures; `max_concurrency` from tfvars |
+| EventBridge rules and targets | reconcile and brief in the module; the optional groups here (`optional_schedules`) only where declared |
 | Lambda invoke permissions | one per rule plus the role's self-invoke; statement ids from tfvars (Alchemy generated them) |
 | Three alarms | live names and descriptions, actions disabled |
 | Pipeline secret container and its policy | the value is set out of band and never read here |
 | Execution role, inline policies and attachments | imported as-is; every field comes from tfvars |
 | Transcripts bucket notification, bucket policy and KMS key policy | the pipeline's own statements are rendered here; every other statement (other stacks, TLS and encryption denies, the **ingest-edge cross-account grants**) comes verbatim from tfvars |
 
-**Why not `modules/aws/functions`.** That module is the self-host mirror of this stack, and its texts are
-generic: rule and alarm descriptions, the secret's name and description, queue-policy Sids, and a module-owned role
-and policy. Matching the live hosted resources through it would mean a dozen override knobs on a public self-host
-module just to reproduce strings. This root takes the old stack's place, so there are still two descriptions: the
-self-host module and this hosted root. They converge in phase 2, when the function moves here too and the module
-can grow the overrides one reviewed change at a time.
+**One module.** The queues, the event source mapping and the reconcile and brief rules come from
+`modules/aws/functions` in adopt mode (`existing_function_name`), the same module self-host uses. Its
+`schedule_description_prefix` keeps the live rule descriptions. The pieces whose live texts or statement ids
+differ from the module's (queue policies, invoke permissions, alarms), the secret, the role and the bucket and key
+policies are declared here, with the module's own copies switched off. When the function moves here in phase 2,
+these converge into the module one reviewed knob at a time.
 
 `aws_s3_bucket_notification` owns the bucket's whole notification configuration. `other_notifications` carries
 every other live target verbatim (queues, functions, topics, EventBridge). Anything missing there would be removed,
@@ -70,6 +70,12 @@ the first apply, so the two reconcilers never fight.
 | ---- | ------- |
 | aws | >= 6.0, < 7.0 |
 
+### Modules
+
+| Name | Source | Version |
+| ---- | ------ | ------- |
+| pipeline | ../../modules/aws/functions | n/a |
+
 ### Resources
 
 | Name | Type |
@@ -84,14 +90,11 @@ the first apply, so the two reconcilers never fight.
 | [aws_iam_role_policy.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy_attachment.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_kms_key_policy.transcripts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key_policy) | resource |
-| [aws_lambda_event_source_mapping.events](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_event_source_mapping) | resource |
 | [aws_lambda_permission.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_s3_bucket_notification.transcripts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_notification) | resource |
 | [aws_s3_bucket_policy.transcripts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_policy) | resource |
 | [aws_secretsmanager_secret.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
 | [aws_secretsmanager_secret_policy.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_policy) | resource |
-| [aws_sqs_queue.dlq](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue) | resource |
-| [aws_sqs_queue.events](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue) | resource |
 | [aws_sqs_queue_policy.dlq](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue_policy) | resource |
 | [aws_sqs_queue_policy.events](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue_policy) | resource |
 | [aws_lambda_function.pipeline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/lambda_function) | data source |
@@ -134,6 +137,6 @@ the first apply, so the two reconcilers never fight.
 | Name | Description |
 | ---- | ----------- |
 | event\_source\_mapping\_max\_concurrency | The mapping's MaximumConcurrency as planned. |
+| optional\_schedules | Optional schedule rule names and states (reconcile and brief live in the module). |
 | queue\_url | session-events queue URL. |
-| schedules | Schedule rule names and states. |
 <!-- END_TF_DOCS -->

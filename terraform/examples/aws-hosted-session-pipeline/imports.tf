@@ -6,7 +6,7 @@
 
 import {
   for_each = local.import_one
-  to       = aws_sqs_queue.dlq
+  to       = module.pipeline.aws_sqs_queue.dlq
   id       = "https://sqs.${var.region}.amazonaws.com/${var.account_id}/${local.dlq_name}"
 }
 
@@ -18,7 +18,7 @@ import {
 
 import {
   for_each = local.import_one
-  to       = aws_sqs_queue.events
+  to       = module.pipeline.aws_sqs_queue.events
   id       = "https://sqs.${var.region}.amazonaws.com/${var.account_id}/${local.queue_name}"
 }
 
@@ -30,8 +30,32 @@ import {
 
 import {
   for_each = local.import_one
-  to       = aws_lambda_event_source_mapping.events
+  to       = module.pipeline.aws_lambda_event_source_mapping.events
   id       = var.import_ids.event_source_mapping_uuid
+}
+
+import {
+  for_each = local.import_one
+  to       = module.pipeline.aws_cloudwatch_event_rule.reconcile
+  id       = "${var.name_prefix}-session-reconcile"
+}
+
+import {
+  for_each = local.import_one
+  to       = module.pipeline.aws_cloudwatch_event_rule.brief
+  id       = "${var.name_prefix}-session-brief"
+}
+
+import {
+  for_each = local.import_one
+  to       = module.pipeline.aws_cloudwatch_event_target.reconcile
+  id       = "${var.name_prefix}-session-reconcile/session-pipeline"
+}
+
+import {
+  for_each = local.import_one
+  to       = module.pipeline.aws_cloudwatch_event_target.brief
+  id       = "${var.name_prefix}-session-brief/session-pipeline"
 }
 
 import {
