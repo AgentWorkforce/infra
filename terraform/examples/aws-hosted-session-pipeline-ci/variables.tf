@@ -68,3 +68,13 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "apply_scope" {
+  description = "adoption (default): the apply role may write state and update the pipeline's event source mapping only, which is all the zero-diff import plus the approved ESM change needs. full: changes to every resource the hosted root manages (for later reviewed changes)."
+  type        = string
+  default     = "adoption"
+  validation {
+    condition     = contains(["adoption", "full"], var.apply_scope)
+    error_message = "apply_scope: adoption or full."
+  }
+}

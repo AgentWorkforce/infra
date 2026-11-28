@@ -51,3 +51,20 @@ run "roles_are_scoped" {
     error_message = "State bucket and SecureString parameter."
   }
 }
+
+run "adoption_scope_is_minimal" {
+  command = apply
+  assert {
+    condition     = toset([for s in jsondecode(aws_iam_role_policy.ci["apply"].policy).Statement : s.Sid if s.Effect == "Allow" && !contains([for c in jsondecode(aws_iam_role_policy.ci["plan"].policy).Statement : c.Sid], s.Sid)]) == toset(["WriteState", "WriteMapping"])
+    error_message = "Adoption scope: the apply role adds only state writes and the mapping update to the plan role's reads."
+  }
+}
+
+run "full_scope" {
+  command = apply
+  variables { apply_scope = "full" }
+  assert {
+    condition     = contains([for s in jsondecode(aws_iam_role_policy.ci["apply"].policy).Statement : s.Sid], "WriteTranscriptsKey")
+    error_message = "Full scope grants the writes later reviewed changes need."
+  }
+}

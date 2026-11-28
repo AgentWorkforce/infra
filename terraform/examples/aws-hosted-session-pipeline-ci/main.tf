@@ -162,17 +162,24 @@ locals {
     { Sid = "NeverWriteState", Effect = "Deny", Action = ["s3:PutObject", "s3:DeleteObject"], Resource = "${local.bucket_arn}/${var.state_key}" },
   ]
 
-  apply_writes = [
-    { Sid = "WriteState", Effect = "Allow", Action = "s3:PutObject", Resource = "${local.bucket_arn}/${var.state_key}" },
+  write_state = { Sid = "WriteState", Effect = "Allow", Action = "s3:PutObject", Resource = "${local.bucket_arn}/${var.state_key}" }
+  write_mapping = {
+    Sid       = "WriteMapping"
+    Effect    = "Allow"
+    Action    = ["lambda:UpdateEventSourceMapping", "lambda:TagResource", "lambda:UntagResource"]
+    Resource  = "arn:${local.p}:lambda:${local.region}:${local.acct}:event-source-mapping:*"
+    Condition = { StringEquals = { "lambda:FunctionArn" = local.function_arn } }
+  }
+  no_deletes = { Sid = "NoDeletes", Effect = "Deny", Action = ["sqs:DeleteQueue", "lambda:DeleteEventSourceMapping", "lambda:DeleteFunction", "events:DeleteRule", "cloudwatch:DeleteAlarms", "secretsmanager:DeleteSecret", "iam:DeleteRole", "iam:DeleteRolePolicy", "s3:DeleteBucketPolicy", "kms:ScheduleKeyDeletion", "kms:DisableKey"], Resource = "*" }
+
+  # Adoption: an import writes only state, and the one approved change is the mapping's concurrency.
+  adoption_writes = [local.write_state, local.write_mapping, local.no_deletes]
+
+  full_writes = [
+    local.write_state,
+    local.write_mapping,
     { Sid = "WriteQueues", Effect = "Allow", Action = ["sqs:SetQueueAttributes", "sqs:TagQueue", "sqs:UntagQueue"], Resource = local.queues },
     { Sid = "WriteFunctionPolicy", Effect = "Allow", Action = ["lambda:AddPermission", "lambda:RemovePermission"], Resource = local.function_arn },
-    {
-      Sid       = "WriteMapping"
-      Effect    = "Allow"
-      Action    = ["lambda:UpdateEventSourceMapping", "lambda:TagResource", "lambda:UntagResource"]
-      Resource  = "arn:${local.p}:lambda:${local.region}:${local.acct}:event-source-mapping:*"
-      Condition = { StringEquals = { "lambda:FunctionArn" = local.function_arn } }
-    },
     { Sid = "WriteRules", Effect = "Allow", Action = ["events:PutRule", "events:PutTargets", "events:RemoveTargets", "events:EnableRule", "events:DisableRule", "events:TagResource", "events:UntagResource"], Resource = local.rules },
     { Sid = "WriteAlarms", Effect = "Allow", Action = ["cloudwatch:PutMetricAlarm", "cloudwatch:TagResource", "cloudwatch:UntagResource"], Resource = local.alarms },
     { Sid = "WriteLogs", Effect = "Allow", Action = ["logs:PutRetentionPolicy", "logs:TagResource", "logs:UntagResource", "logs:TagLogGroup"], Resource = local.log_groups },
@@ -180,8 +187,7 @@ locals {
     { Sid = "WriteRole", Effect = "Allow", Action = ["iam:UpdateRole", "iam:UpdateRoleDescription", "iam:UpdateAssumeRolePolicy", "iam:PutRolePolicy", "iam:TagRole", "iam:UntagRole"], Resource = local.role_arn },
     { Sid = "WriteTranscriptsBucket", Effect = "Allow", Action = ["s3:PutBucketPolicy", "s3:PutBucketNotification"], Resource = local.transcripts },
     { Sid = "WriteTranscriptsKey", Effect = "Allow", Action = ["kms:PutKeyPolicy"], Resource = var.pipeline.kms_key_arn },
-    # Nothing this root owns is ever deleted from CI; a removal is its own reviewed change outside these roles.
-    { Sid = "NoDeletes", Effect = "Deny", Action = ["sqs:DeleteQueue", "lambda:DeleteEventSourceMapping", "lambda:DeleteFunction", "events:DeleteRule", "cloudwatch:DeleteAlarms", "secretsmanager:DeleteSecret", "iam:DeleteRole", "iam:DeleteRolePolicy", "s3:DeleteBucketPolicy", "kms:ScheduleKeyDeletion", "kms:DisableKey"], Resource = "*" },
+    local.no_deletes,
   ]
 }
 
@@ -199,6 +205,6 @@ resource "aws_iam_role_policy" "ci" {
   role     = each.value.name
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = concat(local.common_reads, jsondecode(each.key == "plan" ? jsonencode(local.plan_only) : jsonencode(local.apply_writes)))
+    Statement = concat(local.common_reads, jsondecode(each.key == "plan" ? jsonencode(local.plan_only) : (var.apply_scope == "full" ? jsonencode(local.full_writes) : jsonencode(local.adoption_writes))))
   })
 }

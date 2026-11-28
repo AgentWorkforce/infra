@@ -68,6 +68,7 @@ Create the GitHub environments `hosted-session-pipeline-plan` (branch `main`) an
 | pipeline | What the hosted root manages, so both roles are scoped to it and nothing else. | ```object({ name_prefix = string # 96bulls-<stage> function_name = string role_name = string bucket_name = string kms_key_arn = string secret_name = string # 96bulls/<stage>/session-pipeline log_group_names = optional(list(string), []) })``` | n/a | yes |
 | region | The hosted sessions region. | `string` | n/a | yes |
 | apply\_environment | GitHub environment of the apply job (protected: required reviewers, main only). | `string` | `"hosted-session-pipeline"` | no |
+| apply\_scope | adoption (default): the apply role may write state and update the pipeline's event source mapping only, which is all the zero-diff import plus the approved ESM change needs. full: changes to every resource the hosted root manages (for later reviewed changes). | `string` | `"adoption"` | no |
 | create\_oidc\_provider | Create the GitHub OIDC provider. false when the account already has one. | `bool` | `true` | no |
 | github\_repository | owner/repo whose workflow assumes the roles. | `string` | `"AgentWorkforce/infra"` | no |
 | name | Prefix for the CI resources (roles, state bucket, key alias, parameter). | `string` | `"hosted-session-pipeline-ci"` | no |
