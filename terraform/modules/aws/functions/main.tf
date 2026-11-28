@@ -308,12 +308,12 @@ resource "aws_lambda_function" "this" {
   description   = "agent-relay session pipeline (event-driven mode): manifest events to HoopDb pointers and search index"
 
   package_type      = local.is_image ? "Image" : "Zip"
-  image_uri         = var.package.image_uri
-  s3_bucket         = var.package.s3_bucket
-  s3_key            = var.package.s3_key
-  s3_object_version = var.package.s3_object_version
-  filename          = var.package.filename
-  source_code_hash  = var.package.source_code_hash
+  image_uri         = try(var.package.image_uri, null)
+  s3_bucket         = try(var.package.s3_bucket, null)
+  s3_key            = try(var.package.s3_key, null)
+  s3_object_version = try(var.package.s3_object_version, null)
+  filename          = try(var.package.filename, null)
+  source_code_hash  = try(var.package.source_code_hash, null)
   handler           = local.is_image ? null : var.handler
   runtime           = local.is_image ? null : var.runtime
   architectures     = [var.architecture]
