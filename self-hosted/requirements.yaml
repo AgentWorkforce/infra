@@ -6310,9 +6310,9 @@ entries:
           - { key: LOCKER_SECRET_ACCESS_KEY, key_path: worker.sessionAnalysis.s3KeysSecret.secretAccessKeyKey }
       - name: "<Azure storage account key Secret>"
         name_paths: [worker.sessionAnalysis.azure.accountKeySecret.name, worker.existingSecret]
-        note: locker.provider=azure only; an empty accountKeySecret.name falls back to worker.existingSecret
+        note: locker.provider=azure only; an empty accountKeySecret.name falls back to worker.existingSecret and an empty accountKeySecret.key to worker.secretKeys.lockerAzureAccountKey
         keys:
-          - { key: LOCKER_AZURE_ACCOUNT_KEY, key_path: worker.sessionAnalysis.azure.accountKeySecret.key }
+          - { key: LOCKER_AZURE_ACCOUNT_KEY, key_path: worker.secretKeys.lockerAzureAccountKey }
     verify: Render nothing by default; with locker.provider=azure render LOCKER_PROVIDER=azure, SESSION_ANALYSIS_AZURE_ACCOUNT, _CONTAINER, the optional _ENDPOINT and the account key as a file, no S3 setting, and refuse S3 values, allowInClusterHttp, decisionRecords=true and a bad key Secret; render the dormant Deployment with its own ServiceAccount, file-mounted secrets, 660 s grace and the documented probes; render run=true with tick, batch and custom-ca; podIdentity renders exactly the pre-static env; static renders the key files from s3KeysSecret, an in-cluster http endpoint with allowInClusterHttp and needs no workloadIdentity rule; refuse a missing bucket, region, key root or Secret, credentials other than podIdentity or static, static without s3KeysSecret, s3KeysSecret with podIdentity, an endpoint with a path, query, credentials or plain http outside loopback and in-cluster Service names, in-cluster http without allowInClusterHttp, the GCS API host, allowInClusterHttp without an endpoint, s3VersioningCheck other than empty or true, replicas above 1, out-of-range tick or batch, custom-ca without its CA and an empty egress list.
     sources: ["charts/sessions-pipeline-worker/templates/session-analysis.yaml:1", "ci/sessions-pipeline-worker-advisor-analysis/test_chart.py:1"]
 

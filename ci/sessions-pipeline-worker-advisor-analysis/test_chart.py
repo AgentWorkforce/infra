@@ -397,6 +397,21 @@ class AdvisorAnalysis(unittest.TestCase):
         self.assertFalse([k for k in e if k.startswith("SESSION_ANALYSIS_S3_")])
 
 
+    def test_azure_analysis_key_follows_locker_key_mapping(self):
+        # Renaming only the Locker key moves the analysis mount with it (one Secret entry for both).
+        docs = self.azure(top={"secretKeys": {"lockerAzureAccountKey": "blob-key"}})
+        vol = next(v for v in self.analysis(docs)["spec"]["template"]["spec"]["volumes"] if v["name"] == "azure-account-key")
+        self.assertEqual(vol["secret"]["items"], [{"key": "blob-key", "path": "account-key"}])
+        e = self.env(docs, "session-summary-worker")
+        self.assertEqual(e["LOCKER_AZURE_ACCOUNT_KEY"]["secretKeyRef"]["key"], "blob-key")
+        # External Secrets must map every key the target Secret is read for, the analysis key included.
+        es = {"externalSecrets": {"enabled": True, "secretStoreRef": {"kind": "ClusterSecretStore", "name": "store"},
+              "data": {"HOOPDB_URL": {"key": "k", "property": "url"}, "LOCKER_AZURE_ACCOUNT_KEY": {"key": "k", "property": "blob"}, "SUMMARY_MASTER_KEYS": {"key": "k", "property": "summary"}}}}
+        self.azure(top=es)
+        self.azure({"azure": {"accountKeySecret": {"key": "analysis-blob"}}}, top=es, fail="externalSecrets.data must map analysis-blob")
+        self.azure({"azure": {"accountKeySecret": {"name": "other-secret", "key": "analysis-blob"}}}, top=es)
+
+
     def test_azure_refusals(self):
         for analysis, top, msg in [
             ({"bucket": "b"}, {}, "sessionAnalysis.bucket must be empty with locker.provider=azure"),

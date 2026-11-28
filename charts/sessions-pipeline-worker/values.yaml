@@ -528,7 +528,7 @@ sessionAnalysis:
   # locker.provider=azure: the runner reads the Locker's own account,
   # container (locker.bucket) and endpoint (SESSION_ANALYSIS_AZURE_*), and the
   # Shared Key from a file mounted from accountKeySecret (empty name: the
-  # shared existingSecret; key: the Secret data key, LOCKER_AZURE_ACCOUNT_KEY). Every
+  # shared existingSecret; empty key: secretKeys.lockerAzureAccountKey). Every
   # S3 value above (bucket, bucketRegion, s3Endpoint, s3KeysSecret,
   # s3VersioningCheck, allowInClusterHttp) must stay empty, and
   # decisionRecords cannot be "true" (the runner refuses both). The runner
@@ -540,7 +540,7 @@ sessionAnalysis:
   azure:
     accountKeySecret:
       name: ""
-      key: LOCKER_AZURE_ACCOUNT_KEY
+      key: ""
   # Mounted read-only; SESSION_ANALYSIS_OPENAI_API_KEY_FILE points at it.
   modelKeySecret:
     name: ""
