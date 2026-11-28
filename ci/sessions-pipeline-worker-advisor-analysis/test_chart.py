@@ -193,7 +193,7 @@ class AdvisorAnalysis(unittest.TestCase):
         peer = [{"ipBlock": {"cidr": "10.0.0.0/8"}}]
         netpol = {"enabled": True, "dns": {"to": peer}, "database": {"to": peer}, "objectStorage": {"to": peer}}
         for top, extra, msg in [
-            ({"locker": {"provider": "gcs"}}, {}, "requires locker.provider=s3"),
+            ({"locker": {"provider": "gcs"}}, {}, "requires locker.provider=s3 or azure"),
             ({}, {"modelEgress": {"enabled": True, "to": peer}}, "modelEgress requires networkPolicy.enabled"),
             ({"networkPolicy": netpol}, {"run": True}, "needs sessionAnalysis.modelEgress"),
             ({"networkPolicy": netpol}, {"modelEgress": {"enabled": True, "to": peer}}, "workloadIdentity.to must list the Pod Identity agent"),
@@ -293,6 +293,190 @@ class AdvisorAnalysis(unittest.TestCase):
         ]:
             with self.subTest(msg=msg, extra=extra):
                 self.render({"sessionAnalysis": merge(yaml.safe_load(yaml.safe_dump(ANALYSIS)), extra)}, fail=msg)
+
+    # locker.provider=azure: native Azure Blob (runner.ts LOCKER_PROVIDER=azure, Shared Key from a file).
+    AZURE_VALUES = CHART / "ci/session-analysis-azure-blob-values.yaml"
+    AZ_LOCKER = {"existingSecret": "sessions-pipeline", "locker": {"provider": "azure", "endpoint": "", "bucket": "sessions-ci", "azure": {"account": "exampleciacct"}}, "lockerInit": {"enabled": False},
+                 # Only coordination-advisor and session-analysis admit LOCKER_PROVIDER=azure (vendorBindings ownLocker, fefbc87c).
+                 "components": {n: {"enabled": False} for n in ("bob-costas", "referee", "hoopdb-indexer", "session-brief")}}
+    AZ_ANALYSIS = {"enabled": True, "keyPrefix": "96bulls",
+                   "modelKeySecret": {"name": "analysis-model", "key": "OPENAI_API_KEY"},
+                   "databaseSecret": {"name": "analysis-db", "key": "SESSION_ANALYSIS_DATABASE_URL"}}
+
+    def azure(self, analysis=None, top=None, fail=None):
+        v = merge(yaml.safe_load(yaml.safe_dump(self.AZ_LOCKER)), {"sessionAnalysis": merge(yaml.safe_load(yaml.safe_dump(self.AZ_ANALYSIS)), analysis or {})})
+        return self.render(merge(v, top or {}), fail=fail)
+
+    def test_azure_ci_values_render(self):
+        r = subprocess.run(["helm", "template", "ci", str(CHART), "-n", "ci", "-f", str(self.AZURE_VALUES)], text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        docs = [d for d in yaml.safe_load_all(r.stdout) if d]
+        e = self.env(docs, "session-analysis")
+        self.assertEqual(e["LOCKER_PROVIDER"], "azure")
+        self.assertEqual(e["SESSION_ANALYSIS_AZURE_CONTAINER"], "sessions-ci")
+
+    def test_azure_analysis_env_and_key_file(self):
+        docs = self.azure()
+        e = self.env(docs, "session-analysis")
+        self.assertEqual(e["LOCKER_PROVIDER"], "azure")
+        self.assertEqual(e["SESSION_ANALYSIS_AZURE_ACCOUNT"], "exampleciacct")
+        self.assertEqual(e["SESSION_ANALYSIS_AZURE_CONTAINER"], "sessions-ci")
+        self.assertEqual(e["SESSION_ANALYSIS_AZURE_ACCOUNT_KEY_FILE"], "/var/run/session-analysis/azure/account-key")
+        self.assertEqual(e["PIPELINE_KEY_PREFIX"], "96bulls")
+        self.assertNotIn("SESSION_ANALYSIS_AZURE_ENDPOINT", e)
+        self.assertNotIn("SESSION_ANALYSIS_AZURE_ACCOUNT_KEY", e)
+        self.assertNotIn("ALLOW_IN_CLUSTER_HTTP", e)
+        # The runner refuses any SESSION_ANALYSIS_S3_* on Azure (azure_s3_settings_conflict).
+        self.assertFalse([k for k in e if k.startswith("SESSION_ANALYSIS_S3_") or k.startswith("AWS_")])
+        spec = self.analysis(docs)["spec"]["template"]["spec"]
+        vol = next(v for v in spec["volumes"] if v["name"] == "azure-account-key")
+        self.assertEqual(vol["secret"], {"secretName": "sessions-pipeline", "items": [{"key": "LOCKER_AZURE_ACCOUNT_KEY", "path": "account-key"}]})
+        mount = next(m for m in spec["containers"][0]["volumeMounts"] if m["name"] == "azure-account-key")
+        self.assertEqual(mount, {"name": "azure-account-key", "mountPath": "/var/run/session-analysis/azure", "readOnly": True})
+        self.assertFalse([v for v in spec["volumes"] if v["name"] == "s3-keys"])
+        # An explicit key Secret and an endpoint (Azure public, sovereign or Azurite on loopback).
+        e = self.env(self.azure({"azure": {"accountKeySecret": {"name": "analysis-blob", "key": "accountKey"}}}), "session-analysis")
+        docs = self.azure({"azure": {"accountKeySecret": {"name": "analysis-blob", "key": "accountKey"}}})
+        vol = next(v for v in self.analysis(docs)["spec"]["template"]["spec"]["volumes"] if v["name"] == "azure-account-key")
+        self.assertEqual(vol["secret"], {"secretName": "analysis-blob", "items": [{"key": "accountKey", "path": "account-key"}]})
+        for endpoint in ("https://exampleciacct.blob.core.windows.net", "https://exampleciacct.blob.core.usgovcloudapi.net/", "http://127.0.0.1:10000/exampleciacct"):
+            with self.subTest(endpoint=endpoint):
+                e = self.env(self.azure(top={"locker": {"endpoint": endpoint}}), "session-analysis")
+                self.assertEqual(e["SESSION_ANALYSIS_AZURE_ENDPOINT"], endpoint)
+
+    def test_azure_locker_env_for_every_worker(self):
+        # coordination-advisor is the one sibling worker the services run on Azure (ownLocker); the migrate Job
+        # gets the Locker env too but never reads the Locker.
+        docs = self.azure(top={"components": {"coordination-advisor": {"enabled": True}}})
+        seen = set()
+        for d in docs:
+            if d["kind"] not in ("Deployment", "Job"):
+                continue
+            for c in d["spec"]["template"]["spec"]["containers"]:
+                if c["name"] == "session-analysis":
+                    continue
+                e = {x["name"]: x.get("value", x.get("valueFrom")) for x in c.get("env", [])}
+                if "LOCKER_BUCKET" not in e:
+                    continue
+                seen.add(e["SERVICE"])
+                self.assertEqual(e["LOCKER_PROVIDER"], "azure", c["name"])
+                self.assertEqual(e["LOCKER_BUCKET"], "sessions-ci")
+                self.assertEqual(e["LOCKER_AZURE_ACCOUNT"], "exampleciacct")
+                self.assertEqual(e["LOCKER_AZURE_ACCOUNT_KEY"], {"secretKeyRef": {"name": "sessions-pipeline", "key": "LOCKER_AZURE_ACCOUNT_KEY"}})
+                for k in ("LOCKER_ACCESS_KEY_ID", "LOCKER_SECRET_ACCESS_KEY", "PIPELINE_RAW_PROVIDER"):
+                    self.assertNotIn(k, e, c["name"])
+        self.assertEqual(seen, {"coordination-advisor", "hoopdb-migrate"})
+        # Analysis off: the Locker on Azure renders on its own.
+        self.render(dict(self.AZ_LOCKER))
+
+    def test_azure_refuses_workers_the_services_refuse(self):
+        # src/shared/env.ts vendorBindings throws for LOCKER_PROVIDER=azure without ownLocker (fefbc87c, 155f7ba6).
+        for name in ("bob-costas", "referee", "hoopdb-indexer", "session-brief"):
+            with self.subTest(component=name):
+                if name != "session-brief":
+                    self.azure(top={"components": {name: {"enabled": True}}}, fail=f"locker.provider=azure requires components.{name}.enabled=false")
+                    continue
+                # session-brief renders only with a full native-brief selection (ci/sessions-pipeline-native-brief).
+                peer = [{"ipBlock": {"cidr": "10.0.0.0/8"}}]
+                brief = {"migrations": {"enabled": False}, "postgresCa": {"enabled": True, "configMap": "public-pg-ca", "sha256": "a" * 64}, "components": {"session-brief": {"enabled": True}},
+                         "nativeBrief": {"enabled": True, "image": {"repository": "agentworkforce/native-services", "digest": "sha256:" + "b" * 64},
+                                         "workspaceIds": ["default-workspace"], "openaiSecret": {"name": "brief-model-key"},
+                                         "openaiEgress": {"enabled": True, "to": peer}},
+                         "networkPolicy": {"enabled": True, "dns": {"to": peer}, "database": {"to": peer}, "objectStorage": {"to": peer}}}
+                self.render(merge(yaml.safe_load(yaml.safe_dump(self.AZ_LOCKER)), brief), fail=f"locker.provider=azure requires components.{name}.enabled=false")
+
+    def test_azure_fixture_pins_the_release_image(self):
+        # The agent-relay-2026.11.24 sessions-pipeline pin (source fefbc87c), as the runner image.
+        pins = __import__("json").loads((ROOT / "releases/agent-relay-2026.11.24/pins.json").read_text())["pins"]["sessions-pipeline"]
+        self.assertEqual(pins["sourceRevision"][:8], "fefbc87c")
+        r = subprocess.run(["helm", "template", "ci", str(CHART), "-n", "ci", "-f", str(self.AZURE_VALUES)], text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        image = self.analysis([d for d in yaml.safe_load_all(r.stdout) if d])["spec"]["template"]["spec"]["containers"][0]["image"]
+        self.assertEqual(image, f'{pins["repository"]}@{pins["digest"]}')
+
+    def test_s3_still_renders(self):
+        for f in ("session-analysis-static-minio-values.yaml", "default-values.yaml"):
+            with self.subTest(values=f):
+                r = subprocess.run(["helm", "template", "ci", str(CHART), "-n", "ci", "-f", str(CHART / "ci" / f)], text=True, capture_output=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertNotIn("LOCKER_AZURE", r.stdout)
+                self.assertNotIn("SESSION_ANALYSIS_AZURE", r.stdout)
+
+    def test_aks_umbrella_renders_with_azure_blob_and_with_minio(self):
+        """The AKS guide's own values (ci/agent-relay/aks-native-site-values.sh), through the agent-relay chart."""
+        umbrella = ROOT / "charts/agent-relay"
+        # The step 13b example from the AKS guide itself, placeholders filled, under sessions-pipeline.worker.
+        readme = (ROOT / "docs/azure-install/README.md").read_text()
+        section = readme[readme.index("### 13b."):]
+        block = section[section.index("```yaml\n") + len("```yaml\n"):section.index("\n```", section.index("```yaml\n"))]
+        for k, v in {"__SESSIONS_CONTAINER__": "sessions-ci", "__STORAGE_ACCOUNT__": "exampleciacct", "__POSTGRES_CA_SHA256__": "\"" + "1" * 64 + "\""}.items():
+            block = block.replace(k, v)
+        self.assertNotIn("__", block)
+        overlay = {"sessions-pipeline": {"worker": yaml.safe_load(block)}}
+        with tempfile.TemporaryDirectory() as folder:
+            site = Path(folder) / "site.yaml"
+            subprocess.run([str(ROOT / "ci/agent-relay/aks-native-site-values.sh"), str(site)], check=True)
+            az = Path(folder) / "azure.yaml"
+            az.write_text(yaml.safe_dump(overlay))
+            base = ["helm", "template", "agent-relay", str(umbrella), "-n", "agent-relay", "-f", str(umbrella / "values-eks.yaml"),
+                    "-f", str(site), "-f", str(umbrella / "ci/aks-native-values.yaml")]
+            s3 = subprocess.run(base, text=True, capture_output=True)
+            self.assertEqual(s3.returncode, 0, s3.stderr)
+            self.assertNotIn("SESSION_ANALYSIS_AZURE", s3.stdout)
+            r = subprocess.run(base + ["-f", str(az)], text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        e = self.env([d for d in yaml.safe_load_all(r.stdout) if d], "session-analysis")
+        self.assertEqual(e["LOCKER_PROVIDER"], "azure")
+        self.assertEqual(e["SESSION_ANALYSIS_AZURE_ACCOUNT"], "exampleciacct")
+        self.assertFalse([k for k in e if k.startswith("SESSION_ANALYSIS_S3_")])
+
+
+    def test_azure_analysis_key_follows_locker_key_mapping(self):
+        # Renaming only the Locker key moves the analysis mount with it (one Secret entry for both).
+        docs = self.azure(top={"secretKeys": {"lockerAzureAccountKey": "blob-key"}, "components": {"coordination-advisor": {"enabled": True}}})
+        vol = next(v for v in self.analysis(docs)["spec"]["template"]["spec"]["volumes"] if v["name"] == "azure-account-key")
+        self.assertEqual(vol["secret"]["items"], [{"key": "blob-key", "path": "account-key"}])
+        e = self.env(docs, "coordination-advisor")
+        self.assertEqual(e["LOCKER_AZURE_ACCOUNT_KEY"]["secretKeyRef"]["key"], "blob-key")
+        # External Secrets must map every key the target Secret is read for, the analysis key included.
+        es = {"externalSecrets": {"enabled": True, "secretStoreRef": {"kind": "ClusterSecretStore", "name": "store"},
+              "data": {"HOOPDB_URL": {"key": "k", "property": "url"}, "LOCKER_AZURE_ACCOUNT_KEY": {"key": "k", "property": "blob"}, "SUMMARY_MASTER_KEYS": {"key": "k", "property": "summary"}}}}
+        self.azure(top=es)
+        self.azure({"azure": {"accountKeySecret": {"key": "analysis-blob"}}}, top=es, fail="externalSecrets.data must map analysis-blob")
+        self.azure({"azure": {"accountKeySecret": {"name": "other-secret", "key": "analysis-blob"}}}, top=es)
+
+
+    def test_azure_refusals(self):
+        for analysis, top, msg in [
+            ({"bucket": "b"}, {}, "sessionAnalysis.bucket must be empty with locker.provider=azure"),
+            ({"bucketRegion": "us-east-1"}, {}, "sessionAnalysis.bucketRegion must be empty with locker.provider=azure"),
+            ({"s3Endpoint": "https://s3.example.com"}, {}, "sessionAnalysis.s3Endpoint must be empty with locker.provider=azure"),
+            ({"s3VersioningCheck": "true"}, {}, "sessionAnalysis.s3VersioningCheck must be empty with locker.provider=azure"),
+            ({"s3KeysSecret": {"name": "keys"}}, {}, "s3KeysSecret.name must be empty with locker.provider=azure"),
+            ({"allowInClusterHttp": True}, {}, "allowInClusterHttp must be false with locker.provider=azure"),
+            ({"decisionRecords": "true"}, {}, "azure_decision_records_unsupported"),
+            ({"azure": {"accountKeySecret": {"key": "a/b"}}}, {}, "accountKeySecret.key must be a Secret data key"),
+            ({"keyPrefix": ""}, {}, "sessionAnalysis.keyPrefix is required"),
+            ({}, {"locker": {"azure": {"account": ""}}}, "requires locker.azure.account"),
+            ({}, {"locker": {"azure": {"account": "Bad_Account"}}}, "requires locker.azure.account"),
+            ({}, {"locker": {"bucket": "Sessions"}}, "requires locker.bucket to be an Azure container name"),
+            ({}, {"locker": {"bucket": "ab"}}, "requires locker.bucket to be an Azure container name"),
+            ({}, {"locker": {"bucket": "a--b"}}, "requires locker.bucket to be an Azure container name"),
+            ({}, {"locker": {"credentials": {"mode": "podIdentity"}}}, "locker.provider=azure requires locker.credentials.mode=secret"),
+            ({}, {"locker": {"endpoint": "http://blob.example.com"}}, "locker.endpoint with locker.provider=azure must be"),
+            ({}, {"locker": {"endpoint": "https://user:pw@blob.example.com"}}, "locker.endpoint with locker.provider=azure must be"),
+            ({}, {"locker": {"endpoint": "https://blob.example.com/other"}}, "locker.endpoint with locker.provider=azure must be"),
+            ({}, {"locker": {"endpoint": "https://blob.example.com?sv=x"}}, "locker.endpoint with locker.provider=azure must be"),
+            ({}, {"lockerInit": {"enabled": True}}, "lockerInit.enabled must be false with locker.provider=azure"),
+            ({}, {"extraEnv": [{"name": "LOCKER_AZURE_ACCOUNT_KEY", "value": "x"}]}, "extraEnv must not set LOCKER_AZURE_ACCOUNT_KEY"),
+            ({}, {"locker": {"provider": "blob", "endpoint": "https://x.example.com"}}, "requires locker.provider=s3 or azure"),
+        ]:
+            with self.subTest(msg=msg, analysis=analysis, top=top):
+                self.azure(analysis, top, fail=msg)
+        self.render(merge(yaml.safe_load(yaml.safe_dump(self.AZ_LOCKER)), {"locker": {"provider": "blob", "endpoint": "https://x.example.com"}}), fail="locker.provider must be s3, gcs or azure")
+        # Without any Secret name there is nowhere to read the key from.
+        self.azure(top={"existingSecret": "", "hoopdb": {"existingSecret": "hoopdb"}}, fail="existingSecret is required")
+
 
 if __name__ == "__main__":
     unittest.main()

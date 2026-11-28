@@ -4,7 +4,9 @@
 {{- $component := "session-analysis" -}}
 {{- $analysisImage := $s.image | default dict -}}
 {{- $t := include "sessions-pipeline-worker.sessionAnalysisTls" . | fromJson }}
-{{- $static := eq ($s.s3Credentials | default "podIdentity") "static" }}
+{{- $azure := eq (.Values.locker.provider | default "s3") "azure" }}
+{{- $static := and (not $azure) (eq ($s.s3Credentials | default "podIdentity") "static") }}
+{{- $azureKey := include "sessions-pipeline-worker.analysisAzureKeySecret" . | fromJson }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -49,7 +51,8 @@ spec:
       {{- include "sessions-pipeline-worker.pullSecrets" . | nindent 6 }}
       serviceAccountName: {{ include "sessions-pipeline-worker.analysisServiceAccountName" . }}
       # EKS Pod Identity (s3Credentials=podIdentity) injects its token through the
-      # pod spec, not the SA token mount; static keys need no token at all.
+      # pod spec, not the SA token mount; static keys and the Azure Shared Key
+      # need no token at all.
       automountServiceAccountToken: false
       {{- with .Values.podSecurityContext }}
       securityContext:
@@ -80,6 +83,17 @@ spec:
             {{- include "sessions-pipeline-worker.scrubEngine" (dict "root" . "localName" "readerMaxRuleset") | nindent 12 }}
             - { name: SESSION_ANALYSIS_OPENAI_API_KEY_FILE, value: /var/run/session-analysis/model/key }
             - { name: SESSION_ANALYSIS_DATABASE_URL_FILE, value: /var/run/session-analysis/database/url }
+            {{- if $azure }}
+            {{- /* Azure Blob (runner.ts LOCKER_PROVIDER=azure): the Locker's own account,
+            container and endpoint; the Shared Key only as a mounted file. No S3 setting. */}}
+            - { name: LOCKER_PROVIDER, value: "azure" }
+            - { name: SESSION_ANALYSIS_AZURE_ACCOUNT, value: {{ .Values.locker.azure.account | quote }} }
+            - { name: SESSION_ANALYSIS_AZURE_CONTAINER, value: {{ .Values.locker.bucket | quote }} }
+            {{- with .Values.locker.endpoint }}
+            - { name: SESSION_ANALYSIS_AZURE_ENDPOINT, value: {{ . | quote }} }
+            {{- end }}
+            - { name: SESSION_ANALYSIS_AZURE_ACCOUNT_KEY_FILE, value: /var/run/session-analysis/azure/account-key }
+            {{- else }}
             - { name: SESSION_ANALYSIS_S3_BUCKET, value: {{ $s.bucket | quote }} }
             - { name: SESSION_ANALYSIS_S3_REGION, value: {{ $s.bucketRegion | quote }} }
             - { name: SESSION_ANALYSIS_S3_CREDENTIALS, value: {{ ternary "static" "podIdentity" $static | quote }} }
@@ -93,6 +107,7 @@ spec:
             {{- end }}
             {{- if eq (toString ($s.s3VersioningCheck | default "")) "true" }}
             - { name: SESSION_ANALYSIS_S3_VERSIONING_CHECK, value: "true" }
+            {{- end }}
             {{- end }}
             - { name: PIPELINE_KEY_PREFIX, value: {{ $s.keyPrefix | quote }} }
             - { name: PIPELINE_ORG_FROM_PREFIX, value: "true" }
@@ -146,6 +161,9 @@ spec:
             {{- if $static }}
             - { name: s3-keys, mountPath: /var/run/session-analysis/s3, readOnly: true }
             {{- end }}
+            {{- if $azure }}
+            - { name: azure-account-key, mountPath: /var/run/session-analysis/azure, readOnly: true }
+            {{- end }}
             {{- if eq $t.profile "custom-ca" }}
             - { name: postgres-ca, mountPath: /etc/session-analysis-ca, readOnly: true }
             {{- end }}
@@ -166,6 +184,12 @@ spec:
             items:
               - { key: {{ $s.s3KeysSecret.accessKeyIdKey | quote }}, path: access-key-id }
               - { key: {{ $s.s3KeysSecret.secretAccessKeyKey | quote }}, path: secret-access-key }
+        {{- end }}
+        {{- if $azure }}
+        - name: azure-account-key
+          secret:
+            secretName: {{ $azureKey.name | quote }}
+            items: [{ key: {{ $azureKey.key | quote }}, path: account-key }]
         {{- end }}
         {{- if eq $t.profile "custom-ca" }}
         - name: postgres-ca

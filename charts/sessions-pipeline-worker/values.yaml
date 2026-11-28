@@ -51,6 +51,9 @@ secretKeys:
   hoopdbUrl: HOOPDB_URL
   lockerAccessKeyId: LOCKER_ACCESS_KEY_ID
   lockerSecretAccessKey: LOCKER_SECRET_ACCESS_KEY
+  # locker.provider=azure only: the existingSecret key holding the storage
+  # account's Shared Key (LOCKER_AZURE_ACCOUNT_KEY).
+  lockerAzureAccountKey: LOCKER_AZURE_ACCOUNT_KEY
 
 # Bob Costas encrypts summary objects before they reach the Locker. The value
 # is never accepted in values.yaml: it is read from a Kubernetes Secret and is
@@ -76,7 +79,23 @@ locker:
   # CLOUD_SQL_CONNECTION_NAME, REDIS_HOST, REDIS_PORT, REDIS_AUTH_ENABLED
   # ("false"), REDIS_TRANSIT_ENCRYPTION ("SERVER_AUTHENTICATION"),
   # REDIS_TLS_CA_PEM, PUBSUB_TOPIC and PUBSUB_SUBSCRIPTION.
+  # azure: native Azure Blob Storage with the account's Shared Key. Renders
+  # LOCKER_PROVIDER=azure, LOCKER_AZURE_ACCOUNT (azure.account) and
+  # LOCKER_AZURE_ACCOUNT_KEY from existingSecret
+  # (secretKeys.lockerAzureAccountKey); no S3 keys. bucket is the container,
+  # endpoint is optional (empty: https://<account>.blob.core.windows.net), and
+  # credentials.mode must be secret. lockerInit must be off: create the
+  # container and turn on blob versioning on the account outside the chart.
+  # The services admit azure only in session-analysis and coordination-advisor:
+  # components bob-costas, referee, hoopdb-indexer and session-brief must be
+  # disabled (they refuse LOCKER_PROVIDER=azure at startup, sessions-pipeline
+  # src/shared/env.ts as of fefbc87c).
+  # Needs a services image with the Azure Locker and analysis runner
+  # (sessions-pipeline 10d27ff4 or later; agent-relay-2026.11.24 has it).
   provider: s3
+  azure:
+    # The storage account name (3-24 lowercase letters or digits).
+    account: ""
   # Required in secret mode, e.g. http://minio:9000. In podIdentity mode,
   # leave empty to use the provider's native endpoint (S3: for locker.region).
   endpoint: ""
@@ -437,8 +456,9 @@ coordinationAdvisor:
 # SERVICE=session-analysis: the session-analysis job processor as a pod
 # (relayhistory-pipeline docs/session-analysis-runner.md, "Chart values to
 # request from infra"). Off by default. It reads canonical evidence from S3
-# or an S3-compatible store only (no GCS or Azure Blob): AWS S3 through EKS
-# Pod Identity, or the bundled MinIO with static keys (s3Credentials: static).
+# or an S3-compatible store (AWS S3 through EKS Pod Identity, or the bundled
+# MinIO with static keys: s3Credentials: static), or from native Azure Blob
+# with locker.provider=azure (sessionAnalysis.azure below). Not GCS.
 sessionAnalysis:
   # Whether the Deployment, ServiceAccount and policy render at all.
   enabled: false
@@ -509,6 +529,24 @@ sessionAnalysis:
   # s3:GetBucketVersioning). There is no way to turn the check off: the
   # runner refuses any other value.
   s3VersioningCheck: ""
+  # locker.provider=azure: the runner reads the Locker's own account,
+  # container (locker.bucket) and endpoint (SESSION_ANALYSIS_AZURE_*), and the
+  # Shared Key from a file mounted from accountKeySecret (empty name: the
+  # shared existingSecret; empty key: secretKeys.lockerAzureAccountKey). Every
+  # S3 value above (bucket, bucketRegion, s3Endpoint, s3KeysSecret,
+  # s3VersioningCheck, allowInClusterHttp) must stay empty, and
+  # decisionRecords cannot be "true" (the runner refuses both). The runner
+  # proves blob versioning at startup with a probe write and erase, so the
+  # account needs versioning on and the key needs write and delete rights.
+  # Needs sessions-pipeline 10d27ff4 or later in the shared worker image
+  # (agent-relay-2026.11.24's image has it): locker.provider=azure also switches
+  # coordination-advisor and migrate, so pinning sessionAnalysis.image alone is
+  # not enough. This
+  # chart's standalone default image predates it.
+  azure:
+    accountKeySecret:
+      name: ""
+      key: ""
   # Mounted read-only; SESSION_ANALYSIS_OPENAI_API_KEY_FILE points at it.
   modelKeySecret:
     name: ""

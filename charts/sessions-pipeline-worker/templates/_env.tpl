@@ -22,7 +22,7 @@ Fail early on missing required values (render time, not crash-loop time).
 {{- if and (eq $credentialsMode "secret") (not .Values.existingSecret) }}{{ fail "sessions-pipeline-worker: existingSecret is required when locker.credentials.mode=secret" }}{{ end -}}
 {{- if and (not .Values.hoopdb.existingSecret) (not .Values.existingSecret) }}{{ fail "sessions-pipeline-worker: hoopdb.existingSecret or existingSecret is required for HOOPDB_URL" }}{{ end -}}
 {{- if ne (empty (get $migrationHoopdb "existingSecret")) (empty (get $migrationHoopdb "key")) }}{{ fail "sessions-pipeline-worker: migrations.hoopdb.existingSecret and key must be set together" }}{{ end -}}
-{{- if and (eq $credentialsMode "secret") (not .Values.locker.endpoint) }}{{ fail "sessions-pipeline-worker: locker.endpoint is required when locker.credentials.mode=secret" }}{{ end -}}
+{{- if and (eq $credentialsMode "secret") (ne (.Values.locker.provider | default "s3") "azure") (not .Values.locker.endpoint) }}{{ fail "sessions-pipeline-worker: locker.endpoint is required when locker.credentials.mode=secret" }}{{ end -}}
 {{- if not (include "sessions-pipeline-worker.orgId" .) }}{{ fail "sessions-pipeline-worker: tenant.orgId (or global.tenant.orgId) is required" }}{{ end -}}
 {{- $idx := index .Values.components "hoopdb-indexer" -}}
 {{- if and $idx.enabled (gt (int $idx.replicas) 1) }}{{ fail "sessions-pipeline-worker: components.hoopdb-indexer.replicas must be 1 (manifest reconcile is not leader-elected)" }}{{ end -}}
@@ -58,7 +58,7 @@ native GCS (LOCKER_PROVIDER=gcs, Workload Identity through the GKE metadata
 server). It refuses HMAC keys on GCS and refuses the S3 client against a
 Google Cloud Storage endpoint, so both shapes fail here at render time. */ -}}
 {{- $provider := .Values.locker.provider | default "s3" -}}
-{{- if not (has $provider (list "s3" "gcs")) }}{{ fail "sessions-pipeline-worker: locker.provider must be s3 or gcs" }}{{ end -}}
+{{- if not (has $provider (list "s3" "gcs" "azure")) }}{{ fail "sessions-pipeline-worker: locker.provider must be s3, gcs or azure" }}{{ end -}}
 {{- $gcs := eq $provider "gcs" -}}
 {{- $extraEnvNames := list -}}
 {{- range .Values.extraEnv }}{{ $extraEnvNames = append $extraEnvNames (.name | default "") }}{{ end -}}
@@ -73,6 +73,32 @@ Google Cloud Storage endpoint, so both shapes fail here at render time. */ -}}
 {{- range $name := list "CLOUD_SQL_CONNECTION_NAME" "REDIS_HOST" "REDIS_PORT" "REDIS_AUTH_ENABLED" "REDIS_TRANSIT_ENCRYPTION" "REDIS_TLS_CA_PEM" "PUBSUB_TOPIC" "PUBSUB_SUBSCRIPTION" }}
 {{- if not (has $name $extraEnvNames) }}{{ fail (printf "sessions-pipeline-worker: locker.provider=gcs arms the services' GCS data-path readiness check, which needs %s in extraEnv (Cloud SQL connection name, Memorystore TLS and Pub/Sub settings); pods never become Ready without it" $name) }}{{ end -}}
 {{- end }}
+{{- end }}
+{{- /* Azure Blob: the services' Locker (src/shared/locker-selection.ts) takes the
+storage account, the container as LOCKER_BUCKET and the Shared Key as
+LOCKER_AZURE_ACCOUNT_KEY; it refuses S3 keys and an endpoint that is not https
+(http only to loopback). The chart reads the key from existingSecret only. */ -}}
+{{- if eq $provider "azure" }}
+{{- if ne $credentialsMode "secret" }}{{ fail "sessions-pipeline-worker: locker.provider=azure requires locker.credentials.mode=secret (Shared Key from existingSecret; Entra workload identity is not supported by the services yet)" }}{{ end -}}
+{{- if not (regexMatch "^[a-z0-9]{3,24}$" (dig "azure" "account" "" .Values.locker)) }}{{ fail "sessions-pipeline-worker: locker.provider=azure requires locker.azure.account (the storage account: 3-24 lowercase letters or digits)" }}{{ end -}}
+{{- if not (regexMatch "^[a-z0-9]+(-[a-z0-9]+)*$" (.Values.locker.bucket | default "")) }}{{ fail "sessions-pipeline-worker: locker.provider=azure requires locker.bucket to be an Azure container name (3-63 lowercase letters, digits and single hyphens)" }}{{ end -}}
+{{- if or (lt (len .Values.locker.bucket) 3) (gt (len .Values.locker.bucket) 63) }}{{ fail "sessions-pipeline-worker: locker.provider=azure requires locker.bucket to be an Azure container name (3-63 lowercase letters, digits and single hyphens)" }}{{ end -}}
+{{- with .Values.locker.endpoint }}
+{{- $label := "[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?" -}}
+{{- $origin := printf "(https://%s(\\.%s)*|http://(localhost|127\\.0\\.0\\.1|\\[::1\\]))(:[0-9]{1,5})?" $label $label -}}
+{{- if not (regexMatch (printf "^%s(/%s)?/?$" $origin (dig "azure" "account" "" $.Values.locker)) .) }}{{ fail "sessions-pipeline-worker: locker.endpoint with locker.provider=azure must be empty (https://<account>.blob.core.windows.net), https://<host>[:port], or http to loopback, optionally with the path /<account> (no credentials, query or fragment)" }}{{ end -}}
+{{- end }}
+{{- if not (.Values.secretKeys.lockerAzureAccountKey | default "") }}{{ fail "sessions-pipeline-worker: secretKeys.lockerAzureAccountKey is required with locker.provider=azure" }}{{ end -}}
+{{- if .Values.lockerInit.enabled }}{{ fail "sessions-pipeline-worker: lockerInit.enabled must be false with locker.provider=azure: create the container (with blob versioning on the account) outside the chart" }}{{ end -}}
+{{- /* The services admit LOCKER_PROVIDER=azure only in a process that reads the Locker through
+its own store and claims no pipeline stage (src/shared/env.ts vendorBindings `ownLocker`, as of
+sessions-pipeline fefbc87c, the agent-relay-2026.11.24 image, and 155f7ba6): coordination-advisor
+and session-analysis. The stage workers (bob-costas, referee, hoopdb-indexer) and session-brief
+throw at startup ("not available to the vendored pipeline routes"), so refuse them here. */ -}}
+{{- range $name := list "bob-costas" "referee" "hoopdb-indexer" "session-brief" }}
+{{- if (index $.Values.components $name).enabled }}{{ fail (printf "sessions-pipeline-worker: locker.provider=azure requires components.%s.enabled=false: the services refuse LOCKER_PROVIDER=azure in that worker (only coordination-advisor and session-analysis read Azure Blob)" $name) }}{{ end -}}
+{{- end }}
+{{- range $name := list "LOCKER_AZURE_ACCOUNT" "LOCKER_AZURE_ACCOUNT_KEY" "LOCKER_ACCESS_KEY_ID" "LOCKER_SECRET_ACCESS_KEY" }}{{ if has $name $extraEnvNames }}{{ fail (printf "sessions-pipeline-worker: extraEnv must not set %s with locker.provider=azure: use locker.azure and secretKeys" $name) }}{{ end }}{{ end -}}
 {{- end }}
 {{- range $name := list "LOCKER_PROVIDER" "PIPELINE_RAW_PROVIDER" }}{{ if has $name $extraEnvNames }}{{ fail (printf "sessions-pipeline-worker: extraEnv must not set %s: use locker.provider" $name) }}{{ end }}{{ end -}}
 {{- end }}
@@ -124,7 +150,17 @@ Usage: include "sessions-pipeline-worker.env" (dict "context" . "service" "refer
 - name: PIPELINE_RAW_PROVIDER
   value: "gcs"
 {{- end }}
-{{- if eq ($v.locker.credentials.mode | default "secret") "secret" }}
+{{- if eq ($v.locker.provider | default "s3") "azure" }}
+- name: LOCKER_PROVIDER
+  value: "azure"
+- name: LOCKER_AZURE_ACCOUNT
+  value: {{ $v.locker.azure.account | quote }}
+- name: LOCKER_AZURE_ACCOUNT_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ $v.existingSecret }}
+      key: {{ $v.secretKeys.lockerAzureAccountKey }}
+{{- else if eq ($v.locker.credentials.mode | default "secret") "secret" }}
 - name: LOCKER_ACCESS_KEY_ID
   valueFrom:
     secretKeyRef:

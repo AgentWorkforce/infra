@@ -1,0 +1,44 @@
+# session-analysis on native Azure Blob Storage (locker.provider=azure), as on
+# an AKS self-host install. Synthetic values only: the account, container and
+# Secret names are placeholders and the chart never takes the account key; it
+# is read from the existing Secret by name. The runner image is pinned to the
+# release digest below.
+existingSecret: sessions-pipeline
+locker:
+  provider: azure
+  bucket: sessions-ci
+  azure:
+    account: exampleciacct
+tenant:
+  orgId: org_ci
+migrations:
+  databaseMode: selfhosted
+  supabaseShim: true
+  runtimeRole: sessions_pipeline_runtime
+  runtimeRoleLogin: true
+  functionBoundaryMode: global-default-revoke
+lockerInit:
+  enabled: false
+# The services refuse LOCKER_PROVIDER=azure in the stage workers and session-brief
+# (vendorBindings, sessions-pipeline fefbc87c); only session-analysis and
+# coordination-advisor read Azure Blob.
+components:
+  bob-costas: { enabled: false }
+  referee: { enabled: false }
+  hoopdb-indexer: { enabled: false }
+  session-brief: { enabled: false }
+sessionAnalysis:
+  enabled: true
+  run: false
+  keyPrefix: 96bulls
+  # The agent-relay-2026.11.24 sessions-pipeline image (releases/agent-relay-2026.11.24/pins.json),
+  # built from AgentWorkforce/relayhistory-pipeline fefbc87c, which carries the Azure runner (10d27ff4).
+  image:
+    repository: ghcr.io/agentworkforce/sessions-pipeline
+    digest: sha256:84495b4d90c6b0a605ba545a7f4b01b42cb6f1cbd2db21a535ab05b21f49b57f
+  modelKeySecret:
+    name: agent-relay-llm
+    key: OPENAI_API_KEY
+  databaseSecret:
+    name: session-analysis-db
+    key: url
