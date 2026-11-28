@@ -405,10 +405,11 @@ searchIndexer:
     provider: s3
     bucket: ""
     region: us-east-1
-    # provider=azure only: the storage account and the existingSecret key holding its Shared Key.
-    azure:
-      account: ""
-    accountKeyKey: account-key
+    # provider=azure only (left unset by default so existing renders and the
+    # content-addressed bootstrap Job name do not change):
+    # azure:
+    #   account: <storage account>
+    # accountKeyKey: <existingSecret key holding the Shared Key>
     # Empty uses the AWS S3 endpoint for the region (Pod Identity credentials).
     endpoint: ""
     # podIdentity: no keys; the AWS credential chain of the ServiceAccount.

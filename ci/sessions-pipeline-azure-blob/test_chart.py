@@ -114,7 +114,7 @@ class AzureBlob(unittest.TestCase):
         self.render([AZURE, CI / "read-api-values.yaml"], fail="requires sessionReadApi.extraEnv LOCKER_PROVIDER=azure")
         # The indexer cannot read Azure while the ingest edge writes S3.
         self.render(BASE, {"searchIndexer": {"locker": {"provider": "azure", "bucket": "sessions-ci", "credentials": {"mode": "secret"},
-                                                        "existingSecret": "s", "azure": {"account": "exampleciacct"}}}},
+                                                        "existingSecret": "s", "azure": {"account": "exampleciacct"}, "accountKeyKey": "account-key"}}},
                     fail="searchIndexer.locker.provider=azure requires ingestEdge.locker.provider=azure")
 
 

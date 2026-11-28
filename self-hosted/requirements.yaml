@@ -5905,12 +5905,12 @@ entries:
       bob-costas, referee, hoopdb-indexer and session-brief must be disabled.
       ingestEdge.locker.provider=azure and searchIndexer.locker.provider=azure
       (sessions-pipeline 0.8.67) render the same LOCKER_AZURE_* names with the key from
-      locker.existingSecret[accountKeyKey]. The ingest edge needs ledger sql and refuses
+      locker.existingSecret[accountKeyKey] (searchIndexer.locker.azure.account and accountKeyKey are unset by default so the content-addressed bootstrap Job name does not change). The ingest edge needs ledger sql and refuses
       uploadDirect, the re-arm sweeper and the operator session erase on Azure. Every
       Locker reader must use the same account and container. alleyoop
       (session-ingest-api) must be off because the services refuse Azure there.
     chart: sessions-pipeline
-    values: [worker.locker.provider, worker.locker.azure.account, worker.secretKeys.lockerAzureAccountKey, ingestEdge.locker.provider, ingestEdge.locker.azure.account, ingestEdge.locker.accountKeyKey, searchIndexer.locker.provider, searchIndexer.locker.azure.account, searchIndexer.locker.accountKeyKey, alleyoop.locker.provider, worker.extraEnv, alleyoop.extraEnv]
+    values: [worker.locker.provider, worker.locker.azure.account, worker.secretKeys.lockerAzureAccountKey, ingestEdge.locker.provider, ingestEdge.locker.azure.account, ingestEdge.locker.accountKeyKey, searchIndexer.locker.provider, alleyoop.locker.provider, worker.extraEnv, alleyoop.extraEnv]
     env: [LOCKER_PROVIDER, PIPELINE_RAW_PROVIDER, LOCKER_AZURE_ACCOUNT, LOCKER_AZURE_ACCOUNT_KEY, CLOUD_SQL_CONNECTION_NAME, REDIS_HOST, REDIS_PORT, REDIS_AUTH_ENABLED, REDIS_TRANSIT_ENCRYPTION, REDIS_TLS_CA_PEM, PUBSUB_TOPIC, PUBSUB_SUBSCRIPTION]
     profiles: [selfhost-postgres, migration, external-selfhosted, external-rds, aws-rds-native, external-supabase, aws-cnpg, aws-supabase, gcp-cloudsql]
     status: shipped
