@@ -2,13 +2,14 @@ nameOverride: ""
 fullnameOverride: ""
 
 # Deployed by immutable digest only. The default is the published multi-arch
-# index (linux/amd64, linux/arm64) built from relaygate main 8ae66ac8 (release
-# v0.1.0; #48 Ed25519 upstream assertions, #49 relayfacts/coordination, #50,
-# #51 event-query scope parity); see self-hosted/customer-images.yaml. Mirror
-# it by digest and override for your registry.
+# index of relaygate v0.1.1 (linux/amd64, linux/arm64; source 5142b09a, the
+# reviewed release.yml workflow: SPDX SBOM and SLSA v1 provenance per platform,
+# GitHub build-provenance attestation). Runtime code is that of 8ae66ac8 (#48,
+# #49, #50, #51); see self-hosted/customer-images.yaml. Mirror it by digest and
+# override for your registry.
 image:
   repository: ghcr.io/agentworkforce/relaygate
-  digest: sha256:429c811acf1a37bfd12269d698f116bcade50050b3ef7ea4040e34d4336064cf
+  digest: sha256:29ca6cd1cc3c45b0dc4386fb471741987647116ae9e9f9268f85b05cc62ce6b6
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 

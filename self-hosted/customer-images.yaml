@@ -575,10 +575,10 @@ images:
   # built-in History gate. Inactive here: the GCP customer profile keeps it
   # off; the opt-in profiles values-gcp-relaygate.yaml, values-eks-relaygate.yaml
   # and the AKS guide's relaygate-values.yaml turn it on. The chart pins this
-  # digest. Verified 2026-11-24: anonymous crane digest of the index, an OCI
-  # index with linux/amd64 (sha256:09d1d2df...) and linux/arm64
-  # (sha256:03ffd5bc...) manifests, built by the successful main push run
-  # below at the recorded revision.
+  # digest. Verified 2026-11-25: anonymous crane digest of the v0.1.1 index,
+  # linux/amd64 (sha256:6b0c326b...) and linux/arm64 (sha256:2845b8c4...)
+  # manifests, each with an SPDX SBOM and SLSA v1 provenance attestation;
+  # gh attestation verify passes (release.yml on main, run below).
   - id: relaygate
     active: false
     firstParty: true
@@ -587,34 +587,39 @@ images:
       - Deployment/<release>-relaygate:relaygate
     current:
       repository: ghcr.io/agentworkforce/relaygate
-      digest: sha256:429c811acf1a37bfd12269d698f116bcade50050b3ef7ea4040e34d4336064cf
+      digest: sha256:29ca6cd1cc3c45b0dc4386fb471741987647116ae9e9f9268f85b05cc62ce6b6
       chartStatus: optional-preview
       valuesFile: charts/relaygate/values.yaml
     source:
       repository: https://github.com/AgentWorkforce/relaygate
-      revision: 8ae66ac873b8baf967b1929d64d4ee19d93464ba
+      revision: 5142b09ae71a5f7cec9247bc5a615a92fe2ad450
       reproducibleReference: true
       note: >-
-        relaygate main 8ae66ac8 (merge of #51; GitHub release and git tag
-        v0.1.0, no registry tag of that name: the published tags are
-        sha-8ae66ac873b8baf967b1929d64d4ee19d93464ba and main). Carries #48 (Ed25519 upstream assertions,
-        RELAYGATE_UPSTREAM_ASSERTION_KEY/_KID/_TTL_SECONDS), #49 (relayfacts
-        and coordination proxy), #50 (user grants, cross-session enforcement)
-        and #51 (event-query scope parity), per git ancestry.
+        relaygate v0.1.1 (main 5142b09a, merge of #52), published by the
+        reviewed release workflow; tags v0.1.1 and sha256-29ca6cd1 (digest
+        alias). Runtime code equals 8ae66ac8 (5142b09a only adds
+        .github/workflows/release.yml and docs/release.md): #48 (Ed25519
+        upstream assertions), #49 (relayfacts and coordination proxy), #50
+        (user grants, cross-session enforcement), #51 (event-query scope
+        parity).
     license:
       status: recorded
       spdx: FSL-1.1-ALv2
-      evidence: https://github.com/AgentWorkforce/relaygate/blob/8ae66ac873b8baf967b1929d64d4ee19d93464ba/LICENSE
+      evidence: https://github.com/AgentWorkforce/relaygate/blob/5142b09ae71a5f7cec9247bc5a615a92fe2ad450/LICENSE
     platforms:
       expected: [linux/amd64, linux/arm64]
       verifiedFromRegistry: [linux/amd64, linux/arm64]
       status: verified
       verificationAccess: anonymous
     release:
-      run: https://github.com/AgentWorkforce/relaygate/actions/runs/45238503140
-      trigger: push (main)
+      workflow: https://github.com/AgentWorkforce/relaygate/blob/5142b09ae71a5f7cec9247bc5a615a92fe2ad450/.github/workflows/release.yml
+      run: https://github.com/AgentWorkforce/relaygate/actions/runs/45643864733
+      trigger: workflow_dispatch
       buildsCommittedRevision: true
-      publishedTags: []
+      publishedTags: [v0.1.1]
+      publishesSbom: true
+      publishesProvenance: true
+      provenanceMode: max-plus-github-attestation
       verifiesAnonymousPull: true
     customerAcquisition:
       status: available-public
@@ -623,10 +628,12 @@ images:
       status: not-in-gated-profile
       basis: >-
         Optional component, off by default and outside the gated GCP profile.
-        Not part of the release-candidate component set yet (follow-up): a
-        release that turns the gate on must add relaygate to the signed
-        customer image inventory and get its license approved for self-hosted
-        distribution.
+        Supply chain verified 2026-11-25 for v0.1.1: anonymous index pull,
+        SPDX SBOM and SLSA v1 provenance attestation per platform, and gh
+        attestation verify (signer release.yml on main at 5142b09a,
+        workflow_dispatch, run 45643864733). Still outstanding before
+        approval: the license (FSL-1.1-ALv2) is recorded but not approved for
+        self-hosted distribution; that is the owner's decision.
       blockingReasons: []
 
   # Optional durable-actors images (agent-relay 0.3.12, values-eks-actors.yaml).

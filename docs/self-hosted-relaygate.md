@@ -118,7 +118,7 @@ scopes except the Relaycast ones.
 It needs agent-relay chart **0.7.77 or later**. The install guides keep their
 pinned releases and describe it as the recommended next step once the release
 carries that chart. On EKS the attested pull-based upgrade also needs a release
-whose signed image inventory pins relaygate (none does yet).
+whose signed image inventory pins relaygate (agent-relay-2026.11.19 and earlier do not; a later release lists it once relaygate is approved in `self-hosted/customer-images.yaml`).
 
 The example values per platform (release name `agent-relay`):
 
