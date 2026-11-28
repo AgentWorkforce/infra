@@ -76,7 +76,7 @@ class AzureBlob(unittest.TestCase):
         self.assertEqual(services["session-pipeline-consumer"]["LOCKER_AZURE_ACCOUNT_KEY"]["secretKeyRef"], {"name": "search-indexer-store", "key": "account-key"})
         # An explicit https endpoint (sovereign cloud) reaches both.
         ep = "https://exampleciacct.blob.core.usgovcloudapi.net"
-        services = self.locker_env(self.azure({"ingestEdge": {"locker": {"endpoint": ep}}, "searchIndexer": {"locker": {"endpoint": ep}}}))
+        services = self.locker_env(self.azure({"ingestEdge": {"locker": {"endpoint": ep}}, "searchIndexer": {"locker": {"endpoint": ep}}, "worker": {"locker": {"endpoint": ep}}}))
         self.assertEqual(services["session-ingest"]["LOCKER_ENDPOINT"], ep)
         self.assertEqual(services["session-pipeline-consumer"]["LOCKER_ENDPOINT"], ep)
 
@@ -99,19 +99,41 @@ class AzureBlob(unittest.TestCase):
             ({"ingestEdge": {"locker": {"endpoint": "http://blob.x.svc.cluster.local"}}}, "ingestEdge.locker.endpoint must be a bare HTTPS DNS origin"),
             ({"ingestEdge": {"locker": {"accountKeyKey": ""}}}, "ingestEdge Secret/CA keys must be nonempty"),
             ({"ingestEdge": {"uploadDirect": {"mode": "on"}, "admission": {"mode": "async"}}}, "uploadDirect currently requires S3-compatible storage"),
-            ({"searchIndexer": {"locker": {"bucket": "other-container"}}}, "requires searchIndexer.locker on the same Azure account and container"),
-            ({"searchIndexer": {"locker": {"provider": "s3", "endpoint": "http://session-object-storage:9000", "accessKeyIdKey": "a", "secretAccessKeyKey": "b"}}}, "requires searchIndexer.locker on the same Azure account and container"),
+            ({"searchIndexer": {"locker": {"bucket": "other-container"}}}, "requires searchIndexer.locker on the same Azure account, container and endpoint"),
+            ({"searchIndexer": {"locker": {"provider": "s3", "endpoint": "http://session-object-storage:9000", "accessKeyIdKey": "a", "secretAccessKeyKey": "b"}}}, "requires searchIndexer.locker on the same Azure account, container and endpoint"),
             ({"searchIndexer": {"locker": {"credentials": {"mode": "podIdentity"}}}}, "searchIndexer.locker.provider=azure requires locker.credentials.mode=secret"),
             ({"searchIndexer": {"locker": {"endpoint": "http://blob.example.com"}}}, "must be empty or a bare https origin"),
             ({"searchIndexer": {"extraEnv": [{"name": "LOCKER_AZURE_ACCOUNT_KEY", "value": "x"}]}}, "searchIndexer.extraEnv must not set LOCKER_AZURE_ACCOUNT_KEY"),
-            ({"worker": {"locker": {"provider": "s3", "endpoint": "http://session-object-storage:9000"}, "components": {"bob-costas": {"enabled": True}, "referee": {"enabled": True}, "hoopdb-indexer": {"enabled": True}}}}, "requires worker.locker on the same Azure account and container"),
+            ({"worker": {"locker": {"provider": "s3", "endpoint": "http://session-object-storage:9000"}, "components": {"bob-costas": {"enabled": True}, "referee": {"enabled": True}, "hoopdb-indexer": {"enabled": True}}}}, "requires worker.locker on the same Azure account, container and endpoint"),
             ({"worker": {"components": {"referee": {"enabled": True}}}}, "locker.provider=azure requires components.referee.enabled=false"),
             ({"global": {"operatorSessionErase": {"fenceEnforced": True}}}, "does not support the operator session erase"),
+            # Same store means the same effective endpoint too (empty = the account's public endpoint).
+            ({"ingestEdge": {"locker": {"endpoint": "https://exampleciacct.blob.core.usgovcloudapi.net"}}, "searchIndexer": {"locker": {"endpoint": "https://exampleciacct.blob.core.usgovcloudapi.net"}}}, "requires worker.locker on the same Azure account, container and endpoint"),
+            ({"searchIndexer": {"locker": {"endpoint": "https://other.blob.core.windows.net"}}}, "requires searchIndexer.locker on the same Azure account, container and endpoint"),
+            ({"worker": {"locker": {"azure": {"account": "otheracct"}}}}, "requires worker.locker on the same Azure account, container and endpoint"),
+            ({"nativeConsumer": {"enabled": True}, "searchIndexer": {"enabled": False}}, "does not support nativeConsumer.enabled=true"),
         ]:
             with self.subTest(msg=msg):
                 self.azure(overrides, fail=msg)
-        # The read API must read the same container (its Locker settings come through extraEnv).
-        self.render([AZURE, CI / "read-api-values.yaml"], fail="requires sessionReadApi.extraEnv LOCKER_PROVIDER=azure")
+        # The read API must read the same store (its Locker settings come through extraEnv).
+        key = {"name": "LOCKER_AZURE_ACCOUNT_KEY", "valueFrom": {"secretKeyRef": {"name": "read-store", "key": "account-key"}}}
+        good = [{"name": "LOCKER_PROVIDER", "value": "azure"}, {"name": "LOCKER_BUCKET", "value": "sessions-ci"},
+                {"name": "LOCKER_AZURE_ACCOUNT", "value": "exampleciacct"}, key,
+                {"name": "PIPELINE_ORG_FROM_PREFIX", "value": "true"}, {"name": "PIPELINE_KEY_PREFIX", "value": "96bulls"}]
+        read = [AZURE, CI / "read-api-values.yaml"]
+        services = self.locker_env(self.render(read, {"sessionReadApi": {"extraEnv": good}}))
+        self.assertEqual(services["session-read-api"]["LOCKER_PROVIDER"], "azure")
+        self.assertEqual(services["session-read-api"]["LOCKER_AZURE_ACCOUNT"], "exampleciacct")
+        drop = lambda name: [e for e in good if e["name"] != name]
+        for env, msg in [
+            ([], "requires sessionReadApi.extraEnv on the same store"),
+            (drop("LOCKER_AZURE_ACCOUNT_KEY"), "requires sessionReadApi.extraEnv on the same store"),
+            (drop("LOCKER_AZURE_ACCOUNT") + [{"name": "LOCKER_AZURE_ACCOUNT", "value": "otheracct"}], "requires sessionReadApi.extraEnv on the same store"),
+            (good + [{"name": "LOCKER_ENDPOINT", "value": "https://exampleciacct.blob.core.usgovcloudapi.net"}], "requires sessionReadApi.extraEnv on the same store"),
+            (good + [{"name": "LOCKER_ACCESS_KEY_ID", "valueFrom": {"secretKeyRef": {"name": "m", "key": "rootUser"}}}], "requires sessionReadApi.extraEnv without LOCKER_ACCESS_KEY_ID"),
+        ]:
+            with self.subTest(read_api=msg, n=len(env)):
+                self.render(read, {"sessionReadApi": {"extraEnv": env}}, fail=msg)
         # The indexer cannot read Azure while the ingest edge writes S3.
         self.render(BASE, {"searchIndexer": {"locker": {"provider": "azure", "bucket": "sessions-ci", "credentials": {"mode": "secret"},
                                                         "existingSecret": "s", "azure": {"account": "exampleciacct"}, "accountKeyKey": "account-key"}}},

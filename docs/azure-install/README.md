@@ -529,11 +529,19 @@ What the services support on Azure, checked against sessions-pipeline
 | `alleyoop` (session-ingest-api) | **no**, for the same reason. This guide already turns it off |
 
 The chart rejects these values at render time, before anything reaches the
-cluster: a component the services refuse, an S3-only option, or a reader on a
-different account or container than the ingest edge.
+cluster: a component the services refuse, an S3-only option, or a reader
+(worker, search indexer, read API) on a different account, container or
+endpoint than the ingest edge. An empty endpoint means the account's public
+endpoint.
 
 Before you start:
 
+- **New installs only.** This switches every reader to the new container.
+  Nothing here copies the existing MinIO objects into Blob, and the session
+  pointers in HoopDb still name the old store. On an install that already has
+  session history, those transcripts would stop opening even with MinIO still
+  running. Do not apply this to an existing install: a MinIO-to-Blob migration
+  is not part of this guide.
 - **Image.** The Azure Locker and the Azure runner need sessions-pipeline
   `10d27ff4` or later in every component above. agent-relay-2026.11.24 pins a
   services image built from `fefbc87c`, which has them. On an older release,

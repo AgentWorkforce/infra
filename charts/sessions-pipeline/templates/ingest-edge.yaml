@@ -108,20 +108,33 @@ upload, the re-arm sweeper and the operator session erase use S3-only code there
 {{- if $podIdentity }}{{ fail "ingestEdge.locker.provider=azure requires locker.credentials.mode=secret (Shared Key from locker.existingSecret; Entra workload identity is not supported by the services yet)" }}{{ end -}}
 {{- if not (regexMatch "^[a-z0-9]{3,24}$" (dig "azure" "account" "" $c.locker)) }}{{ fail "ingestEdge.locker.provider=azure requires ingestEdge.locker.azure.account (the storage account: 3-24 lowercase letters or digits)" }}{{ end -}}
 {{- if or (not (regexMatch "^[a-z0-9]+(-[a-z0-9]+)*$" ($c.locker.bucket | default ""))) (lt (len ($c.locker.bucket | default "")) 3) (gt (len ($c.locker.bucket | default "")) 63) }}{{ fail "ingestEdge.locker.provider=azure requires ingestEdge.locker.bucket to be an Azure container name (3-63 lowercase letters, digits and single hyphens)" }}{{ end -}}
+{{- with $c.locker.endpoint }}{{ $_ := include "sessions-pipeline.ingestEdge.endpoint" (dict "name" "ingestEdge.locker.endpoint" "url" . "allowHttp" false) }}{{ end -}}
 {{- if eq $ledger "s3" }}{{ fail "ingestEdge.locker.provider=azure requires ingestEdge.ledger=sql (the S3 ledger store is S3-only in the services)" }}{{ end -}}
 {{- if or .Values.global.operatorSessionErase.fenceEnforced .Values.operatorSessionErase.api.enabled .Values.operatorSessionErase.bytes.enabled }}{{ fail "ingestEdge.locker.provider=azure does not support the operator session erase in this chart yet" }}{{ end -}}
 {{- /* One store for every Locker reader and writer. Alleyoop (session-ingest-api) refuses
 LOCKER_PROVIDER=azure at startup (vendorBindings without ownLocker, fefbc87c), so it must be off. */ -}}
 {{- if and .Values.alleyoop.deployment.enabled (gt (int .Values.alleyoop.ingest.replicas) 0) }}{{ fail "ingestEdge.locker.provider=azure requires alleyoop.deployment.enabled=false (session-ingest-api refuses LOCKER_PROVIDER=azure in the services)" }}{{ end -}}
+{{- /* Effective endpoint: empty is the account's public endpoint; a trailing slash is ignored. */ -}}
+{{- $account := $c.locker.azure.account -}}
+{{- $publicEp := printf "https://%s.blob.core.windows.net" $account -}}
+{{- $ingestEp := trimSuffix "/" ($c.locker.endpoint | default $publicEp) -}}
 {{- if .Values.searchIndexer.enabled -}}
-{{- if or (ne .Values.searchIndexer.locker.provider "azure") (ne .Values.searchIndexer.locker.bucket $c.locker.bucket) (ne (dig "azure" "account" "" .Values.searchIndexer.locker) $c.locker.azure.account) }}{{ fail "ingestEdge.locker.provider=azure requires searchIndexer.locker on the same Azure account and container (provider azure, same bucket and azure.account)" }}{{ end -}}
+{{- $si := .Values.searchIndexer.locker -}}
+{{- if or (ne $si.provider "azure") (ne $si.bucket $c.locker.bucket) (ne (dig "azure" "account" "" $si) $account) (ne (trimSuffix "/" ($si.endpoint | default $publicEp)) $ingestEp) }}{{ fail "ingestEdge.locker.provider=azure requires searchIndexer.locker on the same Azure account, container and endpoint (provider azure, same bucket, azure.account and effective endpoint)" }}{{ end -}}
 {{- end -}}
+{{- $wl := .Values.worker.locker -}}
+{{- if or (ne ($wl.provider | default "s3") "azure") (ne $wl.bucket $c.locker.bucket) (ne (dig "azure" "account" "" $wl) $account) (ne (trimSuffix "/" ($wl.endpoint | default $publicEp)) $ingestEp) }}{{ fail "ingestEdge.locker.provider=azure requires worker.locker on the same Azure account, container and endpoint (provider azure, same bucket, azure.account and effective endpoint)" }}{{ end -}}
 {{- if .Values.sessionReadApi.enabled -}}
-{{- $readProvider := "" -}}
-{{- range $e := .Values.sessionReadApi.extraEnv }}{{ if eq ($e.name | default "") "LOCKER_PROVIDER" }}{{ $readProvider = toString $e.value }}{{ end }}{{ end -}}
-{{- if ne $readProvider "azure" }}{{ fail "ingestEdge.locker.provider=azure requires sessionReadApi.extraEnv LOCKER_PROVIDER=azure with LOCKER_AZURE_ACCOUNT and LOCKER_AZURE_ACCOUNT_KEY (the read API reads the same container)" }}{{ end -}}
+{{- $re := dict -}}
+{{- range $e := .Values.sessionReadApi.extraEnv }}{{ $_ := set $re ($e.name | default "") $e }}{{ end -}}
+{{- $rv := dict -}}
+{{- range $k := list "LOCKER_PROVIDER" "LOCKER_AZURE_ACCOUNT" "LOCKER_ENDPOINT" }}{{ $_ := set $rv $k (toString (dig "value" "" (get $re $k | default dict))) }}{{ end -}}
+{{- $readKeyRef := dig "valueFrom" "secretKeyRef" "name" "" (get $re "LOCKER_AZURE_ACCOUNT_KEY" | default dict) -}}
+{{- if or (ne (get $rv "LOCKER_PROVIDER") "azure") (ne (get $rv "LOCKER_AZURE_ACCOUNT") $account) (not $readKeyRef) (ne (trimSuffix "/" ((get $rv "LOCKER_ENDPOINT") | default $publicEp)) $ingestEp) }}{{ fail "ingestEdge.locker.provider=azure requires sessionReadApi.extraEnv on the same store: LOCKER_PROVIDER=azure, LOCKER_AZURE_ACCOUNT equal to ingestEdge.locker.azure.account, LOCKER_AZURE_ACCOUNT_KEY from a secretKeyRef, and the same effective LOCKER_ENDPOINT" }}{{ end -}}
+{{- range $k := list "LOCKER_ACCESS_KEY_ID" "LOCKER_SECRET_ACCESS_KEY" }}{{ if hasKey $re $k }}{{ fail (printf "ingestEdge.locker.provider=azure requires sessionReadApi.extraEnv without %s (the services refuse S3 keys on Azure)" $k) }}{{ end }}{{ end -}}
 {{- end -}}
-{{- if or (ne (.Values.worker.locker.provider | default "s3") "azure") (ne .Values.worker.locker.bucket $c.locker.bucket) (ne (dig "azure" "account" "" .Values.worker.locker) $c.locker.azure.account) }}{{ fail "ingestEdge.locker.provider=azure requires worker.locker on the same Azure account and container (provider azure, same bucket and azure.account)" }}{{ end -}}
+{{- /* The native consumer's Locker slot is S3/MinIO only. */ -}}
+{{- if .Values.nativeConsumer.enabled }}{{ fail "ingestEdge.locker.provider=azure does not support nativeConsumer.enabled=true (its Locker settings are S3/MinIO only); use searchIndexer" }}{{ end -}}
 {{- end -}}
 {{- $endpoint := "" -}}
 {{- if or (and (not $podIdentity) (not $azure)) $c.locker.endpoint -}}
