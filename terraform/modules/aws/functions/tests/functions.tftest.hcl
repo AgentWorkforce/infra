@@ -282,6 +282,15 @@ run "adopt_existing_function" {
   }
 }
 
+run "schedule_description_prefix" {
+  command = plan
+  variables { schedule_description_prefix = "96bulls session pipeline" }
+  assert {
+    condition     = aws_cloudwatch_event_rule.reconcile.description == "96bulls session pipeline: reconcile recent manifests (lost notifications)" && aws_cloudwatch_event_rule.brief.description == "96bulls session pipeline: one session-brief tick (due wakeups)"
+    error_message = "The prefix replaces only the product name in both rule descriptions."
+  }
+}
+
 run "explicit_brief_disabled" {
   command = plan
   variables {

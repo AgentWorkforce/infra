@@ -143,6 +143,7 @@ does not adopt, detach or forget existing IAM resources automatically.
 | reserved\_concurrent\_executions | Reserved concurrency for the function (-1: unreserved). | `number` | `-1` | no |
 | role\_path | IAM path for the managed execution role; unused with existing\_execution\_role\_arn. | `string` | `"/"` | no |
 | runtime | Runtime for zip packages (ignored for images). The hosted pipeline runs nodejs24.x. | `string` | `"nodejs24.x"` | no |
+| schedule\_description\_prefix | Prefix of the reconcile and brief rules' descriptions. Set it only to match an adopted stack's live rules. | `string` | `"agent-relay session pipeline"` | no |
 | search\_index\_enabled | SEARCH\_INDEX\_ENABLED. Off: pointers only (Postgres pg\_trgm search). On: the pipeline also writes the search index through its SearchIndexAdapter. ClickHouse credentials go in the pipeline secret; Amazon OpenSearch uses IAM instead: grant the execution role with additional\_policy\_statements and list it in the search module's additional\_principal\_arns. | `bool` | `false` | no |
 | secret\_arn | Existing pipeline secret ARN, when create\_secret is false. | `string` | `null` | no |
 | secret\_kms\_key\_arn | KMS key for the created secret. null uses aws/secretsmanager. | `string` | `null` | no |

@@ -356,6 +356,12 @@ variable "visibility_timeout_seconds" {
   }
 }
 
+variable "schedule_description_prefix" {
+  description = "Prefix of the reconcile and brief rules' descriptions. Set it only to match an adopted stack's live rules."
+  type        = string
+  default     = "agent-relay session pipeline"
+}
+
 variable "brief_schedule_enabled" {
   description = "The brief schedule's state. Null: enabled only when enabled and briefs_enabled are both true."
   type        = bool

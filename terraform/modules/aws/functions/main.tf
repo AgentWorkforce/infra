@@ -81,7 +81,7 @@ resource "aws_sqs_queue" "events" {
   lifecycle {
     # Cross-variable check here, not in the variable, so Terraform 1.6-1.8 still work.
     precondition {
-      condition     = var.visibility_timeout_seconds == null || var.visibility_timeout_seconds >= var.timeout_seconds
+      condition     = var.visibility_timeout_seconds == null ? true : var.visibility_timeout_seconds >= var.timeout_seconds
       error_message = "visibility_timeout_seconds must be at least timeout_seconds, or a message reappears while its invocation still runs."
     }
   }
@@ -393,7 +393,7 @@ resource "aws_lambda_event_source_mapping" "events" {
 
 resource "aws_cloudwatch_event_rule" "reconcile" {
   name                = "${var.name}-session-reconcile"
-  description         = "agent-relay session pipeline: reconcile recent manifests (lost notifications)"
+  description         = "${var.schedule_description_prefix}: reconcile recent manifests (lost notifications)"
   schedule_expression = "rate(${var.reconcile_minutes} minutes)"
   state               = var.enabled ? "ENABLED" : "DISABLED"
   tags                = var.tags
@@ -420,7 +420,7 @@ resource "aws_lambda_permission" "reconcile" {
 # briefs are off (the function also returns early without SESSION_BRIEF_ENABLED).
 resource "aws_cloudwatch_event_rule" "brief" {
   name                = "${var.name}-session-brief"
-  description         = "agent-relay session pipeline: one session-brief tick (due wakeups)"
+  description         = "${var.schedule_description_prefix}: one session-brief tick (due wakeups)"
   schedule_expression = var.brief_schedule_expression
   state               = local.brief_enabled ? "ENABLED" : "DISABLED"
   tags                = var.tags
