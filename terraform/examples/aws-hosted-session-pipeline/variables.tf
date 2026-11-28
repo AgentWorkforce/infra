@@ -127,16 +127,33 @@ variable "analysis_results" {
   default     = false
 }
 
-variable "upload_queue_configuration" {
-  description = "The bucket's second notification (finished desktop uploads to the upload-admission queue), when live has it. null: the bucket notifies only the pipeline queue."
+variable "other_notifications" {
+  description = "Every other live notification on the transcripts bucket, verbatim (for example the upload-inbox queue). aws_s3_bucket_notification owns the bucket's WHOLE notification configuration, so anything live that is missing here would be removed (the gate refuses that plan)."
   type = object({
-    id            = string
-    queue_arn     = string
-    events        = list(string)
-    filter_prefix = optional(string)
-    filter_suffix = optional(string)
+    queues = optional(list(object({
+      id            = string
+      queue_arn     = string
+      events        = list(string)
+      filter_prefix = optional(string)
+      filter_suffix = optional(string)
+    })), [])
+    lambda_functions = optional(list(object({
+      id                  = string
+      lambda_function_arn = string
+      events              = list(string)
+      filter_prefix       = optional(string)
+      filter_suffix       = optional(string)
+    })), [])
+    topics = optional(list(object({
+      id            = string
+      topic_arn     = string
+      events        = list(string)
+      filter_prefix = optional(string)
+      filter_suffix = optional(string)
+    })), [])
+    eventbridge = optional(bool, false)
   })
-  default = null
+  default = {}
 }
 
 # --- Queues and mapping ---

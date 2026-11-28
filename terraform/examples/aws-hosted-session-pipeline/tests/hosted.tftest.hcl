@@ -106,6 +106,19 @@ run "optional_schedule_group" {
   }
 }
 
+run "other_notifications_kept_verbatim" {
+  command = apply
+  variables {
+    other_notifications = {
+      queues = [{ id = "96bulls-upload-inbox", queue_arn = "arn:aws:sqs:us-east-1:111111111111:upload", events = ["s3:ObjectCreated:*"], filter_prefix = "inbox/" }]
+    }
+  }
+  assert {
+    condition     = length(aws_s3_bucket_notification.transcripts.queue) == 2 && !aws_s3_bucket_notification.transcripts.eventbridge
+    error_message = "Every other live notification is carried alongside the pipeline's."
+  }
+}
+
 run "duplicate_rendered_sid_refused" {
   command = plan
   variables {

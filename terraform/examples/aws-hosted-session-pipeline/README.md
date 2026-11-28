@@ -19,6 +19,17 @@ Helm chart, or optionally on `modules/aws/functions` or `modules/gcp/functions`.
 | Execution role, inline policies and attachments | imported as-is; every field comes from tfvars |
 | Transcripts bucket notification, bucket policy and KMS key policy | the pipeline's own statements are rendered here; every other statement (other stacks, TLS and encryption denies, the **ingest-edge cross-account grants**) comes verbatim from tfvars |
 
+**Why not `modules/aws/functions`.** That module is the self-host mirror of this stack, and its texts are
+generic: rule and alarm descriptions, the secret's name and description, queue-policy Sids, and a module-owned role
+and policy. Matching the live hosted resources through it would mean a dozen override knobs on a public self-host
+module just to reproduce strings. This root takes the old stack's place, so there are still two descriptions: the
+self-host module and this hosted root. They converge in phase 2, when the function moves here too and the module
+can grow the overrides one reviewed change at a time.
+
+`aws_s3_bucket_notification` owns the bucket's whole notification configuration. `other_notifications` carries
+every other live target verbatim (queues, functions, topics, EventBridge). Anything missing there would be removed,
+and the gate refuses that plan.
+
 Not yet: the function itself (phase 2, once the pipeline publishes a pinned artifact for Terraform to deploy),
 the upload-inbox stack, the Cloudflare ingest Worker and the rest of `stacks/aws`.
 
@@ -112,10 +123,10 @@ the first apply, so the two reconcilers never fight.
 | log\_group | The function's log group, if it exists and should be managed. null leaves it alone. | ```object({ retention_in_days = number tags = optional(map(string), {}) })``` | `null` | no |
 | max\_concurrency | Event source mapping MaximumConcurrency. Self-host's module default is 4; the hosted value is set in the private tfvars, equal to live. | `number` | `4` | no |
 | optional\_schedules | Optional schedule groups the old stack declared per stage (analysisCache, semanticCopy, analysisJob, bufferedSearchFeed, bufferedErasureDelete): key => enabled. Absent keys plan nothing. | `map(bool)` | `{}` | no |
+| other\_notifications | Every other live notification on the transcripts bucket, verbatim (for example the upload-inbox queue). aws\_s3\_bucket\_notification owns the bucket's WHOLE notification configuration, so anything live that is missing here would be removed (the gate refuses that plan). | ```object({ queues = optional(list(object({ id = string queue_arn = string events = list(string) filter_prefix = optional(string) filter_suffix = optional(string) })), []) lambda_functions = optional(list(object({ id = string lambda_function_arn = string events = list(string) filter_prefix = optional(string) filter_suffix = optional(string) })), []) topics = optional(list(object({ id = string topic_arn = string events = list(string) filter_prefix = optional(string) filter_suffix = optional(string) })), []) eventbridge = optional(bool, false) })``` | `{}` | no |
 | reconcile\_minutes | Reconcile schedule period. | `number` | `30` | no |
 | secret\_description | The secret's description, as live. | `string` | `"96bulls session pipeline: Supabase HoopDb URL and ClickHouse ingest credentials (JSON)"` | no |
 | tags | Tags on the pipeline resources, exactly as live (the old stack's stack/component/repo tags). | `map(string)` | `{}` | no |
-| upload\_queue\_configuration | The bucket's second notification (finished desktop uploads to the upload-admission queue), when live has it. null: the bucket notifies only the pipeline queue. | ```object({ id = string queue_arn = string events = list(string) filter_prefix = optional(string) filter_suffix = optional(string) })``` | `null` | no |
 | visibility\_timeout\_seconds | session-events visibility timeout (old stack: 6 x 300 = 1800). | `number` | `1800` | no |
 
 ### Outputs

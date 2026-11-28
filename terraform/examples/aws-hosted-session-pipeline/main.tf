@@ -292,14 +292,38 @@ resource "aws_s3_bucket_notification" "transcripts" {
     filter_suffix = "/manifest.json"
   }
 
+  eventbridge = var.other_notifications.eventbridge
+
   dynamic "queue" {
-    for_each = var.upload_queue_configuration == null ? [] : [var.upload_queue_configuration]
+    for_each = var.other_notifications.queues
     content {
       id            = queue.value.id
       queue_arn     = queue.value.queue_arn
       events        = queue.value.events
       filter_prefix = queue.value.filter_prefix
       filter_suffix = queue.value.filter_suffix
+    }
+  }
+
+  dynamic "lambda_function" {
+    for_each = var.other_notifications.lambda_functions
+    content {
+      id                  = lambda_function.value.id
+      lambda_function_arn = lambda_function.value.lambda_function_arn
+      events              = lambda_function.value.events
+      filter_prefix       = lambda_function.value.filter_prefix
+      filter_suffix       = lambda_function.value.filter_suffix
+    }
+  }
+
+  dynamic "topic" {
+    for_each = var.other_notifications.topics
+    content {
+      id            = topic.value.id
+      topic_arn     = topic.value.topic_arn
+      events        = topic.value.events
+      filter_prefix = topic.value.filter_prefix
+      filter_suffix = topic.value.filter_suffix
     }
   }
 }

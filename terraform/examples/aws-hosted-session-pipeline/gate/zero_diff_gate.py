@@ -41,8 +41,24 @@ def put(obj, path, value):
     return obj
 
 
+def any_true(value):
+    if value is True:
+        return True
+    if isinstance(value, dict):
+        return any(any_true(v) for v in value.values())
+    if isinstance(value, list):
+        return any(any_true(v) for v in value)
+    return False
+
+
 def check(plan, allows):
     problems = []
+    if plan.get("errored") is True:
+        problems.append("plan: errored")
+    if plan.get("complete") is not True:
+        problems.append("plan: not complete (targeted, deferred or unknown completeness)")
+    if plan.get("applyable") is False:
+        problems.append("plan: not applyable")
     allowed = {}
     for address, path, before, after in allows:
         allowed.setdefault(address, []).append((path, before, after))
@@ -50,10 +66,19 @@ def check(plan, allows):
     for rc in plan.get("resource_changes", []):
         address, change = rc["address"], rc["change"]
         actions = change.get("actions", [])
-        if actions == ["no-op"] or actions == ["read"]:
+        if actions == ["no-op"]:
+            continue
+        if actions == ["read"]:
+            problems.append(f"{address}: data source deferred to apply")
             continue
         if actions != ["update"] or address not in allowed:
             problems.append(f"{address}: {'+'.join(actions)} is not approved")
+            continue
+        if any_true(change.get("after_unknown")):
+            problems.append(f"{address}: has values unknown until apply")
+            continue
+        if change.get("replace_paths"):
+            problems.append(f"{address}: has replace paths")
             continue
         b, a = change.get("before"), change.get("after")
         for path, before, after in allowed[address]:
