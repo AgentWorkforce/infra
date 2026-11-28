@@ -52,11 +52,12 @@ test("the shipped allowlist: auto only in the sandbox, the agent-hosts account a
   assert.equal(dev.tier, "prod");
   assert.deepEqual(dev.regions, ["us-west-2"]);
   assert.deepEqual(dev.roles, { elevated: "arn:aws:iam::154551280135:role/agent-broker-dev-read" });
-  // The prod account: approval-tier role only, us-west-2 only; the role itself can describe one cluster and nothing else (terraform/prod).
+  // The prod account: approval-tier roles only, us-west-2 only; the elevated role can describe one cluster and nothing else,
+  // the edge-dns role only the agentrelay-edge-dns root's state, LB lookups and certificate (terraform/prod), and only for profile requests.
   const prod = allowlist.accounts[PROD]!;
   assert.equal(prod.tier, "prod");
   assert.deepEqual(prod.regions, ["us-west-2"]);
-  assert.deepEqual(prod.roles, { elevated: `arn:aws:iam::${PROD}:role/agent-broker-prod-read` });
+  assert.deepEqual(prod.roles, { elevated: `arn:aws:iam::${PROD}:role/agent-broker-prod-read`, edgeDns: `arn:aws:iam::${PROD}:role/agent-broker-prod-edge-dns` });
   // The sessions account: approval-tier role only, us-east-1 only, and no workspaceAuto capability, so every request there goes to the approver.
   // The role itself can read one Lambda's configuration and its one log group (terraform/sessions).
   const sessions = allowlist.accounts[SESSIONS]!;

@@ -514,7 +514,7 @@ export function approvalPrompt(p: Pending, list: Allowlist, delegate?: string): 
     `AWS credential request ${p.requestId} needs your approval.`,
     ...(d ? [`You may approve it as a delegate of ${d.grantedBy} until ${d.expiresAt}, only inside your capability. Approve only what you asked for; refuse anything you didn't.`] : []),
     `From: ${p.requester.name} (${p.requester.address})`,
-    `Account: ${p.request.account} (${account?.label ?? "?"}, ${account?.tier ?? "?"}) via ${p.roleArn}`,
+    `Account: ${p.request.account} (${account?.label ?? "?"}, ${account?.tier ?? "?"}) via ${p.roleArn}${p.request.profile !== undefined ? ` (profile ${p.request.profile})` : ""}`,
     `Purpose: ${p.request.purpose}`,
     `Actions: ${p.request.actions.join(", ")}`,
     `Resources: ${(p.request.resources ?? ["*"]).join(", ")}  Scope: ${p.request.scope ?? "run-tag"} (${p.request.runTag}, namespace ${p.namespace})`,

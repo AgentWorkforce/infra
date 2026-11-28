@@ -60,6 +60,32 @@ variable "assume_role_arn" {
   }
 }
 
+variable "edge_dns_role_name" {
+  description = "Name of the edge-dns role (the allowlist's roles.edgeDns for the prod account)."
+  type        = string
+  default     = "agent-broker-prod-edge-dns"
+}
+
+variable "edge_dns_state_kms_key_id" {
+  description = "Id of the KMS key the agentrelay-edge-dns prod state is encrypted with (its prod.backend.hcl kms_key_id). Owned by the EO state bootstrap, not here."
+  type        = string
+  default     = "717fa644-8436-4042-abfa-0ddaa9b696c9"
+  validation {
+    condition     = can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.edge_dns_state_kms_key_id))
+    error_message = "edge_dns_state_kms_key_id must be one literal KMS key id."
+  }
+}
+
+variable "edge_dns_certificate_id" {
+  description = "Id of the ACM certificate the agentrelay-edge-dns root manages in prod (certificates.public)."
+  type        = string
+  default     = "4a0284eb-d27f-4aaa-8185-0cc2dd87cac0"
+  validation {
+    condition     = can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.edge_dns_certificate_id))
+    error_message = "edge_dns_certificate_id must be one literal ACM certificate id."
+  }
+}
+
 variable "tags" {
   description = "Tags on the role."
   type        = map(string)

@@ -213,6 +213,58 @@ Limits:
 - Another action or resource in this account can't work even if it is
   approved: the role has no more than this.
 
+## Prod edge-dns
+
+For a plan or apply of enterprise-onboarding's
+`environments/agentrelay-edge-dns` in prod. Always goes to the approver
+(never automatic, for any agent), and is issued on a dedicated role,
+`agent-broker-prod-edge-dns`, that can do only this. Name the profile
+explicitly; the same actions without it go to the general prod role, which
+can't do them.
+
+Request exactly this, or a subset of its actions with the resources they use
+(`<prod>` is the prod account id from `allowlist.json`, label
+`agentrelay-prod`; the exact ARNs are `EDGE_DNS_PROFILE` in
+[`src/policy.ts`](src/policy.ts)):
+
+```json
+{
+  "account": "<prod>",
+  "purpose": "agentrelay-edge-dns prod: plan and apply the Cloudflare records and certificate",
+  "profile": "edge-dns",
+  "actions": [
+    "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket",
+    "kms:Decrypt", "kms:GenerateDataKey",
+    "elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeTags",
+    "elasticloadbalancing:DescribeLoadBalancerAttributes",
+    "acm:DescribeCertificate", "acm:ListTagsForCertificate"
+  ],
+  "durationMinutes": 60,
+  "runTag": "edge-dns-prod-1",
+  "scope": "account",
+  "resources": [
+    "arn:aws:s3:::agentrelay-prod-tfstate-<prod>",
+    "arn:aws:s3:::agentrelay-prod-tfstate-<prod>/<prod>/us-west-2/prod/edge-dns/terraform.tfstate",
+    "arn:aws:s3:::agentrelay-prod-tfstate-<prod>/<prod>/us-west-2/prod/edge-dns/terraform.tfstate.tflock",
+    "arn:aws:kms:us-west-2:<prod>:key/717fa644-8436-4042-abfa-0ddaa9b696c9",
+    "arn:aws:acm:us-west-2:<prod>:certificate/4a0284eb-d27f-4aaa-8185-0cc2dd87cac0"
+  ],
+  "regions": ["us-west-2"],
+  "delivery": { "kind": "encrypted", "publicKey": "<from keygen>" }
+}
+```
+
+- The ELB actions take no resource ARNs (IAM allows them only on `*`); the
+  broker gives them their own `*` statement. Don't list `*`.
+- With `"profile": "edge-dns"`, anything else is **refused**: another
+  action (EKS, IAM, Route 53, another S3 key), another resource, another
+  account or region, `regions` missing, or a scope other than `account`.
+  Split unrelated work into its own request.
+- The role keeps `s3:DeleteObject` to the lockfile, `s3:ListBucket` to the
+  S3 backend's one listing (`env:/`), and the state key to use through S3.
+  DNS changes need `CLOUDFLARE_API_TOKEN` as well; the broker doesn't issue
+  that.
+
 ## Rules
 
 - Never put credentials, secret values or tokens in a Relay message, a log

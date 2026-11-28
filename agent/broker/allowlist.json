@@ -133,7 +133,8 @@
         "us-west-2"
       ],
       "roles": {
-        "elevated": "arn:aws:iam::786098391924:role/agent-broker-prod-read"
+        "elevated": "arn:aws:iam::786098391924:role/agent-broker-prod-read",
+        "edgeDns": "arn:aws:iam::786098391924:role/agent-broker-prod-edge-dns"
       }
     },
     "941433935742": {

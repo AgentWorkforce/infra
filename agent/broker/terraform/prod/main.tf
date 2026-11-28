@@ -19,6 +19,11 @@
 #
 # The cluster itself is not created or changed here. Its authentication mode
 # must include API (API or API_AND_CONFIG_MAP): the plan stops otherwise.
+#
+# A second role, agent-broker-prod-edge-dns (bottom of this file), with the
+# same trust: the agentrelay-edge-dns root's prod state, its load balancer
+# lookups and its one certificate, and nothing else. Only ever issued with the
+# owner's approval, for requests that name "profile": "edge-dns".
 
 provider "aws" {
   region              = var.region
@@ -100,6 +105,75 @@ locals {
       Resource = [local.cluster_arn]
     }]
   }
+
+  # The agentrelay-edge-dns root's prod state (enterprise-onboarding,
+  # environments/agentrelay-edge-dns/prod.backend.hcl): bucket, key, S3 native
+  # lockfile (use_lockfile = true: "<key>.tflock") and the state's KMS key.
+  edge_dns_state_bucket     = "agentrelay-prod-tfstate-${var.prod_account_id}"
+  edge_dns_state_bucket_arn = "arn:aws:s3:::${local.edge_dns_state_bucket}"
+  edge_dns_state_key        = "${var.prod_account_id}/${var.region}/prod/edge-dns/terraform.tfstate"
+  edge_dns_state_arn        = "${local.edge_dns_state_bucket_arn}/${local.edge_dns_state_key}"
+  edge_dns_lock_arn         = "${local.edge_dns_state_arn}.tflock"
+  edge_dns_state_kms_arn    = "arn:aws:kms:${var.region}:${var.prod_account_id}:key/${var.edge_dns_state_kms_key_id}"
+  edge_dns_certificate_arn  = "arn:aws:acm:${var.region}:${var.prod_account_id}:certificate/${var.edge_dns_certificate_id}"
+
+  # Exactly what `terraform plan` / `apply` of that root needs in AWS (the DNS
+  # itself is Cloudflare): no EKS, IAM, Route 53 or other S3.
+  edge_dns_permissions_policy = {
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "EdgeDnsStateReadWrite"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject"]
+        Resource = [local.edge_dns_state_arn, local.edge_dns_lock_arn]
+      },
+      {
+        # Terraform deletes the lockfile on unlock. Never the state object.
+        Sid      = "EdgeDnsReleaseLock"
+        Effect   = "Allow"
+        Action   = ["s3:DeleteObject"]
+        Resource = [local.edge_dns_lock_arn]
+      },
+      {
+        # The S3 backend's only list call is Workspaces(): ListObjectsV2 with
+        # Prefix "<workspace_key_prefix>/" = "env:/" (the default; the root
+        # sets none), made on every StateMgr (init, plan, apply). It never
+        # lists with the state key (checked in hashicorp/terraform
+        # internal/backend/remote-state/s3/backend_state.go, v1.7.0 to
+        # v1.16.7). Terraform >= 1.8 tolerates AccessDenied here for the
+        # default prefix, but the root allows >= 1.7, so allow exactly that
+        # one prefix and nothing else in the bucket.
+        Sid       = "EdgeDnsListWorkspaces"
+        Effect    = "Allow"
+        Action    = ["s3:ListBucket"]
+        Resource  = [local.edge_dns_state_bucket_arn]
+        Condition = { StringEquals = { "s3:prefix" = ["env:/"] } }
+      },
+      {
+        Sid       = "EdgeDnsStateKeyViaS3"
+        Effect    = "Allow"
+        Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource  = [local.edge_dns_state_kms_arn]
+        Condition = { StringEquals = { "kms:ViaService" = "s3.${var.region}.amazonaws.com" } }
+      },
+      {
+        # data.aws_lb (by tags): DescribeLoadBalancers, DescribeTags and, in
+        # the provider's read, DescribeLoadBalancerAttributes. ELBv2 Describe
+        # actions have no resource-level permissions in IAM: "*" only.
+        Sid      = "EdgeDnsFindLoadBalancers"
+        Effect   = "Allow"
+        Action   = ["elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeLoadBalancerAttributes"]
+        Resource = ["*"]
+      },
+      {
+        Sid      = "EdgeDnsReadCertificate"
+        Effect   = "Allow"
+        Action   = ["acm:DescribeCertificate", "acm:ListTagsForCertificate"]
+        Resource = [local.edge_dns_certificate_arn]
+      },
+    ]
+  }
 }
 
 resource "aws_iam_role" "read" {
@@ -132,4 +206,22 @@ resource "aws_eks_access_policy_association" "view" {
   access_scope {
     type = "cluster"
   }
+}
+
+# The agentrelay-edge-dns root's prod plans and applies (enterprise-onboarding,
+# environments/agentrelay-edge-dns): approval-tier only, vended by the broker
+# for requests with "profile": "edge-dns" (broker/src/policy.ts), each one
+# approved by the owner. Same trust as the read role; no EKS access entry.
+resource "aws_iam_role" "edge_dns" {
+  name                 = var.edge_dns_role_name
+  description          = "agentrelay-edge-dns prod Terraform sessions vended by the AWS credential broker (owner-approved per request)."
+  assume_role_policy   = jsonencode(local.trust_policy)
+  max_session_duration = 3600
+  tags                 = merge(var.tags, { "managed-by" = "aws-cred-broker" })
+}
+
+resource "aws_iam_role_policy" "edge_dns" {
+  name   = "agentrelay-edge-dns-prod"
+  role   = aws_iam_role.edge_dns.id
+  policy = jsonencode(local.edge_dns_permissions_policy)
 }
